@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+data/*.json
+*.log
+CLAUDE.local.md
+.claude/settings.local.json
+Harvy-MVP-v0.1.0.zip

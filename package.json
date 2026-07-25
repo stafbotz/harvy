@@ -1,0 +1,25 @@
+{
+  "name": "harvy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fondasi MVP Harvy Capybara untuk membantu pelajar mengatur tugas lewat Telegram.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/app.ts",
+    "start": "node dist/src/app.js",
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "grammy": "^1.45.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}
