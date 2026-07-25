@@ -1,6 +1,6 @@
 # WO-003: Percakapan AI Pertama Harvy
 
-- Status: `IN_PROGRESS`
+- Status: `READY_FOR_REVIEW`
 - Pemilik produk: pengguna Harvy
 - Orkestrator: ChatGPT
 - Builder: Codex (Work Mode)
@@ -80,26 +80,26 @@ belum tersedia.
 
 ## Kriteria penerimaan
 
-- [ ] Pengguna belum lolos kelas 8+ tidak pernah memanggil model AI.
-- [ ] Pengguna eligible melihat penjelasan pemrosesan OpenAI sebelum pesan bebas
+- [x] Pengguna belum lolos kelas 8+ tidak pernah memanggil model AI.
+- [x] Pengguna eligible melihat penjelasan pemrosesan OpenAI sebelum pesan bebas
       pertama dan dapat memilih setuju atau tidak.
-- [ ] Persetujuan AI disimpan sebagai data minimum per ID pengguna dan dapat
+- [x] Persetujuan AI disimpan sebagai data minimum per ID pengguna dan dapat
       ditarik melalui `/privasi`.
-- [ ] Setelah setuju, pesan bebas menghasilkan jawaban Harvy melalui Responses
+- [x] Setelah setuju, pesan bebas menghasilkan jawaban Harvy melalui Responses
       API; perintah tugas lama tetap berfungsi.
-- [ ] Request memakai model konfigurasi, `store: false`, moderasi input/output,
+- [x] Request memakai model konfigurasi, `store: false`, moderasi input/output,
       batas keluaran, dan tidak memuat ID Telegram.
-- [ ] Isi pesan dan jawaban tidak ditulis ke file lokal, log, atau memori
+- [x] Isi pesan dan jawaban tidak ditulis ke file lokal, log, atau memori
       jangka panjang.
-- [ ] Paling banyak enam pesan konteks aktif berada di RAM maksimal 30 menit;
+- [x] Paling banyak enam pesan konteks aktif berada di RAM maksimal 30 menit;
       `/hapuspercakapan` dan penarikan izin membersihkannya.
-- [ ] Prompt menyatakan identitas/batas Harvy dan mendukung lima konteks MVP.
-- [ ] Ungkapan bahaya serius yang eksplisit tidak masuk ke alur AI biasa dan
+- [x] Prompt menyatakan identitas/batas Harvy dan mendukung lima konteks MVP.
+- [x] Ungkapan bahaya serius yang eksplisit tidak masuk ke alur AI biasa dan
       menerima arahan bantuan manusia yang proporsional.
-- [ ] Pesan terlalu panjang, timeout, API gagal, atau output kosong mendapat
+- [x] Pesan terlalu panjang, timeout, API gagal, atau output kosong mendapat
       fallback yang jelas tanpa membocorkan error atau credential.
-- [ ] Bot tetap hanya merespons lewat chat pribadi.
-- [ ] Semua tes lama dan baru lulus.
+- [x] Bot tetap hanya merespons lewat chat pribadi.
+- [x] Semua tes lama dan baru lulus.
 
 ## Konteks yang wajib dibaca
 
@@ -162,22 +162,40 @@ Manual:
 
 ## Handoff Builder
 
-- Commit/PR:
-- Ringkasan:
+- Commit/PR: implementasi `53fea954ddfc482da29562b0ba10b06d4bb3f041`;
+  draft PR `https://github.com/stafbotz/harvy/pull/2`.
+- Ringkasan: persetujuan AI, Responses API, model `gpt-5.6-luna`, moderasi,
+  konteks aktif sementara, kontrol penghapusan, alur risiko eksplisit, fallback,
+  serta dokumentasi operasional.
 - Automated:
-- Manual:
-- Asumsi:
+  - `npm ci` — PASS.
+  - `npm run check` — PASS.
+  - `npm test` — PASS (39 test dalam 11 suite).
+  - `npm audit --omit=dev --audit-level=high` — PASS (0 vulnerability).
+  - Pemindaian kandidat secret — PASS.
+- Manual: `NOT RUN` — lingkungan Builder tidak memiliki token Telegram dan API
+  key proyek OpenAI.
+- Asumsi: `gpt-5.6-luna` tersedia pada proyek berbayar pengguna; uji awal hanya
+  dilakukan oleh pemilik produk dewasa dengan data sintetis.
 - Risiko atau pekerjaan tersisa:
-- Dokumentasi yang diubah:
+  - kualitas, latensi, biaya, moderasi, dan copy belum diuji pada API nyata;
+  - filter risiko lokal hanya menangkap ungkapan eksplisit dan bukan sistem
+    keselamatan lengkap;
+  - akun belum dikonfirmasi mempunyai Zero Data Retention;
+  - belum ada rate limit, spend limit, deployment, tinjauan hukum, atau izin
+    yang memadai untuk pengujian bersama pelajar nyata;
+  - PR #2 bergantung pada PR #1 dan harus ditinjau terhadap branch WO-002.
+- Dokumentasi yang diubah: README, `.env.example`, INDEX, PROJECT, TESTING, dan
+  WO-003.
 
 ## Hasil review
 
-- Status:
-- `BLOCKER`/`IMPORTANT`:
-- `MINOR` untuk backlog:
+- Status: menunggu Reviewer.
+- `BLOCKER`/`IMPORTANT`: menunggu.
+- `MINOR` untuk backlog: menunggu.
 
 ## Penerimaan
 
-- Keputusan pengguna:
-- Commit yang diterima:
-- Tanggal:
+- Keputusan pengguna: menunggu uji hasil WO-003.
+- Commit yang diterima: menunggu.
+- Tanggal: menunggu.
