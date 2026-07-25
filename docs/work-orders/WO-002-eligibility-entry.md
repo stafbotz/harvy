@@ -104,7 +104,8 @@ Manual:
 
 ## Handoff Builder
 
-- Commit/PR: branch siap diterbitkan; diisi setelah push dan PR dibuat.
+- Commit/PR: implementasi `60cddd314c8b32abbdafae9813064f708233dcaf`;
+  draft PR `https://github.com/stafbotz/harvy/pull/1`.
 - Ringkasan: gerbang kelas 8+, penyimpanan status minimum, koreksi jawaban,
   pembuka manusiawi, perlindungan semua fitur lama, serta dokumentasi acuan.
 - Automated:
