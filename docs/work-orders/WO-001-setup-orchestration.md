@@ -1,6 +1,6 @@
 # WO-001: Setup Orkestrasi Harvy
 
-- Status: `READY_FOR_ACCEPTANCE`
+- Status: `ACCEPTED`
 - Pemilik produk: pengguna Harvy
 - Orkestrator: ChatGPT
 - Builder: Codex (sesi setup)
@@ -58,7 +58,7 @@ agent lain meninjau atau menguji tanpa tumpang tindih.
 - [x] Repositori GitHub tetap privat dan snapshot awal tersedia di `main`.
 - [x] `npm run check` dan `npm test` lulus setelah perubahan.
 - [x] Audit file sensitif dan diff akhir selesai.
-- [ ] Pengguna menerima setup.
+- [x] Pengguna menerima setup.
 
 ## Konteks yang wajib dibaca
 
@@ -108,23 +108,24 @@ Manual:
   lokal valid; source, tests, dependency, lockfile, dan konfigurasi TypeScript
   identik dengan arsip v0.1; pemindaian secret tidak menemukan kandidat
 - Manual: audit kepemilikan memastikan hanya Builder yang boleh menulis;
-  verifikasi adaptor dalam aplikasi Codex/Claude/Antigravity belum dijalankan
+  adaptor Codex, Claude Code, dan Antigravity berhasil diverifikasi; pemeriksaan
+  Claude Code dan Antigravity tidak mengubah file
 - Asumsi: repo `stafbotz/harvy` tetap menjadi sumber kebenaran privat Harvy
-- Risiko atau pekerjaan tersisa: workspace Codex sesi ini tidak dapat menulis
-  `.git`; gunakan clone baru dari GitHub pada coding agent. Rule Antigravity
-  masih perlu dikonfirmasi sebagai `Always On`
+- Risiko atau pekerjaan tersisa: tidak ada blocker penerimaan; keterbatasan
+  metadata `.git` pada workspace Codex sesi setup sudah dimitigasi dengan clone
+  GitHub baru yang bersih. Pekerjaan berikutnya wajib melalui branch dan PR
 - Dokumentasi yang diubah: `README.md`, `AGENTS.md`, `CLAUDE.md`,
   `.agent/rules/`, `.github/`, dan dokumen baru di `docs/`
 
 ## Hasil review
 
-- Status: `READY_FOR_ACCEPTANCE`; tree GitHub identik dengan snapshot lokal dan
-  seluruh pemeriksaan wajib lulus
+- Status: `PASS`; tree GitHub identik dengan snapshot lokal, seluruh pemeriksaan
+  wajib lulus, dan adaptor tiga alat berhasil diverifikasi
 - `BLOCKER`/`IMPORTANT`: tidak ada pada audit lokal terakhir
 - `MINOR` untuk backlog: tidak ada
 
 ## Penerimaan
 
-- Keputusan pengguna: menunggu
-- Commit yang diterima: menunggu
-- Tanggal: menunggu
+- Keputusan pengguna: diterima — “Saya menerima setup WO-001.”
+- Commit yang diterima: `af6ad73e77b37b1c576874c03a93b6a54f0332a4`
+- Tanggal: 2026-07-25 (Asia/Jakarta)
