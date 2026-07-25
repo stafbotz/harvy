@@ -2,12 +2,19 @@
 
 - Status: `READY_FOR_REVIEW`
 - Pemilik produk: pengguna Harvy
-- Orkestrator: ChatGPT
-- Builder: Codex (Work Mode)
-- Reviewer: `UNASSIGNED`
-- QA: pengguna Harvy
-- Base branch: `work/wo-002-eligibility-entry` pada `461128847c9fb19c97a065400f8e489bb44b5824`
+- Orkestrator: ChatGPT Work
+- Pelaksana historis aktual: ChatGPT Work melalui konektor GitHub
+- Builder perbaikan berikutnya: Codex (GPT-5.6 Sol), hanya setelah dispatch baru
+- Reviewer: Claude Code (Opus 5), read-only
+- QA/integrasi: Antigravity (Gemini 3.6 Flash), read-only
+- Base implementasi historis: `work/wo-002-eligibility-entry` pada `461128847c9fb19c97a065400f8e489bb44b5824`
+- Base review: head `work/wo-002-eligibility-entry` yang dikunci dalam dispatch Reviewer
 - Work branch: `work/wo-003-ai-conversation`
+
+> **Koreksi provenance, 26 Juli 2026:** implementasi ini dibuat langsung oleh
+> ChatGPT Work melalui konektor GitHub. Label lama “Codex (Work Mode)” salah dan
+> telah dikoreksi. Kode dipertahankan sebagai prototipe, tetapi belum direview
+> atau diuji secara independen.
 
 ## Masalah dan hasil pengguna
 
@@ -72,11 +79,17 @@ belum tersedia.
   pengaturan standar dapat menyimpan isi hingga 30 hari.
 - Konteks aktif sementara bukan memori jangka panjang dan batasnya dijelaskan
   sebelum pengguna memberi izin.
-- Keputusan sebelumnya memilih keluarga GPT-5.6 Luna untuk beban percakapan
-  awal; dokumentasi OpenAI pada 26 Juli 2026 memverifikasi slug
-  `gpt-5.6-luna` sebagai pilihan efisien untuk beban volume tinggi.
+- Arah arsitektur produk yang ditetapkan pengguna memakai DeepSeek V4 Flash
+  untuk volume tinggi/risiko rendah, GPT-5.6 Luna untuk percakapan generatif
+  utama, dan GPT-5.6 Terra untuk masalah tersulit, verifikasi, serta perencanaan
+  kompleks.
+- Paket ini hanya prototipe jalur langsung satu model `gpt-5.6-luna`; router
+  tiga model belum dibuat dan tidak boleh dianggap selesai.
 - Model tetap dikonfigurasi melalui environment agar dapat dievaluasi atau
   diganti tanpa mengubah kontrak bot.
+- Ketersediaan, slug API, harga, dan batas provider belum diverifikasi ulang
+  secara independen dalam koreksi dokumentasi ini; verifikasi resmi wajib
+  dilakukan sebelum uji live atau keputusan arsitektur final.
 
 ## Kriteria penerimaan
 
@@ -100,6 +113,10 @@ belum tersedia.
       fallback yang jelas tanpa membocorkan error atau credential.
 - [x] Bot tetap hanya merespons lewat chat pribadi.
 - [x] Semua tes lama dan baru lulus.
+
+Catatan bukti: tanda centang di atas berasal dari implementasi dan tes yang
+  dilaporkan pelaksana historis. Tanda tersebut belum merupakan review Claude
+  Code, QA Antigravity, atau penerimaan pengguna.
 
 ## Konteks yang wajib dibaca
 
@@ -160,39 +177,79 @@ Manual:
 - Diperlukan tindakan eksternal, memori lintas sesi, foto, atau perluasan lain.
 - Ditemukan konflik antara Konstitusi, MVP, dan perilaku yang diminta.
 
-## Handoff Builder
+## Catatan komunikasi
 
+| Waktu | Alat/model aktual | Mode/peran | Tindakan | Branch/commit/bukti | Hasil | Belum terbukti | Pemilik berikutnya |
+|---|---|---|---|---|---|---|---|
+| 25 Juli 2026 | ChatGPT Work | `BUILD` historis (penyimpangan) | Membuat prototipe percakapan AI dan PR #2 secara langsung | `work/wo-003-ai-conversation`; implementasi `53fea95`; head sebelum koreksi `ff3fe2f` | Pelaksana melaporkan check, 39 tes, audit, dan pemindaian secret lulus | Review independen, Telegram + provider AI nyata, router tiga model | Orkestrator |
+| 26 Juli 2026 | ChatGPT Work | `ORCHESTRATE` dokumentasi | Mengoreksi identitas, membedakan model alat/produk, dan menetapkan jalur review/QA | PR #2 dan Work Order ini | Dokumentasi saja; tidak mengubah kode aplikasi | Hasil Claude Code dan Antigravity | Claude Code |
+
+## Handoff implementasi historis
+
+- Pelaksana aktual: ChatGPT Work melalui konektor GitHub; bukan Codex.
 - Commit/PR: implementasi `53fea954ddfc482da29562b0ba10b06d4bb3f041`;
+  head sebelum koreksi dokumentasi `ff3fe2f98b4a05739bc7c2427af1974c5508fd5e`;
   draft PR `https://github.com/stafbotz/harvy/pull/2`.
-- Ringkasan: persetujuan AI, Responses API, model `gpt-5.6-luna`, moderasi,
-  konteks aktif sementara, kontrol penghapusan, alur risiko eksplisit, fallback,
-  serta dokumentasi operasional.
-- Automated:
+- Ringkasan: persetujuan AI, Responses API, konfigurasi satu model
+  `gpt-5.6-luna`, moderasi, konteks aktif sementara, kontrol penghapusan, alur
+  risiko eksplisit, fallback, serta dokumentasi operasional.
+- Automated yang dilaporkan pelaksana:
   - `npm ci` — PASS.
   - `npm run check` — PASS.
   - `npm test` — PASS (39 test dalam 11 suite).
   - `npm audit --omit=dev --audit-level=high` — PASS (0 vulnerability).
   - Pemindaian kandidat secret — PASS.
-- Manual: `NOT RUN` — lingkungan Builder tidak memiliki token Telegram dan API
-  key proyek OpenAI.
-- Asumsi: `gpt-5.6-luna` tersedia pada proyek berbayar pengguna; uji awal hanya
-  dilakukan oleh pemilik produk dewasa dengan data sintetis.
+- Manual: `NOT RUN` — sesi pelaksana tidak memiliki token Telegram dan API key
+  proyek AI.
+- Status bukti: laporan di atas belum diulang oleh Reviewer atau QA independen.
+- Asumsi historis: `gpt-5.6-luna` tersedia pada proyek pengguna. Asumsi ini
+  belum diverifikasi dan tidak menggantikan arsitektur produk tiga model.
 - Risiko atau pekerjaan tersisa:
   - kualitas, latensi, biaya, moderasi, dan copy belum diuji pada API nyata;
-  - filter risiko lokal hanya menangkap ungkapan eksplisit dan bukan sistem
-    keselamatan lengkap;
+  - filter risiko lokal bukan sistem keselamatan lengkap;
   - akun belum dikonfirmasi mempunyai Zero Data Retention;
   - belum ada rate limit, spend limit, deployment, tinjauan hukum, atau izin
-    yang memadai untuk pengujian bersama pelajar nyata;
-  - PR #2 bergantung pada PR #1 dan harus ditinjau terhadap branch WO-002.
-- Dokumentasi yang diubah: README, `.env.example`, INDEX, PROJECT, TESTING, dan
-  WO-003.
+    untuk pelajar nyata;
+  - router DeepSeek/Luna/Terra belum dibuat;
+  - PR #2 bergantung pada PR #1.
+- Dokumentasi yang diubah saat implementasi: README, `.env.example`, INDEX,
+  PROJECT, TESTING, dan WO-003.
+- Pemilik berikutnya: Claude Code untuk review read-only.
 
 ## Hasil review
 
-- Status: menunggu Reviewer.
-- `BLOCKER`/`IMPORTANT`: menunggu.
-- `MINOR` untuk backlog: menunggu.
+- Reviewer yang ditugaskan: Claude Code (Opus 5), read-only.
+- Compare: `work/wo-002-eligibility-entry@<base yang dikunci>...work/wo-003-ai-conversation@<head yang dikunci>`.
+- Status: `NOT RUN`.
+- `BLOCKER`/`IMPORTANT`: menunggu laporan.
+- `MINOR`: menunggu laporan.
+- Fokus minimum: kebenaran kontrak SDK/provider, privasi, persetujuan,
+  penyimpanan konteks, moderasi, jalur risiko, fallback, regresi WO-002, dan
+  ketidaksesuaian terhadap arsitektur tiga model.
+- Catatan: reviewer wajib melaporkan alat/model aktual; profil yang berbeda
+  tidak boleh disubstitusi diam-diam.
+
+## Hasil QA/integrasi
+
+- QA yang ditugaskan: Antigravity (Gemini 3.6 Flash), read-only.
+- Commit target: ditentukan setelah review awal.
+- Status: `NOT RUN`.
+- Environment: komputer pengguna dengan secret lokal; secret tidak boleh masuk
+  chat, repo, screenshot, atau laporan.
+- Skenario minimum: kelayakan, izin/setop izin, lima konteks sintetis,
+  percakapan lanjutan, hapus konteks, fallback API, risiko eksplisit, perintah
+  tugas, restart, dan chat non-pribadi.
+- Catat model runtime aktual, waktu respons, expected/observed, dan
+  `PASS`/`FAIL`/`NOT RUN`.
+
+## Rencana kelanjutan
+
+1. Claude Code meninjau PR #1, lalu PR #2, tanpa mengedit.
+2. Antigravity menjalankan QA pada commit yang dikunci tanpa mengedit.
+3. ChatGPT Work menggabungkan temuan, bukti, dan hal yang belum terbukti untuk
+   pengguna.
+4. Jika pengguna menyetujui perbaikan, Codex (GPT-5.6 Sol) menerima dispatch
+   baru sebagai satu-satunya Builder.
 
 ## Penerimaan
 
