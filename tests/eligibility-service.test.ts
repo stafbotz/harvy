@@ -33,6 +33,38 @@ describe("EligibilityService", () => {
 
     assert.equal(await service.getStatus("student"), null);
   });
+
+  it("menyimpan dan menarik persetujuan AI tanpa menghapus kelayakan", async () => {
+    const service = new EligibilityService(new MemoryEligibilityRepository());
+    await service.setStatus("student", "eligible");
+
+    await service.setAiConsent("student", "granted");
+    assert.equal(await service.getAiConsent("student"), "granted");
+
+    await service.clearAiConsent("student");
+    assert.equal(await service.getAiConsent("student"), null);
+    assert.equal(await service.getStatus("student"), "eligible");
+  });
+
+  it("menolak persetujuan AI untuk pengguna yang belum eligible", async () => {
+    const service = new EligibilityService(new MemoryEligibilityRepository());
+
+    await assert.rejects(
+      service.setAiConsent("student", "granted"),
+      /hanya tersedia untuk pengguna eligible/,
+    );
+  });
+
+  it("menghapus persetujuan ketika status berubah menjadi ineligible", async () => {
+    const service = new EligibilityService(new MemoryEligibilityRepository());
+    await service.setStatus("student", "eligible");
+    await service.setAiConsent("student", "granted");
+
+    await service.setStatus("student", "ineligible");
+
+    assert.equal(await service.getStatus("student"), "ineligible");
+    assert.equal(await service.getAiConsent("student"), null);
+  });
 });
 
 class MemoryEligibilityRepository implements EligibilityRepository {

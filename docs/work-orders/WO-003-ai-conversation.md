@@ -30,7 +30,12 @@ belum tersedia.
 - Instruksi Harvy yang mencakup lima konteks MVP tanpa menu atau mode kaku:
   kewajiban, belajar, keputusan, kewalahan ringan, dan bantuan manusia.
 - Permintaan API menggunakan `store: false`; ID Telegram tidak dikirimkan.
-- Tidak menyimpan transkrip atau menjadikan pesan sebagai memori Harvy.
+- Moderasi resmi OpenAI memberi skor pada input dan memblokir output yang
+  ditandai, sebagai lapisan tambahan untuk prototipe pengguna remaja.
+- Konteks aktif maksimal enam pesan berada di RAM selama maksimal 30 menit agar
+  balasan lanjutan tetap nyambung.
+- Konteks aktif tidak ditulis ke disk, hilang saat restart, dapat dihapus lewat
+  `/hapuspercakapan`, dan langsung dibersihkan ketika izin AI ditarik.
 - Pemeriksaan lokal untuk ungkapan bahaya serius yang eksplisit sebelum respons
   AI biasa, disertai respons bantuan manusia yang proporsional.
 - Batas panjang masukan, batas keluaran, timeout, serta fallback aman saat API
@@ -42,7 +47,7 @@ belum tersedia.
 
 ## Di luar ruang lingkup
 
-- Memori percakapan lintas pesan atau lintas sesi.
+- Memori jangka panjang atau konteks lintas restart.
 - Penyimpanan otomatis cerita, keadaan emosional, atau informasi sensitif.
 - Foto/OCR, suara, web search, RAG, atau sumber real-time.
 - Pembuatan atau perubahan tugas otomatis dari jawaban model.
@@ -62,6 +67,11 @@ belum tersedia.
 - Harvy membantu tetapi tidak mengambil alih.
 - Harvy jujur sebagai AI dan tidak berpura-pura mempunyai perasaan atau memori.
 - Isi pesan hanya diproses model setelah penjelasan singkat dan persetujuan.
+- Penjelasan persetujuan menyatakan bahwa `store: false` menonaktifkan
+  penyimpanan state Response, tetapi log pemantauan penyalahgunaan OpenAI pada
+  pengaturan standar dapat menyimpan isi hingga 30 hari.
+- Konteks aktif sementara bukan memori jangka panjang dan batasnya dijelaskan
+  sebelum pengguna memberi izin.
 - Keputusan sebelumnya memilih keluarga GPT-5.6 Luna untuk beban percakapan
   awal; dokumentasi OpenAI pada 26 Juli 2026 memverifikasi slug
   `gpt-5.6-luna` sebagai pilihan efisien untuk beban volume tinggi.
@@ -77,9 +87,12 @@ belum tersedia.
       ditarik melalui `/privasi`.
 - [ ] Setelah setuju, pesan bebas menghasilkan jawaban Harvy melalui Responses
       API; perintah tugas lama tetap berfungsi.
-- [ ] Request memakai model konfigurasi, `store: false`, batas keluaran, dan
-      tidak memuat ID Telegram.
-- [ ] Isi pesan dan jawaban tidak ditulis ke repository lokal, log, atau memori.
+- [ ] Request memakai model konfigurasi, `store: false`, moderasi input/output,
+      batas keluaran, dan tidak memuat ID Telegram.
+- [ ] Isi pesan dan jawaban tidak ditulis ke file lokal, log, atau memori
+      jangka panjang.
+- [ ] Paling banyak enam pesan konteks aktif berada di RAM maksimal 30 menit;
+      `/hapuspercakapan` dan penarikan izin membersihkannya.
 - [ ] Prompt menyatakan identitas/batas Harvy dan mendukung lima konteks MVP.
 - [ ] Ungkapan bahaya serius yang eksplisit tidak masuk ke alur AI biasa dan
       menerima arahan bantuan manusia yang proporsional.
@@ -111,8 +124,8 @@ belum tersedia.
 - API key hanya dibaca dari `OPENAI_API_KEY`; jangan ditulis ke Git, output,
   tes, atau dokumentasi sebagai nilai nyata.
 - Model default `gpt-5.6-luna`, reasoning effort `low`, dan dapat dioverride.
-- Tidak ada riwayat percakapan yang dikirim ulang; setiap pesan berdiri sendiri
-  pada paket ini.
+- Hanya konteks aktif maksimal enam pesan yang dikirim ulang. Tidak ada konteks
+  lintas restart atau penyimpanan transkrip ke disk.
 - Perubahan data harus kompatibel dengan record kelayakan WO-002 yang sudah ada.
 - Jangan mengubah format `data/tasks.json`.
 - Jangan mengklaim fitur telah diuji live tanpa token Telegram dan API key.
@@ -129,14 +142,19 @@ Manual:
 
 - Jalankan bot dengan akun Telegram uji dan API key proyek.
 - Pastikan gerbang kelas, persetujuan AI, pesan bebas, `/privasi`, penolakan
-  persetujuan, fallback API, perintah tugas, dan restart status.
-- Uji sekurang-kurangnya satu contoh dari masing-masing lima konteks MVP.
+  persetujuan, `/hapuspercakapan`, fallback API, perintah tugas, dan restart
+  status.
+- Gunakan pemilik produk dewasa, akun uji, dan data sintetis; jangan memakai
+  cerita atau data pribadi pelajar sungguhan pada tahap ini.
+- Uji sekurang-kurangnya satu contoh sintetis dari masing-masing lima konteks
+  MVP.
 - Catat model aktual, hasil, waktu respons, serta bagian yang belum diuji.
 
 ## Berhenti dan tanyakan jika
 
 - Implementasi memerlukan API key atau token nyata di repository/chat.
-- Integrasi mengharuskan penyimpanan transkrip atau data sensitif.
+- Integrasi mengharuskan penyimpanan transkrip ke disk, konteks lebih lama dari
+  batas paket, atau data sensitif sebagai memori.
 - Model yang dikunci tidak tersedia pada akun pengguna dan penggantinya mengubah
   biaya atau kualitas secara material.
 - Diperlukan tindakan eksternal, memori lintas sesi, foto, atau perluasan lain.

@@ -15,17 +15,17 @@ export const ELIGIBILITY_PROMPT = [
 ].join("\n");
 
 export const FIRST_WELCOME_MESSAGE = [
-  "Oke, kamu bisa lanjut.",
+  "Oke, izin pemrosesan AI aktif.",
   "",
-  "Harvy dirancang buat membantu hal yang ingin kamu beresin, pikirin, atau ceritain. Di versi percobaan yang aktif sekarang, yang sudah tersambung baru pengelolaan tugas. Aku nggak akan pura-pura memahami pesan bebas sebelum kemampuan itu siap.",
+  "Sekarang ceritain aja apa yang lagi pengin kamu beresin, pikirin, atau pahami. Nggak perlu dirapikan dulu—kita mulai dari ceritamu.",
   "",
-  "Kirim /bantuan untuk melihat yang sudah bisa dipakai. Aku tidak otomatis menjadikan pesanmu sebagai ingatan.",
+  "Aku hanya membawa beberapa pesan terbaru dalam konteks aktif sementara—bukan memori jangka panjang. Hapus kapan saja lewat /hapuspercakapan atau ubah izin AI lewat /privasi.",
 ].join("\n");
 
 export const RETURNING_WELCOME_MESSAGE = [
   "Hai lagi.",
   "",
-  "Versi percobaan ini baru bisa membantu merapikan tugas. Kirim /bantuan untuk melihat caranya; percakapan bebas masih sedang dibangun.",
+  "Hari ini lagi ada apa? Ceritain aja seadanya. Aku hanya membawa konteks aktif sementara, bukan ingatan jangka panjang.",
 ].join("\n");
 
 export const INELIGIBLE_MESSAGE = [
@@ -36,14 +36,57 @@ export const INELIGIBLE_MESSAGE = [
   "Agar ingat jawaban ini, aku menyimpan ID akun Telegram dan status kelayakan—bukan kelas persis, nama sekolah, atau kartu pelajar. Kalau tadi salah pilih, kamu bisa koreksi jawaban.",
 ].join("\n");
 
-export const FREE_TEXT_LIMIT_MESSAGE = [
-  "Aku sudah membaca pesanmu, tapi kemampuan memahami cerita bebas belum tersambung di versi ini. Aku tidak mau pura-pura paham.",
+export const AI_CONSENT_PROMPT = [
+  "Sebelum pesan bebas pertama, aku perlu izinmu.",
   "",
-  "Untuk sekarang, kemampuan yang sudah bisa dipakai adalah merapikan tugas. Kirim /bantuan untuk melihat caranya.",
+  "Kalau kamu setuju, isi pesan dan jawaban akan diproses oleh OpenAI. Data API tidak dipakai melatih model secara default, tetapi pada pengaturan standar dapat berada di log pemantauan penyalahgunaan hingga 30 hari.",
+  "",
+  "Harvy mematikan penyimpanan percakapan sebagai state di API (store:false). Agar balasan lanjutan tetap nyambung, beberapa pesan terakhir disimpan sementara di RAM maksimal 30 menit dan dikirim bersama pesan berikutnya; tidak ditulis ke disk, hilang saat restart, dan bisa dihapus lewat /hapuspercakapan.",
+  "",
+  "Perintah tugas tetap bisa dipakai tanpa izin ini. Kamu boleh menolak atau menarik izin lewat /privasi.",
+].join("\n");
+
+export const AI_CONSENT_DECLINED_MESSAGE = [
+  "Oke, izin AI tidak aktif. Pesan bebasmu tidak akan dikirim ke OpenAI.",
+  "",
+  "Perintah tugas tetap bisa dipakai. Kalau berubah pikiran, buka /privasi.",
+].join("\n");
+
+export const PRIVACY_GRANTED_MESSAGE = [
+  "Izin AI saat ini aktif.",
+  "",
+  "Pesan dan jawaban diproses OpenAI. Data API tidak dipakai melatih model secara default, tetapi dapat berada di log pemantauan penyalahgunaan hingga 30 hari pada pengaturan standar.",
+  "",
+  "Harvy mematikan penyimpanan percakapan sebagai state di API (store:false). Beberapa pesan terakhir disimpan sementara di RAM maksimal 30 menit dan dikirim bersama pesan berikutnya agar percakapan nyambung; tidak ditulis ke disk dan bisa dihapus lewat /hapuspercakapan. Kamu bisa menarik izin di bawah.",
+].join("\n");
+
+export const CONVERSATION_CLEARED_MESSAGE =
+  "Konteks percakapan aktif sudah dihapus. Pesan berikutnya akan dimulai tanpa riwayat.";
+
+export const INPUT_TOO_LONG_MESSAGE = [
+  "Pesan itu terlalu panjang untuk percobaan ini.",
+  "",
+  "Coba kirim bagian yang paling penting dulu, maksimal sekitar 6.000 karakter.",
+].join("\n");
+
+export const AI_UNAVAILABLE_MESSAGE = [
+  "Maaf, koneksi AI Harvy lagi belum bisa menjawab.",
+  "",
+  "Pesanmu tidak disimpan sebagai memori. Kamu bisa mencoba lagi nanti atau memakai /bantuan untuk fitur tugas yang tetap tersedia.",
+].join("\n");
+
+export const HIGH_RISK_MESSAGE = [
+  "Aku khawatir pesanmu mungkin menyangkut keselamatanmu.",
+  "",
+  "Kalau bahaya sedang terjadi sekarang, pindah ke tempat yang lebih aman jika kamu bisa, lalu hubungi orang dewasa yang kamu percaya atau layanan darurat setempat sekarang. Kalau sulit menjelaskan, kamu bisa kirim: “Aku sedang tidak aman dan butuh ditemani sekarang.”",
+  "",
+  "Harvy adalah AI, bukan layanan darurat, dan keadaan seperti ini membutuhkan bantuan manusia secara langsung.",
 ].join("\n");
 
 export const HELP_MESSAGE = [
-  "Harvy dirancang untuk mendampingi kehidupan pelajar secara lebih luas. Versi percobaan yang sudah aktif sekarang baru bisa membantu merapikan tugas.",
+  "Kamu bisa menulis pesan biasa tentang hal yang ingin dibereskan, dipikirkan, atau dipahami setelah izin AI aktif.",
+  "",
+  "Percakapan AI hanya membawa konteks aktif sementara, maksimal 30 menit dan tidak ditulis ke disk. Hapus lewat /hapuspercakapan atau atur izinnya lewat /privasi.",
   "",
   "Tambah tugas:",
   "/tambah Matematika halaman 20 | 2026-07-28 19:00 | tinggi",
@@ -55,6 +98,8 @@ export const HELP_MESSAGE = [
   "/tugas — lihat tugas aktif",
   "/selesai ID — tandai selesai",
   "/ingatkan ID | 2026-07-28 17:00 — pasang pengingat",
+  "/hapuspercakapan — hapus konteks aktif sementara",
+  "/privasi — lihat atau ubah izin AI",
   "/bantuan — tampilkan panduan",
 ].join("\n");
 

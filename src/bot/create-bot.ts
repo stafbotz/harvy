@@ -1,25 +1,38 @@
 import { Bot, Context, InlineKeyboard } from "grammy";
+import { InMemoryConversationContext } from "../ai/conversation-context.js";
+import type { ConversationService } from "../ai/conversation-service.js";
 import type { AppConfig } from "../config.js";
 import type { EligibilityService } from "../core/eligibility-service.js";
 import { parseAddTask, parseReminder } from "../core/input-parser.js";
 import type { TaskService } from "../core/task-service.js";
 import type { EligibilityStatus } from "../domain/user-profile.js";
+import { hasExplicitSeriousRisk } from "../safety/explicit-risk.js";
 import {
+  AI_CONSENT_DECLINED_MESSAGE,
+  AI_CONSENT_PROMPT,
+  AI_UNAVAILABLE_MESSAGE,
+  CONVERSATION_CLEARED_MESSAGE,
   ELIGIBILITY_PROMPT,
   FIRST_WELCOME_MESSAGE,
   formatTask,
-  FREE_TEXT_LIMIT_MESSAGE,
   HELP_MESSAGE,
+  HIGH_RISK_MESSAGE,
   INELIGIBLE_MESSAGE,
+  INPUT_TOO_LONG_MESSAGE,
+  PRIVACY_GRANTED_MESSAGE,
   RETURNING_WELCOME_MESSAGE,
 } from "./messages.js";
+
+const MAX_AI_INPUT_CHARS = 6_000;
 
 export function createBot(
   config: AppConfig,
   tasks: TaskService,
   eligibility: EligibilityService,
+  conversations: ConversationService,
 ): Bot {
   const bot = new Bot(config.telegramBotToken);
+  const conversationContext = new InMemoryConversationContext();
 
   bot.use(async (ctx, next) => {
     if (ctx.chat?.type === "private") {
@@ -53,9 +66,20 @@ export function createBot(
     const status = await eligibility.getStatus(userId(ctx));
 
     if (status === "eligible") {
-      await ctx.reply(RETURNING_WELCOME_MESSAGE, {
-        reply_markup: correctionKeyboard(),
-      });
+      const consent = await eligibility.getAiConsent(userId(ctx));
+      if (consent === "granted") {
+        await ctx.reply(RETURNING_WELCOME_MESSAGE, {
+          reply_markup: activeConsentKeyboard(),
+        });
+      } else if (consent === "declined") {
+        await ctx.reply(AI_CONSENT_DECLINED_MESSAGE, {
+          reply_markup: consentKeyboard(),
+        });
+      } else {
+        await ctx.reply(AI_CONSENT_PROMPT, {
+          reply_markup: consentKeyboard(),
+        });
+      }
       return;
     }
 
@@ -65,8 +89,8 @@ export function createBot(
   bot.callbackQuery("eligibility:eligible", async (ctx) => {
     await eligibility.setStatus(userId(ctx), "eligible");
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(FIRST_WELCOME_MESSAGE, {
-      reply_markup: correctionKeyboard(),
+    await ctx.editMessageText(AI_CONSENT_PROMPT, {
+      reply_markup: consentKeyboard(),
     });
   });
 
@@ -79,6 +103,7 @@ export function createBot(
   });
 
   bot.callbackQuery("eligibility:reset", async (ctx) => {
+    conversationContext.clear(userId(ctx));
     await eligibility.clearStatus(userId(ctx));
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(ELIGIBILITY_PROMPT, {
@@ -86,8 +111,47 @@ export function createBot(
     });
   });
 
+  bot.callbackQuery("ai-consent:granted", async (ctx) => {
+    await eligibility.setAiConsent(userId(ctx), "granted");
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(FIRST_WELCOME_MESSAGE, {
+      reply_markup: activeConsentKeyboard(),
+    });
+  });
+
+  bot.callbackQuery("ai-consent:declined", async (ctx) => {
+    conversationContext.clear(userId(ctx));
+    await eligibility.setAiConsent(userId(ctx), "declined");
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(AI_CONSENT_DECLINED_MESSAGE, {
+      reply_markup: consentKeyboard(),
+    });
+  });
+
   bot.command("bantuan", async (ctx) => {
     await ctx.reply(HELP_MESSAGE);
+  });
+
+  bot.command("privasi", async (ctx) => {
+    const consent = await eligibility.getAiConsent(userId(ctx));
+    if (consent === "granted") {
+      await ctx.reply(PRIVACY_GRANTED_MESSAGE, {
+        reply_markup: activeConsentKeyboard(),
+      });
+      return;
+    }
+
+    await ctx.reply(
+      consent === "declined"
+        ? AI_CONSENT_DECLINED_MESSAGE
+        : AI_CONSENT_PROMPT,
+      { reply_markup: consentKeyboard() },
+    );
+  });
+
+  bot.command("hapuspercakapan", async (ctx) => {
+    conversationContext.clear(userId(ctx));
+    await ctx.reply(CONVERSATION_CLEARED_MESSAGE);
   });
 
   bot.command("tambah", async (ctx) => {
@@ -179,11 +243,46 @@ export function createBot(
   });
 
   bot.on("message:text", async (ctx) => {
-    await ctx.reply(FREE_TEXT_LIMIT_MESSAGE);
+    const message = ctx.message.text.trim();
+
+    if (hasExplicitSeriousRisk(message)) {
+      await ctx.reply(HIGH_RISK_MESSAGE);
+      return;
+    }
+
+    const consent = await eligibility.getAiConsent(userId(ctx));
+    if (consent !== "granted") {
+      await ctx.reply(
+        consent === "declined"
+          ? AI_CONSENT_DECLINED_MESSAGE
+          : AI_CONSENT_PROMPT,
+        { reply_markup: consentKeyboard() },
+      );
+      return;
+    }
+
+    if (message.length > MAX_AI_INPUT_CHARS) {
+      await ctx.reply(INPUT_TOO_LONG_MESSAGE);
+      return;
+    }
+
+    try {
+      await ctx.replyWithChatAction("typing");
+      const ownerId = userId(ctx);
+      const response = await conversations.reply({
+        message,
+        history: conversationContext.get(ownerId),
+      });
+      await ctx.reply(response);
+      conversationContext.appendExchange(ownerId, message, response);
+    } catch (error) {
+      console.error("Respons AI gagal:", safeErrorName(error));
+      await ctx.reply(AI_UNAVAILABLE_MESSAGE);
+    }
   });
 
   bot.catch(({ error }) => {
-    console.error("Telegram update gagal:", error);
+    console.error("Telegram update gagal:", safeErrorName(error));
   });
 
   return bot;
@@ -219,6 +318,22 @@ function correctionKeyboard(): InlineKeyboard {
   );
 }
 
+function consentKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Setuju, aktifkan AI", "ai-consent:granted")
+    .row()
+    .text("Jangan gunakan AI", "ai-consent:declined")
+    .row()
+    .text("Koreksi jawaban kelas", "eligibility:reset");
+}
+
+function activeConsentKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Tarik izin AI", "ai-consent:declined")
+    .row()
+    .text("Koreksi jawaban kelas", "eligibility:reset");
+}
+
 function isStartCommand(ctx: Context): boolean {
   return /^\/start(?:@\w+)?(?:\s|$)/.test(ctx.message?.text ?? "");
 }
@@ -237,4 +352,8 @@ function userId(ctx: Context): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Terjadi kesalahan.";
+}
+
+function safeErrorName(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
 }

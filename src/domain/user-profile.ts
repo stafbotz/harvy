@@ -1,8 +1,10 @@
 export type EligibilityStatus = "eligible" | "ineligible";
+export type AiConsentStatus = "granted" | "declined";
 
 export interface EligibilityRecord {
   ownerId: string;
   status: EligibilityStatus;
+  aiConsent?: AiConsentStatus;
 }
 
 export interface EligibilityRepository {

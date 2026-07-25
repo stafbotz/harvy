@@ -1,6 +1,6 @@
 # Harvy — Keputusan Proyek dan Backlog
 
-Terakhir diperbarui: 25 Juli 2026.
+Terakhir diperbarui: 26 Juli 2026.
 
 ## Identitas dan produk
 
@@ -23,13 +23,14 @@ Terakhir diperbarui: 25 Juli 2026.
 
 Harvy membantu tetapi tidak mengambil alih. Pengguna tetap menentukan keputusan,
 boleh melihat serta menghapus data, dan harus memberi izin sebelum Harvy
-melakukan tindakan proaktif. Harvy bukan terapis, psikolog, dokter, alat
-diagnosis, atau pengganti bantuan darurat dan hubungan manusia.
+melakukan tindakan proaktif atau mengirim isi pesan ke layanan AI. Harvy bukan
+terapis, psikolog, dokter, alat diagnosis, atau pengganti bantuan darurat dan
+hubungan manusia.
 
-## Now — Sprint 1
+## Now — Fondasi dan Percakapan Prototipe
 
-Tujuan: satu pengguna dapat memasukkan tugas nyata, melihat apa yang perlu
-dikerjakan, memasang pengingat, dan menandainya selesai.
+Tujuan: pemilik produk dewasa dapat menguji alur masuk, pesan AI dengan konteks
+aktif sementara, pengelolaan tugas, dan pengingat dengan data sintetis.
 
 - [x] Fondasi Node.js + TypeScript.
 - [x] Bot Telegram khusus chat pribadi.
@@ -38,33 +39,42 @@ dikerjakan, memasang pengingat, dan menandainya selesai.
 - [x] Pengingat hanya atas permintaan pengguna.
 - [x] Penyimpanan lokal terpisah per pengguna.
 - [x] Tes unit untuk parser, prioritas, layanan, dan penyimpanan.
+- [x] Gerbang kelas 8+ dengan data minimum.
+- [x] Persetujuan terpisah sebelum pemrosesan pesan oleh OpenAI.
+- [x] Integrasi Responses API dengan `store: false` dan konteks aktif di RAM
+  maksimal 30 menit.
+- [x] Prompt Harvy untuk lima konteks MVP dan batas kemampuan yang jujur.
+- [x] Moderasi input/output serta alur lokal untuk risiko eksplisit.
 - [ ] Buat bot melalui BotFather dan pasang token.
-- [ ] Uji manual dengan satu akun Telegram.
-- [ ] Uji mandiri selama tujuh hari dengan tugas nyata.
+- [ ] Buat API key proyek OpenAI dengan billing/credit aktif.
+- [ ] Uji manual dengan pemilik produk dewasa dan data sintetis.
+- [ ] Uji mandiri selama tujuh hari tanpa data pelajar sungguhan.
 
-### Definition of Done
+### Definition of Done tahap prototipe
 
-Sprint 1 selesai ketika bot berjalan tujuh hari tanpa kehilangan data, seluruh
-perintah utama dapat digunakan dari ponsel, pengingat datang pada waktu yang
-benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
+Tahap ini selesai ketika bot berjalan tujuh hari tanpa kehilangan data, alur
+kelas dan izin dapat dipahami, lima konteks percakapan sintetis menghasilkan
+bantuan awal yang berguna, seluruh perintah tugas berfungsi dari ponsel, dan
+pengingat datang pada waktu yang benar.
 
-## Next — Sprint 2
+## Next
 
-- Alur percakapan bertahap agar pengguna tidak perlu menghafal format.
+- Evaluasi kualitas prompt dengan skenario tetap dan catatan hasil.
 - Tombol tindakan cepat untuk selesai, tunda, dan ubah tenggat.
+- Konfirmasi terstruktur sebelum AI membuat atau mengubah tugas.
 - Penyimpanan PostgreSQL serta migrasi data.
 - Preferensi zona waktu per pengguna.
 - Ekspor dan hapus seluruh data pengguna.
 - Observabilitas tanpa mencatat isi pesan sensitif.
-- Deployment dan backup.
-- Integrasi AI murah hanya untuk mengubah pesan bebas menjadi data tugas
-  terstruktur; hasil tetap harus dikonfirmasi pengguna.
+- Deployment, spend limit, rate limit, dan backup.
+- Desain keselamatan, pelaporan, dan eskalasi yang ditinjau untuk pengguna
+  remaja.
 
 ## Research Waitlist
 
 Wawancara pelajar ditunda karena responden masih sulit ditemukan. Pekerjaan ini
-tidak memblokir prototipe, tetapi harus dilakukan sebelum klaim kebutuhan luas
-atau peluncuran publik.
+tidak memblokir prototipe oleh pemilik produk dewasa, tetapi wajib dilakukan
+secara aman sebelum klaim kebutuhan luas atau peluncuran publik.
 
 - [ ] Tiga wawancara percobaan.
 - [ ] Dua belas sampai lima belas wawancara kebutuhan.
@@ -75,12 +85,11 @@ atau peluncuran publik.
   memulai, instruksi tidak jelas, atau akses bantuan.
 
 Pemicu untuk mengaktifkan kembali riset: tersedia minimal tiga responden yang
-bersedia dan proses persetujuan peserta/wali sudah siap.
+bersedia dan proses persetujuan peserta/wali serta perlindungan data sudah siap.
 
 ## Later
 
-- Pendamping belajar berbasis petunjuk bertahap.
-- Check-in ringan dan refleksi.
+- Pendamping belajar berbasis petunjuk bertahap yang dievaluasi per pelajaran.
 - Memori terstruktur yang dapat dilihat, diedit, dan dihapus.
 - Routing model berdasarkan kesulitan tugas, bukan harga paket pengguna.
 - Harvy Chat di grup WhatsApp: permainan, poin, polling, dan fitur komunitas.
@@ -95,3 +104,5 @@ bersedia dan proses persetujuan peserta/wali sudah siap.
 - Penyimpanan otomatis informasi sensitif.
 - Tindakan proaktif tanpa persetujuan.
 - Rotasi nomor untuk menghindari pembatasan platform.
+- Penggunaan pelajar nyata atau peluncuran publik sebelum tinjauan hukum,
+  privasi, keselamatan, dan pengujian usia yang memadai.

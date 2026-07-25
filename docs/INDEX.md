@@ -15,6 +15,7 @@ sesuai kolom **Baca ketika**.
 | [`work-orders/TEMPLATE.md`](work-orders/TEMPLATE.md) | Membuat paket kerja baru | Format Work Order |
 | [`work-orders/WO-001-setup-orchestration.md`](work-orders/WO-001-setup-orchestration.md) | Meninjau setup orkestrasi awal | Paket setup pertama |
 | [`work-orders/WO-002-eligibility-entry.md`](work-orders/WO-002-eligibility-entry.md) | Meninjau gerbang kelas 8+ dan pintu masuk | Paket implementasi kedua |
+| [`work-orders/WO-003-ai-conversation.md`](work-orders/WO-003-ai-conversation.md) | Meninjau percakapan AI, persetujuan, privasi, dan batas keselamatan awal | Paket implementasi ketiga |
 | [`../README.md`](../README.md) | Menjalankan atau mencoba Harvy v0.1 | Panduan penggunaan lokal |
 
 ## Urutan pencarian konteks

@@ -46,4 +46,28 @@ describe("FileEligibilityRepository", () => {
     await repository.delete("student");
     assert.equal(await repository.find("student"), null);
   });
+
+  it("menyimpan hanya status persetujuan AI tambahan yang diperlukan", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "harvy-eligibility-"));
+    temporaryDirectories.push(directory);
+    const filePath = join(directory, "eligibility.json");
+    const repository = new FileEligibilityRepository(filePath);
+
+    await repository.save({
+      ownerId: "student",
+      status: "eligible",
+      aiConsent: "granted",
+    });
+
+    const raw = JSON.parse(await readFile(filePath, "utf8")) as {
+      records: unknown[];
+    };
+    assert.deepEqual(raw.records, [
+      {
+        ownerId: "student",
+        status: "eligible",
+        aiConsent: "granted",
+      },
+    ]);
+  });
 });

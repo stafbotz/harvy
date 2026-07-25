@@ -1,3 +1,7 @@
+import {
+  OpenAIConversationService,
+  UnavailableConversationService,
+} from "./ai/conversation-service.js";
 import { createBot } from "./bot/create-bot.js";
 import { loadConfig } from "./config.js";
 import { EligibilityService } from "./core/eligibility-service.js";
@@ -13,7 +17,14 @@ const eligibilityRepository = new FileEligibilityRepository(
 );
 const tasks = new TaskService(taskRepository);
 const eligibility = new EligibilityService(eligibilityRepository);
-const bot = createBot(config, tasks, eligibility);
+const conversations = config.openaiApiKey
+  ? new OpenAIConversationService({
+      apiKey: config.openaiApiKey,
+      model: config.openaiModel,
+      timeoutMs: config.openaiTimeoutMs,
+    })
+  : new UnavailableConversationService();
+const bot = createBot(config, tasks, eligibility, conversations);
 const stopReminders = startReminderWorker(bot, tasks, config);
 
 await bot.api.setMyCommands([
@@ -21,6 +32,11 @@ await bot.api.setMyCommands([
   { command: "tugas", description: "Lihat tugas aktif" },
   { command: "selesai", description: "Tandai tugas selesai" },
   { command: "ingatkan", description: "Pasang pengingat tugas" },
+  {
+    command: "hapuspercakapan",
+    description: "Hapus konteks percakapan aktif",
+  },
+  { command: "privasi", description: "Atur izin pemrosesan AI" },
   { command: "bantuan", description: "Lihat panduan" },
 ]);
 
@@ -32,7 +48,11 @@ const shutdown = (): void => {
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 
-console.log("Harvy Capybara mulai berjalan.");
+console.log(
+  config.openaiApiKey
+    ? `Harvy Capybara mulai berjalan dengan model ${config.openaiModel}.`
+    : "Harvy Capybara mulai berjalan tanpa koneksi AI; OPENAI_API_KEY belum diisi.",
+);
 await bot.start({
   allowed_updates: ["message", "callback_query"],
 });
