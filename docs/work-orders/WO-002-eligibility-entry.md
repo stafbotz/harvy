@@ -2,12 +2,18 @@
 
 - Status: `READY_FOR_REVIEW`
 - Pemilik produk: pengguna Harvy
-- Orkestrator: ChatGPT
-- Builder: Codex (Work Mode)
-- Reviewer: `UNASSIGNED`
-- QA: pengguna Harvy
+- Orkestrator: ChatGPT Work
+- Pelaksana historis aktual: ChatGPT Work melalui konektor GitHub
+- Builder perbaikan berikutnya: Codex (GPT-5.6 Sol), hanya setelah dispatch baru
+- Reviewer: Claude Code (Opus 5), read-only
+- QA/integrasi: Antigravity (Gemini 3.6 Flash), read-only
 - Base branch: `main` pada `9971ac2b3835ae69a2f16c65a6c6835f2b233f8a`
 - Work branch: `work/wo-002-eligibility-entry`
+
+> **Koreksi provenance, 26 Juli 2026:** implementasi ini dibuat langsung oleh
+> ChatGPT Work melalui konektor GitHub. Label lama “Codex (Work Mode)” salah dan
+> telah dikoreksi. Kode tetap dipertahankan sebagai prototipe, tetapi belum
+> direview atau diuji secara independen.
 
 ## Masalah dan hasil pengguna
 
@@ -102,29 +108,60 @@ Manual:
 - Diperlukan model, API, dependency, atau biaya baru.
 - Perubahan menyentuh keselamatan psikologis atau rilis publik.
 
-## Handoff Builder
+## Catatan komunikasi
 
+| Waktu | Alat/model aktual | Mode/peran | Tindakan | Branch/commit/bukti | Hasil | Belum terbukti | Pemilik berikutnya |
+|---|---|---|---|---|---|---|---|
+| 25 Juli 2026 | ChatGPT Work | `BUILD` historis (penyimpangan) | Membuat gerbang kelas dan PR #1 secara langsung | `work/wo-002-eligibility-entry`; implementasi `60cddd3`; head sebelum koreksi `4611288` | Pelaksana melaporkan check dan 18 tes lulus | Review independen dan Telegram nyata | Orkestrator |
+| 26 Juli 2026 | ChatGPT Work | `ORCHESTRATE` dokumentasi | Mengoreksi identitas pelaksana dan menetapkan jalur review/QA | PR #1 dan Work Order ini | Dokumentasi saja; tidak mengubah kode aplikasi | Hasil Claude Code dan Antigravity | Claude Code |
+
+## Handoff implementasi historis
+
+- Pelaksana aktual: ChatGPT Work melalui konektor GitHub; bukan Codex.
 - Commit/PR: implementasi `60cddd314c8b32abbdafae9813064f708233dcaf`;
   draft PR `https://github.com/stafbotz/harvy/pull/1`.
 - Ringkasan: gerbang kelas 8+, penyimpanan status minimum, koreksi jawaban,
-  pembuka manusiawi, perlindungan semua fitur lama, serta dokumentasi acuan.
-- Automated:
-  - `npm run check` — PASS
-  - `npm test` — PASS (18 test dalam 7 suite)
-- Manual: `NOT RUN` — tidak ada token dan akun Telegram uji di lingkungan
-  Builder.
+  pembuka manusiawi, perlindungan fitur lama, dan dokumentasi acuan.
+- Automated yang dilaporkan pelaksana:
+  - `npm run check` — PASS.
+  - `npm test` — PASS (18 test dalam 7 suite).
+- Manual: `NOT RUN` — tidak ada token dan akun Telegram uji pada sesi
+  pelaksana.
+- Status bukti: laporan di atas belum diulang oleh Reviewer atau QA independen.
 - Asumsi: pemeriksaan mandiri cukup untuk prototipe terbatas, sesuai definisi
   MVP yang disahkan.
-- Risiko atau pekerjaan tersisa: pengguna harus menguji copy dan tombol pada
-  Telegram nyata; percakapan bebas masih belum tersedia.
-- Dokumentasi yang diubah: README, INDEX, TESTING, Konstitusi, Definisi MVP,
-  dan WO-002.
+- Risiko tersisa: copy, tombol, penyimpanan, dan restart belum diuji pada
+  Telegram nyata; percakapan bebas belum tersedia.
+- Dokumentasi yang diubah saat implementasi: README, INDEX, TESTING,
+  Konstitusi, Definisi MVP, dan WO-002.
+- Pemilik berikutnya: Claude Code untuk review read-only.
 
 ## Hasil review
 
-- Status: menunggu Reviewer.
-- `BLOCKER`/`IMPORTANT`: menunggu.
-- `MINOR` untuk backlog: menunggu.
+- Reviewer yang ditugaskan: Claude Code (Opus 5), read-only.
+- Base/head: `main@9971ac2...work/wo-002-eligibility-entry@<head yang dikunci saat dispatch>`.
+- Status: `NOT RUN`.
+- `BLOCKER`/`IMPORTANT`: menunggu laporan.
+- `MINOR`: menunggu laporan.
+- Catatan: reviewer wajib melaporkan alat/model aktual; profil yang berbeda
+  tidak boleh disubstitusi diam-diam.
+
+## Hasil QA/integrasi
+
+- QA yang ditugaskan: Antigravity (Gemini 3.6 Flash), read-only.
+- Commit target: ditentukan setelah review awal.
+- Status: `NOT RUN`.
+- Skenario minimum: gerbang baru, lolos, ditolak, koreksi, perintah tugas,
+  persistensi setelah restart, dan pembatasan chat pribadi.
+- Data: akun uji dan data sintetis; jangan masukkan token ke chat/repo.
+
+## Rencana kelanjutan
+
+1. Claude Code meninjau PR #1 tanpa mengedit.
+2. Antigravity menjalankan QA pada commit yang dikunci tanpa mengedit.
+3. ChatGPT Work menggabungkan temuan dan menjelaskannya kepada pengguna.
+4. Jika pengguna menyetujui perbaikan, Codex (GPT-5.6 Sol) menerima dispatch
+   baru sebagai satu-satunya Builder.
 
 ## Penerimaan
 
