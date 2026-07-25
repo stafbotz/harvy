@@ -6,6 +6,7 @@ describe("hasExplicitSeriousRisk", () => {
   it("mendeteksi ungkapan bahaya serius yang eksplisit", () => {
     for (const message of [
       "Aku mau bunuh diri",
+      "Aku pengen mati aja",
       "Saya ingin menyakiti diri",
       "Aku lagi dipukul di rumah",
       "Dia mau membunuh aku",
@@ -22,6 +23,7 @@ describe("hasExplicitSeriousRisk", () => {
       "Bagaimana membantu teman yang sedih?",
       "Film itu membahas kekerasan",
       "Aku lagi bingung memilih tugas",
+      "Aku mau mati ketawa lihat videonya",
     ]) {
       assert.equal(hasExplicitSeriousRisk(message), false, message);
     }
