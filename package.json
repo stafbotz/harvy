@@ -2,7 +2,7 @@
   "name": "harvy",
   "version": "0.1.0",
   "private": true,
-  "description": "Fondasi MVP Harvy Capybara untuk membantu pelajar mengatur tugas lewat Telegram.",
+  "description": "Fondasi Telegram MVP Harvy, AI pendamping kehidupan pelajar Indonesia.",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/app.ts",

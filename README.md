@@ -1,11 +1,17 @@
 # Harvy
 
-Fondasi MVP **Harvy Capybara**, pendamping pelajar yang diakses lewat chat
-pribadi Telegram. Versi pertama ini sengaja belum memakai model AI: tugas,
-prioritas, dan pengingat dapat diuji tanpa biaya inferensi.
+Fondasi MVP **Harvy Capybara**, AI pendamping kehidupan pelajar Indonesia yang
+diakses lewat chat pribadi Telegram. Versi yang berjalan saat ini masih berupa
+prototipe terbatas: gerbang kelas 8+ dan pengelolaan tugas sudah aktif, sedangkan
+percakapan alami yang lebih luas belum tersambung.
 
 ## Yang sudah dapat dilakukan
 
+- Memeriksa bahwa pengguna sudah kelas 8 SMP atau tingkat setara dengan
+  pernyataan mandiri.
+- Menyimpan hanya status memenuhi/tidak memenuhi syarat, tanpa kelas persis,
+  sekolah, atau kartu pelajar.
+- Mengizinkan pengguna mengoreksi jawaban kelayakan.
 - Menambahkan tugas beserta tenggat dan tingkat kepentingan.
 - Menampilkan tugas aktif berdasarkan prioritas.
 - Menandai tugas selesai.
@@ -37,6 +43,13 @@ npm test
 npm run build
 ```
 
+## Mencoba alur masuk
+
+1. Kirim `/start` lewat chat pribadi.
+2. Jawab pemeriksaan kelas melalui tombol.
+3. Jika jawaban keliru, gunakan tombol **Koreksi jawaban kelas**.
+4. Setelah lolos, gunakan perintah tugas di bawah.
+
 ## Perintah pengguna
 
 ```text
@@ -54,6 +67,7 @@ pengguna perlu ditambahkan.
 
 ## Batas versi awal
 
+- Belum memahami pesan bebas dengan model AI.
 - Tidak membaca grup Telegram atau WhatsApp.
 - Tidak memberikan jawaban pelajaran.
 - Tidak menyimpan curhat, kondisi kesehatan, atau memori sensitif.
@@ -62,6 +76,8 @@ pengguna perlu ditambahkan.
   dengan banyak server.
 
 Keputusan produk dan backlog ada di [docs/PROJECT.md](docs/PROJECT.md).
+Konstitusi dan definisi MVP yang disahkan ada di
+[docs/product/](docs/product/).
 
 ## Pengembangan dengan coding agent
 

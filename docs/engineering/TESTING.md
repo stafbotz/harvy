@@ -42,12 +42,16 @@ Lakukan bagian ini jika perubahan menyentuh bot, konfigurasi waktu,
 penyimpanan, atau pengingat:
 
 1. Gunakan bot dan akun uji, bukan data pengguna nyata.
-2. Jalankan `/start` dan `/bantuan`.
-3. Tambahkan tugas, lihat `/tugas`, pasang pengingat di masa depan, lalu tandai
+2. Jalankan `/start`; pastikan pemeriksaan kelas 8+ muncul sebelum fitur lain.
+3. Pilih **Belum**; pastikan fitur ditutup dengan ramah dan tidak ada kelas
+   persis, sekolah, atau kartu pelajar yang diminta.
+4. Tekan **Koreksi jawaban kelas**, lalu pilih **Ya, sudah kelas 8+**.
+5. Jalankan `/bantuan`.
+6. Tambahkan tugas, lihat `/tugas`, pasang pengingat di masa depan, lalu tandai
    selesai.
-4. Pastikan perintah di grup ditolak.
-5. Jika penyimpanan atau pengingat berubah, restart proses dan pastikan data
-   tetap ada serta satu pengingat tidak terkirim dua kali.
+7. Pastikan perintah di grup ditolak.
+8. Restart proses; pastikan status kelayakan dan tugas tetap ada serta satu
+   pengingat tidak terkirim dua kali.
 
 Catat langkah, hasil yang diamati, zona waktu, dan bagian yang belum sempat
 diuji. Screenshot boleh menjadi bukti tambahan, tetapi tidak menggantikan

@@ -1,13 +1,19 @@
 import { createBot } from "./bot/create-bot.js";
 import { loadConfig } from "./config.js";
+import { EligibilityService } from "./core/eligibility-service.js";
 import { TaskService } from "./core/task-service.js";
 import { startReminderWorker } from "./reminders/reminder-worker.js";
+import { FileEligibilityRepository } from "./storage/file-eligibility-repository.js";
 import { FileTaskRepository } from "./storage/file-task-repository.js";
 
 const config = loadConfig();
-const repository = new FileTaskRepository(config.dataFile);
-const tasks = new TaskService(repository);
-const bot = createBot(config, tasks);
+const taskRepository = new FileTaskRepository(config.dataFile);
+const eligibilityRepository = new FileEligibilityRepository(
+  config.eligibilityDataFile,
+);
+const tasks = new TaskService(taskRepository);
+const eligibility = new EligibilityService(eligibilityRepository);
+const bot = createBot(config, tasks, eligibility);
 const stopReminders = startReminderWorker(bot, tasks, config);
 
 await bot.api.setMyCommands([
@@ -28,5 +34,5 @@ process.once("SIGTERM", shutdown);
 
 console.log("Harvy Capybara mulai berjalan.");
 await bot.start({
-  allowed_updates: ["message"],
+  allowed_updates: ["message", "callback_query"],
 });

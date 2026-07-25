@@ -1,13 +1,24 @@
-import { Bot } from "grammy";
+import { Bot, Context, InlineKeyboard } from "grammy";
 import type { AppConfig } from "../config.js";
-import {
-  parseAddTask,
-  parseReminder,
-} from "../core/input-parser.js";
+import type { EligibilityService } from "../core/eligibility-service.js";
+import { parseAddTask, parseReminder } from "../core/input-parser.js";
 import type { TaskService } from "../core/task-service.js";
-import { formatTask, HELP_MESSAGE } from "./messages.js";
+import type { EligibilityStatus } from "../domain/user-profile.js";
+import {
+  ELIGIBILITY_PROMPT,
+  FIRST_WELCOME_MESSAGE,
+  formatTask,
+  FREE_TEXT_LIMIT_MESSAGE,
+  HELP_MESSAGE,
+  INELIGIBLE_MESSAGE,
+  RETURNING_WELCOME_MESSAGE,
+} from "./messages.js";
 
-export function createBot(config: AppConfig, tasks: TaskService): Bot {
+export function createBot(
+  config: AppConfig,
+  tasks: TaskService,
+  eligibility: EligibilityService,
+): Bot {
   const bot = new Bot(config.telegramBotToken);
 
   bot.use(async (ctx, next) => {
@@ -23,15 +34,56 @@ export function createBot(config: AppConfig, tasks: TaskService): Bot {
     }
   });
 
+  bot.use(async (ctx, next) => {
+    if (isStartCommand(ctx) || isEligibilityCallback(ctx)) {
+      await next();
+      return;
+    }
+
+    const status = await eligibility.getStatus(userId(ctx));
+    if (status === "eligible") {
+      await next();
+      return;
+    }
+
+    await replyForStatus(ctx, status);
+  });
+
   bot.command("start", async (ctx) => {
-    await ctx.reply(
-      [
-        "Hai, aku Harvy 👋",
-        "Aku bantu kamu mencatat dan merapikan tugas tanpa mengambil alih keputusanmu.",
-        "",
-        HELP_MESSAGE,
-      ].join("\n"),
-    );
+    const status = await eligibility.getStatus(userId(ctx));
+
+    if (status === "eligible") {
+      await ctx.reply(RETURNING_WELCOME_MESSAGE, {
+        reply_markup: correctionKeyboard(),
+      });
+      return;
+    }
+
+    await replyForStatus(ctx, status);
+  });
+
+  bot.callbackQuery("eligibility:eligible", async (ctx) => {
+    await eligibility.setStatus(userId(ctx), "eligible");
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(FIRST_WELCOME_MESSAGE, {
+      reply_markup: correctionKeyboard(),
+    });
+  });
+
+  bot.callbackQuery("eligibility:ineligible", async (ctx) => {
+    await eligibility.setStatus(userId(ctx), "ineligible");
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(INELIGIBLE_MESSAGE, {
+      reply_markup: correctionKeyboard(),
+    });
+  });
+
+  bot.callbackQuery("eligibility:reset", async (ctx) => {
+    await eligibility.clearStatus(userId(ctx));
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(ELIGIBILITY_PROMPT, {
+      reply_markup: eligibilityKeyboard(),
+    });
   });
 
   bot.command("bantuan", async (ctx) => {
@@ -42,7 +94,7 @@ export function createBot(config: AppConfig, tasks: TaskService): Bot {
     try {
       const parsed = parseAddTask(ctx.match, config.defaultUtcOffset);
       const task = await tasks.create({
-        ownerId: String(ctx.from?.id ?? ctx.chat.id),
+        ownerId: userId(ctx),
         chatId: String(ctx.chat.id),
         ...parsed,
       });
@@ -61,9 +113,7 @@ export function createBot(config: AppConfig, tasks: TaskService): Bot {
   });
 
   bot.command("tugas", async (ctx) => {
-    const activeTasks = await tasks.listActive(
-      String(ctx.from?.id ?? ctx.chat.id),
-    );
+    const activeTasks = await tasks.listActive(userId(ctx));
     if (activeTasks.length === 0) {
       await ctx.reply("Belum ada tugas aktif. Tambahkan dengan /tambah.");
       return;
@@ -87,10 +137,7 @@ export function createBot(config: AppConfig, tasks: TaskService): Bot {
       return;
     }
 
-    const completed = await tasks.complete(
-      String(ctx.from?.id ?? ctx.chat.id),
-      id,
-    );
+    const completed = await tasks.complete(userId(ctx), id);
     if (!completed) {
       await ctx.reply("Tugas aktif dengan ID itu tidak ditemukan.");
       return;
@@ -111,7 +158,7 @@ export function createBot(config: AppConfig, tasks: TaskService): Bot {
       }
 
       const updated = await tasks.setReminder(
-        String(ctx.from?.id ?? ctx.chat.id),
+        userId(ctx),
         id,
         reminderAt,
       );
@@ -132,9 +179,7 @@ export function createBot(config: AppConfig, tasks: TaskService): Bot {
   });
 
   bot.on("message:text", async (ctx) => {
-    await ctx.reply(
-      "Aku belum memahami pesan bebas pada versi ini. Gunakan /bantuan untuk melihat perintah.",
-    );
+    await ctx.reply(FREE_TEXT_LIMIT_MESSAGE);
   });
 
   bot.catch(({ error }) => {
@@ -142,6 +187,52 @@ export function createBot(config: AppConfig, tasks: TaskService): Bot {
   });
 
   return bot;
+}
+
+async function replyForStatus(
+  ctx: Context,
+  status: EligibilityStatus | null,
+): Promise<void> {
+  if (status === "ineligible") {
+    await ctx.reply(INELIGIBLE_MESSAGE, {
+      reply_markup: correctionKeyboard(),
+    });
+    return;
+  }
+
+  await ctx.reply(ELIGIBILITY_PROMPT, {
+    reply_markup: eligibilityKeyboard(),
+  });
+}
+
+function eligibilityKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Ya, sudah kelas 8+", "eligibility:eligible")
+    .row()
+    .text("Belum", "eligibility:ineligible");
+}
+
+function correctionKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text(
+    "Koreksi jawaban kelas",
+    "eligibility:reset",
+  );
+}
+
+function isStartCommand(ctx: Context): boolean {
+  return /^\/start(?:@\w+)?(?:\s|$)/.test(ctx.message?.text ?? "");
+}
+
+function isEligibilityCallback(ctx: Context): boolean {
+  return ctx.callbackQuery?.data?.startsWith("eligibility:") ?? false;
+}
+
+function userId(ctx: Context): string {
+  const id = ctx.from?.id ?? ctx.chat?.id;
+  if (id === undefined) {
+    throw new Error("Identitas pengguna Telegram tidak tersedia.");
+  }
+  return String(id);
 }
 
 function errorMessage(error: unknown): string {

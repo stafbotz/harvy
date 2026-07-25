@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 export interface AppConfig {
   telegramBotToken: string;
   dataFile: string;
+  eligibilityDataFile: string;
   defaultTimezone: string;
   defaultUtcOffset: string;
   reminderIntervalMs: number;
@@ -35,6 +36,9 @@ export function loadConfig(): AppConfig {
   return {
     telegramBotToken,
     dataFile: resolve(process.env.DATA_FILE ?? "./data/tasks.json"),
+    eligibilityDataFile: resolve(
+      process.env.ELIGIBILITY_DATA_FILE ?? "./data/eligibility.json",
+    ),
     defaultTimezone: process.env.DEFAULT_TIMEZONE ?? "Asia/Jakarta",
     defaultUtcOffset,
     reminderIntervalMs,
