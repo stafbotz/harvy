@@ -10,23 +10,30 @@ export const ELIGIBILITY_PROMPT = [
   "Hai, aku Harvy. Aku AI pendamping buat pelajar.",
   "",
   "Sebelum ngobrol lebih jauh, aku perlu cek satu hal dulu: kamu sudah kelas 8 SMP, tingkat setara, atau lebih tinggi?",
+  "",
+  "Agar tidak menanyakannya setiap kali, aku akan menyimpan ID akun Telegram dan status jawabanmu. Aku tidak meminta kelas persis, nama sekolah, atau kartu pelajar.",
 ].join("\n");
 
 export const FIRST_WELCOME_MESSAGE = [
-  "Oke. Gimana harimu? Ada yang lagi pengin kamu beresin, pikirin, atau ceritain?",
+  "Oke, kamu bisa lanjut.",
   "",
-  "Aku tidak otomatis menjadikan ceritamu sebagai ingatan. Kalau nanti ada yang berguna untuk disimpan, aku akan minta izin dulu.",
+  "Harvy dirancang buat membantu hal yang ingin kamu beresin, pikirin, atau ceritain. Di versi percobaan yang aktif sekarang, yang sudah tersambung baru pengelolaan tugas. Aku nggak akan pura-pura memahami pesan bebas sebelum kemampuan itu siap.",
+  "",
+  "Kirim /bantuan untuk melihat yang sudah bisa dipakai. Aku tidak otomatis menjadikan pesanmu sebagai ingatan.",
 ].join("\n");
 
-export const RETURNING_WELCOME_MESSAGE =
-  "Hai lagi. Hari ini gimana? Ada yang lagi pengin kamu beresin, pikirin, atau ceritain?";
+export const RETURNING_WELCOME_MESSAGE = [
+  "Hai lagi.",
+  "",
+  "Versi percobaan ini baru bisa membantu merapikan tugas. Kirim /bantuan untuk melihat caranya; percakapan bebas masih sedang dibangun.",
+].join("\n");
 
 export const INELIGIBLE_MESSAGE = [
   "Terima kasih sudah jawab.",
   "",
   "Harvy versi percobaan ini baru bisa dipakai mulai kelas 8 SMP atau tingkat setara, jadi kita belum bisa lanjut.",
   "",
-  "Aku hanya menyimpan status kelayakan akunmu—bukan kelas persis, nama sekolah, atau kartu pelajar. Kalau tadi salah pilih, kamu bisa koreksi jawaban.",
+  "Agar ingat jawaban ini, aku menyimpan ID akun Telegram dan status kelayakan—bukan kelas persis, nama sekolah, atau kartu pelajar. Kalau tadi salah pilih, kamu bisa koreksi jawaban.",
 ].join("\n");
 
 export const FREE_TEXT_LIMIT_MESSAGE = [
