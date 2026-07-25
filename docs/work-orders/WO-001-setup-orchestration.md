@@ -1,6 +1,6 @@
 # WO-001: Setup Orkestrasi Harvy
 
-- Status: `IN_PROGRESS`
+- Status: `READY_FOR_ACCEPTANCE`
 - Pemilik produk: pengguna Harvy
 - Orkestrator: ChatGPT
 - Builder: Codex (sesi setup)
@@ -23,7 +23,7 @@ agent lain meninjau atau menguji tanpa tumpang tindih.
 - Mendefinisikan peran, status Work Order, branch, handoff, review, dan QA.
 - Menyediakan template Work Order dan pull request.
 - Mendokumentasikan gerbang pengujian yang sesuai dengan proyek saat ini.
-- Memulai repositori Git lokal dengan branch `main`.
+- Membentuk snapshot Git awal pada branch `main`.
 - Memverifikasi repositori GitHub privat `stafbotz/harvy` dan akses konektor.
 - Menerbitkan snapshot awal ke branch `main` sebagai pengecualian bootstrap.
 - Memastikan tidak ada secret yang jelas ikut terlacak.
@@ -52,8 +52,10 @@ agent lain meninjau atau menguji tanpa tumpang tindih.
 - [x] Rule Antigravity menunjuk ke instruksi inti.
 - [x] Peta dokumentasi, protokol orkestrasi, dan keputusan tersedia.
 - [x] Template Work Order dan pull request tersedia.
-- [ ] Repositori Git lokal menggunakan branch `main`.
-- [ ] Repositori GitHub tetap privat dan snapshot awal tersedia di `main`.
+- [x] Riwayat Git bootstrap menggunakan branch `main`; workspace Codex sesi
+  ini tidak dapat menulis metadata `.git`, sehingga verifikasi dilakukan
+  melalui tree Git sementara dan konektor.
+- [x] Repositori GitHub tetap privat dan snapshot awal tersedia di `main`.
 - [x] `npm run check` dan `npm test` lulus setelah perubahan.
 - [x] Audit file sensitif dan diff akhir selesai.
 - [ ] Pengguna menerima setup.
@@ -97,7 +99,8 @@ Manual:
 
 ## Handoff Builder
 
-- Commit/PR: menunggu publikasi bootstrap ke `stafbotz/harvy`; PR tidak
+- Commit/PR: snapshot bootstrap `2f0be4fa64a9d1c7487c85057569ef21257d3f2c`
+  pada `main`; commit dokumentasi handoff ini menjadi HEAD berikutnya; PR tidak
   digunakan untuk initial `main`
 - Ringkasan: instruksi inti, adaptor Claude/Antigravity, peta dokumentasi,
   protokol peran, template Work Order, template PR, dan gerbang tes telah dibuat
@@ -106,16 +109,17 @@ Manual:
   identik dengan arsip v0.1; pemindaian secret tidak menemukan kandidat
 - Manual: audit kepemilikan memastikan hanya Builder yang boleh menulis;
   verifikasi adaptor dalam aplikasi Codex/Claude/Antigravity belum dijalankan
-- Asumsi: GitHub remote akan dibuat privat pada langkah berikutnya
-- Risiko atau pekerjaan tersisa: initial commit perlu dibuat dan rule
-  Antigravity perlu dikonfirmasi sebagai `Always On`
+- Asumsi: repo `stafbotz/harvy` tetap menjadi sumber kebenaran privat Harvy
+- Risiko atau pekerjaan tersisa: workspace Codex sesi ini tidak dapat menulis
+  `.git`; gunakan clone baru dari GitHub pada coding agent. Rule Antigravity
+  masih perlu dikonfirmasi sebagai `Always On`
 - Dokumentasi yang diubah: `README.md`, `AGENTS.md`, `CLAUDE.md`,
   `.agent/rules/`, `.github/`, dan dokumen baru di `docs/`
 
 ## Hasil review
 
-- Status: file lokal lulus audit; koneksi GitHub sudah terverifikasi dan
-  publikasi bootstrap sedang berlangsung
+- Status: `READY_FOR_ACCEPTANCE`; tree GitHub identik dengan snapshot lokal dan
+  seluruh pemeriksaan wajib lulus
 - `BLOCKER`/`IMPORTANT`: tidak ada pada audit lokal terakhir
 - `MINOR` untuk backlog: tidak ada
 
