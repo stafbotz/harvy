@@ -28,6 +28,43 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 26 Juli 2026 — Seluruh perubahan dipusatkan di `main`
+
+**Kenapa.** Pemilik produk meminta seluruh perubahan proyek dikirim ke
+repository GitHub Harvy pada branch `main`, lalu seluruh branch selain `main`
+dihapus.
+
+**Yang berubah.**
+
+- Referensi GitHub disegarkan dan setiap branch diperiksa sebelum dihapus.
+  `feat/memori-dan-riwayat-percakapan` serta
+  `fix/dokumen-usang-dan-skrip-diagnostik` sama-sama telah menjadi leluhur
+  `main`; tidak ada commit unik yang dibuang.
+- Stash `epitaxy: pre-switch from feat/memori-dan-riwayat-percakapan` ditemukan
+  saat audit. Seluruh isinya—perbaikan UX bubble, batas giliran adaptif,
+  riwayat, memori, routing intent, dan tes—dipulihkan, konflik tambahan entri
+  `LOG.md` digabungkan tanpa membuang salah satunya, lalu disimpan pada commit
+  `67b1fac`. Stash baru dihapus setelah commit dan working tree dipastikan
+  bersih.
+- Perubahan aturan kerja disimpan pada commit `b29921b`. Branch `main` lokal
+  kemudian dimajukan secara fast-forward dari `91ec013` ke `67b1fac` dan
+  berhasil dikirim ke `origin/main`.
+- Branch lokal dan remote `feat/memori-dan-riwayat-percakapan` serta
+  `fix/dokumen-usang-dan-skrip-diagnostik` dihapus setelah keduanya dipastikan
+  telah tergabung.
+
+**Bukti.** `npm run check` PASS. Setelah target
+`C:\Users\imamh\harvy\dist` dipastikan tepat lalu hasil build lama dihapus,
+`npm test` PASS — **122 test dalam 20 suite**, 0 gagal.
+`git diff --cached --check` PASS sebelum commit. `git push origin main` berhasil
+memajukan GitHub dari `7337b91` ke `67b1fac`; penghapusan kedua branch remote
+dan kedua branch lokal juga dikonfirmasi berhasil oleh Git.
+
+Yang **tidak** diuji: bot tidak dijalankan ulang di Telegram pada sesi
+integrasi ini. Karena itu hasil manual yang masih ditandai `NOT RUN` di
+`docs/engineering/STATUS.md` dan `docs/engineering/TESTING.md` tetap belum
+terbukti.
+
 ## 26 Juli 2026 — Kerja langsung di `main` diizinkan
 
 **Kenapa.** Pemilik produk meminta agar agent boleh mengedit branch `main`
