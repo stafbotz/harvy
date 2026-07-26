@@ -1,4 +1,21 @@
 import { resolve } from "node:path";
+import { ApiKeyPool } from "./ai/key-pool.js";
+import type { ModelTier } from "./ai/model-policy.js";
+
+/**
+ * `testing` memakai satu model gratis lewat Google AI Studio, dengan beberapa
+ * kunci yang dipakai bergantian. `production` memakai tiga model lewat
+ * OpenRouter, dipilih menurut kesulitan pekerjaan.
+ */
+export type AiMode = "testing" | "production";
+
+export interface AiConfig {
+  mode: AiMode;
+  keys: ApiKeyPool;
+  baseUrl: string;
+  testingModel: string;
+  models: Record<ModelTier, string>;
+}
 
 export interface AppConfig {
   telegramBotToken: string;
@@ -6,7 +23,12 @@ export interface AppConfig {
   defaultTimezone: string;
   defaultUtcOffset: string;
   reminderIntervalMs: number;
+  ai: AiConfig;
 }
+
+const GOOGLE_BASE_URL =
+  "https://generativelanguage.googleapis.com/v1beta/openai";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export function loadConfig(): AppConfig {
   try {
@@ -38,6 +60,73 @@ export function loadConfig(): AppConfig {
     defaultTimezone: process.env.DEFAULT_TIMEZONE ?? "Asia/Jakarta",
     defaultUtcOffset,
     reminderIntervalMs,
+    ai: loadAiConfig(),
+  };
+}
+
+/**
+ * Seluruh ID model dibaca dari environment, tidak ditulis mati di kode.
+ *
+ * Nama, ketersediaan, dan harga model berubah cepat. Menaruhnya di konfigurasi
+ * membuat koreksi cukup satu baris `.env`, tanpa menyentuh kode.
+ */
+function loadAiConfig(): AiConfig {
+  const mode = (process.env.AI_MODE ?? "testing") as AiMode;
+  if (mode !== "testing" && mode !== "production") {
+    throw new Error("AI_MODE harus testing atau production.");
+  }
+
+  const models = {
+    cheap: process.env.AI_MODEL_CHEAP?.trim() ?? "",
+    efficient: process.env.AI_MODEL_EFFICIENT?.trim() ?? "",
+    ambitious: process.env.AI_MODEL_AMBITIOUS?.trim() ?? "",
+  } satisfies Record<ModelTier, string>;
+
+  const testingModel = process.env.AI_MODEL_TESTING?.trim() ?? "";
+
+  if (mode === "testing") {
+    const keys = ApiKeyPool.parse(process.env.GOOGLE_AI_STUDIO_API_KEYS);
+    if (keys.length === 0) {
+      throw new Error(
+        "GOOGLE_AI_STUDIO_API_KEYS wajib diisi ketika AI_MODE=testing. " +
+          "Beberapa kunci boleh dipisah koma.",
+      );
+    }
+    if (!testingModel) {
+      throw new Error("AI_MODEL_TESTING wajib diisi ketika AI_MODE=testing.");
+    }
+
+    return {
+      mode,
+      keys: new ApiKeyPool(keys),
+      baseUrl: process.env.AI_BASE_URL?.trim() || GOOGLE_BASE_URL,
+      testingModel,
+      models,
+    };
+  }
+
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error(
+      "OPENROUTER_API_KEY wajib diisi ketika AI_MODE=production.",
+    );
+  }
+
+  const missing = (Object.keys(models) as ModelTier[]).filter(
+    (tier) => !models[tier],
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Model belum lengkap untuk AI_MODE=production: ${missing.join(", ")}.`,
+    );
+  }
+
+  return {
+    mode,
+    keys: new ApiKeyPool([apiKey]),
+    baseUrl: process.env.AI_BASE_URL?.trim() || OPENROUTER_BASE_URL,
+    testingModel,
+    models,
   };
 }
 

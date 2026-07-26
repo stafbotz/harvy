@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# Menolak commit yang mengubah pekerjaan tetapi tidak meninggalkan konteks.
+#
+# Berlaku untuk siapa pun yang melakukan commit di repositori ini: manusia,
+# Codex, Claude Code, maupun Antigravity. Instruksi dalam AGENTS.md hanya
+# berharap dibaca; hook ini tidak.
+#
+# Aktifkan sekali per clone:
+#   git config core.hooksPath .githooks
+
+staged=$(git diff --cached --name-only)
+
+# Tidak ada yang perlu dijaga bila commit ini tidak menyentuh pekerjaan.
+work=$(printf '%s\n' "$staged" | grep -E '^(src/|tests/|docs/|AGENTS\.md|README\.md)' | grep -v '^docs/LOG\.md$')
+[ -z "$work" ] && exit 0
+
+# Konteksnya ada. Lanjutkan.
+printf '%s\n' "$staged" | grep -q '^docs/LOG\.md$' && exit 0
+
+cat >&2 <<'PESAN'
+
+  Commit ditahan: docs/LOG.md tidak ikut berubah.
+
+  Repositori ini dikerjakan bergantian oleh manusia dan beberapa AI yang tidak
+  dapat membaca riwayat percakapan satu sama lain. Tanpa entri LOG, sesi
+  berikutnya harus menebak apa yang sudah terjadi — dan tebakan yang masuk akal
+  pernah masuk ke dokumen sebagai fakta yang tidak pernah terjadi.
+
+  Tulis satu entri di docs/LOG.md: kenapa, yang berubah, yang dibahas, bukti
+  verifikasi, dan yang sengaja ditinggalkan. Lalu commit ulang.
+
+  Kalau commit ini memang tidak layak dicatat, lewati dengan sadar:
+      git commit --no-verify
+
+PESAN
+
+exit 1

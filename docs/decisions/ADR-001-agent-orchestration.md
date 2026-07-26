@@ -1,8 +1,18 @@
 # ADR-001: Satu Sumber Kebenaran untuk Coding Agent
 
-- Status: Accepted
+- Status: Superseded sebagian
 - Tanggal: 25 Juli 2026
 - Pemilik keputusan: pengguna Harvy dan orkestrator
+- Diganti sebagian oleh: [`ADR-005`](ADR-005-konteks-menggantikan-work-order.md)
+
+> **Catatan 26 Juli 2026.** Keputusan nomor 1, 4, 5, 6, dan 7 **tetap berlaku**:
+> satu repositori sebagai sumber kebenaran, peninjau yang tidak mengedit, commit
+> dan dokumen keputusan sebagai media serah-terima, `AGENTS.md` sebagai
+> instruksi inti, dan dokumentasi modular lewat `docs/INDEX.md`.
+>
+> Yang dibatalkan adalah Work Order sebagai satuan kerja (nomor 2) beserta
+> peran Builder yang terikat padanya (nomor 3). Penggantinya adalah konteks yang
+> dapat dibaca sendiri dan catatan pekerjaan di `docs/LOG.md`. Lihat `ADR-005`.
 
 ## Konteks
 

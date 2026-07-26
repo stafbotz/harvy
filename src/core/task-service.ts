@@ -18,7 +18,17 @@ export class TaskService {
       throw new Error("Judul tugas tidak boleh kosong.");
     }
 
-    const createdAt = this.now().toISOString();
+    const now = this.now();
+    const createdAt = now.toISOString();
+
+    // Pengingat yang waktunya sudah lewat berarti salah baca, bukan permintaan
+    // pengguna. Memasangnya akan membuat Harvy menegur pada detik yang sama
+    // dengan pencatatan.
+    const remindAt =
+      input.remindAt && input.remindAt.getTime() > now.getTime()
+        ? input.remindAt
+        : null;
+
     const task: StudentTask = {
       id: randomUUID().replaceAll("-", "").slice(0, 8),
       ownerId: input.ownerId,
@@ -29,7 +39,7 @@ export class TaskService {
       status: "active",
       createdAt,
       completedAt: null,
-      reminderAt: null,
+      reminderAt: remindAt?.toISOString() ?? null,
       reminderSentAt: null,
     };
 
@@ -53,6 +63,31 @@ export class TaskService {
     };
     await this.repository.save(completed);
     return completed;
+  }
+
+  async find(ownerId: string, id: string): Promise<StudentTask | null> {
+    return this.repository.findById(ownerId, id);
+  }
+
+  async setDue(
+    ownerId: string,
+    id: string,
+    dueAt: Date | null,
+  ): Promise<StudentTask | null> {
+    const task = await this.repository.findById(ownerId, id);
+    if (!task || task.status === "completed") return null;
+
+    const updated = { ...task, dueAt: dueAt?.toISOString() ?? null };
+    await this.repository.save(updated);
+    return updated;
+  }
+
+  /** Membatalkan tugas sepenuhnya, bukan menandainya selesai. */
+  async remove(ownerId: string, id: string): Promise<StudentTask | null> {
+    const task = await this.repository.findById(ownerId, id);
+    if (!task) return null;
+
+    return (await this.repository.remove(ownerId, id)) ? task : null;
   }
 
   async setReminder(

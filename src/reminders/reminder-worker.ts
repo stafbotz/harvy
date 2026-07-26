@@ -1,6 +1,7 @@
 import type { Bot } from "grammy";
 import type { AppConfig } from "../config.js";
 import type { TaskService } from "../core/task-service.js";
+import { reminderActions } from "../bot/messages.js";
 
 export function startReminderWorker(
   bot: Bot,
@@ -19,12 +20,8 @@ export function startReminderWorker(
         try {
           await bot.api.sendMessage(
             task.chatId,
-            [
-              `Pengingat: ${task.title}`,
-              `ID ${task.id}`,
-              "",
-              `Sudah selesai? Kirim /selesai ${task.id}`,
-            ].join("\n"),
+            [`🔔 Pengingat`, "", `• ${task.title}`].join("\n"),
+            { reply_markup: reminderActions(task) },
           );
           await tasks.markReminderSent(task);
         } catch (error) {

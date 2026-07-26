@@ -20,6 +20,8 @@ export interface NewTask {
   chatId: string;
   title: string;
   dueAt: Date | null;
+  /** Hanya terisi bila pengguna memang meminta diingatkan pada waktu tertentu. */
+  remindAt: Date | null;
   importance: TaskImportance;
 }
 
@@ -28,4 +30,6 @@ export interface TaskRepository {
   findById(ownerId: string, id: string): Promise<StudentTask | null>;
   listActive(ownerId: string): Promise<StudentTask[]>;
   listDueReminders(now: Date): Promise<StudentTask[]>;
+  /** Menghapus tugas milik pengguna. Mengembalikan `false` bila tidak ada. */
+  remove(ownerId: string, id: string): Promise<boolean>;
 }

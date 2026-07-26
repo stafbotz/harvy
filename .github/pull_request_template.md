@@ -1,18 +1,8 @@
-## Work Order
-
-- Work Order:
-- Builder:
-- Base → branch:
-
-## Hasil
+## Apa yang berubah
 
 - Masalah pengguna yang diselesaikan:
 - Ringkasan perubahan:
 - Hal yang sengaja tidak diubah:
-
-## Kriteria penerimaan
-
-- [ ] Semua kriteria pada Work Order telah diperiksa.
 
 ## Bukti verifikasi
 
@@ -24,18 +14,21 @@ Automated:
 Manual:
 
 - Skenario dan hasil:
-- Bagian yang tidak dijalankan:
+- **Yang tidak dijalankan:**
 
-## Handoff
+> Percakapan, tombol, dan pengingat tidak tersentuh gerbang otomatis. Kalau
+> ketiganya tidak diuji manual, tulis apa adanya di sini — jangan dikosongkan.
 
-- Commit SHA:
+## Konteks
+
+- [ ] `docs/LOG.md` sudah berisi entri untuk pekerjaan ini.
+- [ ] `docs/engineering/STATUS.md` diperbarui bila kemampuan Harvy bergeser.
+- Dokumentasi lain yang diubah:
 - Asumsi:
 - Risiko atau pekerjaan tersisa:
-- Dokumentasi yang diubah:
-- Screenshot/video (jika relevan):
 
 ## Pemeriksaan keamanan
 
 - [ ] Tidak ada `.env`, token, credential, atau data pengguna nyata.
-- [ ] Tidak ada dependency, layanan eksternal, kontrak data, atau biaya baru di
-      luar Work Order.
+- [ ] Tidak ada dependency, layanan eksternal, kontrak data, atau biaya baru
+      yang tidak diminta.

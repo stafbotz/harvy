@@ -29,6 +29,20 @@ export class FileTaskRepository implements TaskRepository {
     });
   }
 
+  async remove(ownerId: string, id: string): Promise<boolean> {
+    return this.exclusive(async () => {
+      const database = await this.readDatabase();
+      const index = database.tasks.findIndex(
+        (task) => task.ownerId === ownerId && task.id === id,
+      );
+      if (index < 0) return false;
+
+      database.tasks.splice(index, 1);
+      await this.writeDatabase(database);
+      return true;
+    });
+  }
+
   async findById(ownerId: string, id: string): Promise<StudentTask | null> {
     const database = await this.readDatabase();
     return (
