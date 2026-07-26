@@ -59,9 +59,21 @@ diperbaiki pada 26 Juli 2026 dan kini dijaga tes di `tests/conversation.test.ts`
 serta `tests/task-service.test.ts`.
 
 Ketiganya punya pola yang sama dan pantas diingat: **kode ditulis lengkap lalu
-tidak pernah disambungkan.** `tsconfig.json` tidak mengaktifkan `noUnusedLocals`,
-sehingga impor dan fungsi yang tidak pernah dipanggil tetap lolos
-`npm run check`. Gerbang statis tidak akan menangkap cacat keempat yang serupa.
+tidak pernah disambungkan.** Cacat keempat memang muncul, persis seperti yang
+dikhawatirkan: `scripts/coba-pemahaman.ts` tetap memakai batas token 400 setelah
+angka di `src/ai/conversation.ts` dinaikkan ke 2048, sehingga alat diagnostiknya
+sendiri mereproduksi cacat yang ia dibuat untuk mencari.
+
+Sejak 26 Juli 2026 gerbang statis diperketat: `noUnusedLocals` aktif, dan
+`include` `tsconfig.json` mencakup `scripts/` yang sebelumnya tidak pernah
+tersentuh `npm run check` sama sekali.
+
+Jangan menyimpulkan lebih dari itu. `noUnusedLocals` hanya menangkap impor dan
+nilai lokal yang tidak terpakai; **angka yang salah tetapi dipakai tetap tidak
+terlihat olehnya**, dan cacat keempat itu justru berbentuk demikian. Yang
+mencegahnya berulang bukan flag, melainkan satu sumber nilai: batas token kini
+diimpor dari `conversation.ts`, tidak ditulis ulang. Pola yang sama pantas
+dipakai untuk nilai lain yang harus sama di dua tempat.
 
 ## Bukti dari pemakaian nyata
 
