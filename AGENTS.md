@@ -25,6 +25,18 @@ mencatat penghapusan tiga berkas yang tidak pernah ada, hanya karena penulisnya
 menyusun riwayat yang masuk akal alih-alih memeriksanya. Lihat catatan koreksi
 di `ADR-002` dan `ADR-004`.
 
+Nomor 3 tidak bergantung pada niat baik. `.githooks/pre-commit` menolak commit
+yang menyentuh `src/`, `tests/`, `docs/`, `AGENTS.md`, atau `README.md` tanpa
+perubahan pada `docs/LOG.md`. Instruksi hanya berharap dibaca; hook ini tidak.
+Aktifkan sekali per clone — termasuk clone milik agent:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Kalau sebuah commit memang tidak layak dicatat, lewati dengan sadar memakai
+`git commit --no-verify`, bukan dengan mematikan hook-nya.
+
 ## Sebelum bekerja
 
 Repositori ini dikerjakan bergantian oleh manusia dan beberapa AI yang tidak
@@ -96,6 +108,18 @@ Menjalankan satu berkas tes atau satu kasus:
 npm run build && node --test dist/tests/prioritizer.test.js
 npm run build && node --test --test-name-pattern="menandai tugas selesai" dist/tests/*.test.js
 ```
+
+Menguji pemahaman satu kalimat langsung ke model, tanpa lewat Telegram:
+
+```bash
+npx tsx scripts/coba-pemahaman.ts "ingetin aku jam 8 minum obat"
+```
+
+Ini satu-satunya cara memeriksa jalur percakapan tanpa membuka Telegram, dan
+satu-satunya yang menampilkan balasan mentah model — yang membedakan balasan
+terpotong dari balasan rusak. Perlu `.env` berisi kunci sungguhan; pakai
+`AI_MODE=testing` agar gratis. Skrip ini memanggil model, jadi ia tidak boleh
+masuk gerbang otomatis.
 
 Konfigurasi runtime berasal dari `.env` (lihat `.env.example`):
 `TELEGRAM_BOT_TOKEN`, `DATA_FILE`, `DEFAULT_TIMEZONE`, `DEFAULT_UTC_OFFSET`,
@@ -176,8 +200,13 @@ Invarian yang harus dijaga:
   keduanya memang mati setelah proses restart. Itu keadaan normal, bukan galat.
 - Proyek ini ESM dengan `module: NodeNext`. Impor antarmodul wajib berakhiran
   `.js` meskipun sumbernya `.ts`.
-- `tsconfig.json` memakai `strict`, `noUncheckedIndexedAccess`, dan
-  `exactOptionalPropertyTypes`. Indeks array menghasilkan tipe opsional.
+- `tsconfig.json` memakai `strict`, `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes`, dan `noUnusedLocals`. Indeks array menghasilkan
+  tipe opsional, dan impor atau fungsi lokal yang tidak pernah dipakai
+  menggagalkan `npm run check` alih-alih diam-diam lolos.
+- `include` mencakup `src/`, `tests/`, **dan** `scripts/`. Skrip diagnostik ikut
+  diperiksa tipe dan ikut dibangun ke `dist/scripts/`; ia tidak ikut dijalankan
+  `npm test`, karena glob tesnya hanya `dist/tests/*.test.js`.
 - Di chat non-pribadi, Harvy hanya menjawab perintah dan mengabaikan pesan lain.
   Pesan bebas hanya diproses di chat pribadi, dan di sana itulah jalur utamanya.
 

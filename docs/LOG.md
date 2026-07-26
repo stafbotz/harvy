@@ -28,6 +28,94 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 26 Juli 2026 — Dokumen usang dibuang; alat diagnostik disambungkan
+
+**Kenapa.** Sesi ini dimulai dari `/init` Claude Code, yang meminta CLAUDE.md
+dibuat atau diperbaiki. CLAUDE.md tidak diubah: `ADR-001` nomor 6 masih berlaku,
+dan menyalin arsitektur ke sana justru menghidupkan alternatif yang ADR itu tolak
+— tiga berkas instruksi yang cepat basi. Yang dikerjakan adalah hasil
+sampingannya: pemeriksaan AGENTS.md terhadap kode menemukan tiga percanggahan.
+Setelah ketiganya diperbaiki, dua kekurangan `AGENTS.md` dan celah gerbang statis
+yang semula hanya dilaporkan ikut diminta untuk dikerjakan.
+
+**Yang berubah.**
+
+- `docs/engineering/ARCHITECTURE.md` **dihapus.** Berkas ini belum pernah masuk
+  Git dan tidak terdaftar di `docs/INDEX.md`, tetapi isinya menggambarkan Harvy
+  sebelum `ADR-004`: pesan bebas katanya dijawab dengan arahan ke `/bantuan`
+  "karena v0.1 sengaja tanpa model AI", pengguna disebut mengetik ID pada
+  `/selesai` dan `/ingatkan`, `core/` disebut berisi parser masukan, tabel
+  konfigurasinya tanpa satu pun `AI_*`, dan pekerjaan masih dibatasi Work Order
+  yang sudah dicabut `ADR-005`. Sebuah dokumen arsitektur yang salah lebih
+  berbahaya daripada tidak ada, karena ia dibaca lebih dulu daripada kode.
+- `docs/engineering/TESTING.md`: baseline diperbarui dari 33 menjadi **36 test
+  dalam 7 suite**. Langkah 33 tetap ditulis sebagai riwayat, bukan ditimpa.
+- `scripts/coba-pemahaman.ts`: `maxTokens` tidak lagi ditulis sendiri, melainkan
+  diimpor dari `src/ai/conversation.ts`.
+- `src/ai/conversation.ts`: `UNDERSTANDING_MAX_TOKENS` diekspor agar impor itu
+  mungkin.
+- `tsconfig.json`: `noUnusedLocals` diaktifkan, dan `include` diperluas ke
+  `scripts/`. Sebelumnya seluruh `scripts/` tidak pernah tersentuh
+  `npm run check` sama sekali — itulah sebabnya `maxTokens: 400` dapat
+  tertinggal tanpa ketahuan gerbang mana pun.
+- `AGENTS.md`: menyebut `.githooks/pre-commit` beserta langkah
+  `git config core.hooksPath .githooks` pada bagian Kontrak, memasukkan
+  `scripts/coba-pemahaman.ts` ke daftar perintah pengembangan, dan memperbarui
+  invarian `tsconfig.json`.
+- `docs/engineering/STATUS.md`: paragraf pola cacat diperbarui — cacat keempat
+  yang dikhawatirkan ternyata benar-benar terjadi, dan batas gerbang barunya
+  ditulis apa adanya.
+
+**Dibahas.** Temuan yang paling perlu diingat adalah skrip diagnostiknya sendiri.
+`scripts/coba-pemahaman.ts` ditulis pada sesi sebelumnya untuk mendiagnosis
+balasan terpotong, dan perbaikannya menaikkan batas token di `conversation.ts`
+dari 400 ke 2048 — tetapi skripnya tetap tertinggal di 400. Alat pemeriksanya
+mereproduksi persis cacat yang ia dibuat untuk mencari, sehingga kalimat yang
+sebenarnya dipahami Harvy akan dilaporkan "GAGAL DIBACA" dan mengirim sesi
+berikutnya memburu cacat yang sudah tidak ada. Karena itu angkanya kini diimpor,
+bukan disalin: penyimpangan yang sama tidak dapat terjadi dua kali.
+
+Ini juga contoh keempat dari pola yang dicatat `STATUS.md` — kode ditulis lengkap
+lalu tidak disambungkan — dan pola itu lolos gerbang statis lagi, kali ini dengan
+alasan tambahan: `tsconfig.json` hanya menyertakan `src/` dan `tests/`, sehingga
+`scripts/` tidak pernah tersentuh `npm run check` sama sekali.
+
+Gerbangnya kini diperketat, tetapi jangan disimpulkan berlebihan. `noUnusedLocals`
+hanya menangkap impor dan nilai lokal yang menganggur; **angka yang salah tetapi
+dipakai tidak terlihat olehnya** — dan cacat keempat itu justru berbentuk
+demikian. Yang benar-benar mencegahnya berulang adalah satu sumber nilai, bukan
+flag kompiler. Memperluas `include` ke `scripts/` juga bukan pilihan yang netral:
+konsekuensinya `scripts/` ikut dibangun ke `dist/scripts/`. Itu aman selama glob
+tes tetap `dist/tests/*.test.js`, dan sudah diperiksa bahwa jumlah test tidak
+berubah setelah perluasan itu.
+
+**Bukti.** `npm run check` PASS. `rm -rf dist && npm test` PASS — 36 test dalam 7
+suite, angka yang sama sebelum dan sesudah perubahan, termasuk sesudah `scripts/`
+masuk ke `include`. `noUnusedLocals` tidak menemukan satu pun pelanggaran di kode
+yang ada, jadi mengaktifkannya tidak menuntut perubahan lain.
+
+`scripts/coba-pemahaman.ts` sempat diperiksa terpisah dengan `npx tsc --noEmit
+--ignoreConfig --module NodeNext --moduleResolution NodeNext --target ES2023
+--strict --types node scripts/coba-pemahaman.ts` — PASS. Perintah itu kini tidak
+diperlukan lagi: `npm run check` sudah menjangkaunya.
+
+Yang **tidak** diuji: skrip itu tidak dijalankan terhadap model sungguhan, jadi
+yang terbukti baru bahwa ia mengompilasi dan memakai angka yang benar — bukan
+bahwa keluarannya untuk kalimat panjang sudah berubah. Percakapan, tombol, dan
+pengingat tidak tersentuh sesi ini.
+
+**Sengaja ditinggalkan.** Baris "Basis" pada `STATUS.md` masih menyebut commit
+`9971ac2` ditambah perubahan yang belum di-commit, padahal perubahan itu sudah
+masuk lewat `91ec013`. Tidak diperbarui karena memperbarui baris itu berarti
+mengklaim seluruh tabel kemampuan sudah diverifikasi ulang hari ini, dan yang
+benar-benar diperiksa sesi ini hanya bagian arsitektur dan perintah — bukan
+seluruh tabelnya. Biarkan sesi yang benar-benar memverifikasi yang mengubahnya.
+
+`noUnusedParameters` tidak ikut diaktifkan; hanya `noUnusedLocals` yang memang
+disebut sebagai celah di `STATUS.md`. Riwayat percakapan, tombol adaptif, dan
+pengingat yang terkirim worker tetap belum tersentuh — tidak ada yang bergeser
+pada tabel kemampuan, jadi tabel itu tidak diubah.
+
 ## 26 Juli 2026 — Tugas pertama tercatat; Harvy menyangkal ingatannya
 
 **Kenapa.** Kegagalan pengingat pada dua percobaan sebelumnya akhirnya

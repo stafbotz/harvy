@@ -12,6 +12,7 @@
  *   npx tsx scripts/coba-pemahaman.ts "ingetin aku jam 8 minum obat"
  */
 import { AiClient } from "../src/ai/client.js";
+import { UNDERSTANDING_MAX_TOKENS } from "../src/ai/conversation.js";
 import { understandingInput, understandingPrompt } from "../src/ai/persona.js";
 import { parseUnderstanding } from "../src/ai/understand.js";
 import { loadConfig } from "../src/config.js";
@@ -40,7 +41,9 @@ console.log("");
 const raw = await client.complete({
   model,
   temperature: 0,
-  maxTokens: 400,
+  // Harus sama dengan jalur sungguhan. Angka yang lebih kecil membuat skrip ini
+  // melaporkan "GAGAL DIBACA" untuk kalimat yang sebenarnya dipahami Harvy.
+  maxTokens: UNDERSTANDING_MAX_TOKENS,
   json: true,
   messages: [
     {
