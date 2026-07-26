@@ -130,14 +130,30 @@ export class AiClient {
 }
 
 function readContent(payload: unknown): string {
-  const content = (
+  const choice = (
     payload as {
-      choices?: { message?: { content?: unknown } }[];
+      choices?: { message?: { content?: unknown }; finish_reason?: unknown }[];
     }
-  )?.choices?.[0]?.message?.content;
+  )?.choices?.[0];
+
+  const content = choice?.message?.content;
+
+  // Balasan yang terpotong tampak seperti balasan rusak di lapisan atas, dan
+  // penyebabnya tidak terlihat sama sekali. Model penalaran menghabiskan jatah
+  // token untuk berpikir, lalu jawabannya terpenggal di tengah.
+  if (choice?.finish_reason === "length") {
+    console.warn(
+      "Balasan model terpotong karena batas token (finish_reason=length). " +
+        "Naikkan maxTokens untuk permintaan ini.",
+    );
+  }
 
   if (typeof content !== "string" || !content.trim()) {
-    throw new AiError("Balasan model kosong atau tidak dikenali.");
+    throw new AiError(
+      choice?.finish_reason === "length"
+        ? "Balasan model habis di batas token sebelum sempat menulis apa pun."
+        : "Balasan model kosong atau tidak dikenali.",
+    );
   }
 
   return content.trim();

@@ -36,15 +36,37 @@ export function parseUnderstanding(raw: string): Understanding | null {
   const payload = extractJson(raw);
   if (!payload) return null;
 
-  const intent = INTENTS.find((candidate) => candidate === payload["intent"]);
+  const task = readTask(payload["task"]);
+  const intent = readIntent(payload["intent"], task);
   if (!intent) return null;
 
   return {
     intent,
     safetySensitive: payload["safetySensitive"] === true,
     needsStepByStep: payload["needsStepByStep"] === true,
-    task: readTask(payload["task"]),
+    task,
   };
+}
+
+/**
+ * Model kecil kadang mengarang label di luar empat yang diminta, misalnya
+ * "reminder" untuk permintaan pengingat.
+ *
+ * Membuang seluruh pesan karena satu label yang salah terlalu mahal bagi
+ * pengguna: ia harus mengetik ulang sesuatu yang sebenarnya sudah dipahami.
+ * Ketika data tugasnya sah, maksudnya sudah cukup jelas untuk diperlakukan
+ * sebagai pencatatan pekerjaan. Tanpa data itu, menebak tetap lebih buruk
+ * daripada mengaku tidak paham.
+ */
+function readIntent(
+  value: unknown,
+  task: ExtractedTask | null,
+): ConversationIntent | null {
+  const label = typeof value === "string" ? value.trim().toLowerCase() : "";
+  const known = INTENTS.find((candidate) => candidate === label);
+  if (known) return known;
+
+  return task ? "task" : null;
 }
 
 function readTask(value: unknown): ExtractedTask | null {

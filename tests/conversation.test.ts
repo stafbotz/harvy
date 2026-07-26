@@ -55,6 +55,25 @@ describe("pemahaman pesan", () => {
     assert.equal(request?.temperature, 0);
     assert.equal(request?.model, "model-uji");
   });
+
+  it("memberi jatah token yang cukup untuk model penalaran", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, SMALLTALK),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.understand("halo");
+
+    // Batas sempit membuat model penalaran kehabisan jatah saat berpikir,
+    // sehingga JSON-nya terpotong dan seluruh pesan gagal dibaca. Kalimat
+    // sederhana tetap lolos, jadi cacatnya hanya muncul pada pesan yang rumit.
+    assert.ok(
+      (requests[0]?.maxTokens ?? 0) >= 1024,
+      "jatah token untuk pemahaman terlalu sempit",
+    );
+  });
 });
 
 /** Klien palsu yang mencatat permintaan tanpa menyentuh jaringan. */
