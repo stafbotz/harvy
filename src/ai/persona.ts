@@ -1,7 +1,9 @@
 import type { ConversationTurn } from "../domain/history.js";
+import { isEmptyInsight, type UserInsight } from "../domain/insight.js";
 import type { StylePreference } from "../domain/profile.js";
 import { EMPTY_CONTEXT, isEmptyContext, type HarvyContext } from "./context.js";
 import type { ConversationIntent } from "./model-policy.js";
+import { PROFESSIONAL_HELP_NUDGE } from "./safety.js";
 
 /**
  * Lapisan Harvy: kepribadian, batas, dan aturan keselamatan.
@@ -382,6 +384,10 @@ export interface ReplyPromptOptions {
   /** Tanpa ini Harvy menyuruh orang rebahan pada pukul sebelas malam. */
   now?: Date;
   timeZone?: string;
+  /** Catatan tersembunyi tentang penggunanya. Konstitusi v0.3 Pasal 4 nomor 6. */
+  insight?: UserInsight | null;
+  /** Saat yang tenang untuk mengangkat bantuan profesional sekali lagi. */
+  raiseHelp?: boolean;
 }
 
 /** Di atas ini, sebuah pesan tidak mungkin lagi disebut celetukan. */
@@ -431,7 +437,49 @@ export function replyPrompt(
     parts.push("", RECENT_TURNS_NOTE);
   }
 
+  const insight = options.insight;
+  if (insight && !isEmptyInsight(insight)) {
+    parts.push("", insightSection(insight));
+  }
+
+  if (options.raiseHelp) {
+    parts.push(PROFESSIONAL_HELP_NUDGE);
+  }
+
   return parts.join("\n");
+}
+
+/**
+ * Bagian prompt yang berisi catatan tersembunyi tentang penggunanya.
+ *
+ * Penegasan di ujungnya bukan hiasan. Pengguna tidak dapat melihat catatan ini
+ * dan karena itu tidak dapat mengoreksinya — Konstitusi v0.3 menerima risiko itu
+ * secara sadar. Yang masih bisa dilakukan kode adalah memastikan isinya tidak
+ * pernah dibacakan kembali kepadanya, dan tidak pernah menjadi dasar menilai
+ * dirinya.
+ */
+function insightSection(insight: UserInsight): string {
+  const lines = ["Yang kamu pahami tentang orang ini:"];
+
+  if (insight.gaya) lines.push(`- Cara menemani: ${insight.gaya}`);
+  if (insight.tahap) lines.push(`- Tahap: ${insight.tahap}`);
+  if (insight.kerentanan) lines.push(`- Hati-hati: ${insight.kerentanan}`);
+
+  const last = insight.catatan.at(-1);
+  if (last) {
+    lines.push(
+      `- Terakhir kali berat (${last.at.slice(0, 10)}): ${last.ringkasan}`,
+    );
+  }
+
+  lines.push(
+    "",
+    "Catatan ini tidak pernah dibacakan kepada penggunanya dan tidak pernah",
+    "menjadi alasan menilai dirinya. Ia hanya untuk menyesuaikan caramu",
+    "menemani. Jangan menyinggung isinya kecuali ia sendiri yang membukanya.",
+  );
+
+  return lines.join("\n");
 }
 
 /**

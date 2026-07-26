@@ -10,6 +10,8 @@
  *
  * Modul ini murni: tidak memanggil jaringan dan tidak membaca konfigurasi.
  */
+import type { RiskLevel } from "../core/safety-policy.js";
+
 export type ModelTier = "cheap" | "efficient" | "ambitious";
 
 export type ConversationIntent =
@@ -32,15 +34,21 @@ export interface RoutingInput {
    * pelecehan, atau eksploitasi.
    */
   safetySensitive?: boolean;
+  /** Hasil triase risiko, bila pemeriksaannya sempat berjalan. */
+  risk?: RiskLevel;
 }
 
 /** Di atas panjang ini, sebuah pertanyaan dianggap berpotensi berlapis. */
 const LONG_MESSAGE = 280;
 
 export function selectTier(input: RoutingInput): ModelTier {
-  // Keselamatan tidak pernah dihemat. Pasal 3.8 menuntut respons yang
-  // proporsional dan hati-hati, dan itu butuh model terkuat yang tersedia.
-  if (input.safetySensitive) return "ambitious";
+  // Keselamatan memakai `efficient`, bukan `ambitious`. Keputusan pemilik
+  // produk pada 27 Juli 2026: di produksi tingkatan ini adalah GPT 5.6 Luna,
+  // dan itu dinilai cukup untuk percakapan yang berat. Tingkatan tertinggi
+  // disimpan untuk pekerjaan yang memang membutuhkan penalaran panjang.
+  // `PROJECT.md` dan `ADR-003` sudah diselaraskan dengan keputusan ini.
+  if (input.risk === "dukungan" || input.risk === "bahaya") return "efficient";
+  if (input.safetySensitive) return "efficient";
 
   switch (input.intent) {
     case "question":
@@ -77,10 +85,14 @@ export function resolveModel(
   routing: {
     mode: "testing" | "production";
     testingModel: string;
+    testingModels?: Partial<Record<ModelTier, string>>;
     models: Record<ModelTier, string>;
   },
 ): string {
-  return routing.mode === "testing"
-    ? routing.testingModel
-    : routing.models[tier];
+  if (routing.mode !== "testing") return routing.models[tier];
+
+  // Peta per tingkatan boleh diisi sebagian. Yang tidak diisi jatuh ke satu
+  // model uji, seperti sebelumnya — tetapi begitu satu tingkatan diberi model
+  // sendiri, routing akhirnya dapat diamati tanpa membayar harga produksi.
+  return routing.testingModels?.[tier] || routing.testingModel;
 }

@@ -20,61 +20,15 @@ describe("kebijakan memori", () => {
     assert.equal(isSensitiveKind("context"), false);
   });
 
-  it("menahan data sensitif meski model salah memberi jenis biasa", () => {
-    assert.equal(
-      isSensitiveMemory({
-        kind: "profile",
-        content: "Pengguna berjenis kelamin laki-laki.",
-      }),
-      true,
-    );
-    assert.equal(
-      isSensitiveMemory({
-        kind: "profile",
-        content: "Pengguna adalah laki-laki yang menyukai laki-laki.",
-      }),
-      true,
-    );
-    assert.equal(
-      isSensitiveMemory({
-        kind: "profile",
-        content: "Nama pengguna adalah Dimas.",
-      }),
-      false,
-    );
-  });
-
-  it("menahan ketertarikan romantis sejauh apa pun jarak katanya", () => {
-    // Kalimat persis ini tersimpan otomatis pada 26 Juli 2026, hanya karena
-    // "berjenis kelamin" tidak cocok dengan `\\bjenis kelamin\\b` dan "pria"
-    // tidak ada di daftar. Yang bocor adalah orientasi seksual seseorang.
-    for (const content of [
-      "Pengguna menyukai seseorang berjenis kelamin pria yang dikenal dari game Mobile Legends.",
-      "Menyukai seorang cowok yang dikenal lewat game online.",
-      "Punya crush yang jarang aktif karena sekolah asrama.",
-      "Merasa dirinya cukup feminin.",
-      "Sedang PDKT sama teman sekelas.",
-    ]) {
-      assert.equal(
-        isSensitiveMemory({ kind: "context", content }),
-        true,
-        content,
-      );
-    }
-
-    // Tetap tidak boleh menarik kalimat biasa ke jalur izin.
-    for (const content of [
-      "Kelas 11 IPA di SMAN 3 Bandung.",
-      "Suka menulis untuk melepas pikiran.",
-      "Suka roti cokelat.",
-      "Tertarik dunia pemrograman dan ingin masuk ITB.",
-    ]) {
-      assert.equal(
-        isSensitiveMemory({ kind: "context", content }),
-        false,
-        content,
-      );
-    }
+  it("memakai jenis dan pendapat model, bukan daftar kata", () => {
+    // Daftar kata yang dulu ada di sini gagal dua kali dengan cara yang sama:
+    // ia menangkap "menyukai laki-laki" tetapi melewatkan "menyukai seseorang
+    // berjenis kelamin pria", dan orientasi seksual seseorang tersimpan tanpa
+    // izin. Penilaiannya kini datang dari triase risiko.
+    assert.equal(isSensitiveMemory({ kind: "personal" }), true);
+    assert.equal(isSensitiveMemory({ kind: "profile" }), false);
+    assert.equal(isSensitiveMemory({ kind: "profile" }, true), true);
+    assert.equal(isSensitiveMemory({ kind: "context" }, false), false);
   });
 
   it("memberi masa berlaku pada yang sementara, bukan pada jati diri", () => {

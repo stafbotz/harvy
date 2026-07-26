@@ -1,4 +1,5 @@
 import type { ConversationTurn } from "../domain/history.js";
+import type { UserInsight } from "../domain/insight.js";
 import type { StylePreference } from "../domain/profile.js";
 import type { TurnBoundaryState } from "../core/turn-taking-policy.js";
 import type { AiClient, ChatMessage } from "./client.js";
@@ -21,6 +22,21 @@ import {
   understandingInput,
   understandingPrompt,
 } from "./persona.js";
+import {
+  CALM_TRIAGE,
+  insightInput,
+  INSIGHT_PROMPT,
+  parseInsightDraft,
+  parseReplyVerdict,
+  parseRiskTriage,
+  replyReviewInput,
+  REPLY_REVIEW_PROMPT,
+  riskTriageInput,
+  RISK_TRIAGE_PROMPT,
+  safetyGuidance,
+  type InsightDraftShape,
+  type RiskTriage,
+} from "./safety.js";
 import {
   parseDueDate,
   parseUnderstanding,
@@ -57,6 +73,18 @@ export const UNDERSTANDING_MAX_TOKENS = 2048;
 const REPLY_MAX_TOKENS = 4096;
 export const TURN_BOUNDARY_MAX_TOKENS = 128;
 export const TURN_BOUNDARY_TIMEOUT_MS = 2_000;
+
+/**
+ * Triase risiko berjalan berbarengan dengan ekstraksi, jadi jatahnya kecil dan
+ * batas waktunya ketat. Yang dihasilkan hanya empat field pendek.
+ */
+export const TRIAGE_MAX_TOKENS = 256;
+export const TRIAGE_TIMEOUT_MS = 6_000;
+
+/** Pemeriksaan balasan hanya menghasilkan satu boolean dan satu alasan. */
+const REVIEW_MAX_TOKENS = 256;
+const REVIEW_TIMEOUT_MS = 8_000;
+const INSIGHT_MAX_TOKENS = 512;
 
 /**
  * Ringkasan sengaja diberi jatah kecil.
@@ -182,17 +210,92 @@ export class Conversation {
    * Memori dan ringkasan tetap dibungkus `<konteks>`. Keduanya memang catatan,
    * dan tidak ada bentuk chat yang wajar untuk mereka.
    */
+  /**
+   * Menilai risiko sebuah pesan tanpa menjawabnya.
+   *
+   * Dipanggil paralel dengan `understand`, memakai model termurah yang sama.
+   * Latensinya menjadi yang terlama dari dua, bukan jumlahnya.
+   */
+  async triageRisk(message: string): Promise<RiskTriage | null> {
+    const raw = await this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: TRIAGE_MAX_TOKENS,
+      timeoutMs: TRIAGE_TIMEOUT_MS,
+      json: true,
+      messages: [
+        { role: "system", content: RISK_TRIAGE_PROMPT },
+        { role: "user", content: riskTriageInput(message) },
+      ],
+    });
+
+    const triage = parseRiskTriage(raw);
+    if (!triage) {
+      console.warn(
+        "Triase risiko tidak dapat dibaca:",
+        JSON.stringify(raw.slice(0, 200)),
+      );
+    }
+    return triage;
+  }
+
+  /**
+   * Memeriksa rancangan balasan untuk giliran yang berisiko.
+   *
+   * Mengembalikan `null` ketika pemeriksaannya sendiri gagal. Pemanggilnya
+   * memilih apa yang harus dilakukan; menganggapnya aman secara diam-diam akan
+   * membuat kegagalan jaringan terlihat seperti lampu hijau.
+   */
+  async reviewReply(message: string, reply: string): Promise<boolean | null> {
+    const raw = await this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: REVIEW_MAX_TOKENS,
+      timeoutMs: REVIEW_TIMEOUT_MS,
+      json: true,
+      messages: [
+        { role: "system", content: REPLY_REVIEW_PROMPT },
+        { role: "user", content: replyReviewInput(message, reply) },
+      ],
+    });
+
+    return parseReplyVerdict(raw);
+  }
+
+  /** Menyusun pemahaman tentang penggunanya. Berjalan di latar, bukan inline. */
+  async readInsight(
+    summary: string | null,
+    turns: ConversationTurn[],
+  ): Promise<InsightDraftShape | null> {
+    const raw = await this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: INSIGHT_MAX_TOKENS,
+      json: true,
+      messages: [
+        { role: "system", content: INSIGHT_PROMPT },
+        { role: "user", content: insightInput(summary, turns) },
+      ],
+    });
+
+    return parseInsightDraft(raw);
+  }
+
   async reply(
     message: string,
     understanding: Understanding,
     context: HarvyContext = EMPTY_CONTEXT,
     style: StylePreference | null = null,
+    triage: RiskTriage = CALM_TRIAGE,
+    insight: UserInsight | null = null,
+    raiseHelp = false,
   ): Promise<string> {
     const tier = selectTier({
       intent: understanding.intent,
       messageLength: message.length,
       needsStepByStep: understanding.needsStepByStep,
       safetySensitive: understanding.safetySensitive,
+      risk: triage.level,
     });
 
     const base = replyPrompt(understanding.intent, {
@@ -200,10 +303,16 @@ export class Conversation {
       style,
       now: this.now(),
       timeZone: this.timeZone,
+      insight,
+      raiseHelp,
     });
-    const system = understanding.safetySensitive
-      ? `${base}${SAFETY_ADDENDUM}`
-      : base;
+
+    // Triase adalah penilai utamanya. Field lama dari ekstraksi tetap dihormati
+    // supaya satu kegagalan triase tidak menghapus tanda bahaya sama sekali.
+    const guidance =
+      safetyGuidance(triage) ||
+      (understanding.safetySensitive ? SAFETY_ADDENDUM : "");
+    const system = `${base}${guidance}`;
 
     // Perintah kedalaman ikut di dalam giliran pengguna, bukan sebagai pesan
     // sistem tersendiri. Sebagai aturan di prompt sistem ia kalah oleh panduan

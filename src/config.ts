@@ -14,6 +14,14 @@ export interface AiConfig {
   keys: ApiKeyPool;
   baseUrl: string;
   testingModel: string;
+  /**
+   * Model uji per tingkatan. Kosong berarti memakai `testingModel`.
+   *
+   * Tanpa peta ini seluruh routing tidak dapat diamati dalam mode uji: satu
+   * model melayani semua tingkatan, sehingga naik-turunnya tier tidak pernah
+   * terlihat pada keluaran mana pun.
+   */
+  testingModels: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
 }
 
@@ -22,6 +30,8 @@ export interface AppConfig {
   dataFile: string;
   /** Memori terstruktur per pengguna. Lihat `ADR-006`. */
   memoryFile: string;
+  /** Folder memori Markdown, satu subfolder per pengguna. */
+  memoryFolder: string;
   /** Riwayat percakapan yang sudah dipadatkan. Berisi kata-kata pengguna. */
   historyFile: string;
   /** Status kenalan dan persetujuan per pengguna. */
@@ -64,6 +74,7 @@ export function loadConfig(): AppConfig {
     telegramBotToken,
     dataFile: resolve(process.env.DATA_FILE ?? "./data/tasks.json"),
     memoryFile: resolve(process.env.MEMORY_FILE ?? "./data/memories.json"),
+    memoryFolder: resolve(process.env.MEMORY_FOLDER ?? "./data/memori"),
     historyFile: resolve(process.env.HISTORY_FILE ?? "./data/history.json"),
     profileFile: resolve(process.env.PROFILE_FILE ?? "./data/profiles.json"),
     defaultTimezone: process.env.DEFAULT_TIMEZONE ?? "Asia/Jakarta",
@@ -92,6 +103,17 @@ function loadAiConfig(): AiConfig {
   } satisfies Record<ModelTier, string>;
 
   const testingModel = process.env.AI_MODEL_TESTING?.trim() ?? "";
+  const testingModels: Partial<Record<ModelTier, string>> = {
+    ...(process.env.AI_MODEL_TESTING_CHEAP?.trim()
+      ? { cheap: process.env.AI_MODEL_TESTING_CHEAP.trim() }
+      : {}),
+    ...(process.env.AI_MODEL_TESTING_EFFICIENT?.trim()
+      ? { efficient: process.env.AI_MODEL_TESTING_EFFICIENT.trim() }
+      : {}),
+    ...(process.env.AI_MODEL_TESTING_AMBITIOUS?.trim()
+      ? { ambitious: process.env.AI_MODEL_TESTING_AMBITIOUS.trim() }
+      : {}),
+  };
 
   if (mode === "testing") {
     const keys = ApiKeyPool.parse(process.env.GOOGLE_AI_STUDIO_API_KEYS);
@@ -110,6 +132,7 @@ function loadAiConfig(): AiConfig {
       keys: new ApiKeyPool(keys),
       baseUrl: process.env.AI_BASE_URL?.trim() || GOOGLE_BASE_URL,
       testingModel,
+      testingModels,
       models,
     };
   }
@@ -135,6 +158,7 @@ function loadAiConfig(): AiConfig {
     keys: new ApiKeyPool([apiKey]),
     baseUrl: process.env.AI_BASE_URL?.trim() || OPENROUTER_BASE_URL,
     testingModel,
+    testingModels,
     models,
   };
 }

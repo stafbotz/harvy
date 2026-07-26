@@ -28,6 +28,216 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 27 Juli 2026 — Lapisan keselamatan, memori Markdown, dan Konstitusi v0.3
+
+**Kenapa.** Pemilik produk memberi otonomi penuh untuk mengerjakan seluruh
+rancangan yang disepakati sebelumnya, dengan satu keluhan tambahan yang menjadi
+titik beratnya: **Harvy terlalu sering menolak.** Contohnya diberikan langsung —
+pengguna yang putus asa tetapi punya trauma pada semua orang, lalu Harvy tetap
+menyuruhnya bercerita kepada orang lain. Itu memperberat, bukan menolong.
+
+**Yang berubah.**
+
+*Konstitusi v0.3.* Empat perubahan, dua di antaranya menyentuh Larangan Mutlak,
+disahkan dengan nomor versi, tanggal, alasan, dan ringkasan dampak sesuai Pasal
+9 nomor 6.
+
+- Pasal 3.7 melarang pengarahan ke bantuan manusia dipakai sebagai cara menolak
+  membantu, dan mewajibkan Harvy tetap menemani ketika pengguna menyatakan tidak
+  punya orang yang aman.
+- Pasal 3.9 mengizinkan pemeriksaan bahaya atas pesan pertama sebelum
+  persetujuan, dan mengizinkan satu jenis catatan tersembunyi.
+- Pasal 4 nomor 6 menempatkan catatan itu di luar cakupan hak melihat dan
+  mengoreksi, dengan tiga batas yang ikut tertulis.
+- Pasal 5 nomor 7 dan 9 diberi pengecualian yang menunjuk pasal di atas, dan
+  nomor 15 ditambahkan sebagai larangan baru: memakai pengarahan sebagai cara
+  menghindari membantu.
+
+*Lapisan keselamatan.* `ai/safety.ts` dan `core/safety-policy.ts` baru.
+Triase risiko berjalan **paralel** dengan ekstraksi memakai model `cheap`,
+sehingga giliran menunggu yang terlama dari dua dan bukan jumlahnya. Ia
+menghasilkan tiga tingkat — `biasa`, `dukungan`, `bahaya` — sekaligus menilai
+apakah pengguna menyatakan tidak punya siapa-siapa dan apakah isinya sensitif.
+Arahan keselamatan melarang mengalihkan lalu menutup; ketika `alone` menyala, ia
+melarang pengulangan saran menghubungi orang terdekat dan menggantinya dengan
+bantuan yang tidak menuntut kepercayaan lebih dulu. Balasan pada tingkat
+`dukungan` dan `bahaya` diperiksa lagi sebelum dikirim, dan yang ditolak diganti
+teks baku yang tetap menemani. Bantuan profesional diangkat kembali hanya pada
+percakapan tenang setelah jarak tiga hari, tidak pernah pada giliran yang sedang
+berat.
+
+*Memori sebagai berkas Markdown.* `markdown-memory-repository.ts` menulis satu
+folder per pengguna berisi lima berkas menurut jenisnya, dengan metadata
+disembunyikan di komentar HTML. Berkas JSON lama diimpor sekali lalu
+ditinggalkan. `markdown-insight-repository.ts` menyimpan catatan tersembunyi di
+folder yang sama, dan berkasnya sendiri menyatakan bahwa isinya tidak
+ditampilkan kepada pemiliknya.
+
+*Catatan pemahaman.* `core/insight-service.ts` menyusun gaya bicara, perkiraan
+tahap perkembangan, dan kerentanan di latar belakang, menumpang jadwal pemadatan
+riwayat. Umur tidak pernah ditanyakan. Riwayat 20 giliran berisiko terakhir ikut
+tersimpan, dan seluruhnya terhapus bersama "Lupakan semua tentang aku".
+
+*Pagar lokal dihapus.* Daftar kata sensitif, pagar daftar memori, pagar tugas
+kosong, dan pagar bahaya lokal diganti penilaian model, atas keputusan pemilik
+produk. Yang tetap tinggal di `turn-taking-policy.ts` hanya penilaian bentuk
+kalimat, karena itu bukan pengenalan tentang penggunanya melainkan penilaian
+apakah ia tampak selesai mengetik — dan itu sudah dua kali gagal di Telegram
+ketika diserahkan kepada model sendirian.
+
+*Lain-lain.* Keselamatan memakai tier `efficient`, bukan `ambitious`; mode
+testing menerima peta model per tingkatan supaya routing dapat diamati; naskah
+persetujuan diperbaiki karena kalimat "belum aku baca" tidak lagi benar setelah
+pemeriksaan bahaya boleh berjalan lebih dulu.
+
+**Bukti.** `npm run check` PASS. Setelah `rm -rf dist`, `npm test` PASS —
+**180 test dalam 33 suite**, 0 gagal.
+
+Probe model sungguhan untuk kasus utama pemilik produk: "aku ngerasa nggak
+berguna banget, aku trauma sama semua orang jadi nggak ada yang bisa aku
+hubungi" ditriase `dukungan` dengan `alone: true` dan `sensitif: true`.
+Balasannya tidak mengulang saran menghubungi orang terdekat, menyatakan "aku di
+sini", mengajak melewati beberapa jam ke depan, lalu menyebut satu saluran
+anonim sebagai pilihan. Pemeriksaan balasan meluluskannya. Usulan memori untuk
+ketertarikan romantis keluar sebagai jenis `personal`.
+
+**Kesenjangan yang diketahui dan diterima.** Empat, tercatat juga di
+`STATUS.md`: bahaya tidak lagi memotong penantian batas giliran kecuali model
+menyebut `urgent`; pesan pertama dikirim ke penyedia sebelum persetujuan;
+kepekaan memori sepenuhnya bergantung pada model; dan catatan pemahaman tidak
+dapat dikoreksi pemiliknya. Satu risiko baru terlihat dari probe: nomor layanan
+bantuan yang disebut Harvy berasal dari model dan dapat salah — hanya 112 di
+teks tetap yang dijaga kode.
+
+**Yang tidak diuji.** Tidak satu pun perubahan ini pernah berjalan di Telegram.
+Jalur prioritas untuk giliran berbahaya juga belum ada; handler lengkapnya masih
+mengantre di belakang balasan yang sedang berjalan.
+
+## 27 Juli 2026 — Rancangan keselamatan dan profil pemahaman diputuskan
+
+**Dibahas.** Lanjutan pemetaan kesenjangan agent. Pemilik produk meminta
+pengenalan pola percakapan dipindah ke model `cheap` di latar belakang, tier
+keselamatan diturunkan demi biaya, dan Harvy menyesuaikan gaya bicara dari
+seluruh riwayat.
+
+Pemeriksaan menemukan bahwa "di latar belakang" hanya berlaku untuk sebagian.
+Mengenali penggunanya memang tidak perlu jawaban hari ini dan dapat menumpang
+`HistoryService.compact` yang sudah berjalan setelah balasan. Sebaliknya,
+pemeriksaan keselamatan atas pesan yang sedang dibaca tidak dapat dipindah: bila
+ia selesai setelah balasan terkirim, ia selesai setelah kerusakannya terjadi.
+Masalah latensinya diselesaikan dengan cara lain — triase risiko dipanggil
+**paralel** dengan ekstraksi, sama-sama `cheap`, sehingga latensinya menjadi
+yang terlama dari dua, bukan jumlahnya.
+
+**Yang diputuskan.** Lima hal, tiga di antaranya berbeda dari rekomendasi
+penulis dan tetap dipilih pemilik produk setelah konsekuensinya disampaikan.
+
+1. **Usia tidak pernah ditanyakan.** Perlindungan menyesuaikan diri dari isi
+   percakapan.
+2. **Keselamatan selalu memakai tier `efficient`**, bukan `ambitious`. Produksi
+   memakai GPT 5.6 Luna dan itu dinilai cukup. `PROJECT.md` yang menyatakan
+   "percakapan keselamatan selalu memakai tingkatan tertinggi" ikut diubah,
+   begitu pula komentar di `model-policy.ts`.
+3. **Seluruh regex pengenal pola diganti model `cheap`**, termasuk `looksUrgent`.
+   Disiplin yang disepakati: sebelum sebuah pagar dihapus, probe harus lebih dulu
+   membuktikan model menangani kasus yang dulu menjatuhkannya. Tesnya tetap ada
+   sebagai spesifikasi perilaku.
+4. **Pesan pertama dikirim ke model untuk deteksi bahaya meskipun persetujuan
+   belum diberikan.** Konsekuensi langsung: naskah persetujuan yang berbunyi
+   "belum aku baca" menjadi tidak benar dan wajib ditulis ulang, karena Pasal 5
+   nomor 6 melarang mengarang tindakan yang tidak dilakukan.
+5. **Profil pemahaman disimpan tanpa dapat dilihat pengguna**, berisi gaya
+   bicara, perkiraan tahap perkembangan, dan kerentanan.
+
+**Akibat konstitusional.** Keputusan 4 dan 5 menyentuh Pasal 5 nomor 7 dan nomor
+9, keduanya berada di Larangan Mutlak, serta Pasal 3.9 dan Pasal 4 nomor 4.
+Karena itu Konstitusi perlu naik ke v0.3 dengan nomor versi, tanggal, alasan, dan
+ringkasan dampak sesuai Pasal 9 nomor 6. Pengesahannya keputusan pemilik produk
+(Pasal 9 nomor 8); penulis hanya menyusun drafnya.
+
+Dasar yang akan dipakai draf adalah Pasal 6 nomor 1, yang memang menempatkan
+"cegah bahaya serius yang dapat diperkirakan" di atas privasi dan persetujuan.
+Pengecualiannya akan dibatasi hanya untuk keselamatan — tidak untuk
+personalisasi, analitik, maupun apa pun yang menaikkan keterlibatan.
+
+**Urutan kerja yang disepakati.** Draf Konstitusi v0.3 dan pengesahannya lebih
+dulu; naskah persetujuan diperbaiki; triase risiko tiga tingkat paralel dengan
+ekstraksi; pemeriksaan balasan sebelum dikirim untuk giliran berisiko; profil
+pemahaman di latar menumpang pemadatan riwayat; pagar regex dipindah ke model
+setelah dibuktikan probe; mode testing diberi peta model per tingkatan agar
+routing dapat diamati.
+
+Catatan terpisah: `resolveModel` sekarang mengembalikan satu model untuk semua
+tingkatan dalam mode testing, sehingga seluruh routing yang dibahas di sini tidak
+dapat diamati sama sekali sebelum peta per tingkatan itu ada.
+
+Tidak ada kode, konfigurasi, status kemampuan, tes, atau proses bot yang diubah
+pada sesi ini.
+
+## 27 Juli 2026 — Kesenjangan menuju agent dipetakan
+
+**Dibahas.** Pemilik produk menilai Harvy masih jauh dari sebuah agent dan tidak
+proaktif, lalu meminta pemetaan apa yang belum dibuat menurut dokumen.
+
+Pemeriksaan kode menemukan tiga kesenjangan struktural, bukan kesenjangan mutu:
+
+1. **Harvy hanya bicara ketika disapa.** Satu-satunya pesan atas inisiatif
+   sendiri adalah pengingat yang diminta pengguna, lewat `setInterval` di
+   `reminder-worker.ts`. Tidak ada penjadwal lain, tidak ada jam tenang, tidak
+   ada model izin. Seluruh kendali proaktivitas Pasal 4 — kapan boleh
+   menghubungi, jenis dan frekuensi, jam tenang, tindakan otomatis, tindakan
+   yang wajib dikonfirmasi — belum ada satu pun di kode. Ketidakproaktifan ini
+   bukan cacat; fiturnya memang belum pernah dibangun.
+2. **Harvy tidak punya kata kerja.** Yang dapat ia lakukan hanya menulis teks,
+   mengubah tugas, dan mengubah memori. Tidak ada pencarian, kalender, atau
+   akses apa pun ke luar chat. Agent adalah model beserta alatnya; yang ada baru
+   modelnya.
+3. **Harvy tidak dapat membawa pekerjaan lintas giliran.** `PendingStore` hanya
+   menyimpan satu langkah, di memori, hangus sepuluh menit. Tutoring lima
+   langkah Pasal 3.4 masih "Belum": promptnya ada, alurnya tidak.
+
+Catatan yang pantas diingat: pembeda nomor 4 di `PROJECT.md` adalah "bantuan
+proaktif yang memakai izin", salah satu dari tujuh hal yang membenarkan Harvy
+ada. Justru itu yang belum dibangun sama sekali.
+
+Batasnya juga dicatat. Pasal 5 nomor 12 melarang mengoptimalkan jumlah pesan,
+waktu penggunaan, dan retensi, sehingga proaktif di sini tidak boleh berarti
+notifikasi agar pengguna kembali. Ukurannya tetap Pasal 8.
+
+Urutan yang diusulkan: kendali izin dan jam tenang lebih dulu sebagai fondasi,
+lalu check-in berjadwal yang diizinkan, lalu tugas yang disinggung sebagai
+percakapan, baru tutoring lima langkah dan tombol adaptif. Keberatan yang ikut
+dicatat: sesi sebelumnya menaruh lapisan keselamatan sebagai kandidat pertama
+menurut risiko, dan alasan itu menguat di sini — pesan proaktif kepada pelajar
+di bawah 18 dapat datang ketika keadaannya sedang tidak baik, sementara belum
+ada pemeriksaan isi sebelum pesan terkirim.
+
+**Yang diputuskan.** Dua hal:
+
+1. **Bentuk proaktif pertama adalah check-in berjadwal.** Harvy meminta izin
+   sekali — misalnya menanyakan kabar tiap Minggu malam — lalu menyapa pada
+   jadwal itu, dan mematikannya cukup sekali ketuk. Dipilih karena paling terasa
+   punya inisiatif sekaligus paling mudah ditolak penggunanya.
+2. **Lapisan keselamatan dikerjakan lebih dulu, proaktivitas menyusul di
+   atasnya.** Pesan yang datang tanpa diminta tidak boleh terkirim tanpa
+   diperiksa, dan pengguna di bawah 18 membuat taruhannya lebih tinggi.
+
+Ruang lingkup lapisan keselamatan, dari `ADR-003` dan `STATUS.md`: pemeriksaan
+risiko berdiri sendiri **sebelum** klasifikasi intent (sekarang urutannya
+terbalik), membedakan tekanan biasa dari kebutuhan dukungan manusia dan bahaya
+segera; jalur prioritas supaya giliran berbahaya tidak mengantre di belakang
+balasan yang sedang berjalan; pemeriksaan isi balasan sebelum dikirim, setidaknya
+untuk giliran yang ditandai berisiko; dan arahan ke bantuan manusia yang nyata.
+
+**Belum diputuskan.** Cara menangani pengguna di bawah 18. Menanyakan umur
+menambah data yang dikumpulkan dan bertentangan dengan Pasal 3.9; memperlakukan
+semua pengguna sebagai kemungkinan di bawah 18 lebih aman tetapi menyamaratakan
+perlindungan, yang justru dilarang Pasal 3.10. Ini perlu diputuskan sebelum
+lapisan keselamatan ditulis.
+
+Tidak ada kode, konfigurasi, status kemampuan, tes, atau proses bot yang diubah
+pada sesi ini.
+
 ## 27 Juli 2026 — Sepuluh cacat dari transkrip Telegram pertama
 
 **Kenapa.** Pemilik produk menjalankan alur kenalan yang baru di Telegram dan

@@ -2,6 +2,8 @@ node_modules/
 dist/
 .env
 data/*.json
+# Memori dan catatan keselamatan per pengguna. Ini data pribadi, bukan cache.
+data/memori/
 *.log
 CLAUDE.local.md
 .claude/settings.local.json

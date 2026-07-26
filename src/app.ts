@@ -3,13 +3,15 @@ import { Conversation } from "./ai/conversation.js";
 import { createBot } from "./bot/create-bot.js";
 import { loadConfig } from "./config.js";
 import { HistoryService } from "./core/history-service.js";
+import { InsightService } from "./core/insight-service.js";
 import { MemoryService } from "./core/memory-service.js";
 import { ProfileService } from "./core/profile-service.js";
 import { TaskService } from "./core/task-service.js";
 import { startReminderWorker } from "./reminders/reminder-worker.js";
 import { FileHistoryRepository } from "./storage/file-history-repository.js";
-import { FileMemoryRepository } from "./storage/file-memory-repository.js";
 import { FileProfileRepository } from "./storage/file-profile-repository.js";
+import { MarkdownInsightRepository } from "./storage/markdown-insight-repository.js";
+import { MarkdownMemoryRepository } from "./storage/markdown-memory-repository.js";
 import { FileTaskRepository } from "./storage/file-task-repository.js";
 
 const config = loadConfig();
@@ -22,7 +24,11 @@ const conversation = new Conversation(
   config.defaultTimezone,
 );
 
-const memories = new MemoryService(new FileMemoryRepository(config.memoryFile));
+// Memori berupa berkas Markdown, satu folder per pengguna. Berkas JSON lama
+// hanya dibaca sekali sebagai bahan impor, lalu tidak pernah ditulis lagi.
+const memories = new MemoryService(
+  new MarkdownMemoryRepository(config.memoryFolder, config.memoryFile),
+);
 
 // Peringkasnya memanggil model, tetapi `HistoryService` sendiri tidak tahu
 // apa-apa soal itu — ia hanya memegang fungsi. Itu yang membuat aturan
@@ -38,7 +44,23 @@ const profiles = new ProfileService(
   new FileProfileRepository(config.profileFile),
 );
 
-const bot = createBot(config, tasks, conversation, memories, history, profiles);
+// Catatan tersembunyi tinggal di folder yang sama dengan memori pengguna,
+// supaya "hapus semua data" berarti satu tempat. Konstitusi v0.3 Pasal 4
+// nomor 6 mengizinkannya justru dengan syarat batas-batasnya jelas.
+const insights = new InsightService(
+  new MarkdownInsightRepository(config.memoryFolder),
+  (summary, turns) => conversation.readInsight(summary, turns),
+);
+
+const bot = createBot(
+  config,
+  tasks,
+  conversation,
+  memories,
+  history,
+  profiles,
+  insights,
+);
 const stopReminders = startReminderWorker(bot, tasks, config);
 const SHUTDOWN_GRACE_MS = 60_000;
 

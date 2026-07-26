@@ -142,7 +142,7 @@ ia tidak boleh masuk gerbang otomatis.
 
 Konfigurasi runtime berasal dari `.env` (lihat `.env.example`):
 `TELEGRAM_BOT_TOKEN`, `DATA_FILE`, `MEMORY_FILE`, `HISTORY_FILE`,
-`PROFILE_FILE`, `DEFAULT_TIMEZONE`, `DEFAULT_UTC_OFFSET`,
+`MEMORY_FOLDER`, `PROFILE_FILE`, `DEFAULT_TIMEZONE`, `DEFAULT_UTC_OFFSET`,
 `REMINDER_INTERVAL_MS`, serta kelompok `AI_*` termasuk `AI_BASE_URL` yang
 menimpa alamat bawaan penyedia. `HISTORY_FILE` berisi kata-kata pengguna apa
 adanya; perlakukan sebagai data pribadi, bukan cache. `PROFILE_FILE` menyimpan
@@ -152,13 +152,19 @@ dependency tambahan.
 
 ID model tidak boleh ditulis di kode. Nama dan harga model berubah cepat, jadi
 semuanya dibaca dari environment agar koreksi cukup satu baris `.env`.
-`AI_MODE=testing` memakai satu model gratis lewat Google AI Studio dengan
-beberapa kunci bergantian; `AI_MODE=production` memakai tiga model lewat
-OpenRouter. Tanpa kunci, bot menolak start.
+`AI_MODE=testing` memakai model gratis lewat Google AI Studio dengan beberapa
+kunci bergantian; `AI_MODE=production` memakai tiga model lewat OpenRouter.
+Tanpa kunci, bot menolak start.
 
-Dalam mode `testing`, `resolveModel` mengembalikan model yang sama untuk semua
-tingkatan. Routing tetap dihitung tetapi tidak dapat diamati, jadi jangan
-mengklaim routing sudah terbukti setelah menguji dalam mode ini.
+Dalam mode `testing`, `resolveModel` memakai `AI_MODEL_TESTING` untuk semua
+tingkatan kecuali yang diberi model sendiri lewat `AI_MODEL_TESTING_CHEAP`,
+`AI_MODEL_TESTING_EFFICIENT`, atau `AI_MODEL_TESTING_AMBITIOUS`. Selama peta itu
+kosong, routing tetap dihitung tetapi tidak dapat diamati — jangan mengklaim
+routing sudah terbukti setelah menguji dalam keadaan itu.
+
+Percakapan yang menyentuh keselamatan memakai tingkatan `efficient`, bukan
+`ambitious`. Keputusan pemilik produk 27 Juli 2026: di produksi tingkatan itu
+adalah GPT 5.6 Luna dan dinilai cukup.
 
 ## Arsitektur
 
@@ -178,7 +184,10 @@ tidak mengenal grammY maupun berkas.
   murni), `task-service.ts`, `memory-policy.ts` (jenis sensitif, masa berlaku,
   pemilihan memori untuk prompt), `memory-service.ts`, `history-policy.ts`
   (jendela dan ambang pemadatan), `history-service.ts`, `profile-service.ts`
-  (`CONSENT_VERSION`, `needsOnboarding`, `shouldAskStyle`), serta
+  (`CONSENT_VERSION`, `needsOnboarding`, `shouldAskStyle`),
+  `safety-policy.ts` (`RiskLevel`, `needsReplyReview`,
+  `shouldRaiseProfessionalHelp`), `insight-service.ts` (catatan tersembunyi dan
+  riwayat giliran berisiko), serta
   `turn-taking-policy.ts` (pengaman lokal dan jendela adaptif batas giliran,
   termasuk `looksUrgent` yang dipakai ulang di gerbang perkenalan).
   `HistoryService` menerima fungsi peringkas dari luar supaya `core/` tetap
@@ -188,8 +197,9 @@ tidak mengenal grammY maupun berkas.
   kesulitan), `understand.ts` (membaca balasan model sebagai masukan tidak
   tepercaya), `client.ts` (HTTP kompatibel OpenAI dengan rotasi kunci),
   `key-pool.ts`, `context.ts` (`HarvyContext`: ringkasan, giliran terakhir, dan
-  memori), dan `conversation.ts` (menyatukan pemahaman, balasan, dan
-  peringkasan).
+  memori), `safety.ts` (triase risiko, arahan anti-penolakan, pemeriksaan
+  balasan, dan prompt pemahaman), dan `conversation.ts` (menyatukan pemahaman,
+  balasan, dan peringkasan).
   Sebelum percakapan, model `cheap` menggolongkan batas bubble sebagai
   `complete`, `open`, `incomplete`, atau `urgent`; kebijakan lokal mengoreksi
   fragmen dan risiko yang jelas. Giliran yang sudah utuh berjalan dua langkah:
@@ -209,8 +219,13 @@ tidak mengenal grammY maupun berkas.
 - `src/storage/` — empat adapter berkas JSON dengan pola yang sama: tulis atomik
   melalui berkas `.tmp` lalu `rename`, dan serialisasi tulis melalui antrian
   promise agar tidak ada pembaruan yang hilang. `file-task-repository.ts`,
-  `file-memory-repository.ts`, `file-history-repository.ts`, dan
-  `file-profile-repository.ts`. Keempatnya aman untuk satu proses saja.
+  `file-history-repository.ts`, dan `file-profile-repository.ts`. Memori dan
+  catatan tersembunyi memakai bentuk lain: `markdown-memory-repository.ts` dan
+  `markdown-insight-repository.ts` menulis satu folder Markdown per pengguna di
+  bawah `MEMORY_FOLDER`, sehingga batas isolasi datanya terlihat dari struktur
+  direktori dan isinya dapat dibuka manusia. `file-memory-repository.ts` masih
+  ada, tetapi hanya sebagai sumber impor sekali jalan. Semuanya aman untuk satu
+  proses saja.
 - `src/reminders/reminder-worker.ts` — `setInterval` dengan penjaga reentrancy;
   `reminderSentAt` mencegah satu pengingat terkirim dua kali.
 
@@ -332,6 +347,33 @@ Invarian yang harus dijaga:
   pintu masuk, bukan syarat. Pesan pertama yang `looksUrgent` dijawab arahan
   keselamatan tetap tanpa memanggil model, karena izin mengirimnya keluar belum
   ada. Menghapus seluruh memori tidak mereset persetujuan.
+- **Keselamatan adalah pemeriksaan tersendiri, bukan satu field di antara
+  belasan field lain.** `Conversation.triageRisk` berjalan **paralel** dengan
+  `understand`, bukan sesudahnya: keduanya memakai model termurah, jadi giliran
+  menunggu yang terlama dari dua, bukan jumlahnya. Triase yang gagal tidak
+  boleh terlihat seperti percakapan yang baik-baik saja — `parseRiskTriage`
+  mengembalikan `null`, dan `understanding.safetySensitive` menjadi jaring
+  terakhirnya. Giliran `dukungan` dan `bahaya` memakai tier `efficient` dan
+  balasannya wajib lewat `reviewReply` sebelum dikirim.
+- **Mengarahkan ke manusia tidak boleh menjadi cara menolak membantu.**
+  Konstitusi v0.3 Pasal 3.7 dan Pasal 5 nomor 15. Ketika triase menandai
+  `alone`, arahan wajib melarang pengulangan saran menghubungi orang terdekat
+  dan menggantinya dengan bantuan yang tidak menuntut kepercayaan lebih dulu.
+  Bantuan profesional diangkat kembali hanya pada percakapan tenang setelah
+  jarak beberapa hari — `shouldRaiseProfessionalHelp`, bukan pada giliran yang
+  sedang berat.
+- **Pengenalan tentang penggunanya dilakukan model, bukan daftar kata.** Daftar
+  kata sensitif, pagar daftar memori, pagar tugas kosong, dan pagar bahaya lokal
+  dihapus pada 27 Juli 2026 atas keputusan pemilik produk. Yang tersisa di
+  `turn-taking-policy.ts` hanya penilaian bentuk kalimat — apakah pengguna
+  tampak selesai mengetik — dan itu memang bukan pengenalan tentang orangnya.
+  Akibat yang diketahui dan diterima: bahaya tidak lagi memotong antrean batas
+  giliran kecuali model batas giliran sendiri menyebut `urgent`.
+- **Catatan tersembunyi hanya satu jenis, dan batasnya tertulis.**
+  `domain/insight.ts` adalah satu-satunya tempat data yang tidak dapat dilihat
+  penggunanya. Menambah field di sana berarti memperluas pengecualian terhadap
+  Larangan Mutlak; jangan melakukannya tanpa keputusan pemilik produk. Ia ikut
+  terhapus pada "Lupakan semua tentang aku".
 - **Harvy tidak punya cadangan berbasis aturan.** Tanpa kunci API, bot tidak
   dapat memproses pesan dan harus mengatakannya terus terang.
 - `ownerId` (Telegram `from.id`) adalah batas isolasi data. Setiap metode

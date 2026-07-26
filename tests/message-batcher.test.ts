@@ -133,14 +133,29 @@ describe("MessageBatcher", () => {
     ]);
   });
 
-  it("mendahulukan keselamatan tanpa menunggu jendela curhat", async () => {
+  it("memproses seketika ketika model menyatakan urgent", async () => {
     const handled: string[] = [];
-    let classifierCalled = false;
     const batcher = new MessageBatcher<string>(
-      () => {
-        classifierCalled = true;
-        return new Promise<TurnBoundaryState>(() => undefined);
+      async () => "urgent" as TurnBoundaryState,
+      async (_ownerId, batch) => {
+        handled.push(batch.text);
       },
+      200,
+      5,
+      150,
+      80,
+    );
+
+    batcher.enqueue("student", "aku mau menyakiti diri sekarang", "ctx-1");
+
+    await waitFor(() => handled.length === 1, 120);
+    assert.deepEqual(handled, ["aku mau menyakiti diri sekarang"]);
+  });
+
+  it("tetap memproses lewat deadline ketika penilaian model menggantung", async () => {
+    const handled: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      () => new Promise<TurnBoundaryState>(() => undefined),
       async (_ownerId, batch) => {
         handled.push(batch.text);
       },
@@ -152,21 +167,14 @@ describe("MessageBatcher", () => {
 
     batcher.enqueue("student", "aku mau curhat", "ctx-1");
     await delay(20);
-    batcher.enqueue(
-      "student",
-      "aku mau menyakiti diri sekarang",
-      "ctx-2",
-    );
+    batcher.enqueue("student", "aku mau menyakiti diri sekarang", "ctx-2");
 
-    await waitFor(() => handled.length === 1, 80);
+    // Sejak pagar bahaya lokal dihapus, satu-satunya yang menyelamatkan giliran
+    // ini adalah deadline. Ia tetap terproses, tetapi tidak lagi seketika.
+    await waitFor(() => handled.length === 1, 300);
     assert.deepEqual(handled, [
       "aku mau curhat\naku mau menyakiti diri sekarang",
     ]);
-    assert.equal(
-      classifierCalled,
-      true,
-      "pembuka boleh sempat dinilai sebelum bubble darurat tiba",
-    );
   });
 
   it("mengabaikan keputusan model yang kalah cepat dari bubble berikutnya", async () => {

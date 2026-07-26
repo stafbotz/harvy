@@ -55,36 +55,25 @@ export function isSensitiveKind(kind: MemoryKind): boolean {
 }
 
 /**
- * Pagar kedua bila model salah memberi label pada isi sensitif.
+ * Apakah sebuah usulan memori harus lewat jalur izin.
  *
- * Model pernah mengembalikan orientasi seksual sebagai `profile`, lalu Harvy
- * menyimpannya otomatis. Jenis dari model tidak cukup kuat untuk memutuskan
- * privasi; kata-kata yang jelas menyentuh tubuh, identitas, relasi, keluarga,
- * kesehatan, atau tekanan emosional selalu jatuh ke jalur izin.
+ * Dulu ini berisi daftar kata. Daftar itu gagal dua kali dengan cara yang sama:
+ * ia menangkap "menyukai laki-laki" tetapi melewatkan "menyukai seseorang
+ * berjenis kelamin pria", dan orientasi seksual seseorang tersimpan tanpa izin.
+ * Satu daftar kata tidak pernah dapat mengejar semua cara orang menceritakan
+ * hal yang sama.
+ *
+ * Sejak 27 Juli 2026 penilaiannya datang dari triase risiko — satu panggilan
+ * model termurah yang sudah berjalan paralel dengan ekstraksi, jadi tidak ada
+ * panggilan tambahan. `sensitiveByModel` adalah pendapat model itu; jenis
+ * `personal` tetap sensitif tanpa perlu ditanya.
  */
 export function isSensitiveMemory(
-  memory: Pick<MemoryItem, "kind" | "content">,
+  memory: Pick<MemoryItem, "kind">,
+  sensitiveByModel = false,
 ): boolean {
-  if (isSensitiveKind(memory.kind)) return true;
-
-  return SENSITIVE_CONTENT.some((pattern) => pattern.test(memory.content));
+  return isSensitiveKind(memory.kind) || sensitiveByModel;
 }
-
-const SENSITIVE_CONTENT: readonly RegExp[] = [
-  // Tanpa awalan bebas, "berjenis kelamin" lolos dari `\bjenis kelamin\b`.
-  // Itu bukan kemungkinan teoretis: kalimat "menyukai seseorang berjenis
-  // kelamin pria" pernah tersimpan otomatis pada 26 Juli 2026.
-  /jenis kelamin/i,
-  /\b(?:gender|orientasi|seksualitas|gay|lesbi|biseks|transgender|lgbt|queer|feminin|maskulin)\w*/i,
-  // Ketertarikan pada orang lain, sejauh apa pun kata sifatnya dari kata
-  // kerjanya. Yang dijaga bukan satu susunan kalimat, melainkan topiknya.
-  /(?:menyukai|suka|naksir|crush|jatuh cinta|sayang)\b[^.!?]{0,60}\b(?:pria|laki-?laki|cowok?|wanita|perempuan|cewek?)\b/i,
-  /\b(?:seorang|sebagai)\s+(?:pria|laki-?laki|cowok?|wanita|perempuan|cewek?)\b/i,
-  /\b(?:crush|pacar|gebetan|pdkt|mantan)\b/i,
-  /\b(?:kesehatan|penyakit|diagnosis|didiagnosis|terapi|obat|sakit)\b/i,
-  /\b(?:keluarga|orang tua|ayah|ibu|pasangan)\b/i,
-  /\b(?:depres|cemas|trauma|bunuh diri|menyakiti diri|tekanan emosional)\w*/i,
-];
 
 export function expiryFor(kind: MemoryKind, now: Date): Date | null {
   const lifetime = LIFETIME_MS[kind];

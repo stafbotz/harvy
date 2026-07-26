@@ -37,11 +37,15 @@ describe("naskah perkenalan", () => {
     assert.match(consent, /bisa salah/i);
   });
 
-  it("mengaku menahan pesan yang telanjur dikirim, dan belum membacanya", () => {
+  it("mengaku apa adanya soal pemeriksaan bahaya sebelum persetujuan", () => {
     const withHeld = introBubbles(null, true)[1] ?? "";
 
-    assert.match(withHeld, /aku tahan dulu, belum aku baca/i);
-    assert.doesNotMatch(introBubbles(null, false)[1] ?? "", /aku tahan dulu/i);
+    // Naskah lama berbunyi "belum aku baca". Sejak pemeriksaan bahaya boleh
+    // berjalan lebih dulu, kalimat itu menjadi klaim yang tidak benar.
+    assert.doesNotMatch(withHeld, /belum aku baca/i);
+    assert.match(withHeld, /lihat sekilas/i);
+    assert.match(withHeld, /bahaya/i);
+    assert.doesNotMatch(introBubbles(null, false)[1] ?? "", /lihat sekilas/i);
   });
 
   it("menjelaskan penyimpanan dan cara menghapus hanya bila ditanya", () => {

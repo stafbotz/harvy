@@ -9,14 +9,19 @@ export const INCOMPLETE_IDLE_MS = 12_000;
 export const MULTI_BUBBLE_IDLE_MS = 4_000;
 
 /**
- * Model tetap menjadi penilai utama, tetapi fragmen yang sangat jelas dan
- * risiko segera tidak boleh bergantung pada satu klasifikasi jaringan.
+ * Model tetap menjadi penilai utama; yang dikoreksi di sini hanya bentuk
+ * kalimatnya.
+ *
+ * Pagar bahaya segera yang dulu ada di sini dipindahkan ke triase risiko pada
+ * 27 Juli 2026. Yang tersisa bukan pengenalan tentang penggunanya, melainkan
+ * penilaian apakah ia tampak selesai mengetik — dan itu terbukti dua kali di
+ * Telegram sebagai hal yang tidak dapat ditebak model kecil sendirian.
  */
 export function guardTurnBoundary(
   text: string,
   proposed: TurnBoundaryState,
 ): TurnBoundaryState {
-  if (proposed === "urgent" || looksUrgent(text)) return "urgent";
+  if (proposed === "urgent") return "urgent";
 
   const bubbles = splitBubbles(text);
   const last = bubbles.at(-1) ?? "";
@@ -106,25 +111,5 @@ function looksOpen(bubbles: string[], last: string): boolean {
 
   return /^(?:aku|gue|gua|saya)\s+.*\b(?:cape|capek+|takut+|sedih+|bingung+|cemas+|khawatir+)\b/iu.test(
     last,
-  );
-}
-
-/**
- * Bahaya segera yang dapat dikenali tanpa jaringan.
- *
- * Dipakai dua kali: memotong penantian batas giliran, dan menjawab pesan
- * pertama yang berbahaya sebelum pengguna sempat menyetujui pengiriman isinya ke
- * penyedia model. Yang kedua hanya mungkin justru karena pemeriksaan ini lokal.
- */
-export function looksUrgent(text: string): boolean {
-  const normalized = normalize(text.replaceAll("\n", " "));
-  return (
-    /\b(?:mau|ingin|pengen|akan)\s+(?:bunuh diri|mati|nyakitin diri|menyakiti diri)\b/iu.test(
-      normalized,
-    ) ||
-    /\b(?:aku|saya|gue|gua)\s+(?:dalam bahaya|nggak aman|gak aman)\s+sekarang\b/iu.test(
-      normalized,
-    ) ||
-    /\b(?:darurat|tolong aku sekarang)\b/iu.test(normalized)
   );
 }

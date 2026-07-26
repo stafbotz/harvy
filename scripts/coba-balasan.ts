@@ -114,7 +114,21 @@ if (!understanding) {
   console.log("--- hasil pembacaan ---");
   console.log(JSON.stringify(understanding, null, 2));
 
-  const reply = await conversation.reply(message, understanding, context, style);
+  // Triase dijalankan persis seperti pada jalur sungguhan. Tanpa ini skrip
+  // memeriksa Harvy yang tidak pernah ada: seluruh arahan keselamatan hidup
+  // dari hasil triase, dan probe tanpa triase akan selalu terlihat baik.
+  const triage = await conversation.triageRisk(message);
+  console.log("");
+  console.log("--- triase risiko ---");
+  console.log(JSON.stringify(triage, null, 2));
+
+  const reply = await conversation.reply(
+    message,
+    understanding,
+    context,
+    style,
+    triage ?? undefined,
+  );
 
   console.log("");
   console.log("--- balasan mentah model ---");
@@ -124,5 +138,15 @@ if (!understanding) {
 
   for (const [index, bubble] of splitReplyBubbles(reply).entries()) {
     console.log(`[bubble ${index + 1}] ${bubble}`);
+  }
+
+  if (triage && triage.level !== "biasa") {
+    const verdict = await conversation.reviewReply(message, reply);
+    console.log("");
+    console.log(
+      `--- pemeriksaan balasan: ${
+        verdict === null ? "GAGAL DIBACA" : verdict ? "aman" : "DITOLAK"
+      } ---`,
+    );
   }
 }

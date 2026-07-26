@@ -3,14 +3,27 @@ import { describe, it } from "node:test";
 import { resolveModel, selectTier } from "../src/ai/model-policy.js";
 
 describe("kebijakan pemilihan model", () => {
-  it("tidak pernah menghemat pada percakapan keselamatan", () => {
-    const tier = selectTier({
-      intent: "feeling",
-      messageLength: 12,
-      safetySensitive: true,
-    });
-
-    assert.equal(tier, "ambitious");
+  it("memakai tingkatan menengah untuk percakapan keselamatan", () => {
+    // Keputusan pemilik produk, 27 Juli 2026: di produksi tingkatan ini adalah
+    // GPT 5.6 Luna, dan itu dinilai cukup untuk percakapan yang berat.
+    // Sebelumnya keselamatan selalu naik ke tingkatan tertinggi.
+    assert.equal(
+      selectTier({ intent: "feeling", messageLength: 12, safetySensitive: true }),
+      "efficient",
+    );
+    assert.equal(
+      selectTier({ intent: "smalltalk", messageLength: 8, risk: "bahaya" }),
+      "efficient",
+    );
+    assert.equal(
+      selectTier({ intent: "smalltalk", messageLength: 8, risk: "dukungan" }),
+      "efficient",
+    );
+    // Risiko biasa tidak menaikkan apa pun.
+    assert.equal(
+      selectTier({ intent: "smalltalk", messageLength: 8, risk: "biasa" }),
+      "cheap",
+    );
   });
 
   it("memakai model termurah untuk mengurai tugas", () => {

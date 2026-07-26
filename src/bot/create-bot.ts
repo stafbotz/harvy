@@ -9,11 +9,17 @@ import type {
 import type { AppConfig } from "../config.js";
 import { HISTORY_WINDOW } from "../core/history-policy.js";
 import type { HistoryService } from "../core/history-service.js";
+import type { InsightService } from "../core/insight-service.js";
 import { isSensitiveMemory } from "../core/memory-policy.js";
 import type { MemoryService } from "../core/memory-service.js";
 import { ProfileService, shouldAskStyle } from "../core/profile-service.js";
+import { needsReplyReview } from "../core/safety-policy.js";
 import type { TaskService } from "../core/task-service.js";
-import { looksUrgent } from "../core/turn-taking-policy.js";
+import {
+  CALM_TRIAGE,
+  SAFE_FALLBACK_REPLY,
+  type RiskTriage,
+} from "../ai/safety.js";
 import type { MemoryItem } from "../domain/memory.js";
 import type { StudentTask } from "../domain/task.js";
 import {
@@ -97,6 +103,7 @@ export function createBot(
   memories: MemoryService,
   history: HistoryService,
   profiles: ProfileService,
+  insights: InsightService,
 ): HarvyBot {
   const bot = new Bot(config.telegramBotToken);
   const pending = new PendingStore();
@@ -286,10 +293,11 @@ export function createBot(
   ): Promise<void> {
     if (text) held.hold(ownerId, text);
 
-    // Bahaya segera dijawab lebih dulu, dan dijawab tanpa model. Teks tetap
-    // adalah satu-satunya jawaban yang mungkin di sini tanpa melanggar izin
-    // yang belum diberikan.
-    if (looksUrgent(text) && held.markSafetyShown(ownerId)) {
+    // Bahaya dijawab lebih dulu, dan penilaiannya memakai model. Konstitusi
+    // v0.3 Pasal 3.9 mengizinkan pemeriksaan ini berjalan sebelum persetujuan,
+    // khusus untuk keselamatan — dan naskah perkenalan mengatakannya apa adanya
+    // alih-alih mengaku belum membaca apa pun.
+    if (text && (await looksDangerous(text)) && held.markSafetyShown(ownerId)) {
       await ctx.reply(PRE_CONSENT_SAFETY);
     }
 
@@ -309,6 +317,22 @@ export function createBot(
         await bestEffortTyping(ctx);
         await sleep(bubblePauseMs(bubbles[index + 1] ?? ""));
       }
+    }
+  }
+
+  /**
+   * Pemeriksaan bahaya atas pesan yang belum disetujui pemrosesannya.
+   *
+   * Kegagalannya tidak boleh menghentikan perkenalan: yang hilang hanya
+   * kesempatan menjawab lebih dulu, dan itu lebih baik daripada pengguna baru
+   * yang tidak mendapat sapaan sama sekali.
+   */
+  async function looksDangerous(text: string): Promise<boolean> {
+    try {
+      return (await conversation.triageRisk(text))?.level === "bahaya";
+    } catch (error) {
+      console.error("Triase pra-persetujuan gagal:", error);
+      return false;
     }
   }
 
@@ -338,15 +362,31 @@ export function createBot(
 
     // Konteks disusun sebelum pesan ini ikut tercatat, supaya giliran yang
     // sedang ditangani tidak muncul dua kali di dalam promptnya sendiri.
-    const [context, profile] = await Promise.all([
+    const [context, profile, insight] = await Promise.all([
       contextFor(ownerId, text),
       profiles.load(ownerId),
+      insights.load(ownerId),
     ]);
 
     let understanding: Understanding | null;
+    let triage: RiskTriage;
 
     try {
-      understanding = await conversation.understand(text, context);
+      // Triase berjalan berbarengan dengan ekstraksi, bukan sesudahnya.
+      // Keduanya memakai model termurah, jadi giliran ini menunggu yang
+      // terlama dari dua — bukan jumlah keduanya.
+      const [read, risk] = await Promise.all([
+        conversation.understand(text, context),
+        conversation.triageRisk(text).catch((error: unknown) => {
+          console.error("Triase risiko gagal:", error);
+          return null;
+        }),
+      ]);
+      understanding = read;
+      // Triase yang gagal tidak boleh terlihat seperti percakapan yang
+      // baik-baik saja. Field lama dari ekstraksi tetap menjadi jaring
+      // terakhirnya di dalam `Conversation.reply`.
+      triage = risk ?? CALM_TRIAGE;
     } catch (error) {
       console.error("Pemahaman pesan gagal:", error);
       await ctx.reply(AI_FAILURE_MESSAGE);
@@ -361,7 +401,7 @@ export function createBot(
         return;
       }
 
-      const route = immediateUnderstandingRoute(understanding, text);
+      const route = immediateUnderstandingRoute(understanding);
 
       if (route.kind === "memory-control") {
         pending.clear(ownerId);
@@ -372,6 +412,8 @@ export function createBot(
       // Balasan disusun lebih dulu, termasuk untuk pesan yang berisi tugas.
       // Kalimat yang membawa perasaan sekaligus pekerjaan pernah dijawab hanya
       // dengan struk pencatatan, dan bagian perasaannya hilang tanpa jejak.
+      const raiseHelp = await insights.shouldRaiseHelp(ownerId, triage.level);
+
       let reply: string | null = null;
       try {
         reply = await conversation.reply(
@@ -379,7 +421,11 @@ export function createBot(
           understanding,
           context,
           profile.stylePreference,
+          triage,
+          insight,
+          raiseHelp,
         );
+        reply = await guardReply(text, reply, triage);
       } catch (error) {
         console.error("Balasan model gagal:", error);
         if (route.kind !== "save-task") {
@@ -390,9 +436,21 @@ export function createBot(
         // pembuka jauh lebih ringan daripada kehilangan pekerjaan pengguna.
       }
 
+      if (raiseHelp) await insights.markHelpSuggested(ownerId);
+
+      // Giliran berisiko dicatat seketika, bukan di latar: kalau proses
+      // berhenti, justru catatan inilah yang paling mahal kalau hilang.
+      await insights.record(
+        ownerId,
+        triage.level,
+        triage.summary,
+        reply ? reply.slice(0, 160) : "(balasan gagal disusun)",
+      );
+
       const remembered = await storeOrdinaryMemories(
         ownerId,
         understanding.memories,
+        triage.sensitive,
       );
 
       if (reply) {
@@ -436,6 +494,53 @@ export function createBot(
       // Model peringkas berjalan setelah balasan utama selesai. Tidak di-await:
       // kegagalan atau timeout-nya tidak boleh membuat pengguna menunggu.
       void history.compact(ownerId);
+      // Pemahaman tentang penggunanya menumpang jadwal yang sama. Ia dipakai
+      // pada giliran berikutnya, jadi tertinggal satu putaran tidak apa-apa.
+      void refreshInsight(ownerId);
+    }
+  }
+
+  /**
+   * Memeriksa rancangan balasan untuk giliran yang berisiko.
+   *
+   * Pemeriksaan yang gagal tidak membatalkan balasan. Menghukum pengguna karena
+   * pemeriksaan Harvy sendiri tidak berjalan akan membuat orang yang sedang
+   * berat menerima pesan baku, padahal balasannya mungkin baik-baik saja.
+   */
+  async function guardReply(
+    message: string,
+    reply: string,
+    triage: RiskTriage,
+  ): Promise<string> {
+    if (!needsReplyReview(triage.level)) return reply;
+
+    let verdict: boolean | null = null;
+    try {
+      verdict = await conversation.reviewReply(message, reply);
+    } catch (error) {
+      console.error("Pemeriksaan balasan gagal:", error);
+      return reply;
+    }
+
+    if (verdict === false) {
+      console.warn(
+        "Balasan ditolak pemeriksaan keselamatan; memakai balasan pengganti.",
+      );
+      return SAFE_FALLBACK_REPLY;
+    }
+    return reply;
+  }
+
+  async function refreshInsight(ownerId: string): Promise<void> {
+    try {
+      const conversationContext = await history.context(ownerId);
+      await insights.refresh(
+        ownerId,
+        conversationContext.summary,
+        conversationContext.turns,
+      );
+    } catch (error) {
+      console.warn("Pemahaman pengguna gagal disegarkan:", error);
     }
   }
 
@@ -510,12 +615,13 @@ export function createBot(
   async function storeOrdinaryMemories(
     ownerId: string,
     items: ExtractedMemory[],
+    sensitiveByModel = false,
   ): Promise<{ saved: MemoryItem[]; sensitive: ExtractedMemory | null }> {
     const saved: MemoryItem[] = [];
     let sensitive: ExtractedMemory | null = null;
 
     for (const item of items) {
-      if (isSensitiveMemory(item)) {
+      if (isSensitiveMemory(item, sensitiveByModel)) {
         sensitive ??= item;
         continue;
       }
@@ -805,6 +911,8 @@ export function createBot(
       case "memallyes": {
         const removed = await memories.forgetAll(ownerId);
         await history.forget(ownerId);
+        // Pasal 4 nomor 6: catatan tersembunyi ikut terhapus bersama sisanya.
+        await insights.forget(ownerId);
         // Persetujuan tidak ikut terhapus: kalau ikut, memakai hak melupakan
         // berarti dipaksa berkenalan ulang, dan Pasal 4 nomor 5 melarang
         // penarikan izin dipersulit.

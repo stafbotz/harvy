@@ -27,9 +27,14 @@ export function introBubbles(
   ];
 
   if (heldMessage) {
+    // Naskah ini pernah berbunyi "belum aku baca". Sejak pemeriksaan bahaya
+    // boleh berjalan sebelum persetujuan (Konstitusi v0.3 Pasal 3.9), kalimat
+    // itu tidak benar lagi — dan Pasal 5 nomor 6 melarang mengarang tindakan
+    // yang tidak dilakukan. Yang berubah bukan perilakunya, melainkan
+    // kejujurannya.
     consent.push(
       "",
-      "Pesanmu yang barusan aku tahan dulu, belum aku baca. Begitu kamu oke, langsung aku lanjut.",
+      "Pesanmu yang barusan cuma aku lihat sekilas dulu, buat mastiin kamu lagi nggak dalam bahaya. Selebihnya belum aku proses sampai kamu oke.",
     );
   }
 
@@ -60,6 +65,7 @@ export const CONSENT_DETAIL = [
   "Boleh. Ini apa adanya:",
   "",
   "• Isi pesanmu dikirim ke layanan AI di luar Harvy supaya bisa dipahami. Tanpa itu aku nggak bisa jalan sama sekali.",
+  "• Satu pengecualian, dan cuma satu: pesan pertamamu aku lihat sekilas sebelum kamu setuju, khusus buat ngecek kamu lagi dalam bahaya atau nggak. Kalau iya, aku nggak mau kamu nunggu tombol dulu.",
   "• Aku nyimpen sebagian obrolan kita dan beberapa catatan tentang kamu, biar kamu nggak perlu ngulang cerita. Yang sifatnya pribadi selalu aku tanya dulu sebelum disimpan.",
   "• Kapan aja kamu bisa nanya apa yang aku inget, dan nyuruh aku lupain — satu per satu atau semuanya sekalian.",
   "• Aku bukan terapis, dokter, atau layanan darurat. Kalau keadaannya berat atau bahaya, manusia yang harus kamu hubungi, bukan aku.",

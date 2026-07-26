@@ -1,6 +1,6 @@
 # Harvy — Keputusan Proyek dan Backlog
 
-Terakhir diperbarui: 26 Juli 2026.
+Terakhir diperbarui: 27 Juli 2026.
 
 ## Identitas dan produk
 
@@ -85,11 +85,12 @@ Daftar ini belum tervalidasi lewat wawancara; lihat Research Waitlist di bawah.
 
 ## Prinsip produk
 
-Seluruh prinsip produk tunduk pada [`CONSTITUTION.md`](CONSTITUTION.md) (Konstitusi Harvy v0.2).
+Seluruh prinsip produk tunduk pada [`CONSTITUTION.md`](CONSTITUTION.md) (Konstitusi Harvy v0.3).
 
 Harvy membantu tetapi tidak mengambil alih. Pengguna tetap menentukan keputusan,
 boleh melihat serta menghapus data, dan harus memberi izin sebelum Harvy
-melakukan tindakan proaktif. Harvy bukan terapis, psikolog, dokter, alat
+melakukan tindakan proaktif. Satu pengecualian disahkan pada v0.3 dan hanya
+satu: catatan keselamatan beserta pemeriksaan bahaya atas pesan pertama. Harvy bukan terapis, psikolog, dokter, alat
 diagnosis, atau pengganti bantuan darurat dan hubungan manusia.
 
 ## Now — Sprint 1
@@ -147,8 +148,9 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 - [x] Memasang pembungkus anti-injeksi, menyambungkan `remindAt` ke pembuatan
   tugas, dan menyalakan mode JSON penyedia. Ketiganya sudah ditulis tetapi tidak
   pernah tersambung.
-- [ ] Memindahkan penilaian keselamatan ke pemeriksaan tersendiri sebelum
-  klasifikasi, sesuai alur teknis di `ADR-003`. Sekarang urutannya terbalik.
+- [x] Memindahkan penilaian keselamatan ke pemeriksaan tersendiri, sesuai alur
+  teknis di `ADR-003`. Sejak 27 Juli 2026 ia berjalan paralel dengan
+  klasifikasi, bukan di dalamnya.
 - [x] Memberi tahu pengguna bahwa pesannya diproses penyedia model pihak ketiga,
   dan meminta persetujuannya. Dijamin Konstitusi Pasal 3.9. Masuk 26 Juli 2026
   bersama perkenalan kontak pertama; gerbangnya berada sebelum klasifikasi batas
@@ -167,21 +169,26 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 - [x] Memori terstruktur per pengguna yang dapat dilihat dan dihapus. Memori
   biasa disimpan otomatis disertai pemberitahuan, memori sensitif hanya dengan
   izin. Lihat `ADR-006`.
-- [ ] Pemeriksaan keselamatan sebagai lapisan tersendiri, bukan hanya penilaian
-  model. Termasuk penanganan pengguna di bawah 18 tahun.
+- [x] Pemeriksaan keselamatan sebagai lapisan tersendiri: triase risiko tiga
+  tingkat, arahan yang melarang menolak lalu menutup, dan pemeriksaan balasan
+  sebelum dikirim. Penanganan pengguna di bawah 18 tahun berjalan tanpa pernah
+  menanyakan umur — perlindungannya menyesuaikan isi percakapan.
+- [ ] Jalur prioritas untuk giliran berbahaya. Handler lengkapnya masih FIFO di
+  belakang balasan yang sedang berjalan.
 - [ ] Batas pemakaian dan pemantauan biaya per pengguna.
 
 ## Model AI
 
 Harvy memakai tiga tingkatan model yang dipilih menurut **kesulitan pekerjaan,
-bukan paket yang dibayar pengguna**. Percakapan keselamatan selalu memakai
-tingkatan tertinggi.
+bukan paket yang dibayar pengguna**. Percakapan keselamatan memakai tingkatan
+`efficient` — keputusan pemilik produk 27 Juli 2026, menggantikan aturan lama
+yang selalu menaikkannya ke tingkatan tertinggi.
 
 | Tingkatan | Rencana model | Dipakai untuk |
 |---|---|---|
 | `cheap` | DeepSeek V4 Flash | Mengurai tugas, klasifikasi, balasan rutin |
 | `efficient` | GPT 5.6 Luna | Percakapan sehari-hari, langkah kecil, penjelasan ringan |
-| `ambitious` | GPT 5.6 Terra | Tutoring bertahap, perencanaan panjang, keselamatan |
+| `ambitious` | GPT 5.6 Terra | Tutoring bertahap dan perencanaan panjang |
 
 Produksi memakai OpenRouter sebagai gerbang tunggal agar tagihan tidak tersebar.
 Selama pengembangan, `AI_MODE=testing` mengarahkan seluruh tingkatan ke satu

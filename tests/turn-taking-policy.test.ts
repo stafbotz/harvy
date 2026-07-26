@@ -32,13 +32,17 @@ describe("kebijakan giliran percakapan", () => {
     assert.equal(idleWindowMs(state, 4), 12_000);
   });
 
-  it("membedakan ketakutan samar dari bahaya segera", () => {
+  it("menghormati keputusan urgent dari model tanpa menundanya", () => {
     assert.equal(
       guardTurnBoundary("aku takutttt banget", "complete"),
       "open",
     );
+    // Pagar bahaya lokal dipindahkan ke triase risiko pada 27 Juli 2026 atas
+    // keputusan pemilik produk. Akibat yang diketahui: ketika model batas
+    // giliran gagal menyebut "urgent", bahaya tidak lagi memotong antrean di
+    // sini — ia baru tertangani setelah deadline fail-safe.
     assert.equal(
-      guardTurnBoundary("aku mau menyakiti diri sekarang", "open"),
+      guardTurnBoundary("aku mau menyakiti diri sekarang", "urgent"),
       "urgent",
     );
     assert.equal(idleWindowMs("urgent", 2), 0);
