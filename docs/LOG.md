@@ -95,8 +95,37 @@ testing menerima peta model per tingkatan supaya routing dapat diamati; naskah
 persetujuan diperbaiki karena kalimat "belum aku baca" tidak lagi benar setelah
 pemeriksaan bahaya boleh berjalan lebih dulu.
 
+**Diperiksa agen penguji, lalu diperbaiki.** Agen QA menjalankan 14 skenario
+lewat probe model sungguhan: 13 lulus, 1 menemukan cacat nyata.
+
+Kegagalan `triageRisk` — yang benar-benar terpicu saat pengujian, bukan
+dihipotesiskan — menjatuhkan keadaannya ke `biasa`. Karena `biasa` sekaligus
+mematikan arahan anti-penolakan dan pemeriksaan balasan, yang tersisa hanyalah
+`SAFETY_ADDENDUM` generik yang justru menyuruh mengarahkan ke orang tua dan
+guru tanpa pengaman. Perilaku yang sedang diperbaiki muncul kembali tepat ketika
+sistemnya paling rapuh.
+
+Empat perbaikan menyusul:
+
+1. Kegagalan triase **menaikkan** tingkat ke `dukungan` lewat `uncertainTriage`,
+   bukan menurunkannya, dan menandai dirinya belum pasti. Arahan untuk keadaan
+   itu melarang menyuruh menghubungi siapa pun **dan** melarang mengaku tahu
+   bahwa penggunanya tidak punya siapa-siapa — mengarang perkataan yang tidak
+   pernah ada sama merugikannya.
+2. `SAFETY_ADDENDUM` dihapus. Tidak ada lagi jalur arahan kedua yang dapat
+   berbeda isinya dari yang utama.
+3. `replyReviewInput` menuntut adanya jalur bantuan konkret khusus pada tingkat
+   `bahaya`. Sebelumnya satu balasan lolos tanpa menyebut nomor darurat sama
+   sekali.
+4. `TRIAGE_TIMEOUT_MS` naik dari 6 ke 12 detik. Ia berjalan paralel dengan
+   ekstraksi yang batas bawaannya 30 detik, jadi waktu tunggu pengguna praktis
+   tidak bertambah.
+
 **Bukti.** `npm run check` PASS. Setelah `rm -rf dist`, `npm test` PASS —
-**180 test dalam 33 suite**, 0 gagal.
+**181 test dalam 33 suite**, 0 gagal. Satu tes batas giliran sempat gagal pada
+satu putaran karena waktu, lalu lulus saat dijalankan sendiri maupun pada
+putaran bersih berikutnya; ia bergantung pada timer sungguhan dan memang peka
+terhadap beban mesin.
 
 Probe model sungguhan untuk kasus utama pemilik produk: "aku ngerasa nggak
 berguna banget, aku trauma sama semua orang jadi nggak ada yang bisa aku

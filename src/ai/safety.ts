@@ -81,6 +81,13 @@ export interface RiskTriage {
   alone: boolean;
   sensitive: boolean;
   summary: string;
+  /**
+   * `false` ketika triase tidak selesai dan tingkatnya ditebak dari sinyal
+   * lain. Arahan keselamatan berubah karenanya: Harvy tidak boleh berasumsi
+   * penggunanya punya orang yang aman, dan tidak boleh pula mengaku tahu bahwa
+   * ia tidak punya.
+   */
+  certain: boolean;
 }
 
 export const CALM_TRIAGE: RiskTriage = {
@@ -88,7 +95,27 @@ export const CALM_TRIAGE: RiskTriage = {
   alone: false,
   sensitive: false,
   summary: "",
+  certain: true,
 };
+
+/**
+ * Triase pengganti ketika pemeriksaannya sendiri gagal.
+ *
+ * Arahnya sengaja naik, bukan turun. Uji QA 27 Juli 2026 membuktikan
+ * `triageRisk` benar-benar dapat kehabisan waktu, dan ketika itu terjadi
+ * keadaan lama menjatuhkannya ke "biasa" — yang sekaligus mematikan arahan
+ * anti-penolakan dan pemeriksaan balasan. Dua jaring pengaman lumpuh bersamaan,
+ * tepat pada giliran yang paling tidak boleh salah.
+ */
+export function uncertainTriage(sensitive: boolean): RiskTriage {
+  return {
+    level: "dukungan",
+    alone: false,
+    sensitive,
+    summary: "(penilaian risiko tidak selesai)",
+    certain: false,
+  };
+}
 
 /**
  * Membaca hasil triase sebagai masukan yang tidak tepercaya.
@@ -112,6 +139,7 @@ export function parseRiskTriage(raw: string): RiskTriage | null {
       typeof record["ringkasan"] === "string"
         ? record["ringkasan"].slice(0, 300)
         : "",
+    certain: true,
   };
 }
 
@@ -144,8 +172,21 @@ export const REPLY_REVIEW_PROMPT = [
   "atau karena kamu akan menuliskannya dengan cara lain.",
 ].join("\n");
 
-export function replyReviewInput(message: string, reply: string): string {
+export function replyReviewInput(
+  message: string,
+  reply: string,
+  level: RiskLevel = "dukungan",
+): string {
   return [
+    ...(level === "bahaya"
+      ? [
+          "Pesan ini dinilai BAHAYA. Selain daftar di atas, tandai tidak aman",
+          "bila balasan tidak menyebut satu pun jalur bantuan konkret — nomor",
+          "darurat, saluran bantuan, atau orang tertentu yang dapat dihubungi",
+          "sekarang.",
+          "",
+        ]
+      : []),
     "Pesan pengguna:",
     "<pesan>",
     message,
@@ -208,6 +249,25 @@ export function safetyGuidance(triage: RiskTriage): string {
     "  sebagai alasan untuk berhenti membantu.",
     "- Tanggapi isinya. Sebut hal yang benar-benar ia tulis.",
   ];
+
+  if (!triage.certain) {
+    // Harvy tidak tahu apa-apa tentang keadaan orang ini selain bahwa ada yang
+    // berat. Berpura-pura tahu ke dua arah sama-sama merugikan: menyuruh
+    // menghubungi seseorang bisa memperberat, dan mengaku "kamu bilang tidak
+    // punya siapa-siapa" adalah mengarang perkataan yang tidak pernah ada.
+    lines.push(
+      "",
+      "Penilaian risikonya tidak selesai, jadi kamu tidak tahu apakah ia punya",
+      "orang yang aman untuk dihubungi.",
+      "",
+      "- Jangan menyuruhnya menghubungi orang tua, guru, atau siapa pun kecuali",
+      "  ia sendiri yang menyebut ada orang seperti itu.",
+      "- Jangan pula mengaku tahu bahwa ia tidak punya siapa-siapa. Ia belum",
+      "  mengatakannya.",
+      "- Tanggapi yang ia tulis, tetap tinggal, dan tanyakan keadaannya sekarang",
+      "  dengan pertanyaan yang mudah dijawab.",
+    );
+  }
 
   if (triage.alone) {
     lines.push(

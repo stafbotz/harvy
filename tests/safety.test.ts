@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   CALM_TRIAGE,
   parseInsightDraft,
+  uncertainTriage,
   parseReplyVerdict,
   parseRiskTriage,
   safetyGuidance,
@@ -33,6 +34,7 @@ describe("triase risiko", () => {
       alone: true,
       sensitive: true,
       summary: "ingin mengakhiri hidup",
+      certain: true,
     });
   });
 
@@ -77,6 +79,23 @@ describe("arahan keselamatan", () => {
     assert.match(guidance, /Jangan mengulang saran bercerita/i);
     assert.match(guidance, /tidak menuntut\s+kepercayaan lebih dulu/i);
     assert.match(guidance, /apa yang bisa ia lakukan sendirian/i);
+  });
+
+  it("menaikkan tingkat ketika triasenya sendiri gagal, bukan menurunkan", () => {
+    const fallback = uncertainTriage(true);
+
+    // Uji QA 27 Juli 2026 membuktikan triase benar-benar dapat kehabisan waktu.
+    // Keadaan lama menjatuhkannya ke "biasa", yang sekaligus mematikan arahan
+    // anti-penolakan dan pemeriksaan balasan — dua jaring pengaman lumpuh
+    // bersamaan, tepat pada giliran yang paling tidak boleh salah.
+    assert.equal(fallback.level, "dukungan");
+    assert.equal(needsReplyReview(fallback.level), true);
+
+    const guidance = safetyGuidance(fallback);
+    assert.match(guidance, /tidak boleh menolak membantu/i);
+    assert.match(guidance, /Jangan menyuruhnya menghubungi orang tua/i);
+    // Tidak boleh pula mengarang bahwa ia sudah bilang tidak punya siapa-siapa.
+    assert.match(guidance, /Ia belum\s+mengatakannya/i);
   });
 
   it("mengutamakan jam-jam terdekat ketika bahayanya dekat", () => {

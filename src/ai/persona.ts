@@ -789,14 +789,10 @@ export function summaryInput(
   return lines.join("\n");
 }
 
-export const SAFETY_ADDENDUM = [
-  "",
-  "PENTING: pesan ini menyinggung keselamatan.",
-  "",
-  "- Tetap tenang dan jangan panik. Jangan menceramahi.",
-  "- Utamakan mengarahkan ke bantuan manusia yang nyata dan terjangkau:",
-  "  orang tua, wali, guru, konselor sekolah, atau layanan darurat setempat.",
-  "- Jelaskan alasanmu mengarahkan, jangan memaksa atau menakut-nakuti.",
-  "- Jangan mendiagnosis dan jangan menjanjikan bisa menangani sendiri.",
-  "- Jangan memberi instruksi yang dapat memperbesar bahaya.",
-].join("\n");
+// `SAFETY_ADDENDUM` dihapus pada 27 Juli 2026. Ia adalah arahan keselamatan
+// generik yang dipakai ketika triase gagal, dan isinya menyuruh mengarahkan ke
+// orang tua, wali, atau guru tanpa pengaman apa pun — persis perilaku yang
+// sedang diperbaiki, muncul kembali tepat ketika sistemnya paling rapuh.
+// Penggantinya bukan prompt cadangan, melainkan `uncertainTriage` di
+// `ai/safety.ts`: kegagalan triase menaikkan tingkat risikonya, sehingga arahan
+// yang lengkap dan pemeriksaan balasan tetap berjalan.

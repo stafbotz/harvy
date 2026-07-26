@@ -18,6 +18,7 @@ import type { TaskService } from "../core/task-service.js";
 import {
   CALM_TRIAGE,
   SAFE_FALLBACK_REPLY,
+  uncertainTriage,
   type RiskTriage,
 } from "../ai/safety.js";
 import type { MemoryItem } from "../domain/memory.js";
@@ -384,9 +385,14 @@ export function createBot(
       ]);
       understanding = read;
       // Triase yang gagal tidak boleh terlihat seperti percakapan yang
-      // baik-baik saja. Field lama dari ekstraksi tetap menjadi jaring
-      // terakhirnya di dalam `Conversation.reply`.
-      triage = risk ?? CALM_TRIAGE;
+      // baik-baik saja. Ketika ekstraksi masih menandai keselamatan, tingkatnya
+      // dinaikkan — bukan diturunkan ke "biasa", yang dulu sekaligus mematikan
+      // arahan anti-penolakan dan pemeriksaan balasan.
+      triage =
+        risk ??
+        (read?.safetySensitive
+          ? uncertainTriage(true)
+          : CALM_TRIAGE);
     } catch (error) {
       console.error("Pemahaman pesan gagal:", error);
       await ctx.reply(AI_FAILURE_MESSAGE);
@@ -516,7 +522,7 @@ export function createBot(
 
     let verdict: boolean | null = null;
     try {
-      verdict = await conversation.reviewReply(message, reply);
+      verdict = await conversation.reviewReply(message, reply, triage.level);
     } catch (error) {
       console.error("Pemeriksaan balasan gagal:", error);
       return reply;

@@ -1,6 +1,7 @@
 import type { ConversationTurn } from "../domain/history.js";
 import type { UserInsight } from "../domain/insight.js";
 import type { StylePreference } from "../domain/profile.js";
+import type { RiskLevel } from "../core/safety-policy.js";
 import type { TurnBoundaryState } from "../core/turn-taking-policy.js";
 import type { AiClient, ChatMessage } from "./client.js";
 import { EMPTY_CONTEXT, type HarvyContext } from "./context.js";
@@ -14,7 +15,6 @@ import {
   dueDateInput,
   dueDatePrompt,
   replyPrompt,
-  SAFETY_ADDENDUM,
   summaryInput,
   SUMMARY_PROMPT,
   turnBoundaryInput,
@@ -79,7 +79,13 @@ export const TURN_BOUNDARY_TIMEOUT_MS = 2_000;
  * batas waktunya ketat. Yang dihasilkan hanya empat field pendek.
  */
 export const TRIAGE_MAX_TOKENS = 256;
-export const TRIAGE_TIMEOUT_MS = 6_000;
+/**
+ * Lebih lapang daripada batas giliran, karena arah kegagalannya jauh lebih
+ * mahal. Uji QA 27 Juli 2026 melihat batas 6 detik benar-benar terlampaui pada
+ * model uji gratis. Ini berjalan paralel dengan ekstraksi yang batas bawaannya
+ * 30 detik, jadi menaikkannya hampir tidak menambah waktu tunggu pengguna.
+ */
+export const TRIAGE_TIMEOUT_MS = 12_000;
 
 /** Pemeriksaan balasan hanya menghasilkan satu boolean dan satu alasan. */
 const REVIEW_MAX_TOKENS = 256;
@@ -246,7 +252,11 @@ export class Conversation {
    * memilih apa yang harus dilakukan; menganggapnya aman secara diam-diam akan
    * membuat kegagalan jaringan terlihat seperti lampu hijau.
    */
-  async reviewReply(message: string, reply: string): Promise<boolean | null> {
+  async reviewReply(
+    message: string,
+    reply: string,
+    level: RiskLevel = "dukungan",
+  ): Promise<boolean | null> {
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
@@ -255,7 +265,7 @@ export class Conversation {
       json: true,
       messages: [
         { role: "system", content: REPLY_REVIEW_PROMPT },
-        { role: "user", content: replyReviewInput(message, reply) },
+        { role: "user", content: replyReviewInput(message, reply, level) },
       ],
     });
 
@@ -307,12 +317,13 @@ export class Conversation {
       raiseHelp,
     });
 
-    // Triase adalah penilai utamanya. Field lama dari ekstraksi tetap dihormati
-    // supaya satu kegagalan triase tidak menghapus tanda bahaya sama sekali.
-    const guidance =
-      safetyGuidance(triage) ||
-      (understanding.safetySensitive ? SAFETY_ADDENDUM : "");
-    const system = `${base}${guidance}`;
+    // Satu jalur arahan saja. Dulu ada dua: `safetyGuidance` yang lengkap, dan
+    // `SAFETY_ADDENDUM` generik yang dipakai ketika triase gagal. Yang generik
+    // itu justru menyuruh mengarahkan ke orang tua dan guru tanpa pengaman
+    // apa pun — persis perilaku yang sedang diperbaiki, muncul kembali tepat
+    // ketika sistemnya paling rapuh. Kegagalan triase kini ditangani dengan
+    // menaikkan tingkat, bukan dengan prompt cadangan yang berbeda.
+    const system = `${base}${safetyGuidance(triage)}`;
 
     // Perintah kedalaman ikut di dalam giliran pengguna, bukan sebagai pesan
     // sistem tersendiri. Sebagai aturan di prompt sistem ia kalah oleh panduan
