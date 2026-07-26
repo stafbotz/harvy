@@ -1,6 +1,7 @@
 import type { ConversationTurn } from "../domain/history.js";
+import type { StylePreference } from "../domain/profile.js";
 import type { TurnBoundaryState } from "../core/turn-taking-policy.js";
-import type { AiClient } from "./client.js";
+import type { AiClient, ChatMessage } from "./client.js";
 import { EMPTY_CONTEXT, type HarvyContext } from "./context.js";
 import {
   resolveModel,
@@ -8,6 +9,7 @@ import {
   type ModelTier,
 } from "./model-policy.js";
 import {
+  depthDirective,
   dueDateInput,
   dueDatePrompt,
   replyPrompt,
@@ -169,10 +171,22 @@ export class Conversation {
     return decision;
   }
 
+  /**
+   * Menyusun balasan, dengan giliran terakhir sebagai pesan chat sungguhan.
+   *
+   * Sebelumnya seluruh riwayat diselipkan sebagai kutipan di dalam satu pesan
+   * sistem. Model membacanya sebagai catatan tentang percakapan, bukan sebagai
+   * percakapan yang sedang berjalan, dan balasannya terdengar seperti membalas
+   * surat: mengulang pembuka yang sama dan kehilangan ritme.
+   *
+   * Memori dan ringkasan tetap dibungkus `<konteks>`. Keduanya memang catatan,
+   * dan tidak ada bentuk chat yang wajar untuk mereka.
+   */
   async reply(
     message: string,
     understanding: Understanding,
     context: HarvyContext = EMPTY_CONTEXT,
+    style: StylePreference | null = null,
   ): Promise<string> {
     const tier = selectTier({
       intent: understanding.intent,
@@ -181,10 +195,23 @@ export class Conversation {
       safetySensitive: understanding.safetySensitive,
     });
 
-    const base = replyPrompt(understanding.intent, context);
+    const base = replyPrompt(understanding.intent, {
+      context,
+      style,
+      now: this.now(),
+      timeZone: this.timeZone,
+    });
     const system = understanding.safetySensitive
       ? `${base}${SAFETY_ADDENDUM}`
       : base;
+
+    // Perintah kedalaman ikut di dalam giliran pengguna, bukan sebagai pesan
+    // sistem tersendiri. Sebagai aturan di prompt sistem ia kalah oleh panduan
+    // intent yang menyuruh membalas singkat; sebagai pesan sistem kedua ia sama
+    // sekali tidak berpengaruh, karena penyedia yang hanya mengenal satu
+    // `system_instruction` menggabungkan atau membuangnya. Yang pasti terbaca
+    // model mana pun adalah giliran terakhir.
+    const depth = depthDirective(message);
 
     return this.client.complete({
       model: resolveModel(tier, this.routing),
@@ -192,7 +219,8 @@ export class Conversation {
       maxTokens: REPLY_MAX_TOKENS,
       messages: [
         { role: "system", content: system },
-        { role: "user", content: message },
+        ...recentTurnMessages(context.turns),
+        { role: "user", content: depth ? `${depth}\n\n${message}` : message },
       ],
     });
   }
@@ -217,6 +245,21 @@ export class Conversation {
       ],
     });
   }
+}
+
+/**
+ * Mengubah giliran tersimpan menjadi pesan chat.
+ *
+ * Giliran kosong dibuang: sebagian penyedia menolak pesan tanpa isi, dan satu
+ * giliran rusak tidak boleh menggagalkan seluruh balasan.
+ */
+function recentTurnMessages(turns: ConversationTurn[]): ChatMessage[] {
+  return turns
+    .filter((turn) => turn.text.trim().length > 0)
+    .map((turn): ChatMessage => ({
+      role: turn.role === "user" ? "user" : "assistant",
+      content: turn.text,
+    }));
 }
 
 export function parseWaitDecision(raw: string): boolean | null {

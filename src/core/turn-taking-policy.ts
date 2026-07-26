@@ -109,7 +109,14 @@ function looksOpen(bubbles: string[], last: string): boolean {
   );
 }
 
-function looksUrgent(text: string): boolean {
+/**
+ * Bahaya segera yang dapat dikenali tanpa jaringan.
+ *
+ * Dipakai dua kali: memotong penantian batas giliran, dan menjawab pesan
+ * pertama yang berbahaya sebelum pengguna sempat menyetujui pengiriman isinya ke
+ * penyedia model. Yang kedua hanya mungkin justru karena pemeriksaan ini lokal.
+ */
+export function looksUrgent(text: string): boolean {
   const normalized = normalize(text.replaceAll("\n", " "));
   return (
     /\b(?:mau|ingin|pengen|akan)\s+(?:bunuh diri|mati|nyakitin diri|menyakiti diri)\b/iu.test(

@@ -29,20 +29,16 @@ const KIND_LABEL: Record<MemoryKind, string> = {
  * sehari-hari dan tindakan dijalankan lewat tombol, bukan kode.
  */
 export const HELP_MESSAGE = [
-  "Tulis saja tugasmu seperti biasa, aku yang rapikan.",
+  "Tulis aja tugasmu seperti biasa, aku yang rapikan.",
   "",
   "Contoh:",
   "• besok jam 7 malam kumpulin matematika halaman 20",
   "• senin ada ulangan biologi, penting banget",
   "• bawa buku sejarah",
   "",
-  "Setelah tercatat, tinggal pakai tombol untuk menandai selesai, memasang",
-  "pengingat, atau membatalkan. Kamu yang menentukan, aku hanya membantu.",
+  "Setelah tercatat, tinggal pakai tombol buat nandain selesai, masang pengingat, atau ngebatalin. Kamu yang nentuin, aku cuma bantu.",
   "",
-  "Aku juga mengingat beberapa hal supaya kamu tidak perlu mengulang diri:",
-  "kelasmu, cara belajar yang cocok, apa yang sedang kamu hadapi. Untuk hal",
-  "pribadi aku selalu bertanya dulu. Tanya saja “apa yang kamu ingat tentang",
-  "aku”, dan kamu bisa menyuruhku melupakan apa pun kapan saja.",
+  "Aku juga nyimpen beberapa hal biar kamu nggak perlu ngulang cerita: kelasmu, cara belajar yang cocok, apa yang lagi kamu hadapi. Buat hal pribadi aku selalu nanya dulu. Tanya aja “apa yang kamu ingat tentang aku”, dan kamu bisa nyuruh aku lupain apa pun kapan aja.",
   "",
   "/tugas — lihat semua tugasmu",
   "/bantuan — tampilkan pesan ini",
@@ -134,10 +130,7 @@ export function reminderActions(task: StudentTask): InlineKeyboard {
 export function understandingNote(task: StudentTask): string {
   if (task.dueAt || task.reminderAt) return "";
 
-  return [
-    "",
-    "Aku belum menangkap kapan tenggatnya. Kalau ada, tekan Ubah tenggat.",
-  ].join("\n");
+  return "\nAku belum nangkep kapan tenggatnya. Kalau ada, tekan Ubah tenggat.";
 }
 
 function shorten(title: string, limit = 28): string {
@@ -150,15 +143,82 @@ function shorten(title: string, limit = 28): string {
  * Pasal 4 nomor 2 meminta pengguna tahu sebelum sesuatu yang baru disimpan.
  * Untuk memori biasa, Harvy tidak meminta izin — tetapi ia tetap harus
  * mengatakannya, dan jalan keluarnya harus ada di pesan yang sama.
+ *
+ * Dulu ini bubble tersendiri dengan tombol Oke dan Lupakan. Bentuk itu memenuhi
+ * Pasal 4 nomor 2 tetapi memotong percakapan: di tengah cerita, sebuah pop-up
+ * muncul dan meminta ditutup. Sekarang ia menjadi satu baris tipis di ujung
+ * balasan yang sama. Yang diwajibkan Pasal 4 tetap ada — pengguna diberi tahu,
+ * dan jalan keluarnya berada di pesan yang sama — tanpa menyuruhnya menutup
+ * apa pun untuk melanjutkan.
  */
-export function memorySavedNote(item: MemoryItem): string {
-  return `📎 Aku ingat ini: ${item.content}`;
+export const MEMORY_NOTE_PREFIX = "📎";
+
+export function memoryNoteLines(items: MemoryItem[]): string {
+  return items
+    .map((item) => `${MEMORY_NOTE_PREFIX} aku inget ini: ${item.content}`)
+    .join("\n");
 }
 
-export function memorySavedActions(item: MemoryItem): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("Oke", `memack:${item.id}`)
-    .text("Lupakan", `memforget:${item.id}`);
+/** Menempelkan catatan ke bubble terakhir sebuah balasan. */
+export function withMemoryNotes(bubble: string, items: MemoryItem[]): string {
+  if (items.length === 0) return bubble;
+  return [bubble.trimEnd(), "", memoryNoteLines(items)].join("\n");
+}
+
+export function memoryNoteActions(items: MemoryItem[]): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  if (items.length === 1 && items[0]) {
+    return keyboard.text("Lupakan itu", `memdrop:${items[0].id}`);
+  }
+
+  for (const item of items) {
+    keyboard.text(`Lupakan: ${shorten(item.content)}`, `memdrop:${item.id}`).row();
+  }
+
+  return keyboard;
+}
+
+/**
+ * Membuang satu baris catatan dari balasan yang sudah terkirim.
+ *
+ * Balasan itu pesan sungguhan, jadi ia tidak boleh dihapus atau ditimpa daftar
+ * memori hanya karena tombolnya ditekan. Yang hilang cukup barisnya, supaya
+ * chat tidak menyisakan pernyataan "aku inget ini" tentang sesuatu yang sudah
+ * dilupakan.
+ */
+export function withoutMemoryNote(
+  text: string,
+  content: string | null,
+): string {
+  const kept = content
+    ? text
+        .split("\n")
+        .filter(
+          (line) =>
+            !(line.startsWith(MEMORY_NOTE_PREFIX) && line.includes(content)),
+        )
+    : text.split("\n");
+
+  const cleaned = kept.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd();
+  const note = "🗑 Oke, itu aku lupain.";
+
+  return cleaned ? `${cleaned}\n\n${note}` : note;
+}
+
+/**
+ * Jeda kecil sebelum bubble lanjutan dikirim.
+ *
+ * Tiga bubble yang tiba pada milidetik yang sama terbaca seperti notifikasi
+ * beruntun, bukan seperti orang yang sedang mengetik. Jeda ini untuk
+ * keterbacaan, bukan untuk memperpanjang percakapan — Pasal 3.12 melarang yang
+ * kedua — karena itu ia pendek dan berplafon.
+ */
+export const MAX_BUBBLE_PAUSE_MS = 1_200;
+
+export function bubblePauseMs(text: string): number {
+  const estimate = Math.round(text.trim().length * 18);
+  return Math.min(Math.max(estimate, 300), MAX_BUBBLE_PAUSE_MS);
 }
 
 /** Persetujuan sebelum hal sensitif disimpan. Pasal 4 nomor 3. */
@@ -171,19 +231,18 @@ export function memoryConsentActions(): InlineKeyboard {
 export function formatMemories(items: MemoryItem[]): string {
   if (items.length === 0) {
     return [
-      "Sejauh ini aku belum mengingat apa pun tentang kamu.",
+      "Sejauh ini aku belum nyimpen apa pun tentang kamu.",
       "",
-      "Kalau nanti ada yang kusimpan, aku selalu bilang, dan kamu bisa",
-      "menyuruhku melupakannya kapan saja.",
+      "Kalau nanti ada yang kusimpan, aku selalu bilang, dan kamu bisa nyuruh aku lupain kapan aja.",
     ].join("\n");
   }
 
   return [
-    "Ini yang aku ingat tentang kamu:",
+    "Ini yang aku inget tentang kamu:",
     "",
-    ...items.map((item) => `• ${item.content}\n  ${KIND_LABEL[item.kind]}`),
+    ...items.map((item) => `• ${item.content} — ${KIND_LABEL[item.kind]}`),
     "",
-    "Tekan tombolnya kalau ada yang mau aku lupakan.",
+    "Tekan tombolnya kalau ada yang mau aku lupain.",
   ].join("\n");
 }
 

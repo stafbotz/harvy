@@ -28,6 +28,259 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 27 Juli 2026 — Sepuluh cacat dari transkrip Telegram pertama
+
+**Kenapa.** Pemilik produk menjalankan alur kenalan yang baru di Telegram dan
+melaporkan hasilnya: Harvy "ga enak diajak chattan, jutek, ga proaktif, ga kayak
+temen", tidak memahami, dan berhalusinasi. Transkripnya diserahkan utuh.
+
+**Yang ditemukan.** Sepuluh cacat, dua di antaranya serius.
+
+1. **Orientasi seksual tersimpan otomatis tanpa izin.** Catatan "menyukai
+   seseorang berjenis kelamin pria" lolos dari pagar sensitif: `\bjenis kelamin\b`
+   tidak cocok dengan "berjenis kelamin", dan "pria" tidak ada di daftar
+   kata-katanya. Pelanggaran Pasal 4 nomor 3, dan bentuk kedua dari cacat yang
+   sama persis pada 26 Juli.
+2. **Kalimat "iya kan aku udah tulis di situ kamu pahami aja" membuka seluruh
+   daftar memori** berikut tombol "Lupakan semua tentang aku" — yang lalu
+   benar-benar ditekan, dan seluruh riwayat pengguna hilang. Sebuah salah baca
+   berjarak satu ketukan dari penghapusan permanen.
+3. Balasan terdengar jutek: "Aku jalan pakai sistem dari Google. Gitu aja sih."
+   Aturan anti-pola yang ditulis sehari sebelumnya terlalu keras.
+4. Curhat sembilan paragraf — kebingungan hidup, ITB, pemrograman, pertemanan,
+   hobi — dijawab satu kalimat.
+5. Harvy tidak tahu jam berapa sekarang. Pada pukul 23.02 ia menyuruh "rebahan
+   dulu" lalu mengajak "ngobrol sambil nunggu malam".
+6. Pesan pertama seseorang dijawab "Ada yang mau dibahas lagi?".
+7. "eh buat pengingat dong" tersimpan sebagai tugas berjudul "Membuat pengingat"
+   tanpa tenggat, padahal Harvy sendiri sedang menanyakan isinya.
+8. Tombol "Aku mau tanya dulu" tetap hidup setelah ditekan; penjelasan
+   persetujuan terkirim dua kali.
+9. Naskah statis terpenggal di tengah kalimat — baris sudah dipatahkan di kode
+   lalu dibungkus sekali lagi oleh Telegram.
+10. Catatan memori memanggil pemiliknya "Pengguna" di layarnya sendiri.
+
+Pertanyaan gaya juga muncul tepat setelah pesan pembuka "p".
+
+**Yang berubah.**
+
+- `memory-policy.ts`: pola sensitif diperluas ke ketertarikan romantis, crush,
+  identitas gender, dan orientasi, tanpa bergantung pada satu susunan kalimat.
+- `understanding-route.ts`: dua pagar baru yang memeriksa teks asli, bukan hanya
+  JSON model. `looksLikeMemoryRequest` menuntut pesannya memang menyinggung
+  ingatan sebelum daftar memori boleh terbuka; `isVagueTaskTitle` menolak judul
+  yang hanya menyebut tindakan mencatat.
+- `persona.ts`: aturan gaya diseimbangkan — larangan balasan datar yang menutup
+  obrolan, panjang mengikuti apa yang dibawa pengguna, larangan menyuruh
+  pengguna mengulang yang sudah ditulis. Panduan `feeling` kini membedakan
+  keluhan sehari-hari dari cerita yang benar-benar berat. `replyPrompt` menerima
+  jam dan zona waktu, dan menegaskan jam itu tidak disebut ketika pengguna sudah
+  menyatakan keadaannya sendiri. Prompt pemahaman melarang kata "Pengguna" di
+  isi memori dan mewajibkan ketertarikan romantis berjenis `personal`.
+- `depthDirective` baru: pesan di atas 400 karakter dipecah menjadi kerangka isi
+  pesannya sendiri, lalu ditempelkan **di dalam giliran pengguna**. Tiga
+  penempatan lain dicoba lebih dulu dan semuanya gagal; sebagai pesan sistem
+  kedua ia hilang sama sekali pada penyedia yang hanya mengenal satu
+  `system_instruction`.
+- Seluruh naskah statis ditulis ulang sebagai paragraf utuh tanpa penggalan
+  baris. `tests/copywriting.test.ts` baru menjaganya untuk 25 layar sekaligus,
+  sekaligus melarang kata "Pengguna".
+- Tombol "Aku mau tanya dulu" mematikan papan tombol lamanya sebelum mengirim
+  penjelasan. Pertanyaan gaya baru muncul setelah riwayat mencapai enam giliran.
+- `scripts/coba-balasan.ts` menerima `--riwayat=berkas.json` supaya pengulangan
+  lintas giliran dapat diuji dengan riwayat sungguhan.
+
+**Bukti.** `npm run check` PASS. Setelah `rm -rf dist`, `npm test` PASS —
+**157 test dalam 26 suite**, 0 gagal.
+
+Agent penguji terpisah menjalankan dua belas skenario dari transkrip lewat probe
+model sungguhan. Delapan lulus, termasuk ketiga pagar klasifikasi dan seluruh
+keluhan nada. Tiga yang dilaporkan lemah diperbaiki lalu diprobe ulang: keluhan
+ringan kini dijawab ringan, pembuka tidak lagi mengulang "Wah" pada giliran
+berikutnya, dan jam sistem tidak lagi disandingkan dengan keadaan yang disebut
+pengguna.
+
+Yang **tidak** selesai: pesan panjang yang dibuka satu kalimat pengarah
+("bahas ini kocak: …") tetap dijawab hanya tentang kalimat pembuka itu. Lima
+variasi prompt dicoba. Isi yang sama tanpa kalimat pengarah dijawab penuh, jadi
+penyebabnya bukan panjangnya. Ini tampak sebagai batas model kecil, dan
+`AI_MODE=testing` memakai satu model kecil untuk semua tingkatan sehingga tidak
+dapat dibedakan dari sini.
+
+Yang **tidak** diuji: seluruh perbaikan ini belum dijalankan ulang lewat
+Telegram. Sepuluh langkah uji manual baru ditambahkan di
+`docs/engineering/TESTING.md` nomor 44–54 dan semuanya masih NOT RUN.
+
+## 26 Juli 2026 — Rasa percakapan dan onboarding dikerjakan
+
+**Kenapa.** Pemilik produk menyetujui empat keputusan pada entri di bawah,
+memilih naskah perkenalan yang diusulkan, dan meminta keduanya dikerjakan
+sekaligus dengan catatan agar gaya bahasanya natural.
+
+**Yang berubah.**
+
+*Rasa percakapan.*
+
+- `Conversation.reply` kini mengirim giliran terakhir sebagai pesan chat
+  sungguhan (`role` user/assistant), bukan kutipan di dalam pesan sistem.
+  Memori dan ringkasan tetap dibungkus `<konteks>`. `RECENT_TURNS_NOTE` di
+  `persona.ts` menggantikan pembungkus yang hilang: ia menegaskan giliran lama
+  tetap perkataan pengguna dan aturan Harvy hanya yang ada di pesan sistem.
+  Langkah `understand` tidak berubah.
+- `IDENTITY` mendapat aturan menulis seperti orang mengetik di chat dan daftar
+  pola yang membuatnya terdengar seperti mesin: mengulang pembuka, menyebut nama
+  di setiap pesan, selalu menutup dengan pertanyaan, merangkum ulang pengguna,
+  menawarkan solusi sebelum diminta.
+- Kalimat yang berisi perasaan sekaligus tugas tidak lagi dijawab hanya dengan
+  kartu. `handleFreeText` menyusun balasan lebih dulu untuk semua intent, lalu
+  kartu tugas menyusul tanpa kalimat pembuka kedua. Bila panggilan balasan
+  gagal, tugasnya tetap dicatat memakai kalimat dari kode.
+- `bot/phrasing.ts` baru: setiap kalimat tetap Harvy punya beberapa bentuk,
+  dipilih lewat fungsi acak yang boleh diberikan dari luar supaya dapat diuji.
+- Pemberitahuan memori menjadi satu baris `📎` di ujung bubble terakhir berikut
+  tombol Lupakan, menggantikan bubble tersendiri bertombol Oke/Lupakan.
+  Tombolnya memakai callback `memdrop:` yang hanya membuang barisnya lewat
+  `withoutMemoryNote`; `memforget:` yang menimpa seluruh pesan tetap dipakai
+  pada daftar memori. Akibat langsungnya, `src/bot/ephemeral-message-store.ts`
+  beserta tesnya dihapus — tidak ada lagi bubble sementara yang perlu dilacak
+  dan dihapus.
+- Bubble lanjutan didahului indikator mengetik dan jeda 0,3–1,2 detik
+  (`bubblePauseMs`), untuk keterbacaan dan bukan untuk memperpanjang percakapan.
+
+*Kenalan dan persetujuan.*
+
+- `domain/profile.ts`, `storage/file-profile-repository.ts`, dan
+  `core/profile-service.ts` baru. Isinya sesedikit mungkin: `consentVersion`,
+  `onboardedAt`, `stylePreference`, `styleAskedAt`. Nama panggilan sengaja tidak
+  disimpan — Telegram sudah mengirimkannya, dan nama yang dikoreksi pengguna
+  sudah menjadi memori jenis `profile`.
+- Gerbang persetujuan dipasang di handler `message:text` **sebelum**
+  `MessageBatcher.enqueue`. Ini bukan pilihan gaya: batcher memanggil
+  `classifyTurnBoundary`, dan panggilan itu sudah mengirim teks pengguna ke
+  penyedia. Statusnya dibaca sekali per pengguna lewat satu promise yang dipakai
+  ulang, sehingga bubble beruntun tidak membaca berkas berkali-kali dan tidak
+  masuk batcher terbalik.
+- `bot/onboarding.ts` memuat naskah dua bubble, penjelasan panjang untuk yang
+  menekan "Aku mau tanya dulu", sapaan pengguna lama, pertanyaan gaya, dan
+  `HeldMessageStore`. Pesan yang telanjur dikirim ditahan di memori proses saja,
+  tidak pernah ke berkas, karena isinya belum disetujui untuk diproses.
+- Pesan pertama yang lolos `looksUrgent` dijawab arahan keselamatan tetap tanpa
+  memanggil model sama sekali. `looksUrgent` kini diekspor dari
+  `turn-taking-policy.ts` untuk dipakai ulang di sini.
+- `/start` menjadi salah satu pintu masuk perkenalan, bukan syaratnya. Pengguna
+  lama disapa dari jumlah tugas aktifnya, bukan dari ingatan yang dikarang.
+- Pertanyaan gaya menemani diajukan sekali setelah percakapan pertama, hanya
+  bila tidak ada pertanyaan lain yang sedang menunggu jawaban. Hasilnya masuk ke
+  prompt balasan.
+- "Lupakan semua tentang aku" kini juga menghapus preferensi gaya, tetapi
+  mempertahankan catatan persetujuan.
+- `scripts/coba-balasan.ts` baru. Sampai sekarang tidak ada cara memeriksa
+  bagaimana Harvy *terdengar* tanpa membuka Telegram, padahal gaya bicara justru
+  yang paling sering disetel.
+
+**Bukti.** `npm run check` PASS. Setelah `rm -rf dist`, `npm test` PASS —
+**147 test dalam 25 suite**, 0 gagal. Angka itu sudah memperhitungkan enam tes
+`EphemeralMessageStore` yang ikut dihapus.
+
+Probe model sungguhan lewat `scripts/coba-balasan.ts` pada Gemini 3.5
+Flash-Lite, lima kalimat: curhat dua bubble, lanjutan dengan riwayat contoh,
+kalimat tugas bertenggat, permintaan pengingat, dan kebingungan memulai dengan
+gaya `advice`. Semuanya menghasilkan satu sampai dua bubble pendek, tanpa
+menyebut nama pengguna, tanpa merangkum ulang, dan tanpa mengulang pembuka
+giliran sebelumnya. Permintaan pengingat dijawab "Sip, nanti aku ingetin jam 8
+ya" lebih dulu — persis perilaku yang dulu hilang di balik struk pencatatan.
+
+Yang **tidak** diuji: seluruh alur perkenalan pada Telegram, penahanan pesan
+pertama, arahan keselamatan pra-persetujuan, pertanyaan gaya, catatan memori
+yang menempel, serta jeda antar bubble. Tidak satu pun pernah berjalan di
+Telegram. Ketahanan riwayat berperan `user` terhadap injeksi juga belum diuji:
+tesnya hanya membuktikan penegasannya ada di prompt, bukan bahwa model
+menaatinya. Model produksi belum dipakai.
+
+**Sengaja ditinggalkan.** Menarik persetujuan dari dalam chat belum ada;
+sekarang satu-satunya cara berhenti adalah berhenti memakai Harvy. Tombol
+adaptif yang disusun AI tetap belum dikerjakan, dan lapisan keselamatan mandiri
+tetap kandidat berikutnya menurut risiko.
+
+## 26 Juli 2026 — Rasa percakapan dan onboarding: empat keputusan diambil
+
+**Dibahas.** Lanjutan dua entri sebelumnya tentang UX kenalan dan rasa
+percakapan. Sesi ini tidak mengulang usulannya, melainkan menelusuri penyebabnya
+di kode lalu menutup pertanyaan yang menggantung.
+
+Penyebab rasa "mengisi formulir" ditemukan di empat tempat:
+
+1. `create-bot.ts:259` — ketika intent `task` + `taskAction: save`, alur langsung
+   `saveTask()` lalu `return`, sehingga `conversation.reply()` tidak pernah
+   dipanggil. Kalimat yang membawa perasaan sekaligus tugas dijawab hanya dengan
+   struk pencatatan. Ini penyebab terbesar karena mengenai jalur yang paling
+   sering dipakai.
+2. Kalimat Harvy sendiri hardcoded dan identik setiap kali: "Sudah aku catat.",
+   "Oke, nggak aku catat.", "Selesai ✓", "Semua beres. Nikmati waktumu 🌿".
+3. `conversation.ts:189` hanya mengirim `system` + pesan terakhir; enam giliran
+   terakhir diselipkan sebagai teks di dalam `<konteks>`, sehingga model membaca
+   percakapan sebagai arsip, bukan obrolan berjalan.
+4. Tidak ada instruksi apa pun di `persona.ts` yang meminta balasan ditulis
+   sebagai beberapa paragraf pendek, sehingga `splitReplyBubbles` praktis selalu
+   menghasilkan satu bubble. Indikator mengetik juga hanya dikirim sekali di awal
+   giliran, bukan di antara bubble.
+
+**Yang diputuskan.** Empat keputusan pemilik produk:
+
+1. **Riwayat memakai bentuk hybrid.** Enam giliran terakhir dikirim sebagai
+   pesan chat asli (`role` user/assistant), sedangkan memori dan ringkasan tetap
+   dibungkus `<konteks>`. Ini menggeser invarian anti-injeksi di `AGENTS.md`,
+   jadi penegasan barunya harus ditulis bersama perubahan kodenya, bukan
+   sesudahnya.
+2. **Jalur pencatatan tugas membalas lebih dulu.** Harvy menanggapi isi pesannya
+   sebagai teman bicara, kartu tugas dan tombolnya menyusul di bubble kedua.
+   Konsekuensinya satu panggilan model tambahan pada jalur `task`.
+3. **Pemberitahuan memori digabung ke bubble terakhir** sebagai satu baris tipis
+   berikut tombol Lupakan, menggantikan bubble terpisah bertombol Oke/Lupakan.
+   Pasal 4 nomor 2 mewajibkan pemberitahuan dan jalan keluar di pesan yang sama,
+   bukan bubble tersendiri.
+4. **Preferensi gaya ngobrol ditanyakan setelah interaksi pertama**, bukan saat
+   onboarding. Onboarding cukup perkenalan dan persetujuan.
+
+**Temuan teknis untuk onboarding.** Dua pertanyaan lama tertutup oleh kode:
+
+- Gerbang persetujuan harus dipasang di `create-bot.ts:169`, **sebelum**
+  `messageBatcher.enqueue`. Batcher memanggil `classifyTurnBoundary`, dan itu
+  sudah mengirim teks pengguna ke penyedia model; gerbang di dalam
+  `handleFreeText` berarti persetujuannya sudah bocor sebelum ditanyakan.
+- Pesan pertama yang menunjukkan bahaya segera dapat dikenali tanpa jaringan
+  lewat `looksUrgent()` di `turn-taking-policy.ts:112`, sehingga respons
+  keselamatan dan arahan ke bantuan manusia bisa diberikan tanpa mengirim apa pun
+  ke pihak ketiga. Onboarding menyusul sesudahnya.
+
+Keputusan pendukung: status onboarding disimpan lewat port baru
+`domain/profile.ts` dan `storage/file-profile-repository.ts` dengan pola yang
+sama seperti tiga repository lain, berisi `onboardedAt`, `consentVersion`,
+`nickname`, dan `stylePreference`. Pesan pertama yang ditahan tidak ditulis ke
+berkas — cukup di memori proses seperti `PendingStore` — karena isinya kata-kata
+yang belum disetujui untuk diproses. "Lupakan semua" menghapus `nickname` dan
+`stylePreference`, tetapi mempertahankan `onboardedAt` dan `consentVersion`; jika
+ikut terhapus, penghapusan data berubah menjadi onboarding ulang dan itu
+mempersulit penarikan izin yang dilarang Pasal 4 nomor 5. Nama panggilan tidak
+ditanyakan di depan karena Telegram sudah memberi `from.first_name`.
+
+Draf naskah perkenalan disusun: dua bubble, satu baris tombol
+`[Oke, mulai] [Aku mau tanya dulu]`. Bubble pertama menyebut nama Harvy dan
+mengajak membawa apa saja — cerita berantakan, pertanyaan, tugas, rencana, atau
+hal yang belum tahu harus dimulai dari mana. Bubble kedua menyampaikan bahwa
+Harvy berjalan dengan AI, isinya dikirim ke layanan di luar Harvy, dan Harvy
+dapat salah. Bila pesan pertama sudah telanjur dikirim, ditambahkan satu kalimat
+bahwa pesan itu ditahan dan belum dibaca. Frasa "AI pendamping", daftar fitur,
+dan `HELP_MESSAGE` tidak muncul di sini. Pesan tambahan sebelum tombol ditekan
+dikumpulkan diam-diam dan hanya diingatkan sekali.
+
+**Belum diputuskan.** Persetujuan akhir atas naskah di atas, angka awal serta
+pemicu kenaikan `consentVersion`, dan urutan pengerjaan terhadap lapisan
+keselamatan yang pada sesi sebelumnya dinilai kandidat pertama menurut risiko.
+
+Yang **tidak** dilakukan: tidak ada kode, konfigurasi, status kemampuan, tes,
+atau proses bot yang diubah. Perubahan hanya pada berkas ini.
+
 ## 26 Juli 2026 — Seluruh perubahan dipusatkan di `main`
 
 **Kenapa.** Pemilik produk meminta seluruh perubahan proyek dikirim ke

@@ -4,10 +4,12 @@ import { createBot } from "./bot/create-bot.js";
 import { loadConfig } from "./config.js";
 import { HistoryService } from "./core/history-service.js";
 import { MemoryService } from "./core/memory-service.js";
+import { ProfileService } from "./core/profile-service.js";
 import { TaskService } from "./core/task-service.js";
 import { startReminderWorker } from "./reminders/reminder-worker.js";
 import { FileHistoryRepository } from "./storage/file-history-repository.js";
 import { FileMemoryRepository } from "./storage/file-memory-repository.js";
+import { FileProfileRepository } from "./storage/file-profile-repository.js";
 import { FileTaskRepository } from "./storage/file-task-repository.js";
 
 const config = loadConfig();
@@ -30,7 +32,13 @@ const history = new HistoryService(
   (previousSummary, turns) => conversation.summarize(previousSummary, turns),
 );
 
-const bot = createBot(config, tasks, conversation, memories, history);
+// Status kenalan sengaja terpisah dari memori dan riwayat: menghapus ingatan
+// adalah hak pengguna, dan hak itu tidak boleh berubah menjadi perkenalan ulang.
+const profiles = new ProfileService(
+  new FileProfileRepository(config.profileFile),
+);
+
+const bot = createBot(config, tasks, conversation, memories, history, profiles);
 const stopReminders = startReminderWorker(bot, tasks, config);
 const SHUTDOWN_GRACE_MS = 60_000;
 

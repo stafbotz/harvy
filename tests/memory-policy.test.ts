@@ -44,6 +44,39 @@ describe("kebijakan memori", () => {
     );
   });
 
+  it("menahan ketertarikan romantis sejauh apa pun jarak katanya", () => {
+    // Kalimat persis ini tersimpan otomatis pada 26 Juli 2026, hanya karena
+    // "berjenis kelamin" tidak cocok dengan `\\bjenis kelamin\\b` dan "pria"
+    // tidak ada di daftar. Yang bocor adalah orientasi seksual seseorang.
+    for (const content of [
+      "Pengguna menyukai seseorang berjenis kelamin pria yang dikenal dari game Mobile Legends.",
+      "Menyukai seorang cowok yang dikenal lewat game online.",
+      "Punya crush yang jarang aktif karena sekolah asrama.",
+      "Merasa dirinya cukup feminin.",
+      "Sedang PDKT sama teman sekelas.",
+    ]) {
+      assert.equal(
+        isSensitiveMemory({ kind: "context", content }),
+        true,
+        content,
+      );
+    }
+
+    // Tetap tidak boleh menarik kalimat biasa ke jalur izin.
+    for (const content of [
+      "Kelas 11 IPA di SMAN 3 Bandung.",
+      "Suka menulis untuk melepas pikiran.",
+      "Suka roti cokelat.",
+      "Tertarik dunia pemrograman dan ingin masuk ITB.",
+    ]) {
+      assert.equal(
+        isSensitiveMemory({ kind: "context", content }),
+        false,
+        content,
+      );
+    }
+  });
+
   it("memberi masa berlaku pada yang sementara, bukan pada jati diri", () => {
     assert.equal(expiryFor("profile", NOW), null);
     assert.equal(expiryFor("preference", NOW), null);

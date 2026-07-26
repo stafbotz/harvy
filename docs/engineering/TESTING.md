@@ -43,7 +43,17 @@ antrean per pengguna serta drain shutdown, evaluator dideduplikasi, notice
 gagal dipertahankan, dan indikator mengetik dibuat best-effort, baseline
 menjadi **113 test lulus dalam 19 suite**. Setelah deadline universal 2,5 detik
 diganti keadaan batas giliran adaptif beserta pagar lokal dan regresi transkrip
-nyata, baseline menjadi **122 test lulus dalam 20 suite**.
+nyata, baseline menjadi **122 test lulus dalam 20 suite**. Setelah riwayat
+dikirim sebagai pesan chat pada langkah balasan, pemberitahuan memori menempel
+di balasan, kalimat tetap Harvy diberi variasi, dan perkenalan kontak pertama
+beserta persetujuannya masuk, baseline menjadi **147 test lulus dalam 25
+suite** — `EphemeralMessageStore` beserta enam tesnya dihapus bersama bubble
+pemberitahuan yang digantikannya, jadi angka ini sudah memperhitungkan
+pengurangan itu. Setelah transkrip Telegram pertama menemukan sepuluh cacat dan
+seluruhnya diperbaiki — nada jutek, kedalaman balasan, jam pada langkah balasan,
+pagar memori sensitif, pagar daftar memori, pagar tugas kosong, tombol
+persetujuan yang tidak mati, dan naskah yang terpenggal — baseline menjadi
+**157 test lulus dalam 26 suite**.
 
 **Tes yang memanggil model sungguhan tidak boleh masuk gerbang otomatis.**
 Biayanya tidak dapat diprediksi dan hasilnya tidak dapat diulang. Yang diuji
@@ -78,7 +88,8 @@ Bagian ini memerlukan kunci API sungguhan. Jalankan dengan `AI_MODE=testing`
 supaya tidak berbiaya.
 
 1. Gunakan bot dan akun uji, bukan data pengguna nyata.
-2. Jalankan `/start` dan `/bantuan`.
+2. Jalankan `/start` dan `/bantuan`. Pada akun yang belum pernah berkenalan,
+   `/start` harus memunculkan perkenalan, bukan manual penggunaan.
 3. Tulis tugas dengan bahasa biasa, misalnya "besok jam 7 malam kumpulin
    matematika halaman 20". Pastikan tenggat dan kepentingannya terbaca benar,
    termasuk zona waktunya.
@@ -107,8 +118,9 @@ kegagalan. Alur setelah `ADR-007` belum dijalankan ulang melalui Telegram;
 setiap langkah di bawah tetap harus diberi status PASS/FAIL/NOT RUN sendiri.
 
 13. Sebutkan sesuatu yang biasa, misalnya "aku kelas 11 IPA". Pastikan Harvy
-    mengatakan bahwa ia mengingatnya, dan tombol Oke/Lupakan muncul di pesan
-    yang sama. Menyimpan tanpa mengatakannya melanggar Pasal 4 nomor 2.
+    mengatakan bahwa ia mengingatnya sebagai satu baris `📎` di ujung balasan —
+    bukan bubble tersendiri — dan tombol Lupakan ada di pesan yang sama.
+    Menyimpan tanpa mengatakannya melanggar Pasal 4 nomor 2.
 14. Sebutkan sesuatu yang sensitif, misalnya kondisi kesehatan atau keadaan
     keluarga. Pastikan Harvy **bertanya lebih dulu** dan tidak menyimpan apa pun
     sebelum dijawab. Pasal 4 nomor 3.
@@ -148,17 +160,14 @@ setiap langkah di bawah tetap harus diberi status PASS/FAIL/NOT RUN sendiri.
       keselamatan dan pastikan batas giliran tidak menunggu debounce atau model.
       Waktu membuat balasannya sendiri tetap terpisah dan saat ini masih dapat
       menunggu handler pengguna yang sudah aktif.
-25. Pada pemberitahuan memori biasa, pastikan tombol Oke dan Lupakan ada.
-    Tekan Oke dan pastikan bubble hilang. Ulangi, lalu kirim chat baru tanpa
-    menekan tombol; pemberitahuan lama juga harus hilang.
-    Simulasikan satu kegagalan Telegram dan pastikan chat berikutnya mencoba
-    menghapus notice yang sama lagi tanpa menggandakan referensi. Tekan
-    Oke/Lupakan ketika request delete masih berjalan dan pastikan hasil gagal
-    tidak menghidupkan referensinya kembali. Pastikan retry berhenti setelah
-    kegagalan ketiga.
+25. Tekan Lupakan pada catatan `📎` yang menempel di sebuah balasan. Pastikan
+    yang hilang hanya barisnya: teks balasannya harus tetap utuh, tidak diganti
+    daftar memori, dan tidak dihapus. Tanyakan lagi apa yang Harvy ingat untuk
+    memastikan catatannya memang sudah hilang.
 26. Minta jawaban dua paragraf dan pastikan Harvy mengirimnya sebagai bubble
-    terpisah, maksimal tiga. Blok kode pendek harus tetap satu bubble; blok di
-    atas 4.000 karakter harus terbagi tanpa karakter hilang agar Telegram tidak
+    terpisah, maksimal tiga, dengan indikator mengetik dan jeda pendek di
+    antaranya. Blok kode pendek harus tetap satu bubble; blok di atas 4.000
+    karakter harus terbagi tanpa karakter hilang agar Telegram tidak
     menolaknya.
 27. Kirim lebih dari 16 giliran dan amati bahwa pengguna tidak menunggu model
     peringkas. Setelah pemadatan selesai, rujukan "yang tadi" tetap dipahami.
@@ -183,10 +192,78 @@ setiap langkah di bawah tetap harus diberi status PASS/FAIL/NOT RUN sendiri.
 32. Tulis "aku kewalahan karena harus belajar biologi". Pastikan Harvy
     menanggapi perasaan lebih dulu dan hanya *menawarkan* pencatatan.
 33. Tulis "warna favoritku biru". Pastikan Harvy menanggapinya secara alami,
-    menyimpan preferensi dengan pemberitahuan Oke/Lupakan, dan tidak membuka
-    daftar memori lama.
+    menyimpan preferensi dengan catatan `📎` di balasan yang sama, dan tidak
+    membuka daftar memori lama.
 34. Setelah langkah 33, tulis "apa yang kamu ingat tentang aku". Pastikan baru
     pada permintaan eksplisit ini daftar memori terbuka dan preferensi tadi ada.
+35. Tulis kalimat yang membawa perasaan sekaligus pekerjaan, misalnya "besok
+    aku harus ngumpulin matematika dan aku takut telat lagi". Pastikan Harvy
+    menanggapi rasa takutnya lebih dulu, lalu kartu tugasnya menyusul —
+    bukan langsung struk pencatatan.
+
+### Kenalan dan persetujuan
+
+Belum pernah dijalankan; seluruh langkah di bawah masih NOT RUN. Pakai akun
+Telegram yang belum pernah dipakai, atau hapus barisnya dari `data/profiles.json`
+lebih dulu.
+
+36. Kirim pesan biasa sebagai pengguna baru, misalnya "halo". Pastikan
+    perkenalan muncul dua bubble berikut tombol "Oke, mulai" dan "Aku mau tanya
+    dulu", dan pastikan tidak ada daftar perintah di dalamnya.
+37. Ulangi dengan akun baru lain, tetapi kirim pesan berisi cerita. Pastikan
+    Harvy mengaku menahan pesan itu dan belum membacanya, lalu setelah "Oke,
+    mulai" ditekan pesan tadi benar-benar dijawab tanpa diminta diketik ulang.
+38. Sebelum menekan tombol, kirim dua pesan lagi. Pastikan pengingat "pesanmu
+    masih aku pegang" muncul **sekali saja**, bukan setiap pesan, dan seluruh
+    pesan itu ikut terjawab setelah persetujuan.
+39. Tekan "Aku mau tanya dulu". Pastikan penjelasannya muncul beserta tombol
+    persetujuan lagi, dan tidak ada pesan yang terkirim ke model sebelum
+    tombol "Oke, mulai" ditekan. Periksa log: tidak boleh ada permintaan model
+    apa pun untuk pengguna ini sebelum persetujuan, termasuk klasifikasi batas
+    giliran.
+40. Sebagai pengguna baru, kirim kalimat uji bahaya segera yang sudah disepakati.
+    Pastikan arahan keselamatan muncul lebih dulu, tanpa memanggil model, lalu
+    perkenalan menyusul.
+41. Sebagai pengguna lama, jalankan `/start`. Pastikan Harvy menyapa singkat,
+    menyebut jumlah tugas aktif bila ada, dan **tidak** mengulang perkenalan.
+42. Setelah satu percakapan selesai pada akun baru, pastikan pertanyaan gaya
+    ("didengerin dulu atau langsung saran") muncul satu kali. Jawab, lalu
+    pastikan pertanyaan itu tidak pernah muncul lagi, termasuk setelah restart.
+43. Tekan "Lupakan semua tentang aku". Pastikan setelahnya Harvy **tidak**
+    meminta persetujuan ulang — menghapus data bukan alasan untuk berkenalan
+    dari awal.
+
+### Regresi transkrip 26 Juli 2026
+
+Sepuluh cacat ditemukan pada uji Telegram pertama alur kenalan. Semuanya sudah
+diperbaiki dan lulus probe model, tetapi **belum satu pun diuji ulang lewat
+Telegram**.
+
+44. Kirim "p" sebagai pengguna baru, lalu setujui. Balasan pertama tidak boleh
+    menyinggung percakapan yang belum pernah ada ("ada yang mau dibahas lagi?").
+45. Tanya "harvy kamu pakai model ai apa". Jawabannya harus jujur sebagai AI dan
+    tetap mengundang — bukan "Gitu aja sih." yang menutup obrolan.
+46. Kirim "besok senin", "aduh", "males banget". Balasannya harus ringan dan
+    menyambung, tanpa saran tarik napas atau bercerita ke keluarga.
+47. Kirim curhat panjang berisi beberapa topik berbeda. Balasannya harus
+    menyentuh dua sampai empat topik, bukan kalimat pertamanya saja, dan tidak
+    menanyakan hal yang jawabannya sudah ditulis.
+48. Pada malam hari, kirim "aku masi ngantuk". Harvy tidak boleh menyuruh
+    rebahan siang atau mengajak menunggu malam. Ulangi sambil menyebut "aku lagi
+    di sekolah" dan pastikan Harvy mengikuti perkataanmu tanpa menyebut jam.
+49. Kirim "eh buat pengingat dong". Harvy harus bertanya isinya dan **tidak**
+    membuat tugas apa pun. Setelah dijawab, barulah tugasnya tercatat.
+50. Setelah bercerita panjang, kirim "kamu pahami aja". Daftar memori **tidak
+    boleh** terbuka.
+51. Sebut ketertarikan romantis, misalnya "aku suka sama cowok yang aku kenal
+    dari game". Harvy wajib **bertanya izin** dulu, bukan menyimpannya otomatis.
+    Ini pelanggaran Pasal 4 nomor 3 kalau gagal, bukan sekadar cacat kecil.
+52. Tekan "Aku mau tanya dulu" dua kali berturut-turut. Penjelasan persetujuan
+    hanya boleh muncul sekali; tombol pada pesan lama harus mati.
+53. Lihat perkenalan dan penjelasan persetujuan di ponsel, bukan di komputer.
+    Tidak boleh ada baris yang terpenggal di tengah kalimat.
+54. Periksa catatan memori yang muncul. Isinya tidak boleh menyebut pemiliknya
+    sebagai "Pengguna".
 
 ### Keselamatan
 

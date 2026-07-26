@@ -7,29 +7,60 @@ import type {
   Understanding,
 } from "../ai/understand.js";
 import type { AppConfig } from "../config.js";
+import { HISTORY_WINDOW } from "../core/history-policy.js";
 import type { HistoryService } from "../core/history-service.js";
 import { isSensitiveMemory } from "../core/memory-policy.js";
 import type { MemoryService } from "../core/memory-service.js";
+import { ProfileService, shouldAskStyle } from "../core/profile-service.js";
 import type { TaskService } from "../core/task-service.js";
+import { looksUrgent } from "../core/turn-taking-policy.js";
+import type { MemoryItem } from "../domain/memory.js";
 import type { StudentTask } from "../domain/task.js";
 import {
+  bubblePauseMs,
   confirmActions,
   formatMemories,
   formatTask,
   HELP_MESSAGE,
   memoryConsentActions,
   memoryListActions,
-  memorySavedActions,
-  memorySavedNote,
+  memoryNoteActions,
+  memoryNoteLines,
   memoryWipeConfirmActions,
   splitReplyBubbles,
   taskActions,
   taskListActions,
   understandingNote,
+  withMemoryNotes,
+  withoutMemoryNote,
 } from "./messages.js";
-import { EphemeralMessageStore } from "./ephemeral-message-store.js";
 import { MessageBatcher } from "./message-batcher.js";
+import {
+  CONSENT_ACCEPTED,
+  CONSENT_ACCEPTED_HELD,
+  CONSENT_DETAIL,
+  consentActions,
+  HeldMessageStore,
+  HOLD_REMINDER,
+  introBubbles,
+  PRE_CONSENT_SAFETY,
+  STYLE_QUESTION,
+  styleAck,
+  styleActions,
+  welcomeBack,
+} from "./onboarding.js";
 import { PendingStore } from "./pending.js";
+import {
+  emptyListNote,
+  notUnderstoodNote,
+  nothingLeftNote,
+  taskCompletedHeading,
+  taskDeclinedNote,
+  taskDroppedHeading,
+  taskListLead,
+  taskMissingNote,
+  taskSavedHeading,
+} from "./phrasing.js";
 import {
   immediateUnderstandingRoute,
   taskToOffer,
@@ -38,10 +69,8 @@ import {
 /** Jarak bawaan antara pengingat dan tenggat. */
 const REMINDER_LEAD_MS = 60 * 60 * 1000;
 
-const AI_FAILURE_MESSAGE = [
-  "Maaf, aku lagi nggak bisa mikir sekarang — sambungan ke otakku bermasalah.",
-  "Coba kirim lagi sebentar lagi, ya.",
-].join("\n");
+const AI_FAILURE_MESSAGE =
+  "Maaf, aku lagi nggak bisa mikir sekarang — sambungan ke otakku lagi bermasalah. Coba kirim lagi sebentar lagi, ya.";
 
 export type HarvyBot = Bot & {
   drainPending: () => Promise<void>;
@@ -67,14 +96,24 @@ export function createBot(
   conversation: Conversation,
   memories: MemoryService,
   history: HistoryService,
+  profiles: ProfileService,
 ): HarvyBot {
   const bot = new Bot(config.telegramBotToken);
   const pending = new PendingStore();
-  const memoryNotices = new EphemeralMessageStore();
+  const held = new HeldMessageStore();
   const messageBatcher = new MessageBatcher<Context>(
     (text) => conversation.classifyTurnBoundary(text),
     (ownerId, batch) => handleFreeText(batch.carrier, ownerId, batch.text),
   );
+
+  /**
+   * Status persetujuan yang sudah dibaca, satu promise per pengguna.
+   *
+   * Bubble yang datang beruntun memakai promise yang sama, sehingga berkasnya
+   * dibaca sekali dan urutan `then` mengikuti urutan pesannya. Tanpa itu, dua
+   * bubble pertama setelah proses restart dapat masuk ke batcher terbalik.
+   */
+  const consentChecks = new Map<string, Promise<boolean>>();
 
   bot.use(async (ctx, next) => {
     if (ctx.chat?.type === "private") {
@@ -98,16 +137,18 @@ export function createBot(
       "Perintah /start gagal:",
       async () => {
         pending.clear(ownerId);
-        await dismissMemoryNotices(ownerId);
-        await ctx.reply(
-          [
-            "Hai, aku Harvy 👋",
-            "Aku bantu merapikan apa yang harus kamu kerjakan, dan siap dengerin",
-            "kalau lagi berat. Keputusannya tetap punyamu.",
-            "",
-            HELP_MESSAGE,
-          ].join("\n"),
-        );
+
+        // `/start` hanyalah salah satu pintu masuk perkenalan, bukan syaratnya.
+        // Yang belum pernah menyetujui apa pun tetap berkenalan dulu di sini.
+        if (await profiles.needsOnboarding(ownerId)) {
+          await beginOnboarding(ctx, ownerId, "", true);
+          return;
+        }
+
+        // Pengguna lama tidak mengulang perkenalan. Sapaannya memakai keadaan
+        // yang benar-benar ada di datanya, bukan ingatan yang dikarang.
+        const active = await tasks.listActive(ownerId);
+        await ctx.reply(welcomeBack(active.length));
       },
     );
   });
@@ -121,7 +162,6 @@ export function createBot(
       "Perintah /bantuan gagal:",
       async () => {
         pending.clear(ownerId);
-        await dismissMemoryNotices(ownerId);
         await ctx.reply(HELP_MESSAGE);
       },
     );
@@ -136,7 +176,6 @@ export function createBot(
       "Perintah /tugas gagal:",
       async () => {
         pending.clear(ownerId);
-        await dismissMemoryNotices(ownerId);
         await sendTaskList(ctx, ownerId);
       },
     );
@@ -146,10 +185,6 @@ export function createBot(
     const ownerId = ownerOf(ctx);
     const text = ctx.message.text.trim();
 
-    // Referensi diambil sekarang; panggilan API penghapusannya tidak perlu
-    // menahan long-polling Telegram.
-    void dismissMemoryNotices(ownerId);
-
     if (text.startsWith("/")) {
       enqueueBotAction(
         ctx,
@@ -157,7 +192,6 @@ export function createBot(
         "cancel",
         "Perintah tak dikenal gagal ditanggapi:",
         async () => {
-          await dismissMemoryNotices(ownerId);
           await ctx.reply(
             ["Aku belum punya perintah itu.", "", HELP_MESSAGE].join("\n"),
           );
@@ -166,7 +200,22 @@ export function createBot(
       return;
     }
 
-    messageBatcher.enqueue(ownerId, text, ctx);
+    // Gerbang persetujuan wajib berada di sini, sebelum `enqueue`.
+    // `MessageBatcher` memanggil `classifyTurnBoundary` untuk menentukan batas
+    // giliran, dan panggilan itu sudah mengirim teks pengguna ke penyedia model.
+    // Gerbang yang dipasang lebih dalam berarti izinnya ditanyakan setelah
+    // isinya telanjur keluar.
+    void consentGate(ownerId)
+      .then(async (allowed) => {
+        if (allowed) {
+          messageBatcher.enqueue(ownerId, text, ctx);
+          return;
+        }
+        await beginOnboarding(ctx, ownerId, text);
+      })
+      .catch((error: unknown) => {
+        console.error("Gerbang kenalan gagal:", error);
+      });
   });
 
   bot.on("callback_query:data", (ctx) => {
@@ -197,6 +246,73 @@ export function createBot(
   });
 
   /**
+   * Membaca status persetujuan sekali per pengguna, lalu mengingatnya.
+   *
+   * Gagal membaca dianggap belum menyetujui. Akibat terburuknya perkenalan
+   * muncul sekali lagi kepada pengguna lama; sebaliknya, menganggap sudah
+   * setuju ketika berkasnya tidak terbaca berarti mengirim pesannya ke luar
+   * tanpa izin.
+   */
+  function consentGate(ownerId: string): Promise<boolean> {
+    let check = consentChecks.get(ownerId);
+    if (check) return check;
+
+    check = profiles
+      .needsOnboarding(ownerId)
+      .then((needs) => !needs)
+      .catch((error: unknown) => {
+        console.error("Status kenalan gagal dibaca:", error);
+        consentChecks.delete(ownerId);
+        return false;
+      });
+
+    consentChecks.set(ownerId, check);
+    return check;
+  }
+
+  /**
+   * Perkenalan pada kontak pertama, apa pun bentuk kontaknya.
+   *
+   * Pesan yang sudah telanjur dikirim ditahan lokal — tidak dibaca, tidak
+   * dikirim ke mana pun — lalu diproses sendiri setelah pengguna menekan
+   * tombolnya. Menyuruhnya mengetik ulang berarti menghukum orang yang langsung
+   * bercerita.
+   */
+  async function beginOnboarding(
+    ctx: Context,
+    ownerId: string,
+    text: string,
+    force = false,
+  ): Promise<void> {
+    if (text) held.hold(ownerId, text);
+
+    // Bahaya segera dijawab lebih dulu, dan dijawab tanpa model. Teks tetap
+    // adalah satu-satunya jawaban yang mungkin di sini tanpa melanggar izin
+    // yang belum diberikan.
+    if (looksUrgent(text) && held.markSafetyShown(ownerId)) {
+      await ctx.reply(PRE_CONSENT_SAFETY);
+    }
+
+    const first = held.markIntroduced(ownerId);
+    if (!first && !force) {
+      if (held.markReminded(ownerId)) await ctx.reply(HOLD_REMINDER);
+      return;
+    }
+
+    const bubbles = introBubbles(ctx.from?.first_name ?? null, held.has(ownerId));
+
+    for (const [index, bubble] of bubbles.entries()) {
+      const last = index === bubbles.length - 1;
+      await ctx.reply(bubble, last ? { reply_markup: consentActions() } : {});
+
+      if (!last) {
+        await bestEffortTyping(ctx);
+        await sleep(bubblePauseMs(bubbles[index + 1] ?? ""));
+      }
+    }
+  }
+
+  /**
    * Setiap pesan bebas dibaca model lebih dulu. Tugas hanya dicatat ketika
    * maksudnya memang mencatat pekerjaan; selebihnya Harvy menjawab sebagai
    * teman bicara dan hanya *menawarkan* pencatatan.
@@ -206,10 +322,6 @@ export function createBot(
     ownerId: string,
     text: string,
   ): Promise<void> {
-    // Bubble ini mungkin tiba ketika batch sebelumnya masih membuat notifikasi
-    // memori. Ulangi pembersihan setelah chain sampai pada giliran ini.
-    await dismissMemoryNotices(ownerId);
-
     // Pending diperiksa saat batch mendapat gilirannya, bukan ketika update
     // masuk. Callback Ubah tenggat mungkin masih mengantre di belakang balasan
     // lama ketika pengguna sudah mengetik tanggal barunya.
@@ -226,7 +338,10 @@ export function createBot(
 
     // Konteks disusun sebelum pesan ini ikut tercatat, supaya giliran yang
     // sedang ditangani tidak muncul dua kali di dalam promptnya sendiri.
-    const context = await contextFor(ownerId, text);
+    const [context, profile] = await Promise.all([
+      contextFor(ownerId, text),
+      profiles.load(ownerId),
+    ]);
 
     let understanding: Understanding | null;
 
@@ -242,45 +357,59 @@ export function createBot(
 
     try {
       if (!understanding) {
-        await ctx.reply(
-          "Aku belum menangkap maksudnya. Coba tulis ulang dengan kalimat lain, ya.",
-        );
+        await ctx.reply(notUnderstoodNote());
         return;
       }
 
-      const immediateRoute = immediateUnderstandingRoute(understanding);
+      const route = immediateUnderstandingRoute(understanding, text);
 
-      if (immediateRoute.kind === "memory-control") {
+      if (route.kind === "memory-control") {
         pending.clear(ownerId);
         await showMemories(ctx, ownerId);
         return;
       }
 
-      if (immediateRoute.kind === "save-task") {
-        pending.clear(ownerId);
-        await saveTask(ctx, ownerId, immediateRoute.task);
-        await offerSensitive(ctx, ownerId, understanding.memories);
-        return;
-      }
-
-      let reply: string;
+      // Balasan disusun lebih dulu, termasuk untuk pesan yang berisi tugas.
+      // Kalimat yang membawa perasaan sekaligus pekerjaan pernah dijawab hanya
+      // dengan struk pencatatan, dan bagian perasaannya hilang tanpa jejak.
+      let reply: string | null = null;
       try {
-        reply = await conversation.reply(text, understanding, context);
+        reply = await conversation.reply(
+          text,
+          understanding,
+          context,
+          profile.stylePreference,
+        );
       } catch (error) {
         console.error("Balasan model gagal:", error);
-        await ctx.reply(AI_FAILURE_MESSAGE);
-        return;
+        if (route.kind !== "save-task") {
+          await ctx.reply(AI_FAILURE_MESSAGE);
+          return;
+        }
+        // Untuk tugas, pencatatannya tetap diteruskan. Kehilangan kalimat
+        // pembuka jauh lebih ringan daripada kehilangan pekerjaan pengguna.
       }
 
-      const bubbles = splitReplyBubbles(reply);
-      for (const bubble of bubbles) {
-        await ctx.reply(bubble);
+      const remembered = await storeOrdinaryMemories(
+        ownerId,
+        understanding.memories,
+      );
+
+      if (reply) {
+        await sendReply(ctx, reply, remembered.saved);
+        await history.append(ownerId, "harvy", reply.trim());
+        await memories.markUsed(context.memories);
       }
-      // Riwayat menyimpan satu balasan logis asli. Batas ukuran Telegram boleh
-      // memotong sebuah blok kode di tengah; menggabungkan bubble dengan baris
-      // baru akan mengubah kode yang sebenarnya ditulis model.
-      await history.append(ownerId, "harvy", reply.trim());
-      await memories.markUsed(context.memories);
+
+      if (route.kind === "save-task") {
+        pending.clear(ownerId);
+        // Kartu tugas menyusul balasan, tanpa kalimat pembuka kedua. Kalau
+        // balasannya gagal dibuat, kartunya yang membawa kalimatnya.
+        await saveTask(ctx, ownerId, route.task, reply ? undefined : taskSavedHeading());
+        if (!reply) await sendMemoryNotes(ctx, remembered.saved);
+        await askSensitive(ctx, ownerId, remembered.sensitive);
+        return;
+      }
 
       // Pekerjaan yang tersirat di balik cerita ditawarkan, tidak dicatat diam-diam.
       const offeredTask = taskToOffer(understanding);
@@ -288,16 +417,21 @@ export function createBot(
         pending.set(ownerId, { kind: "confirm-task", task: offeredTask });
         const offerText =
           `Mau aku catat “${offeredTask.title}” biar nggak perlu kamu ingat-ingat?`;
-        await ctx.reply(
-          offerText,
-          { reply_markup: confirmActions() },
-        );
+        await ctx.reply(offerText, { reply_markup: confirmActions() });
         await history.append(ownerId, "harvy", offerText);
-        await absorbMemories(ctx, ownerId, understanding.memories);
         return;
       }
 
-      await offerSensitive(ctx, ownerId, understanding.memories);
+      await askSensitive(ctx, ownerId, remembered.sensitive);
+
+      // Ditanyakan setelah percakapan punya isi, bukan setelah giliran pertama.
+      // Pada uji pertama pesan pembukanya cuma "p", dan pertanyaan gaya sudah
+      // muncul di detik berikutnya — pengguna belum punya bahan menjawabnya.
+      await askStyleOnce(
+        ctx,
+        ownerId,
+        shouldAskStyle(profile) && context.turns.length >= HISTORY_WINDOW,
+      );
     } finally {
       // Model peringkas berjalan setelah balasan utama selesai. Tidak di-await:
       // kegagalan atau timeout-nya tidak boleh membuat pengguna menunggu.
@@ -322,17 +456,62 @@ export function createBot(
   }
 
   /**
-   * Menyimpan memori biasa dan mengembalikan yang sensitif untuk ditawarkan.
+   * Mengirim balasan sebagai beberapa bubble, dengan jeda kecil di antaranya.
+   *
+   * Tiga bubble yang tiba serentak terbaca seperti notifikasi beruntun. Jedanya
+   * pendek dan berplafon: ini soal keterbacaan, bukan soal membuat percakapan
+   * terasa lebih lama.
+   */
+  async function sendReply(
+    ctx: Context,
+    text: string,
+    notes: MemoryItem[] = [],
+  ): Promise<void> {
+    const bubbles = splitReplyBubbles(text);
+    if (bubbles.length === 0) return;
+
+    for (const [index, bubble] of bubbles.entries()) {
+      const last = index === bubbles.length - 1;
+
+      await ctx.reply(
+        last ? withMemoryNotes(bubble, notes) : bubble,
+        last && notes.length > 0
+          ? { reply_markup: memoryNoteActions(notes) }
+          : {},
+      );
+
+      if (!last) {
+        await bestEffortTyping(ctx);
+        await sleep(bubblePauseMs(bubbles[index + 1] ?? ""));
+      }
+    }
+  }
+
+  /** Jalur mundur ketika tidak ada balasan yang bisa ditempeli catatan. */
+  async function sendMemoryNotes(
+    ctx: Context,
+    items: MemoryItem[],
+  ): Promise<void> {
+    if (items.length === 0) return;
+
+    await ctx.reply(memoryNoteLines(items), {
+      reply_markup: memoryNoteActions(items),
+    });
+  }
+
+  /**
+   * Menyimpan memori biasa dan menyisihkan yang sensitif untuk ditawarkan.
    *
    * Yang biasa disimpan tanpa bertanya, tetapi tidak diam-diam: setiap
-   * penyimpanan diumumkan berikut tombol Oke/Lupakan, sesuai Pasal 4 nomor 2.
-   * Yang sensitif tidak pernah lewat jalur ini — Pasal 4 nomor 3.
+   * penyimpanan diumumkan di balasan yang sama berikut jalan keluarnya, sesuai
+   * Pasal 4 nomor 2. Yang sensitif tidak pernah lewat jalur ini — Pasal 4
+   * nomor 3.
    */
-  async function absorbMemories(
-    ctx: Context,
+  async function storeOrdinaryMemories(
     ownerId: string,
     items: ExtractedMemory[],
-  ): Promise<ExtractedMemory | null> {
+  ): Promise<{ saved: MemoryItem[]; sensitive: ExtractedMemory | null }> {
+    const saved: MemoryItem[] = [];
     let sensitive: ExtractedMemory | null = null;
 
     for (const item of items) {
@@ -341,23 +520,15 @@ export function createBot(
         continue;
       }
 
-      const saved = await memories.remember({
+      const stored = await memories.remember({
         ownerId,
         kind: item.kind,
         content: item.content,
       });
-      if (!saved) continue;
-
-      const notice = await ctx.reply(memorySavedNote(saved), {
-        reply_markup: memorySavedActions(saved),
-      });
-      memoryNotices.add(ownerId, {
-        chatId: notice.chat.id,
-        messageId: notice.message_id,
-      });
+      if (stored) saved.push(stored);
     }
 
-    return sensitive;
+    return { saved, sensitive };
   }
 
   /**
@@ -368,13 +539,11 @@ export function createBot(
    * sekaligus membuat pengguna harus menjawab kuis, dan Pasal 3.11 meminta
    * pilihan yang tidak berlebihan.
    */
-  async function offerSensitive(
+  async function askSensitive(
     ctx: Context,
     ownerId: string,
-    items: ExtractedMemory[],
+    sensitive: ExtractedMemory | null,
   ): Promise<void> {
-    const sensitive = await absorbMemories(ctx, ownerId, items);
-
     if (!sensitive) {
       pending.clear(ownerId);
       return;
@@ -383,13 +552,30 @@ export function createBot(
     pending.set(ownerId, { kind: "confirm-memory", memory: sensitive });
     await ctx.reply(
       [
-        `Boleh aku ingat ini? “${sensitive.content}”`,
+        `Boleh aku inget ini? “${sensitive.content}”`,
         "",
-        "Kalau iya, aku tidak perlu kamu ceritakan ulang nanti. Kalau tidak,",
-        "aku tetap mendengarkan hari ini dan tidak menyimpannya.",
+        "Kalau boleh, kamu nggak perlu cerita ulang nanti. Kalau nggak, aku tetap dengerin hari ini dan nggak nyimpen apa-apa.",
       ].join("\n"),
       { reply_markup: memoryConsentActions() },
     );
+  }
+
+  /**
+   * Satu pertanyaan gaya, sesudah percakapan pertama benar-benar terjadi.
+   *
+   * Tidak diajukan ketika ada pertanyaan lain yang sedang menunggu jawaban:
+   * dua pertanyaan sekaligus mengubah percakapan menjadi formulir.
+   */
+  async function askStyleOnce(
+    ctx: Context,
+    ownerId: string,
+    eligible: boolean,
+  ): Promise<void> {
+    if (!eligible || pending.peek(ownerId)) return;
+
+    await profiles.markStyleAsked(ownerId);
+    await ctx.reply(STYLE_QUESTION, { reply_markup: styleActions() });
+    await history.append(ownerId, "harvy", STYLE_QUESTION);
   }
 
   async function showMemories(ctx: Context, ownerId: string): Promise<void> {
@@ -407,6 +593,7 @@ export function createBot(
     ctx: Context,
     ownerId: string,
     extracted: ExtractedTask,
+    heading?: string,
   ): Promise<void> {
     const task = await tasks.create({
       ownerId,
@@ -418,16 +605,12 @@ export function createBot(
     });
 
     const response = [
-      "Sudah aku catat.",
-      "",
+      ...(heading ? [heading, ""] : []),
       formatTask(task, config.defaultTimezone),
       understandingNote(task),
     ].join("\n");
 
-    await ctx.reply(
-      response,
-      { reply_markup: taskActions(task) },
-    );
+    await ctx.reply(response, { reply_markup: taskActions(task) });
     await history.append(ownerId, "harvy", response);
   }
 
@@ -451,7 +634,7 @@ export function createBot(
 
     if (!dueAt) {
       const response =
-        "Aku belum menangkap waktunya. Coba tulis seperti “besok jam 7 malam” atau “senin depan”.";
+        "Aku belum nangkep waktunya. Coba tulis seperti “besok jam 7 malam” atau “senin depan”.";
       await ctx.reply(response);
       await history.append(ownerId, "harvy", response);
       return;
@@ -461,21 +644,18 @@ export function createBot(
     const updated = await tasks.setDue(ownerId, taskId, dueAt);
 
     if (!updated) {
-      const response = "Tugas itu sudah tidak ada.";
+      const response = taskMissingNote();
       await ctx.reply(response);
       await history.append(ownerId, "harvy", response);
       return;
     }
 
     const response = [
-      "Tenggatnya sudah aku ubah.",
+      "Tenggatnya udah aku ubah.",
       "",
       formatTask(updated, config.defaultTimezone),
     ].join("\n");
-    await ctx.reply(
-      response,
-      { reply_markup: taskActions(updated) },
-    );
+    await ctx.reply(response, { reply_markup: taskActions(updated) });
     await history.append(ownerId, "harvy", response);
   }
 
@@ -486,30 +666,44 @@ export function createBot(
     target: string,
   ): Promise<void> {
     switch (action) {
+      case "consent": {
+        await acceptConsent(ctx, ownerId, target);
+        return;
+      }
+
+      case "style": {
+        if (target !== "listen" && target !== "advice") return;
+
+        await profiles.rememberStyle(ownerId, target);
+        await safeEdit(ctx, styleAck(target));
+        await history.append(ownerId, "harvy", styleAck(target));
+        return;
+      }
+
       case "save": {
         const waiting = pending.peek(ownerId);
         pending.clear(ownerId);
 
         if (waiting?.kind !== "confirm-task") {
-          await safeEdit(ctx, "Tombol ini sudah tidak berlaku.");
+          await safeEdit(ctx, "Tombol ini udah nggak berlaku.");
           return;
         }
 
         await dropKeyboard(ctx);
-        await saveTask(ctx, ownerId, waiting.task);
+        await saveTask(ctx, ownerId, waiting.task, taskSavedHeading());
         return;
       }
 
       case "nosave": {
         pending.clear(ownerId);
-        await safeEdit(ctx, "Oke, nggak aku catat.");
+        await safeEdit(ctx, taskDeclinedNote());
         return;
       }
 
       case "done": {
         const completed = await tasks.complete(ownerId, target);
         if (!completed) {
-          await safeEdit(ctx, "Tugas itu sudah tidak ada.");
+          await safeEdit(ctx, taskMissingNote());
           return;
         }
         await refreshAfterChange(ctx, ownerId, completed.title);
@@ -519,7 +713,7 @@ export function createBot(
       case "drop": {
         const removed = await tasks.remove(ownerId, target);
         if (!removed) {
-          await safeEdit(ctx, "Tugas itu sudah tidak ada.");
+          await safeEdit(ctx, taskMissingNote());
           return;
         }
         await refreshAfterChange(ctx, ownerId);
@@ -529,7 +723,7 @@ export function createBot(
       case "edit": {
         pending.set(ownerId, { kind: "edit-due", taskId: target });
         await ctx.reply(
-          "Mau diubah jadi kapan? Tulis saja, misalnya “besok jam 7 malam” atau “senin depan”.",
+          "Mau diubah jadi kapan? Tulis aja, misalnya “besok jam 7 malam” atau “senin depan”.",
         );
         return;
       }
@@ -545,7 +739,7 @@ export function createBot(
         pending.clear(ownerId);
 
         if (waiting?.kind !== "confirm-memory") {
-          await safeEdit(ctx, "Tombol ini sudah tidak berlaku.");
+          await safeEdit(ctx, "Tombol ini udah nggak berlaku.");
           return;
         }
 
@@ -557,18 +751,9 @@ export function createBot(
 
         await safeEdit(
           ctx,
-          saved
-            ? `📎 Aku ingat ini: ${saved.content}`
-            : "Ternyata sudah aku ingat sebelumnya.",
-          saved ? memorySavedActions(saved) : undefined,
+          saved ? memoryNoteLines([saved]) : "Ternyata udah aku inget sebelumnya.",
+          saved ? memoryNoteActions([saved]) : undefined,
         );
-        if (saved) trackCurrentMemoryNotice(ctx, ownerId);
-        return;
-      }
-
-      case "memack": {
-        forgetCurrentMemoryNotice(ctx, ownerId);
-        await safeDelete(ctx);
         return;
       }
 
@@ -576,13 +761,27 @@ export function createBot(
         pending.clear(ownerId);
         await safeEdit(
           ctx,
-          "Oke, itu nggak aku simpan. Aku tetap di sini kalau kamu mau cerita.",
+          "Oke, itu nggak aku simpen. Aku tetap di sini kalau kamu mau cerita.",
+        );
+        return;
+      }
+
+      // Tombol pada catatan yang menempel di balasan. Balasannya pesan
+      // sungguhan, jadi yang dibuang cukup barisnya — bukan seluruh pesannya,
+      // dan bukan diganti daftar memori.
+      case "memdrop": {
+        const forgotten = await memories.forget(ownerId, target);
+        await safeEdit(
+          ctx,
+          withoutMemoryNote(
+            ctx.callbackQuery?.message?.text ?? "",
+            forgotten?.content ?? null,
+          ),
         );
         return;
       }
 
       case "memforget": {
-        forgetCurrentMemoryNotice(ctx, ownerId);
         const forgotten = await memories.forget(ownerId, target);
         await refreshMemories(
           ctx,
@@ -596,8 +795,7 @@ export function createBot(
       case "memall": {
         await ctx.reply(
           [
-            "Yakin? Aku akan melupakan semua catatan tentang kamu sekaligus",
-            "seluruh riwayat obrolan kita. Ini tidak bisa dibatalkan.",
+            "Yakin? Aku bakal ngelupain semua catatan tentang kamu sekaligus seluruh riwayat obrolan kita. Ini nggak bisa dibatalin.",
           ].join("\n"),
           { reply_markup: memoryWipeConfirmActions() },
         );
@@ -607,28 +805,62 @@ export function createBot(
       case "memallyes": {
         const removed = await memories.forgetAll(ownerId);
         await history.forget(ownerId);
+        // Persetujuan tidak ikut terhapus: kalau ikut, memakai hak melupakan
+        // berarti dipaksa berkenalan ulang, dan Pasal 4 nomor 5 melarang
+        // penarikan izin dipersulit.
+        await profiles.forgetPersonal(ownerId);
         pending.clear(ownerId);
 
         await safeEdit(
           ctx,
           [
-            `Sudah aku lupakan semuanya — ${removed} catatan dan seluruh riwayat obrolan kita.`,
+            `Udah aku lupain semuanya — ${removed} catatan dan seluruh riwayat obrolan kita.`,
             "",
-            "Tugasmu tidak ikut terhapus. Kalau mau itu juga hilang, batalkan",
-            "satu per satu lewat daftarnya.",
+            "Tugasmu nggak ikut kehapus. Kalau mau itu juga hilang, batalin satu per satu lewat daftarnya.",
           ].join("\n"),
         );
         return;
       }
 
       case "memallno": {
-        await safeEdit(ctx, "Nggak jadi. Semuanya masih aku ingat.");
+        await safeEdit(ctx, "Nggak jadi. Semuanya masih aku inget.");
         return;
       }
 
       default:
         return;
     }
+  }
+
+  async function acceptConsent(
+    ctx: Context,
+    ownerId: string,
+    target: string,
+  ): Promise<void> {
+    if (target === "info") {
+      // Tombolnya dipindahkan ke pesan terbaru, bukan digandakan. Kalau papan
+      // lama dibiarkan hidup, setiap ketukan menambah satu salinan penjelasan
+      // yang sama — dan itu yang terjadi pada uji pertama.
+      await dropKeyboard(ctx);
+      await ctx.reply(CONSENT_DETAIL, { reply_markup: consentActions() });
+      return;
+    }
+
+    if (target !== "yes") return;
+
+    await profiles.acceptConsent(ownerId);
+    consentChecks.set(ownerId, Promise.resolve(true));
+    await dropKeyboard(ctx);
+
+    const waiting = held.take(ownerId);
+    held.clear(ownerId);
+
+    await ctx.reply(waiting ? CONSENT_ACCEPTED_HELD : CONSENT_ACCEPTED);
+
+    // Diproses langsung, bukan lewat batcher: pesannya sudah selesai ditulis
+    // jauh sebelum tombol ditekan, jadi tidak ada batas giliran yang perlu
+    // ditebak. Ini tetap berada di dalam antrean pengguna yang sama.
+    if (waiting) await handleFreeText(ctx, ownerId, waiting);
   }
 
   async function refreshMemories(
@@ -639,13 +871,16 @@ export function createBot(
   ): Promise<void> {
     const remaining = await memories.list(ownerId);
     const heading = missing
-      ? "Itu sudah tidak ada."
+      ? "Itu udah nggak ada."
       : forgotten
-      ? `Sudah aku lupakan: ${forgotten}`
-      : "Sudah aku lupakan.";
+      ? `Udah aku lupain: ${forgotten}`
+      : "Udah aku lupain.";
 
     if (remaining.length === 0) {
-      await safeEdit(ctx, `${heading}\n\nSekarang tidak ada lagi yang aku ingat tentang kamu.`);
+      await safeEdit(
+        ctx,
+        `${heading}\n\nSekarang nggak ada lagi yang aku inget tentang kamu.`,
+      );
       return;
     }
 
@@ -664,7 +899,7 @@ export function createBot(
   ): Promise<void> {
     const task = await tasks.find(ownerId, taskId);
     if (!task || task.status === "completed") {
-      await safeEdit(ctx, "Tugas itu sudah tidak ada.");
+      await safeEdit(ctx, taskMissingNote());
       return;
     }
 
@@ -676,7 +911,7 @@ export function createBot(
 
     if (!target || target.getTime() <= now) {
       await ctx.reply(
-        "Tenggatnya sudah terlalu dekat untuk diingatkan lebih awal.",
+        "Tenggatnya udah kelewat dekat buat diingetin lebih awal.",
       );
       return;
     }
@@ -686,14 +921,14 @@ export function createBot(
     if (updated) {
       await ctx.reply(
         [
-          "Oke, nanti aku ingatkan.",
+          "Oke, nanti aku ingetin.",
           "",
           formatTask(updated, config.defaultTimezone),
         ].join("\n"),
       );
       return;
     }
-    await safeEdit(ctx, "Tugas itu sudah tidak ada.");
+    await safeEdit(ctx, taskMissingNote());
   }
 
   async function refreshAfterChange(
@@ -703,11 +938,11 @@ export function createBot(
   ): Promise<void> {
     const remaining = await tasks.listActive(ownerId);
     const heading = completedTitle
-      ? `Selesai ✓ ${completedTitle}`
-      : "Sudah aku batalkan.";
+      ? taskCompletedHeading(completedTitle)
+      : taskDroppedHeading();
 
     if (remaining.length === 0) {
-      await safeEdit(ctx, `${heading}\n\nSemua beres. Nikmati waktumu 🌿`);
+      await safeEdit(ctx, `${heading}\n\n${nothingLeftNote()}`);
       return;
     }
 
@@ -728,58 +963,18 @@ export function createBot(
     const active = await tasks.listActive(ownerId);
 
     if (active.length === 0) {
-      await ctx.reply(
-        "Belum ada yang perlu dikerjakan. Tulis saja kalau ada yang muncul.",
-      );
+      await ctx.reply(emptyListNote());
       return;
     }
 
     await ctx.reply(
       [
-        "Ini urutan yang aku sarankan, dari yang paling mendesak:",
+        taskListLead(),
         "",
         ...active.map((task) => formatTask(task, config.defaultTimezone)),
       ].join("\n"),
       { reply_markup: taskListActions(active) },
     );
-  }
-
-  async function dismissMemoryNotices(ownerId: string): Promise<void> {
-    const notices = memoryNotices.takeAll(ownerId);
-    const failed = await Promise.all(
-      notices.map(async (notice) => {
-        try {
-          await bot.api.deleteMessage(notice.chatId, notice.messageId);
-          memoryNotices.complete(ownerId, notice.messageId);
-          return null;
-        } catch {
-          return notice;
-        }
-      }),
-    );
-    for (const notice of failed) {
-      // Error Telegram dapat bersifat sementara. Simpan referensinya agar chat
-      // berikutnya mencoba lagi, kecuali pengguna sudah menekan Oke/Lupakan
-      // ketika request delete masih berjalan.
-      if (notice) memoryNotices.retry(ownerId, notice);
-    }
-  }
-
-  function trackCurrentMemoryNotice(ctx: Context, ownerId: string): void {
-    const message = ctx.callbackQuery?.message;
-    if (!message) return;
-
-    memoryNotices.add(ownerId, {
-      chatId: message.chat.id,
-      messageId: message.message_id,
-    });
-  }
-
-  function forgetCurrentMemoryNotice(ctx: Context, ownerId: string): void {
-    const messageId = ctx.callbackQuery?.message?.message_id;
-    if (messageId !== undefined) {
-      memoryNotices.remove(ownerId, messageId);
-    }
   }
 
   function enqueueBotAction(
@@ -814,6 +1009,13 @@ function ownerOf(ctx: Context): string {
   return String(ctx.from?.id ?? ctx.chat?.id ?? "tidak-dikenal");
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(), ms);
+    timer.unref?.();
+  });
+}
+
 function dueMinusLead(task: StudentTask): Date | null {
   if (!task.dueAt) return null;
   return new Date(new Date(task.dueAt).getTime() - REMINDER_LEAD_MS);
@@ -838,13 +1040,5 @@ async function safeEdit(
     await ctx.editMessageText(text, options);
   } catch {
     await ctx.reply(text, options);
-  }
-}
-
-async function safeDelete(ctx: Context): Promise<void> {
-  try {
-    await ctx.deleteMessage();
-  } catch {
-    await dropKeyboard(ctx);
   }
 }

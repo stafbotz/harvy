@@ -71,11 +71,18 @@ export function isSensitiveMemory(
 }
 
 const SENSITIVE_CONTENT: readonly RegExp[] = [
-  /\b(?:jenis kelamin|gender|laki-laki|perempuan|cowok|cowo|cewek|cewe)\b/i,
-  /\b(?:orientasi seksual|seksualitas|gay|lesbi|biseks|transgender|lgbt)\b/i,
-  /\b(?:menyukai|suka)\s+(?:laki-laki|perempuan|cowok|cowo|cewek|cewe)\b/i,
+  // Tanpa awalan bebas, "berjenis kelamin" lolos dari `\bjenis kelamin\b`.
+  // Itu bukan kemungkinan teoretis: kalimat "menyukai seseorang berjenis
+  // kelamin pria" pernah tersimpan otomatis pada 26 Juli 2026.
+  /jenis kelamin/i,
+  /\b(?:gender|orientasi|seksualitas|gay|lesbi|biseks|transgender|lgbt|queer|feminin|maskulin)\w*/i,
+  // Ketertarikan pada orang lain, sejauh apa pun kata sifatnya dari kata
+  // kerjanya. Yang dijaga bukan satu susunan kalimat, melainkan topiknya.
+  /(?:menyukai|suka|naksir|crush|jatuh cinta|sayang)\b[^.!?]{0,60}\b(?:pria|laki-?laki|cowok?|wanita|perempuan|cewek?)\b/i,
+  /\b(?:seorang|sebagai)\s+(?:pria|laki-?laki|cowok?|wanita|perempuan|cewek?)\b/i,
+  /\b(?:crush|pacar|gebetan|pdkt|mantan)\b/i,
   /\b(?:kesehatan|penyakit|diagnosis|didiagnosis|terapi|obat|sakit)\b/i,
-  /\b(?:keluarga|orang tua|ayah|ibu|pacar|pasangan)\b/i,
+  /\b(?:keluarga|orang tua|ayah|ibu|pasangan)\b/i,
   /\b(?:depres|cemas|trauma|bunuh diri|menyakiti diri|tekanan emosional)\w*/i,
 ];
 

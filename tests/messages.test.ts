@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  memorySavedActions,
+  bubblePauseMs,
+  MAX_BUBBLE_PAUSE_MS,
+  memoryNoteActions,
   splitReplyBubbles,
+  withMemoryNotes,
+  withoutMemoryNote,
 } from "../src/bot/messages.js";
 import type { MemoryItem } from "../src/domain/memory.js";
 
@@ -39,12 +43,53 @@ describe("bubble balasan", () => {
   });
 });
 
-describe("tombol memori", () => {
-  it("menawarkan Oke selain Lupakan", () => {
-    const keyboard = memorySavedActions(memory());
-    const labels = keyboard.inline_keyboard.flat().map((button) => button.text);
+describe("jeda antar bubble", () => {
+  it("menyesuaikan panjang teks tanpa melewati plafon", () => {
+    assert.ok(bubblePauseMs("oke") < bubblePauseMs("oke, aku ngerti maksudmu"));
+    assert.equal(bubblePauseMs("x".repeat(500)), MAX_BUBBLE_PAUSE_MS);
+    assert.ok(bubblePauseMs("") >= 300);
+  });
+});
 
-    assert.deepEqual(labels, ["Oke", "Lupakan"]);
+describe("catatan memori pada balasan", () => {
+  it("menempel di ujung bubble, bukan menjadi pesan tersendiri", () => {
+    const bubble = withMemoryNotes("Oke, aku ngerti.", [memory()]);
+
+    // Pasal 4 nomor 2 meminta pengguna diberi tahu, bukan meminta percakapan
+    // dipotong pop-up yang harus ditutup dulu.
+    assert.match(bubble, /^Oke, aku ngerti\./);
+    assert.match(bubble, /📎 aku inget ini: Nama pengguna Dimas/);
+  });
+
+  it("tidak mengubah bubble ketika tidak ada yang diingat", () => {
+    assert.equal(withMemoryNotes("Oke.", []), "Oke.");
+  });
+
+  it("menawarkan satu tombol Lupakan untuk satu catatan", () => {
+    const keyboard = memoryNoteActions([memory()]);
+    const buttons = keyboard.inline_keyboard.flat();
+
+    assert.equal(buttons.length, 1);
+    assert.equal(buttons[0]?.text, "Lupakan itu");
+    assert.match(
+      (buttons[0] as { callback_data?: string }).callback_data ?? "",
+      /^memdrop:mem00001$/,
+    );
+  });
+
+  it("membuang barisnya saja, bukan seluruh balasan", () => {
+    const sent = withMemoryNotes("Oke, aku ngerti.", [memory()]);
+    const after = withoutMemoryNote(sent, "Nama pengguna Dimas");
+
+    // Balasan itu pesan sungguhan. Menimpanya dengan daftar memori berarti
+    // menghapus percakapan hanya karena satu tombol ditekan.
+    assert.match(after, /^Oke, aku ngerti\./);
+    assert.doesNotMatch(after, /📎/);
+    assert.match(after, /aku lupain/i);
+  });
+
+  it("tetap memberi kabar ketika catatannya sudah tidak ditemukan", () => {
+    assert.match(withoutMemoryNote("", null), /aku lupain/i);
   });
 });
 

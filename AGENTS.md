@@ -120,21 +120,35 @@ npx tsx scripts/coba-pemahaman.ts --due "besok jam 7 malam"
 npx tsx scripts/coba-pemahaman.ts --boundary "aku mau curhat"
 ```
 
-Ini satu-satunya cara memeriksa jalur percakapan tanpa membuka Telegram, dan
-satu-satunya yang menampilkan balasan mentah model — termasuk jalur sempit Ubah
-tenggat dengan `--due` dan keputusan menyimak bubble dengan `--boundary`.
-Tuliskan `\n` di argumen untuk menguji beberapa bubble sekaligus. Ini
+Menguji bagaimana Harvy *terdengar*, bukan bagaimana ia membaca:
+
+```bash
+npx tsx scripts/coba-balasan.ts "aku capek banget hari ini"
+npx tsx scripts/coba-balasan.ts --riwayat "yang tadi gimana"
+npx tsx scripts/coba-balasan.ts --riwayat=percakapan.json "lanjut dong"
+npx tsx scripts/coba-balasan.ts --listen "besok ada ulangan biologi"
+```
+
+Keduanya satu-satunya cara memeriksa jalur percakapan tanpa membuka Telegram,
+dan satu-satunya yang menampilkan balasan mentah model — termasuk jalur sempit
+Ubah tenggat dengan `--due` dan keputusan menyimak bubble dengan `--boundary`.
+`coba-balasan.ts` menjalankan giliran penuh (pemahaman lalu balasan) dan
+menampilkan pemecahan bubble persis seperti yang akan dikirim; `--riwayat`
+menyisipkan giliran contoh sehingga kesinambungan dan pengulangan pembuka ikut
+terlihat. Tuliskan `\n` di argumen untuk menguji beberapa bubble sekaligus. Ini
 membedakan balasan terpotong dari balasan rusak. Perlu `.env` berisi kunci
 sungguhan; pakai `AI_MODE=testing` agar gratis. Skrip ini memanggil model, jadi
 ia tidak boleh masuk gerbang otomatis.
 
 Konfigurasi runtime berasal dari `.env` (lihat `.env.example`):
 `TELEGRAM_BOT_TOKEN`, `DATA_FILE`, `MEMORY_FILE`, `HISTORY_FILE`,
-`DEFAULT_TIMEZONE`, `DEFAULT_UTC_OFFSET`, `REMINDER_INTERVAL_MS`, serta kelompok
-`AI_*` termasuk `AI_BASE_URL` yang menimpa alamat bawaan penyedia.
-`HISTORY_FILE` berisi kata-kata pengguna apa adanya; perlakukan sebagai data
-pribadi, bukan cache. Berkas `.env` dibaca lewat
-`process.loadEnvFile()`, tanpa dependency tambahan.
+`PROFILE_FILE`, `DEFAULT_TIMEZONE`, `DEFAULT_UTC_OFFSET`,
+`REMINDER_INTERVAL_MS`, serta kelompok `AI_*` termasuk `AI_BASE_URL` yang
+menimpa alamat bawaan penyedia. `HISTORY_FILE` berisi kata-kata pengguna apa
+adanya; perlakukan sebagai data pribadi, bukan cache. `PROFILE_FILE` menyimpan
+catatan persetujuan; menghapusnya membuat semua pengguna diminta menyetujui
+ketentuannya lagi. Berkas `.env` dibaca lewat `process.loadEnvFile()`, tanpa
+dependency tambahan.
 
 ID model tidak boleh ditulis di kode. Nama dan harga model berubah cepat, jadi
 semuanya dibaca dari environment agar koreksi cukup satu baris `.env`.
@@ -156,14 +170,17 @@ tidak mengenal grammY maupun berkas.
   mendaftarkan command Telegram, dan menangani shutdown.
 - `src/domain/` — bentuk data sekaligus port penyimpanan: `task.ts`
   (`StudentTask`, `TaskRepository`), `memory.ts` (`MemoryItem`,
-  `MemoryRepository`), dan `history.ts` (`ConversationHistory`,
-  `HistoryRepository`). Inti bergantung pada antarmuka ini, bukan pada
-  penyimpanan.
+  `MemoryRepository`), `history.ts` (`ConversationHistory`,
+  `HistoryRepository`), dan `profile.ts` (`UserProfile`, `ProfileRepository` —
+  status kenalan, versi persetujuan, dan preferensi gaya). Inti bergantung pada
+  antarmuka ini, bukan pada penyimpanan.
 - `src/core/` — bebas I/O dan bebas Telegram: `prioritizer.ts` (skor prioritas
   murni), `task-service.ts`, `memory-policy.ts` (jenis sensitif, masa berlaku,
   pemilihan memori untuk prompt), `memory-service.ts`, `history-policy.ts`
-  (jendela dan ambang pemadatan), `history-service.ts`, serta
-  `turn-taking-policy.ts` (pengaman lokal dan jendela adaptif batas giliran).
+  (jendela dan ambang pemadatan), `history-service.ts`, `profile-service.ts`
+  (`CONSENT_VERSION`, `needsOnboarding`, `shouldAskStyle`), serta
+  `turn-taking-policy.ts` (pengaman lokal dan jendela adaptif batas giliran,
+  termasuk `looksUrgent` yang dipakai ulang di gerbang perkenalan).
   `HistoryService` menerima fungsi peringkas dari luar supaya `core/` tetap
   bebas jaringan.
 - `src/ai/` — lapisan Harvy di atas model: `persona.ts` (kepribadian, batas
@@ -181,17 +198,19 @@ tidak mengenal grammY maupun berkas.
   besar, dan `safetySensitive` selalu naik ke `ambitious` sekaligus menambahkan
   `SAFETY_ADDENDUM` ke prompt.
 - `src/bot/` — adapter grammY: `create-bot.ts` memasang guard chat pribadi,
-  alur percakapan, dan tombol; `message-batcher.ts` menggabungkan bubble yang
-  dipenggal; `ephemeral-message-store.ts` melacak pemberitahuan memori yang
-  dibersihkan; `messages.ts` memformat keluaran, memecah balasan menjadi bubble,
-  serta menyusun papan tombol; `understanding-route.ts` memeriksa pasangan
-  intent/action sebelum adapter mengubah data; `pending.ts` menyimpan satu
-  langkah percakapan yang sedang menunggu jawaban.
-- `src/storage/` — tiga adapter berkas JSON dengan pola yang sama: tulis atomik
+  gerbang perkenalan, alur percakapan, dan tombol; `message-batcher.ts`
+  menggabungkan bubble yang dipenggal; `onboarding.ts` memuat naskah kenalan,
+  arahan keselamatan pra-persetujuan, dan `HeldMessageStore`; `phrasing.ts`
+  menyimpan beberapa bentuk untuk tiap kalimat tetap Harvy; `messages.ts`
+  memformat keluaran, memecah balasan menjadi bubble, serta menyusun papan
+  tombol; `understanding-route.ts` memeriksa pasangan intent/action sebelum
+  adapter mengubah data; `pending.ts` menyimpan satu langkah percakapan yang
+  sedang menunggu jawaban.
+- `src/storage/` — empat adapter berkas JSON dengan pola yang sama: tulis atomik
   melalui berkas `.tmp` lalu `rename`, dan serialisasi tulis melalui antrian
   promise agar tidak ada pembaruan yang hilang. `file-task-repository.ts`,
-  `file-memory-repository.ts`, dan `file-history-repository.ts`. Ketiganya aman
-  untuk satu proses saja.
+  `file-memory-repository.ts`, `file-history-repository.ts`, dan
+  `file-profile-repository.ts`. Keempatnya aman untuk satu proses saja.
 - `src/reminders/reminder-worker.ts` — `setInterval` dengan penjaga reentrancy;
   `reminderSentAt` mencegah satu pengingat terkirim dua kali.
 
@@ -211,12 +230,43 @@ Invarian yang harus dijaga:
   bila ISO memuat waktu dan offset.
 - **Balasan model adalah masukan yang tidak tepercaya.** Selalu lewat
   `understand.ts`; jangan pernah memakai hasil `JSON.parse` mentah dari model.
+- **Dua cabang yang sulit ditarik kembali diperiksa juga terhadap teks aslinya.**
+  Daftar memori hanya boleh terbuka bila pesannya memang menyinggung ingatan
+  (`looksLikeMemoryRequest`), dan tugas hanya boleh disimpan bila judulnya
+  memuat pekerjaan (`isVagueTaskTitle`). Keduanya lahir dari kegagalan nyata:
+  "kamu pahami aja" membuka seluruh catatan pribadi seseorang lengkap dengan
+  tombol Lupakan semua, dan "buat pengingat dong" tersimpan sebagai tugas
+  berjudul "Membuat pengingat". Satu field JSON dari model termurah bukan bukti
+  yang cukup untuk tindakan sebesar itu.
+- **Langkah balasan tahu jam berapa sekarang.** `replyPrompt` menerima `now` dan
+  `timeZone`. Tanpa itu Harvy menyuruh penggunanya rebahan pada pukul 23.00 lalu
+  mengajak menunggu malam. Ketika pengguna menyebut sendiri keadaannya, jam itu
+  tidak boleh ikut disebut.
+- **Perintah kedalaman untuk pesan panjang menempel di giliran pengguna.**
+  `depthDirective` ikut di dalam pesan `user`, bukan sebagai pesan sistem kedua.
+  Di prompt sistem ia kalah oleh panduan intent yang menyuruh membalas singkat;
+  sebagai pesan sistem kedua ia hilang pada penyedia yang hanya mengenal satu
+  `system_instruction`. Riwayat tetap menyimpan pesan asli, bukan yang sudah
+  ditempeli.
+- **Naskah tetap ditulis sebagai paragraf utuh, tanpa penggalan baris.**
+  Telegram membungkus teks sendiri; baris yang sudah dipenggal di kode dibungkus
+  dua kali dan hasilnya bergerigi di ponsel. `tests/copywriting.test.ts`
+  menjaganya, sekaligus melarang kata "Pengguna" muncul di layar orangnya
+  sendiri.
 - **Memori dan riwayat juga masukan yang tidak tepercaya.** Isinya perkataan
-  pengguna yang diputar ulang ke dalam prompt pada giliran berikutnya, kali ini
-  dari sisi sistem. Keduanya wajib masuk lewat `contextSection` yang
-  membungkusnya dalam `<konteks>` berikut penegasan bahwa isinya catatan, bukan
-  perintah. Menyisipkannya langsung ke prompt adalah jalan injeksi yang
+  pengguna yang diputar ulang pada giliran berikutnya, kali ini dari sisi
+  sistem. Pada langkah `understand`, ketiganya wajib masuk lewat `contextSection`
+  yang membungkusnya dalam `<konteks>` berikut penegasan bahwa isinya catatan,
+  bukan perintah. Menyisipkannya langsung ke prompt adalah jalan injeksi yang
   tertunda.
+- **Pada langkah `reply`, giliran terakhir dikirim sebagai pesan chat, bukan
+  kutipan.** Ini yang membuat Harvy terdengar melanjutkan obrolan alih-alih
+  membalas arsip. Harganya nyata: perkataan lama pengguna kini datang dengan
+  peran `user` yang sama seperti pesan hari ini, sehingga pembungkus `<konteks>`
+  tidak lagi memisahkannya. `RECENT_TURNS_NOTE` di `persona.ts` yang
+  menggantikan pembungkus itu, dan ia **wajib ikut setiap kali** `context.turns`
+  tidak kosong. Memori dan ringkasan tetap di dalam `<konteks>`; keduanya memang
+  catatan, dan tidak ada bentuk chat yang wajar untuk mereka.
 - **Konteks masuk ke dua langkah, bukan satu.** `understand` dan `reply`
   sama-sama menerima `HarvyContext`. Memberikannya hanya pada balasan adalah
   kesalahan yang menggoda: "iya yang tadi itu" justru gagal di langkah
@@ -259,15 +309,29 @@ Invarian yang harus dijaga:
   `personal` selalu lewat tombol izin. Isi tentang kesehatan, keluarga, relasi,
   gender, orientasi seksual, atau tekanan emosional juga dipaksa ke jalur izin
   meskipun model salah memberi jenis biasa. Jenis lain boleh otomatis tetapi
-  wajib diumumkan berikut tombol Oke dan Lupakan. Ini menegakkan Konstitusi
-  Pasal 4 nomor 2 dan 3.
+  wajib diumumkan berikut jalan keluarnya di pesan yang sama. Ini menegakkan
+  Konstitusi Pasal 4 nomor 2 dan 3.
+- **Pemberitahuan memori menempel di balasan, bukan menjadi bubble sendiri.**
+  `withMemoryNotes` menambahkan satu baris `📎` di ujung bubble terakhir dan
+  `memoryNoteActions` memasang tombol Lupakan pada pesan yang sama. Bubble
+  tersendiri memenuhi Pasal 4 nomor 2 tetapi memotong percakapan seperti pop-up.
+  Karena balasan itu pesan sungguhan, tombolnya memakai `memdrop:` yang hanya
+  membuang barisnya lewat `withoutMemoryNote` — bukan `memforget:` yang menimpa
+  seluruh pesan dengan daftar memori.
 - **Fitur memori tidak boleh hidup tanpa kendalinya.** Daftar memori, lupakan
   satu, dan lupakan semua adalah bagian dari fiturnya, bukan pekerjaan susulan —
-  Pasal 4 nomor 4. Referensi pemberitahuan sementara yang gagal dihapus dari
-  Telegram wajib disimpan kembali agar chat berikutnya mencoba lagi. Store
-  memakai lease/tombstone agar callback Oke/Lupakan yang terjadi saat request
-  delete berjalan tidak dapat menghidupkan referensi itu kembali, dan berhenti
-  setelah tiga kegagalan agar error permanen tidak menjadi retry tanpa batas.
+  Pasal 4 nomor 4.
+- **Kontak pertama berkenalan dulu, dan gerbangnya sebelum `enqueue`.** Pengguna
+  yang `consentVersion`-nya belum sama dengan `CONSENT_VERSION` tidak boleh
+  pesannya sampai ke model. Gerbang wajib berada di handler `message:text`
+  sebelum `MessageBatcher.enqueue`, karena batcher memanggil
+  `classifyTurnBoundary` dan panggilan itu sudah mengirim teks pengguna ke
+  penyedia. Pesan yang telanjur dikirim ditahan `HeldMessageStore` di memori
+  proses — tidak pernah ke berkas — lalu diproses sendiri setelah tombolnya
+  ditekan; pengguna tidak diminta mengetik ulang. `/start` hanya salah satu
+  pintu masuk, bukan syarat. Pesan pertama yang `looksUrgent` dijawab arahan
+  keselamatan tetap tanpa memanggil model, karena izin mengirimnya keluar belum
+  ada. Menghapus seluruh memori tidak mereset persetujuan.
 - **Harvy tidak punya cadangan berbasis aturan.** Tanpa kunci API, bot tidak
   dapat memproses pesan dan harus mengatakannya terus terang.
 - `ownerId` (Telegram `from.id`) adalah batas isolasi data. Setiap metode

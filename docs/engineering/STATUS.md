@@ -10,9 +10,9 @@ Aturannya: **jika sebuah kemampuan tidak tercatat “Ada” di sini, jangan
 mengklaimnya ada.** Kalau dokumen lain terdengar lebih optimistis, dokumen ini
 yang menang, dan perbedaannya dilaporkan.
 
-- Terakhir diverifikasi: 26 Juli 2026.
-- Basis: commit `7337b91` ditambah perubahan UX bubble/riwayat yang belum
-  di-commit.
+- Terakhir diverifikasi: 27 Juli 2026.
+- Basis: commit `2a9cb35` ditambah perubahan rasa percakapan, onboarding, dan
+  perbaikan pasca-transkrip yang belum di-commit.
 - Cara verifikasi: membaca kode secara langsung, bukan membaca dokumen lain.
 
 ## Cara memakai Harvy
@@ -31,12 +31,16 @@ papan tombol tetap. Ini belum terjadi; lihat tabel di bawah.
 | Kemampuan | Status | Catatan |
 |---|---|---|
 | Bot Telegram khusus chat pribadi | Ada | Chat non-pribadi hanya dijawab bila pesannya perintah |
+| Perkenalan pada kontak pertama | Ada, sekali diuji Telegram lalu diperbaiki | Dipicu pesan bebas maupun `/start`. Dua bubble, tombol "Oke, mulai" dan "Aku mau tanya dulu". Pesan yang telanjur dikirim ditahan di memori proses lalu diproses sendiri setelah tombol ditekan. Pengguna lama disapa dari jumlah tugas aktifnya, bukan dari ingatan yang dikarang |
+| Preferensi gaya menemani | Ada, belum diuji Telegram | Satu pertanyaan setelah percakapan punya isi — sejak 27 Juli 2026 baru muncul ketika riwayat sudah mencapai enam giliran, karena pada uji pertama ia menyusul pesan pembuka "p". Ditanyakan sekali, dijawab atau tidak, dan tidak muncul bila ada pertanyaan lain yang menunggu |
 | Pesan bebas dipahami model | Ada | Jalur utama. Dua langkah: ekstraksi `cheap`, lalu balasan sesuai tingkatan. Intent dipisahkan dari aksi agar output model yang kontradiktif tidak langsung mengubah data |
 | Penggabungan bubble pengguna | Ada; timer lama terbukti terlalu pendek, perbaikan adaptif belum diuji Telegram | Enqueue langsung mengembalikan kendali ke grammY; jeda 650 ms menggabungkan burst, lalu model `cheap` memilih `complete/open/incomplete/urgent` dengan pagar lokal. Pesan tunggal lengkap langsung diproses; gabungan lengkap, pembuka, dan fragmen menggantung masing-masing diberi 4/7/12 detik sejak bubble terakhir. Bahaya segera lokal tidak menunggu model. Pemeriksaan per pemilik tidak tumpang tindih; command/callback masuk antrean per pengguna tanpa menahan polling global; shutdown normal menguras antrean |
-| Balasan dalam beberapa bubble | Ada, belum teruji Telegram setelah perbaikan | Paragraf dikirim terpisah, maksimal tiga bubble. Blok kode tetap utuh bila muat; pesan di atas 4.000 karakter dipecah agar tidak ditolak Telegram |
+| Balasan dalam beberapa bubble | Ada, belum teruji Telegram setelah perbaikan | Paragraf dikirim terpisah, maksimal tiga bubble. Blok kode tetap utuh bila muat; pesan di atas 4.000 karakter dipecah agar tidak ditolak Telegram. Sejak 26 Juli 2026 ada indikator mengetik dan jeda 0,3–1,2 detik antar bubble, dan prompt memang meminta balasan ditulis sebagai satu sampai tiga paragraf pendek |
+| Balasan yang tidak terdengar seperti mesin | Sebagian; terbukti gagal di Telegram lalu diperbaiki | Uji pertama justru menghasilkan balasan jutek — "Gitu aja sih." — karena aturan anti-pola terlalu keras. Aturannya diseimbangkan pada 27 Juli 2026: larangan balasan datar yang menutup obrolan, panjang mengikuti apa yang dibawa pengguna, dan keluhan ringan tidak boleh dijawab dengan saran istirahat. Pesan di atas 400 karakter mendapat `depthDirective` berisi kerangka isi pesannya sendiri. Probe ulang membaik pada semua skenario kecuali satu, lihat di bawah |
+| Balasan tahu waktu | Ada, belum diuji Telegram | `replyPrompt` menerima jam dan zona waktu. Sebelumnya hanya langkah pemahaman yang tahu, dan Harvy menyuruh penggunanya rebahan pada pukul 23.02 |
 | Permintaan hasil langsung | Ada, terbukti pada probe model | Intent `request` memenuhi permintaan yang dapat dikerjakan di chat, misalnya menulis kode; tidak membuat atau menawarkan tugas. Plafon balasan 4.096 token, lalu pesan panjang dibagi sesuai batas Telegram |
 | Curhat tidak otomatis jadi tugas | Ada | Harvy menjawab dulu, pencatatan ditawarkan lewat tombol |
-| Pencatatan tugas + tombol tindakan | Ada, terbukti | Tugas tercatat dan tombol Selesai berfungsi pada percakapan nyata 26 Juli 2026 |
+| Pencatatan tugas + tombol tindakan | Ada, terbukti sebelum perubahan balasan | Tugas tercatat dan tombol Selesai berfungsi pada percakapan nyata 26 Juli 2026. Sejak 26 Juli 2026 kartunya didahului balasan percakapan; sebelumnya kalimat yang membawa perasaan sekaligus tugas hanya dijawab struk pencatatan. Bila balasan gagal dibuat, tugasnya tetap dicatat dengan kalimat pembuka dari kode |
 | Tombol adaptif yang disusun AI | Belum | Seluruh papan tombol ditulis tangan dan tetap di `src/bot/messages.ts`. Model tidak ikut menentukan tindakan apa yang ditawarkan |
 | `/start`, `/tugas`, `/bantuan` | Ada, sebagai pelengkap | Bukan cara utama. Tidak ada perintah lain; pesan `/` lain dijawab dengan bantuan |
 | Pengurutan prioritas | Ada | Murni dan teruji unit di `src/core/prioritizer.ts` |
@@ -44,20 +48,50 @@ papan tombol tetap. Ini belum terjadi; lihat tabel di bawah.
 | Penyimpanan per pengguna | Ada | JSON atomik, terisolasi lewat `ownerId`. Berlaku sama untuk tugas, memori, dan riwayat |
 | Rotasi kunci mode uji | Ada | Teruji unit; perilaku terhadap kuota nyata belum diamati |
 | Tutoring bertahap | Belum | Promptnya ada dan riwayat percakapan kini tersedia, tetapi pola lima langkah Pasal 3.4 belum ditulis sebagai alur dan belum pernah diamati berjalan lintas pesan |
-| Riwayat percakapan | Ada, terbukti gagal sebelum perbaikan; perbaikan belum teruji Telegram | Enam giliran terakhir dibawa ke pemahaman **dan** balasan; intent `history` membedakannya dari daftar memori. Setelah 16 giliran, pemadatan berjalan di latar setelah balasan dan mempertahankan pesan baru. Transkrip nyata membuktikan riwayat tersambung tetapi salah dijawab sebelum `ADR-007` |
-| Memori terstruktur dan kendalinya | Ada, terbukti sebagian | Lima jenis. `personal` dan isi yang terdeteksi sensitif selalu minta izin; sisanya disimpan otomatis disertai pemberitahuan sementara serta tombol Oke/Lupakan. Penghapusan notice yang gagal dicoba sampai tiga kali; lease/tombstone mencegah ref hidup kembali setelah callback. Daftar, lupakan satu, dan lupakan semua ada. Transkrip nyata membuktikan simpan biasa dan tawaran sensitif tampil; tombol baru belum diuji Telegram |
+| Riwayat percakapan | Ada, terbukti gagal sebelum perbaikan; perbaikan belum teruji Telegram | Enam giliran terakhir dibawa ke pemahaman **dan** balasan; intent `history` membedakannya dari daftar memori. Sejak 26 Juli 2026 langkah balasan mengirimnya sebagai pesan chat sungguhan, bukan kutipan di dalam prompt; pemahaman tetap memakai `<konteks>`. Setelah 16 giliran, pemadatan berjalan di latar setelah balasan dan mempertahankan pesan baru |
+| Memori terstruktur dan kendalinya | Ada, terbukti sebagian | Lima jenis. `personal` dan isi yang terdeteksi sensitif selalu minta izin; sisanya disimpan otomatis. Sejak 26 Juli 2026 pemberitahuannya menempel sebagai satu baris `📎` di ujung balasan berikut tombol Lupakan, menggantikan bubble tersendiri yang harus ditutup. Daftar, lupakan satu, dan lupakan semua ada. Transkrip nyata membuktikan simpan biasa dan tawaran sensitif tampil; bentuk barunya belum diuji Telegram |
 | Pemeriksaan keselamatan sebagai lapisan | Belum | Batas giliran punya pengaman lokal agar bahaya segera tidak menunggu classifier, tetapi handler lengkapnya masih FIFO di belakang balasan aktif. Isi respons keselamatan juga masih hanya mengandalkan satu field JSON dari model ekstraksi lalu tambahan prompt; belum ada preemption atau acknowledgment prioritas |
 | Pemeriksaan respons sebelum dikirim | Belum | Balasan model langsung diteruskan ke pengguna |
-| Pemberitahuan dan persetujuan privasi | Belum | Isi pesan sudah dikirim ke penyedia pihak ketiga tanpa diberitahukan. Sejak memori dan riwayat ada, yang dikirim bukan lagi hanya pesan hari ini — ini menjadi lebih mendesak, bukan kurang |
+| Pemberitahuan dan persetujuan privasi | Ada, belum diuji Telegram | Sejak 26 Juli 2026 pesan tidak dikirim ke penyedia sebelum pengguna menyetujuinya. Gerbangnya berada sebelum `MessageBatcher.enqueue`, jadi klasifikasi batas giliran pun tidak berjalan lebih dulu. Persetujuannya berversi (`CONSENT_VERSION`) dan disimpan terpisah dari memori serta riwayat. Belum ada cara menarik persetujuan selain berhenti memakai Harvy |
 | Zona waktu per pengguna | Belum | Satu zona untuk semua, dari `.env` |
-| Ekspor dan hapus seluruh data | Sebagian | "Lupakan semua tentang aku" menghapus memori dan riwayat dari dalam chat. Tugas belum ikut, dan ekspor belum ada sama sekali |
+| Ekspor dan hapus seluruh data | Sebagian | "Lupakan semua tentang aku" menghapus memori, riwayat, dan preferensi gaya dari dalam chat. Catatan persetujuan sengaja bertahan supaya menghapus data tidak berubah menjadi perkenalan ulang. Tugas belum ikut, dan ekspor belum ada sama sekali |
 | Batas pemakaian dan pemantauan biaya | Belum | Tidak ada penghitungan token |
 | Ukuran keberhasilan Pasal 8 | Belum | Tidak ada yang diukur, termasuk yang boleh diukur |
 | WhatsApp dan website | Belum | Belum dimulai, dan memang belum dijadwalkan |
 
 ## Cacat yang diketahui
 
-Tidak ada cacat terbuka yang tercatat pada kode saat ini. Transkrip Telegram
+**Uji Telegram 26 Juli 2026 (transkrip pengguna nyata) menemukan sepuluh cacat.**
+Seluruhnya sudah diperbaiki di working tree dan dijaga tes, tetapi **belum satu
+pun diuji ulang lewat Telegram**:
+
+1. Balasan terdengar jutek. "Aku jalan pakai sistem dari Google. Gitu aja sih."
+   Aturan anti-pola yang ditambahkan sehari sebelumnya terlalu keras dan
+   berubah menjadi kekakuan.
+2. Curhat sembilan paragraf dijawab satu kalimat.
+3. Harvy tidak tahu jam berapa sekarang: pukul 23.02 ia menyuruh "rebahan dulu"
+   lalu mengajak "ngobrol sambil nunggu malam".
+4. Pesan pertama seseorang dijawab "Ada yang mau dibahas lagi?" — percakapan
+   yang tidak pernah ada.
+5. **Orientasi seksual tersimpan otomatis tanpa izin.** "menyukai seseorang
+   berjenis kelamin pria" lolos dari pagar sensitif karena `jenis kelamin`
+   tidak cocok dengan "berjenis kelamin" dan "pria" tidak ada di daftarnya. Ini
+   pelanggaran Pasal 4 nomor 3, dan cacat yang sama pernah terjadi pada 26 Juli
+   dengan susunan kalimat yang berbeda.
+6. "iya kan aku udah tulis di situ kamu pahami aja" membuka seluruh daftar
+   memori berikut tombol Lupakan semua — yang kemudian benar-benar ditekan, dan
+   seluruh riwayat pengguna hilang.
+7. "eh buat pengingat dong" langsung tersimpan sebagai tugas berjudul "Membuat
+   pengingat" tanpa tenggat, padahal Harvy sendiri sedang menanyakan isinya.
+8. Tombol "Aku mau tanya dulu" tetap hidup setelah ditekan, sehingga penjelasan
+   persetujuan terkirim dua kali.
+9. Naskah statis terpenggal di tengah kalimat karena baris sudah dipatahkan di
+   kode; Telegram membungkusnya sekali lagi.
+10. Catatan memori memanggil pemiliknya "Pengguna" di layarnya sendiri.
+
+Pertanyaan gaya juga muncul terlalu dini, tepat setelah pesan pembuka "p".
+
+Tidak ada cacat terbuka lain yang tercatat pada kode saat ini. Transkrip Telegram
 26 Juli 2026 menemukan delapan cacat yang sudah diperbaiki di working tree tetapi
 belum diuji ulang end-to-end:
 
@@ -187,7 +221,9 @@ tetapi keluar paksa setelah grace period 60 detik atau crash setelah update
 diterima Telegram dapat kehilangan giliran yang belum selesai. Operasi I/O yang
 tidak pernah selesai juga dapat menahan chain satu pengguna sampai batas
 shutdown, tanpa menahan polling global atau pengguna lain. Drain tidak
-menunggu ACK callback, cleanup notice kosmetik, atau pemadatan latar.
+menunggu ACK callback maupun pemadatan latar. Pesan yang ditahan sebelum
+persetujuan juga hanya berada di memori proses: restart sebelum tombolnya
+ditekan membuat pesan itu hilang, dan pengguna harus menulisnya lagi.
 
 Pernah gagal, sudah diperbaiki:
 
@@ -203,6 +239,46 @@ Pernah gagal, sudah diperbaiki:
   mengaku tidak punya ingatan percakapan. Ini pelanggaran Pasal 3.6 dan Pasal 5
   nomor 6, bukan sekadar fitur yang belum ada.
 
+**Probe balasan, 26 Juli 2026.** `scripts/coba-balasan.ts` dijalankan terhadap
+Gemini 3.5 Flash-Lite untuk lima kalimat: curhat dua bubble, lanjutan dengan
+riwayat contoh, kalimat tugas bertenggat, permintaan pengingat, dan kebingungan
+memulai dengan gaya `advice`. Semuanya menghasilkan balasan satu sampai dua
+bubble pendek, tanpa menyebut nama pengguna, tanpa merangkum ulang, dan tanpa
+mengulang pembuka giliran sebelumnya. Permintaan pengingat dijawab kalimat biasa
+lebih dulu, bukan struk pencatatan.
+
+Ini bukti tentang bentuk balasan pada beberapa kalimat, bukan bukti bahwa Harvy
+terasa alami sepanjang percakapan panjang. Model produksi juga belum dipakai.
+
+**Uji Telegram pertama alur kenalan, 26 Juli 2026.** Transkrip pengguna nyata
+membuktikan alur perkenalan sampai persetujuan berjalan, pesan pertama benar
+ditahan lalu diproses, memori tersimpan, dan pengingat dapat diminta. Transkrip
+yang sama menemukan sepuluh cacat di atas — termasuk satu pelanggaran Pasal 4
+nomor 3 dan satu kehilangan seluruh riwayat pengguna.
+
+**Uji ulang lewat probe model, 27 Juli 2026.** Dua belas skenario dari transkrip
+dijalankan ulang lewat `scripts/coba-balasan.ts` dan `scripts/coba-pemahaman.ts`
+pada Gemini 3.5 Flash-Lite. Delapan skenario membaik dan lulus: pesan pertama
+tidak lagi mengarang percakapan lama, pertanyaan tentang model dijawab hangat,
+"kok jutek banget sih" ditanggapi mengundang, curhat panjang menyentuh empat
+topik berbeda, saran waktunya cocok dengan tengah malam, dan ketiga pagar
+klasifikasi — tugas kosong, daftar memori, jenis memori sensitif — berperilaku
+benar.
+
+Yang masih lemah setelah perbaikan:
+
+- Keluhan ringan sempat dijawab terlalu berat; setelah panduan `feeling` dibagi
+  menurut beratnya, probe ulang menghasilkan balasan yang ringan dan pas.
+- Saran yang ditawarkan pada dua giliran berturut-turut masih sejenis meskipun
+  kalimatnya berbeda.
+- **Pesan panjang yang dibuka satu kalimat pengarah tetap dijawab hanya tentang
+  kalimat pembuka itu.** Lima variasi penempatan perintah kedalaman dicoba dan
+  tidak satu pun mengubahnya. Isi yang sama tanpa kalimat pembuka itu dijawab
+  penuh, jadi penyebabnya bukan panjang pesan melainkan kalimat pengarahnya.
+  Ini tampak sebagai batas kemampuan model kecil, dan mode `testing` memakai
+  satu model kecil untuk semua tingkatan sehingga tidak dapat dibedakan dari
+  sini. Harus diuji ulang dengan `AI_MODE=production` sebelum disebut selesai.
+
 Masih belum pernah terjadi setelah perbaikan adaptif terbaru `ADR-007`:
 
 - satu rangkaian bubble dengan jeda 3–4,5 detik diproses sebagai satu giliran
@@ -210,10 +286,21 @@ Masih belum pernah terjadi setelah perbaikan adaptif terbaru `ADR-007`:
 - permintaan membuat kode dijawab dengan hasil tanpa membuat tugas;
 - preferensi baru ditanggapi dan diingat tanpa membuka daftar memori;
 - pertanyaan riwayat yang dijawab benar pada Telegram;
-- tombol Oke serta penghapusan otomatis pemberitahuan memori;
 - peringkasan riwayat latar pada percakapan nyata;
 - percakapan keselamatan;
 - pemakaian lebih dari beberapa menit berturut-turut.
+
+Belum pernah terjadi sama sekali, dari perubahan 26 Juli 2026:
+
+- perkenalan kontak pertama pada Telegram, termasuk penahanan pesan pertama dan
+  pemrosesannya setelah tombol ditekan;
+- arahan keselamatan pra-persetujuan;
+- pertanyaan preferensi gaya dan pengaruhnya pada balasan berikutnya;
+- catatan memori `📎` yang menempel di balasan berikut tombol Lupakan;
+- jeda dan indikator mengetik antar bubble;
+- injeksi lewat giliran lama sekarang bahwa riwayat berperan `user` sungguhan.
+  Tesnya hanya membuktikan penegasannya ada di prompt, bukan bahwa model
+  menaatinya.
 
 Dilaporkan pengguna, belum diamati penulis kode:
 

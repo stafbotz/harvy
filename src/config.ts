@@ -24,6 +24,8 @@ export interface AppConfig {
   memoryFile: string;
   /** Riwayat percakapan yang sudah dipadatkan. Berisi kata-kata pengguna. */
   historyFile: string;
+  /** Status kenalan dan persetujuan per pengguna. */
+  profileFile: string;
   defaultTimezone: string;
   defaultUtcOffset: string;
   reminderIntervalMs: number;
@@ -63,6 +65,7 @@ export function loadConfig(): AppConfig {
     dataFile: resolve(process.env.DATA_FILE ?? "./data/tasks.json"),
     memoryFile: resolve(process.env.MEMORY_FILE ?? "./data/memories.json"),
     historyFile: resolve(process.env.HISTORY_FILE ?? "./data/history.json"),
+    profileFile: resolve(process.env.PROFILE_FILE ?? "./data/profiles.json"),
     defaultTimezone: process.env.DEFAULT_TIMEZONE ?? "Asia/Jakarta",
     defaultUtcOffset,
     reminderIntervalMs,

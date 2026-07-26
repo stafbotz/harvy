@@ -149,8 +149,18 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   pernah tersambung.
 - [ ] Memindahkan penilaian keselamatan ke pemeriksaan tersendiri sebelum
   klasifikasi, sesuai alur teknis di `ADR-003`. Sekarang urutannya terbalik.
-- [ ] Memberi tahu pengguna bahwa pesannya diproses penyedia model pihak ketiga,
-  dan meminta persetujuannya. Dijamin Konstitusi Pasal 3.9.
+- [x] Memberi tahu pengguna bahwa pesannya diproses penyedia model pihak ketiga,
+  dan meminta persetujuannya. Dijamin Konstitusi Pasal 3.9. Masuk 26 Juli 2026
+  bersama perkenalan kontak pertama; gerbangnya berada sebelum klasifikasi batas
+  giliran, jadi tidak ada teks yang keluar sebelum tombolnya ditekan. Belum
+  diuji lewat Telegram, dan menarik persetujuan dari dalam chat belum ada.
+- [x] Pengalaman pengguna pertama: Harvy berkenalan sebelum menjelaskan cara
+  pakai, dipicu kontak pertama dan bukan oleh `/start`. Pesan yang telanjur
+  dikirim ditahan lalu diproses sendiri setelah persetujuan.
+- [x] Balasan yang tidak terdengar seperti mesin: riwayat dikirim sebagai pesan
+  chat pada langkah balasan, kalimat tetap Harvy diberi variasi, pemberitahuan
+  memori menempel di balasan, dan kalimat yang membawa perasaan sekaligus tugas
+  dijawab dulu sebelum kartunya muncul.
 - [x] Riwayat percakapan, agar tutoring bertahap benar-benar mungkin. Riwayatnya
   ada sejak 26 Juli 2026 lewat [`ADR-006`](decisions/ADR-006-memori-dan-riwayat-percakapan.md);
   alur lima langkahnya sendiri masih harus ditulis.
