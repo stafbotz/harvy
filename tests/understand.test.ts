@@ -101,6 +101,78 @@ describe("pembacaan balasan model", () => {
     assert.equal(parseUnderstanding(raw)?.task?.importance, 2);
   });
 
+  it("membaca usulan memori beserta jenisnya", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({
+        intent: "smalltalk",
+        memories: [
+          { kind: "profile", content: "Kelas 11 IPA di SMAN 3" },
+          { kind: "personal", content: "Ibunya sedang sakit" },
+        ],
+      }),
+    );
+
+    assert.equal(understanding?.memories.length, 2);
+    assert.equal(understanding?.memories[0]?.kind, "profile");
+    assert.equal(understanding?.memories[1]?.kind, "personal");
+  });
+
+  it("memperlakukan jenis memori yang tidak dikenal sebagai sensitif", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({
+        intent: "feeling",
+        memories: [{ kind: "kesehatan", content: "Sedang sakit tipes" }],
+      }),
+    );
+
+    // Menebak ke arah yang lebih longgar berarti menyimpan diam-diam sesuatu
+    // yang mungkin sensitif. Menebak ke arah yang ketat hanya membuat Harvy
+    // bertanya dulu, dan itu jauh lebih murah kalau salah.
+    assert.equal(understanding?.memories[0]?.kind, "personal");
+  });
+
+  it("membuang usulan memori yang cacat tanpa menjatuhkan pesannya", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({
+        intent: "task",
+        task: { title: "Kumpulkan matematika", importance: 2 },
+        memories: [
+          { kind: "profile" },
+          { content: "" },
+          "bukan objek",
+          { kind: "routine", content: "Les Jumat sore" },
+        ],
+      }),
+    );
+
+    assert.equal(understanding?.task?.title, "Kumpulkan matematika");
+    assert.equal(understanding?.memories.length, 1);
+    assert.equal(understanding?.memories[0]?.content, "Les Jumat sore");
+  });
+
+  it("membatasi jumlah memori per pesan", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({
+        intent: "smalltalk",
+        memories: [
+          { kind: "profile", content: "Satu" },
+          { kind: "profile", content: "Dua" },
+          { kind: "profile", content: "Tiga" },
+        ],
+      }),
+    );
+
+    assert.equal(understanding?.memories.length, 2);
+  });
+
+  it("mengembalikan daftar memori kosong bila tidak ada", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({ intent: "smalltalk" }),
+    );
+
+    assert.deepEqual(understanding?.memories, []);
+  });
+
   it("membaca tanda keselamatan sebagai boolean tegas", () => {
     const aman = JSON.stringify({ intent: "feeling", task: null });
     assert.equal(parseUnderstanding(aman)?.safetySensitive, false);

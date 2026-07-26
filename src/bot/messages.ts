@@ -1,10 +1,26 @@
 import { InlineKeyboard } from "grammy";
+import type { MemoryItem, MemoryKind } from "../domain/memory.js";
 import type { StudentTask, TaskImportance } from "../domain/task.js";
 
 const IMPORTANCE_LABEL: Record<TaskImportance, string> = {
   1: "santai",
   2: "biasa",
   3: "penting",
+};
+
+/**
+ * Nama jenis memori dalam bahasa yang dimengerti pengguna.
+ *
+ * Konstitusi Pasal 4 nomor 4 memberi hak menghapus satu memori. Hak itu hanya
+ * berguna kalau pemiliknya paham apa yang sedang ia hapus, sehingga label
+ * teknis seperti "context" tidak boleh muncul di layar.
+ */
+const KIND_LABEL: Record<MemoryKind, string> = {
+  profile: "tentang kamu",
+  preference: "cara belajarmu",
+  routine: "kebiasaanmu",
+  context: "yang sedang berjalan",
+  personal: "hal pribadi",
 };
 
 /**
@@ -22,6 +38,11 @@ export const HELP_MESSAGE = [
   "",
   "Setelah tercatat, tinggal pakai tombol untuk menandai selesai, memasang",
   "pengingat, atau membatalkan. Kamu yang menentukan, aku hanya membantu.",
+  "",
+  "Aku juga mengingat beberapa hal supaya kamu tidak perlu mengulang diri:",
+  "kelasmu, cara belajar yang cocok, apa yang sedang kamu hadapi. Untuk hal",
+  "pribadi aku selalu bertanya dulu. Tanya saja “apa yang kamu ingat tentang",
+  "aku”, dan kamu bisa menyuruhku melupakan apa pun kapan saja.",
   "",
   "/tugas — lihat semua tugasmu",
   "/bantuan — tampilkan pesan ini",
@@ -121,4 +142,68 @@ export function understandingNote(task: StudentTask): string {
 
 function shorten(title: string, limit = 28): string {
   return title.length <= limit ? title : `${title.slice(0, limit - 1)}…`;
+}
+
+/**
+ * Pemberitahuan bahwa sesuatu baru saja diingat.
+ *
+ * Pasal 4 nomor 2 meminta pengguna tahu sebelum sesuatu yang baru disimpan.
+ * Untuk memori biasa, Harvy tidak meminta izin — tetapi ia tetap harus
+ * mengatakannya, dan jalan keluarnya harus ada di pesan yang sama.
+ */
+export function memorySavedNote(item: MemoryItem): string {
+  return `📎 Aku ingat ini: ${item.content}`;
+}
+
+export function memorySavedActions(item: MemoryItem): InlineKeyboard {
+  return new InlineKeyboard().text("Lupakan", `memforget:${item.id}`);
+}
+
+/** Persetujuan sebelum hal sensitif disimpan. Pasal 4 nomor 3. */
+export function memoryConsentActions(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Boleh diingat", "memsave:")
+    .text("Jangan", "memskip:");
+}
+
+export function formatMemories(items: MemoryItem[]): string {
+  if (items.length === 0) {
+    return [
+      "Sejauh ini aku belum mengingat apa pun tentang kamu.",
+      "",
+      "Kalau nanti ada yang kusimpan, aku selalu bilang, dan kamu bisa",
+      "menyuruhku melupakannya kapan saja.",
+    ].join("\n");
+  }
+
+  return [
+    "Ini yang aku ingat tentang kamu:",
+    "",
+    ...items.map((item) => `• ${item.content}\n  ${KIND_LABEL[item.kind]}`),
+    "",
+    "Tekan tombolnya kalau ada yang mau aku lupakan.",
+  ].join("\n");
+}
+
+export function memoryListActions(items: MemoryItem[]): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  for (const item of items) {
+    keyboard.text(`Lupakan: ${shorten(item.content)}`, `memforget:${item.id}`).row();
+  }
+
+  return keyboard.text("Lupakan semua tentang aku", "memall:");
+}
+
+/**
+ * Menghapus seluruh ingatan tidak dapat dibatalkan, jadi ia dikonfirmasi.
+ *
+ * Ini bukan penghalang: Pasal 4 nomor 5 melarang penarikan izin dipersulit.
+ * Satu ketukan tambahan yang menjelaskan akibatnya bukan mempersulit, melainkan
+ * memenuhi Pasal 3.11 soal menunjukkan konsekuensi sebelum tindakan penting.
+ */
+export function memoryWipeConfirmActions(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Ya, lupakan semua", "memallyes:")
+    .text("Batal", "memallno:");
 }

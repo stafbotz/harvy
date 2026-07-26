@@ -1,13 +1,27 @@
 import { Bot, type Context, type InlineKeyboard } from "grammy";
+import type { HarvyContext } from "../ai/context.js";
 import type { Conversation } from "../ai/conversation.js";
-import type { ExtractedTask, Understanding } from "../ai/understand.js";
+import type {
+  ExtractedMemory,
+  ExtractedTask,
+  Understanding,
+} from "../ai/understand.js";
 import type { AppConfig } from "../config.js";
+import type { HistoryService } from "../core/history-service.js";
+import { isSensitiveKind } from "../core/memory-policy.js";
+import type { MemoryService } from "../core/memory-service.js";
 import type { TaskService } from "../core/task-service.js";
 import type { StudentTask } from "../domain/task.js";
 import {
   confirmActions,
+  formatMemories,
   formatTask,
   HELP_MESSAGE,
+  memoryConsentActions,
+  memoryListActions,
+  memorySavedActions,
+  memorySavedNote,
+  memoryWipeConfirmActions,
   taskActions,
   taskListActions,
   understandingNote,
@@ -26,6 +40,8 @@ export function createBot(
   config: AppConfig,
   tasks: TaskService,
   conversation: Conversation,
+  memories: MemoryService,
+  history: HistoryService,
 ): Bot {
   const bot = new Bot(config.telegramBotToken);
   const pending = new PendingStore();
@@ -117,15 +133,21 @@ export function createBot(
     ownerId: string,
     text: string,
   ): Promise<void> {
+    // Konteks disusun sebelum pesan ini ikut tercatat, supaya giliran yang
+    // sedang ditangani tidak muncul dua kali di dalam promptnya sendiri.
+    const context = await contextFor(ownerId, text);
+
     let understanding: Understanding | null;
 
     try {
-      understanding = await conversation.understand(text);
+      understanding = await conversation.understand(text, context);
     } catch (error) {
       console.error("Pemahaman pesan gagal:", error);
       await ctx.reply(AI_FAILURE_MESSAGE);
       return;
     }
+
+    await history.append(ownerId, "user", text);
 
     if (!understanding) {
       await ctx.reply(
@@ -134,15 +156,22 @@ export function createBot(
       return;
     }
 
+    if (understanding.intent === "memory") {
+      pending.clear(ownerId);
+      await showMemories(ctx, ownerId);
+      return;
+    }
+
     if (understanding.intent === "task" && understanding.task) {
       pending.clear(ownerId);
       await saveTask(ctx, ownerId, understanding.task);
+      await offerSensitive(ctx, ownerId, understanding.memories);
       return;
     }
 
     let reply: string;
     try {
-      reply = await conversation.reply(text, understanding);
+      reply = await conversation.reply(text, understanding, context);
     } catch (error) {
       console.error("Balasan model gagal:", error);
       await ctx.reply(AI_FAILURE_MESSAGE);
@@ -150,6 +179,8 @@ export function createBot(
     }
 
     await ctx.reply(reply);
+    await history.append(ownerId, "harvy", reply);
+    await memories.markUsed(context.memories);
 
     // Pekerjaan yang tersirat di balik cerita ditawarkan, tidak dicatat diam-diam.
     if (understanding.task) {
@@ -158,10 +189,105 @@ export function createBot(
         `Mau aku catat “${understanding.task.title}” biar nggak perlu kamu ingat-ingat?`,
         { reply_markup: confirmActions() },
       );
+      await absorbMemories(ctx, ownerId, understanding.memories);
       return;
     }
 
-    pending.clear(ownerId);
+    await offerSensitive(ctx, ownerId, understanding.memories);
+  }
+
+  async function contextFor(
+    ownerId: string,
+    message: string,
+  ): Promise<HarvyContext> {
+    const [relevant, conversationContext] = await Promise.all([
+      memories.relevantTo(ownerId, message),
+      history.context(ownerId),
+    ]);
+
+    return {
+      summary: conversationContext.summary,
+      turns: conversationContext.turns,
+      memories: relevant,
+    };
+  }
+
+  /**
+   * Menyimpan memori biasa dan mengembalikan yang sensitif untuk ditawarkan.
+   *
+   * Yang biasa disimpan tanpa bertanya, tetapi tidak diam-diam: setiap
+   * penyimpanan diumumkan berikut tombol Lupakan, sesuai Pasal 4 nomor 2. Yang
+   * sensitif tidak pernah lewat jalur ini — Pasal 4 nomor 3.
+   */
+  async function absorbMemories(
+    ctx: Context,
+    ownerId: string,
+    items: ExtractedMemory[],
+  ): Promise<ExtractedMemory | null> {
+    let sensitive: ExtractedMemory | null = null;
+
+    for (const item of items) {
+      if (isSensitiveKind(item.kind)) {
+        sensitive ??= item;
+        continue;
+      }
+
+      const saved = await memories.remember({
+        ownerId,
+        kind: item.kind,
+        content: item.content,
+      });
+      if (!saved) continue;
+
+      await ctx.reply(memorySavedNote(saved), {
+        reply_markup: memorySavedActions(saved),
+      });
+    }
+
+    return sensitive;
+  }
+
+  /**
+   * Hanya satu langkah tertunda yang dapat hidup sekaligus per pengguna.
+   *
+   * Ketika sebuah pesan melahirkan tawaran tugas sekaligus memori sensitif,
+   * tawaran tugas menang dan memorinya dilewatkan. Menumpuk dua pertanyaan
+   * sekaligus membuat pengguna harus menjawab kuis, dan Pasal 3.11 meminta
+   * pilihan yang tidak berlebihan.
+   */
+  async function offerSensitive(
+    ctx: Context,
+    ownerId: string,
+    items: ExtractedMemory[],
+  ): Promise<void> {
+    const sensitive = await absorbMemories(ctx, ownerId, items);
+
+    if (!sensitive) {
+      pending.clear(ownerId);
+      return;
+    }
+
+    pending.set(ownerId, { kind: "confirm-memory", memory: sensitive });
+    await ctx.reply(
+      [
+        `Boleh aku ingat ini? “${sensitive.content}”`,
+        "",
+        "Kalau iya, aku tidak perlu kamu ceritakan ulang nanti. Kalau tidak,",
+        "aku tetap mendengarkan hari ini dan tidak menyimpannya.",
+      ].join("\n"),
+      { reply_markup: memoryConsentActions() },
+    );
+  }
+
+  async function showMemories(ctx: Context, ownerId: string): Promise<void> {
+    const items = await memories.list(ownerId);
+    const text = formatMemories(items);
+
+    await ctx.reply(
+      text,
+      items.length > 0 ? { reply_markup: memoryListActions(items) } : {},
+    );
+    await history.append(ownerId, "harvy", text);
   }
 
   async function saveTask(
@@ -293,9 +419,112 @@ export function createBot(
         return;
       }
 
+      case "memsave": {
+        const waiting = pending.peek(ownerId);
+        pending.clear(ownerId);
+
+        if (waiting?.kind !== "confirm-memory") {
+          await ctx.answerCallbackQuery({ text: "Sudah tidak berlaku." });
+          return;
+        }
+
+        const saved = await memories.remember({
+          ownerId,
+          kind: waiting.memory.kind,
+          content: waiting.memory.content,
+        });
+
+        await ctx.answerCallbackQuery({ text: "Oke, aku ingat." });
+        await safeEdit(
+          ctx,
+          saved
+            ? `📎 Aku ingat ini: ${saved.content}`
+            : "Ternyata sudah aku ingat sebelumnya.",
+          saved ? memorySavedActions(saved) : undefined,
+        );
+        return;
+      }
+
+      case "memskip": {
+        pending.clear(ownerId);
+        await ctx.answerCallbackQuery({ text: "Oke, nggak aku simpan." });
+        await safeEdit(
+          ctx,
+          "Oke, itu nggak aku simpan. Aku tetap di sini kalau kamu mau cerita.",
+        );
+        return;
+      }
+
+      case "memforget": {
+        const forgotten = await memories.forget(ownerId, target);
+        await ctx.answerCallbackQuery({
+          text: forgotten ? "Sudah aku lupakan." : "Itu sudah tidak ada.",
+        });
+        await refreshMemories(ctx, ownerId, forgotten?.content);
+        return;
+      }
+
+      case "memall": {
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          [
+            "Yakin? Aku akan melupakan semua catatan tentang kamu sekaligus",
+            "seluruh riwayat obrolan kita. Ini tidak bisa dibatalkan.",
+          ].join("\n"),
+          { reply_markup: memoryWipeConfirmActions() },
+        );
+        return;
+      }
+
+      case "memallyes": {
+        const removed = await memories.forgetAll(ownerId);
+        await history.forget(ownerId);
+        pending.clear(ownerId);
+
+        await ctx.answerCallbackQuery({ text: "Sudah bersih." });
+        await safeEdit(
+          ctx,
+          [
+            `Sudah aku lupakan semuanya — ${removed} catatan dan seluruh riwayat obrolan kita.`,
+            "",
+            "Tugasmu tidak ikut terhapus. Kalau mau itu juga hilang, batalkan",
+            "satu per satu lewat daftarnya.",
+          ].join("\n"),
+        );
+        return;
+      }
+
+      case "memallno": {
+        await ctx.answerCallbackQuery({ text: "Nggak jadi." });
+        await safeEdit(ctx, "Nggak jadi. Semuanya masih aku ingat.");
+        return;
+      }
+
       default:
         await ctx.answerCallbackQuery();
     }
+  }
+
+  async function refreshMemories(
+    ctx: Context,
+    ownerId: string,
+    forgotten?: string,
+  ): Promise<void> {
+    const remaining = await memories.list(ownerId);
+    const heading = forgotten
+      ? `Sudah aku lupakan: ${forgotten}`
+      : "Sudah aku lupakan.";
+
+    if (remaining.length === 0) {
+      await safeEdit(ctx, `${heading}\n\nSekarang tidak ada lagi yang aku ingat tentang kamu.`);
+      return;
+    }
+
+    await safeEdit(
+      ctx,
+      [heading, "", formatMemories(remaining)].join("\n"),
+      memoryListActions(remaining),
+    );
   }
 
   async function scheduleReminder(

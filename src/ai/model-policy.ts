@@ -12,7 +12,12 @@
  */
 export type ModelTier = "cheap" | "efficient" | "ambitious";
 
-export type ConversationIntent = "task" | "feeling" | "question" | "smalltalk";
+export type ConversationIntent =
+  | "task"
+  | "feeling"
+  | "question"
+  | "smalltalk"
+  | "memory";
 
 export interface RoutingInput {
   intent: ConversationIntent;
@@ -48,6 +53,11 @@ export function selectTier(input: RoutingInput): ModelTier {
     case "task":
     case "smalltalk":
       // Balasan pendek dan rutin; pekerjaan beratnya sudah selesai di ekstraksi.
+      return "cheap";
+
+    case "memory":
+      // Pengguna sedang mengurus apa yang Harvy ingat tentang dirinya. Jawabannya
+      // disusun kode dari daftar memori, bukan dikarang model.
       return "cheap";
   }
 }

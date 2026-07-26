@@ -28,6 +28,93 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 26 Juli 2026 — Harvy mulai mengingat penggunanya
+
+**Kenapa.** Diminta memutuskan pekerjaan berikutnya, pemilik produk memilih
+memori: Harvy menjengkelkan karena setiap giliran dimulai dari nol, dan tanpa
+riwayat percakapan tutoring bertahap tidak pernah benar-benar mungkin. Pemilik
+produk juga menegaskan Harvy **boleh** mengingat curhat, karena itu membantu.
+
+**Yang diputuskan.** Ditulis lengkap di
+[`ADR-006`](decisions/ADR-006-memori-dan-riwayat-percakapan.md). Empat yang
+paling menentukan:
+
+1. Memori dan riwayat adalah **dua barang terpisah**, bukan satu. Menggabungkan
+   keduanya menghasilkan transkrip mentah yang disebut memori — prompt
+   membengkak, dan pengguna tidak dapat menghapus "satu hal" karena tidak ada
+   satu hal yang dapat ditunjuk.
+2. Memori biasa disimpan otomatis tetapi selalu diumumkan; memori sensitif
+   hanya dengan izin. Konstitusi tidak melarang Harvy mengingat curhat — yang
+   dilarang Pasal 4 nomor 3 adalah menyimpannya diam-diam. Keinginan pemilik
+   produk dan Konstitusi ternyata tidak bertabrakan, asal bentuknya benar.
+3. Riwayat disimpan ke disk (pilihan pemilik produk; usulan saya di memori
+   proses ditolak), lalu diringkas dan dibuang setelah 16 giliran.
+4. Pemilihan memori untuk prompt dilakukan deterministik di `core/`, bukan
+   dengan panggilan model kedua.
+
+**Yang berubah.** Baru: `src/domain/memory.ts`, `src/domain/history.ts`,
+`src/core/memory-policy.ts`, `src/core/memory-service.ts`,
+`src/core/history-policy.ts`, `src/core/history-service.ts`,
+`src/storage/file-memory-repository.ts`, `src/storage/file-history-repository.ts`,
+`src/ai/context.ts`, dan tiga berkas tes.
+
+Yang disambungkan: `understand.ts` membaca usulan memori, `persona.ts` menyusun
+bagian `<konteks>` dan prompt peringkas, `conversation.ts` membawa konteks ke
+**dua** langkah sekaligus menambah `summarize`, `create-bot.ts` menyimpan,
+menawarkan, mendaftar, dan melupakan, `model-policy.ts` mengenal intent
+`memory`, `config.ts` dan `app.ts` merangkai semuanya.
+
+`persona.ts` juga berhenti mewajibkan Harvy mengaku tanpa ingatan. Baris itu
+ditambahkan 26 Juli pagi justru karena Harvy pernah berbohong ke arah
+sebaliknya; membiarkannya berarti mengubah kejujuran kemarin menjadi kebohongan
+baru hari ini.
+
+**Dibahas.** Dua hal yang tidak terlihat dari daftar berkas.
+
+Pertama, **memori adalah masukan tidak tepercaya yang diputar ulang.** Invarian
+repositori ini sudah melindungi pesan pengguna dengan `<pesan>`, tetapi memori
+bocor lewat pintu lain: kalimat yang ditulis hari ini masuk kembali ke prompt
+besok, kali ini dari sisi sistem. Karena itu konteks dibungkus `<konteks>`
+berikut penegasan bahwa isinya catatan, bukan perintah — dan ada tes yang
+menjaganya.
+
+Kedua, **kendali harus lahir bersamaan dengan fiturnya.** Memori tanpa tombol
+Lupakan melanggar Pasal 4 nomor 4 sejak hari pertama, jadi daftar memori,
+lupakan satu, dan lupakan semua ikut dalam perubahan yang sama, bukan
+dijadwalkan menyusul.
+
+Satu tes sempat gagal dan itu berguna: saya mengira riwayat akan tersisa enam
+giliran setelah dua puluh pesan, padahal jawabannya sembilan — pemadatan
+berjalan di ambang lalu riwayat terisi lagi. Yang salah ekspektasi tesnya, bukan
+kodenya, jadi tesnya diubah untuk menguji maksudnya: riwayat tidak pernah tumbuh
+tanpa batas, dan teks yang sudah diringkas benar-benar hilang.
+
+**Bukti.** `npm run check` PASS. `rm -rf dist && npm test` PASS — **63 test
+dalam 11 suite**, naik dari 36 dalam 7.
+
+Yang **tidak** diuji, dan ini bagian terpentingnya: **seluruh fitur ini belum
+pernah dijalankan sekali pun dengan kunci sungguhan.** Yang hijau hanya bagian
+murni — kebijakan memori, pemadatan riwayat, pembacaan usulan model, dan
+pembungkusan konteks. Bahwa Harvy benar-benar mengingat nama penggunanya,
+benar-benar bertanya sebelum menyimpan hal sensitif, dan benar-benar memahami
+"yang tadi itu" belum dibuktikan apa pun. `docs/engineering/TESTING.md` kini
+memuat sepuluh langkah uji manual untuk itu, seluruhnya masih `NOT RUN`.
+
+**Sengaja ditinggalkan.**
+
+- Pengingat yang dikirim worker tidak ikut tercatat ke riwayat, sehingga Harvy
+  tidak tahu ia baru saja menegur penggunanya. `reminder-worker.ts` tidak
+  mengenal `HistoryService`, dan menyambungkannya di luar permintaan.
+- Satu langkah tertunda per pengguna berarti tawaran tugas dan tawaran memori
+  sensitif tidak dapat hidup bersamaan; tawaran tugas menang, memorinya
+  dilewatkan. Sengaja, supaya pengguna tidak dihadapkan dua pertanyaan sekaligus.
+- Menyunting memori belum ada; Pasal 4 nomor 4 menyebut "mengubah", dan yang
+  tersedia baru melihat dan menghapus. Dicatat sebagai Later di `PROJECT.md`.
+- Persetujuan privasi pihak ketiga masih belum ada, dan kini lebih mendesak:
+  yang dikirim ke penyedia model bukan lagi hanya pesan hari ini.
+- Tabel `STATUS.md` menandai memori dan riwayat "Ada, belum teruji manual" —
+  bentuk yang sengaja dipisahkan dari "Ada, terbukti".
+
 ## 26 Juli 2026 — Dokumen usang dibuang; alat diagnostik disambungkan
 
 **Kenapa.** Sesi ini dimulai dari `/init` Claude Code, yang meminta CLAUDE.md

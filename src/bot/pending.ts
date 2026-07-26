@@ -9,10 +9,11 @@
  * mungkin. Konsekuensinya, langkah yang menggantung hilang saat proses
  * restart, dan itu ditangani sebagai keadaan normal, bukan galat.
  */
-import type { ExtractedTask } from "../ai/understand.js";
+import type { ExtractedMemory, ExtractedTask } from "../ai/understand.js";
 
 export type Pending =
   | { kind: "confirm-task"; task: ExtractedTask }
+  | { kind: "confirm-memory"; memory: ExtractedMemory }
   | { kind: "edit-due"; taskId: string };
 
 interface Entry {

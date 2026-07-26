@@ -1,3 +1,4 @@
+import type { MemoryKind } from "../domain/memory.js";
 import type { TaskImportance } from "../domain/task.js";
 import type { ConversationIntent } from "./model-policy.js";
 
@@ -18,11 +19,18 @@ export interface ExtractedTask {
   importance: TaskImportance;
 }
 
+/** Usulan memori dari model. Belum tentu disimpan; lihat `ADR-006` bagian 2. */
+export interface ExtractedMemory {
+  kind: MemoryKind;
+  content: string;
+}
+
 export interface Understanding {
   intent: ConversationIntent;
   safetySensitive: boolean;
   needsStepByStep: boolean;
   task: ExtractedTask | null;
+  memories: ExtractedMemory[];
 }
 
 const INTENTS: readonly ConversationIntent[] = [
@@ -30,7 +38,28 @@ const INTENTS: readonly ConversationIntent[] = [
   "feeling",
   "question",
   "smalltalk",
+  "memory",
 ];
+
+const MEMORY_KINDS: readonly MemoryKind[] = [
+  "profile",
+  "preference",
+  "routine",
+  "context",
+  "personal",
+];
+
+/**
+ * Batas jumlah memori per pesan.
+ *
+ * Model yang bersemangat akan mengusulkan setiap potongan kalimat sebagai
+ * memori. Daftar memori yang panjang membuat haknya menghapus menjadi tidak
+ * berguna: tidak ada yang mau membaca lima puluh baris untuk mencari satu.
+ */
+const MAX_MEMORIES_PER_MESSAGE = 2;
+
+/** Memori yang lebih panjang dari ini hampir pasti kalimat percakapan. */
+const MEMORY_MAX_CHARS = 200;
 
 export function parseUnderstanding(raw: string): Understanding | null {
   const payload = extractJson(raw);
@@ -45,7 +74,42 @@ export function parseUnderstanding(raw: string): Understanding | null {
     safetySensitive: payload["safetySensitive"] === true,
     needsStepByStep: payload["needsStepByStep"] === true,
     task,
+    memories: readMemories(payload["memories"]),
   };
+}
+
+/**
+ * Membaca usulan memori. Yang tidak sah dibuang satu per satu.
+ *
+ * Sebuah usulan yang cacat tidak boleh menjatuhkan seluruh pembacaan pesan:
+ * pengguna akan kehilangan tugasnya hanya karena model salah menamai jenis
+ * memori.
+ */
+function readMemories(value: unknown): ExtractedMemory[] {
+  if (!Array.isArray(value)) return [];
+
+  const memories: ExtractedMemory[] = [];
+
+  for (const entry of value) {
+    if (memories.length >= MAX_MEMORIES_PER_MESSAGE) break;
+    if (!isRecord(entry)) continue;
+
+    const content =
+      typeof entry["content"] === "string" ? entry["content"].trim() : "";
+    if (!content || content.length > MEMORY_MAX_CHARS) continue;
+
+    const label =
+      typeof entry["kind"] === "string" ? entry["kind"].trim().toLowerCase() : "";
+    const kind = MEMORY_KINDS.find((candidate) => candidate === label);
+
+    // Jenis yang tidak dikenal diperlakukan sebagai `personal`, bukan dibuang.
+    // Menebak ke arah yang lebih longgar berarti menyimpan diam-diam sesuatu
+    // yang mungkin sensitif; menebak ke arah yang lebih ketat hanya membuat
+    // Harvy bertanya dulu.
+    memories.push({ kind: kind ?? "personal", content });
+  }
+
+  return memories;
 }
 
 /**

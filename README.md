@@ -42,6 +42,21 @@ Hanya ada dua perintah, dan keduanya opsional:
 
 Tanggal tanpa jam dianggap berlaku sampai akhir hari itu.
 
+### Yang Harvy ingat
+
+Harvy mengingat beberapa hal supaya kamu tidak perlu mengulang dirimu:
+kelasmu, cara belajar yang cocok, kebiasaan, dan apa yang sedang kamu hadapi.
+Setiap kali ada yang disimpan, Harvy mengatakannya berikut tombol **Lupakan**.
+
+Untuk hal pribadi — kesehatan, keluarga, tekanan yang berat — Harvy **selalu
+bertanya dulu** dan tidak menyimpan apa pun tanpa jawabanmu.
+
+Beberapa giliran terakhir juga diingat supaya "yang tadi itu" bisa dimengerti.
+Percakapan lama diringkas menjadi satu paragraf, lalu teks aslinya dibuang.
+
+Tanya "apa yang kamu ingat tentang aku" kapan saja untuk melihat daftarnya,
+menghapus satu, atau menghapus semuanya sekaligus.
+
 ### Yang Harvy lakukan saat tidak yakin
 
 Harvy **tidak** mengubah setiap pesan menjadi tugas. Kalau kamu menulis keluhan,
@@ -86,10 +101,14 @@ npm test
 
 - **Butuh kunci API untuk berjalan.** Tidak ada cadangan berbasis aturan; kalau
   kuota habis atau penyedia terganggu, Harvy mengaku sedang tidak bisa memproses.
-- **Isi pesanmu dikirim ke penyedia model pihak ketiga.** Pemberitahuan dan
-  persetujuan pengguna untuk hal ini belum dibuat.
-- Belum mengingat pesan sebelumnya, sehingga tutoring bertahap belum benar-benar
-  mungkin.
+- **Isi pesanmu dikirim ke penyedia model pihak ketiga**, kini termasuk memori
+  dan ringkasan percakapan. Pemberitahuan dan persetujuan pengguna untuk hal ini
+  belum dibuat.
+- Memori dan riwayat percakapan sudah ada, tetapi belum pernah dicoba pada
+  percakapan sungguhan. Tutoring bertahap lima langkah juga belum ditulis sebagai
+  alur, jadi ia belum benar-benar berjalan.
+- Ringkasan percakapan disusun model, jadi ia bisa keliru. Keliru meringkas
+  berarti Harvy salah mengingat, bukan sekadar lupa.
 - Pengingat lewat tombol Ingatkan waktunya masih ditetapkan Harvy, satu jam
   sebelum tenggat. Belum ada jam tenang maupun pengaturan frekuensi.
 - Pembacaan tenggat oleh model tidak selalu tepat. Setiap tugas yang tercatat
@@ -98,10 +117,11 @@ npm test
   kode berat belum tertangani.
 - Satu zona waktu untuk semua pengguna, mengikuti `DEFAULT_TIMEZONE` dan
   `DEFAULT_UTC_OFFSET`.
-- Belum ada cara melihat, mengekspor, atau menghapus seluruh data dari dalam
-  chat.
+- Memori dan riwayat dapat dihapus dari dalam chat, tetapi tugas belum ikut
+  terhapus dan belum ada cara mengekspor data.
 - Tidak membaca grup Telegram atau WhatsApp.
-- Tidak menyimpan curhat, kondisi kesehatan, atau memori sensitif.
+- Hal sensitif — kesehatan, keluarga, tekanan berat — hanya disimpan bila kamu
+  mengizinkannya lebih dulu, tidak pernah diam-diam.
 - Tidak menghubungi pengguna tanpa pengingat yang ia pasang sendiri.
 - Penyimpanan berkas cocok untuk prototipe satu proses, belum untuk produksi.
 
