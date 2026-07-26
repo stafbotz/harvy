@@ -35,10 +35,12 @@ sederhana:
 
 ## Branch dan `main`
 
-- `main` adalah versi stabil. Jangan menulis atau melakukan push langsung ke
-  sana.
-- Pekerjaan berjalan di branch bernama sesuai isinya, misalnya
-  `fix/tombol-callback` atau `feat/riwayat-percakapan`.
+- Agent boleh bekerja dan membuat commit langsung pada branch aktif, termasuk
+  `main`.
+- Branch bernama seperti `fix/tombol-callback` atau
+  `feat/riwayat-percakapan` bersifat opsional. Gunakan bila pemisahan pekerjaan
+  atau proses review memang membutuhkannya.
+- Pull request tidak wajib. Buat hanya bila diminta atau berguna untuk review.
 - Push, force-push, merge, rebase, dan penghapusan branch hanya dilakukan bila
   diminta.
 

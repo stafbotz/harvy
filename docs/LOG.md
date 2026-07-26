@@ -28,6 +28,37 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 26 Juli 2026 — Kerja langsung di `main` diizinkan
+
+**Kenapa.** Pemilik produk meminta agar agent boleh mengedit branch `main`
+langsung tanpa wajib membuat pull request, serta meminta larangan lama dihapus
+atau diselaraskan.
+
+**Yang berubah.**
+
+- `AGENTS.md` dan `docs/operations/WORKFLOW.md` kini mengizinkan agent menulis
+  serta membuat commit pada branch aktif, termasuk `main`.
+- Branch terpisah dan pull request dinyatakan opsional—dipakai hanya bila
+  diminta atau berguna untuk isolasi pekerjaan dan review.
+- Push, force-push, merge, rebase, dan penghapusan branch tetap hanya dilakukan
+  bila diminta; izin bekerja langsung di `main` bukan izin melakukan perubahan
+  eksternal diam-diam.
+- Catatan keputusan di `ADR-001` dan `ADR-005` diperbarui agar aturan historis
+  tidak bertentangan dengan instruksi aktif.
+
+**Bukti.** Seluruh larangan aktif terhadap tulisan langsung di `main` dicari di
+`AGENTS.md`, `README.md`, `docs/`, dan `.githooks`; sumber yang ditemukan telah
+diselaraskan. `git diff --check` lulus dan `npm run check` lulus. Pemanggilan
+awal `npm test` menemukan tiga tes JavaScript lama di `dist/` dari branch lain,
+bukan kegagalan sumber saat ini. Setelah memastikan target lalu menghapus hanya
+hasil build `C:\Users\imamh\harvy\dist`, `npm test` membangun ulang dan lulus:
+63 tes dalam 11 suite, 0 gagal. Perubahan hanya menyentuh dokumentasi dan aturan
+kerja.
+
+Yang **tidak** dilakukan: tidak ada branch yang dipindah, tidak ada commit,
+push, merge, rebase, pull request, kode produk, konfigurasi runtime, atau proses
+bot yang diubah.
+
 ## 26 Juli 2026 — Harvy mulai mengingat penggunanya
 
 **Kenapa.** Diminta memutuskan pekerjaan berikutnya, pemilik produk memilih

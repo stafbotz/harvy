@@ -13,6 +13,12 @@
 > Yang dibatalkan adalah Work Order sebagai satuan kerja (nomor 2) beserta
 > peran Builder yang terikat padanya (nomor 3). Penggantinya adalah konteks yang
 > dapat dibaca sendiri dan catatan pekerjaan di `docs/LOG.md`. Lihat `ADR-005`.
+>
+> **Perubahan keputusan kemudian, 26 Juli 2026.** Atas keputusan pemilik
+> produk, branch terpisah dan pull request tidak lagi wajib. Agent boleh bekerja
+> serta membuat commit langsung pada branch aktif, termasuk `main`. Push tetap
+> dilakukan hanya bila diminta. Bagian keputusan nomor 5 tetap berlaku untuk
+> commit, bukti tes, dan dokumentasi; pull request kini hanya media opsional.
 
 ## Konteks
 
@@ -30,8 +36,8 @@ Harvy menggunakan:
 2. satu Work Order besar untuk satu hasil pengguna;
 3. satu Builder aktif pada satu branch;
 4. agent lain sebagai Reviewer atau QA read-only;
-5. commit, pull request, bukti tes, dan dokumen keputusan sebagai media
-   serah-terima;
+5. commit, bukti tes, dan dokumen keputusan sebagai media serah-terima; pull
+   request dipakai bila memang diperlukan untuk review;
 6. `AGENTS.md` sebagai instruksi inti, dengan adaptor tipis untuk Claude Code
    dan Antigravity;
 7. dokumentasi modular yang ditemukan melalui `docs/INDEX.md`, bukan seluruh

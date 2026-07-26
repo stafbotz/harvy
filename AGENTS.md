@@ -66,7 +66,10 @@ laporkan perbedaannya.
   mengedit; perbaikan kembali ke penulis yang sama.
 - Jangan mendelegasikan edit kepada agent lain atau menjalankan pekerjaan
   paralel yang menulis file, kecuali diminta.
-- Jangan mengubah atau melakukan push langsung ke `main`.
+- Agent boleh menulis dan membuat commit langsung pada branch aktif, termasuk
+  `main`. Branch terpisah dan pull request bersifat opsional; gunakan hanya bila
+  diminta atau memang membantu proses peninjauan. Push tetap hanya dilakukan
+  bila diminta.
 - Sebelum berpindah alat, commit pekerjaan atau pastikan folder kerja bersih.
   Alat berikutnya tidak dapat melihat perubahan yang masih menggantung.
 

@@ -45,8 +45,10 @@ Formulir tidak menyembuhkan itu. Konteks yang menyembuhkannya.
    serah-terima. Satu entri berisi tanggal, apa yang berubah, alasannya, bukti
    verifikasi, dan apa yang sengaja ditinggalkan.
 4. **Yang tetap berlaku dari ADR-001:** satu penulis aktif pada satu waktu,
-   tidak ada tulisan langsung ke `main`, bukti tes wajib disebut, dan
-   dokumentasi keputusan permanen tetap di `docs/decisions/`.
+   bukti tes wajib disebut, dan dokumentasi keputusan permanen tetap di
+   `docs/decisions/`. Keputusan pemilik produk pada 26 Juli 2026 kemudian
+   mengizinkan tulisan serta commit langsung pada `main`; branch terpisah dan
+   pull request bersifat opsional.
 
 ## Alasan
 
