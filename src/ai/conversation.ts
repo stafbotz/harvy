@@ -35,7 +35,10 @@ export interface RoutingConfig {
  * Batas ini plafon, bukan tagihan: yang dibayar hanya token yang benar-benar
  * dihasilkan.
  */
-const UNDERSTANDING_MAX_TOKENS = 2048;
+// Diekspor agar `scripts/coba-pemahaman.ts` memakai angka yang sama persis.
+// Skrip itu pernah tertinggal di 400 setelah angka di sini dinaikkan, sehingga
+// alat diagnostiknya sendiri mereproduksi cacat yang ia dibuat untuk mencari.
+export const UNDERSTANDING_MAX_TOKENS = 2048;
 const REPLY_MAX_TOKENS = 1536;
 
 /**

@@ -29,7 +29,9 @@ Perintah dianggap lulus hanya jika exit code `0` dan tidak ada test gagal.
 Baseline sebelum setup orkestrasi pada 25 Juli 2026 adalah 10 test lulus dalam
 4 suite. Setelah seluruh percakapan dipindahkan ke model AI pada 26 Juli 2026,
 baseline menjadi 29 test dalam 6 suite. Setelah tiga cacat sambungan diperbaiki
-pada hari yang sama, baseline menjadi **33 test lulus dalam 7 suite**.
+pada hari yang sama, baseline menjadi 33 test dalam 7 suite. Setelah batas token
+pemahaman dinaikkan pada hari yang sama, baseline menjadi **36 test lulus dalam
+7 suite** — diverifikasi ulang dengan `rm -rf dist && npm test`.
 
 **Tes yang memanggil model sungguhan tidak boleh masuk gerbang otomatis.**
 Biayanya tidak dapat diprediksi dan hasilnya tidak dapat diulang. Yang diuji
