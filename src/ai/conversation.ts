@@ -1,4 +1,6 @@
+import type { ConversationTurn } from "../domain/history.js";
 import type { AiClient } from "./client.js";
+import { EMPTY_CONTEXT, type HarvyContext } from "./context.js";
 import {
   resolveModel,
   selectTier,
@@ -7,6 +9,8 @@ import {
 import {
   replyPrompt,
   SAFETY_ADDENDUM,
+  summaryInput,
+  SUMMARY_PROMPT,
   understandingInput,
   understandingPrompt,
 } from "./persona.js";
@@ -42,12 +46,24 @@ export const UNDERSTANDING_MAX_TOKENS = 2048;
 const REPLY_MAX_TOKENS = 1536;
 
 /**
+ * Ringkasan sengaja diberi jatah kecil.
+ *
+ * Ia menggantikan giliran mentah yang dibuang, jadi ringkasan yang panjang
+ * menghapus alasan pemadatan itu sendiri.
+ */
+const SUMMARY_MAX_TOKENS = 512;
+
+/**
  * Menyatukan pemahaman dan balasan menjadi satu alur percakapan.
  *
  * Alurnya dua langkah. Model termurah membaca pesan menjadi data terstruktur,
  * lalu tingkatan model untuk balasan dipilih dari hasil pembacaan itu. Dengan
  * begitu pekerjaan ekstraksi tidak pernah membayar harga model besar, dan
  * percakapan yang memang sulit tidak pernah dilayani model kecil.
+ *
+ * Konteks — ingatan Harvy tentang penggunanya — masuk ke **kedua** langkah.
+ * Memberikannya hanya pada langkah balasan adalah kesalahan yang menggoda:
+ * "iya yang tadi itu" gagal dipahami justru di langkah pertama.
  */
 export class Conversation {
   constructor(
@@ -58,7 +74,10 @@ export class Conversation {
   ) {}
 
   /** Mengembalikan `null` bila model gagal menghasilkan bentuk yang sah. */
-  async understand(message: string): Promise<Understanding | null> {
+  async understand(
+    message: string,
+    context: HarvyContext = EMPTY_CONTEXT,
+  ): Promise<Understanding | null> {
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
@@ -70,8 +89,9 @@ export class Conversation {
           content: understandingPrompt(this.now(), this.timeZone),
         },
         // Dibungkus, bukan dikirim mentah: pesan pengguna adalah data yang
-        // diklasifikasikan, dan tidak boleh terbaca sebagai instruksi.
-        { role: "user", content: understandingInput(message) },
+        // diklasifikasikan, dan tidak boleh terbaca sebagai instruksi. Konteks
+        // ikut dibungkus karena isinya juga berasal dari pengguna.
+        { role: "user", content: understandingInput(message, context) },
       ],
     });
 
@@ -90,7 +110,11 @@ export class Conversation {
     return understanding;
   }
 
-  async reply(message: string, understanding: Understanding): Promise<string> {
+  async reply(
+    message: string,
+    understanding: Understanding,
+    context: HarvyContext = EMPTY_CONTEXT,
+  ): Promise<string> {
     const tier = selectTier({
       intent: understanding.intent,
       messageLength: message.length,
@@ -98,9 +122,10 @@ export class Conversation {
       safetySensitive: understanding.safetySensitive,
     });
 
+    const base = replyPrompt(understanding.intent, context);
     const system = understanding.safetySensitive
-      ? `${replyPrompt(understanding.intent)}${SAFETY_ADDENDUM}`
-      : replyPrompt(understanding.intent);
+      ? `${base}${SAFETY_ADDENDUM}`
+      : base;
 
     return this.client.complete({
       model: resolveModel(tier, this.routing),
@@ -109,6 +134,27 @@ export class Conversation {
       messages: [
         { role: "system", content: system },
         { role: "user", content: message },
+      ],
+    });
+  }
+
+  /**
+   * Memadatkan giliran lama menjadi satu paragraf.
+   *
+   * Memakai tingkatan termurah: ini pekerjaan mekanis, dan ia berjalan di luar
+   * giliran percakapan sehingga pengguna tidak menunggunya.
+   */
+  async summarize(
+    previousSummary: string | null,
+    turns: ConversationTurn[],
+  ): Promise<string> {
+    return this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: SUMMARY_MAX_TOKENS,
+      messages: [
+        { role: "system", content: SUMMARY_PROMPT },
+        { role: "user", content: summaryInput(previousSummary, turns) },
       ],
     });
   }

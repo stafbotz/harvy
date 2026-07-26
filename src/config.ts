@@ -20,6 +20,10 @@ export interface AiConfig {
 export interface AppConfig {
   telegramBotToken: string;
   dataFile: string;
+  /** Memori terstruktur per pengguna. Lihat `ADR-006`. */
+  memoryFile: string;
+  /** Riwayat percakapan yang sudah dipadatkan. Berisi kata-kata pengguna. */
+  historyFile: string;
   defaultTimezone: string;
   defaultUtcOffset: string;
   reminderIntervalMs: number;
@@ -57,6 +61,8 @@ export function loadConfig(): AppConfig {
   return {
     telegramBotToken,
     dataFile: resolve(process.env.DATA_FILE ?? "./data/tasks.json"),
+    memoryFile: resolve(process.env.MEMORY_FILE ?? "./data/memories.json"),
+    historyFile: resolve(process.env.HISTORY_FILE ?? "./data/history.json"),
     defaultTimezone: process.env.DEFAULT_TIMEZONE ?? "Asia/Jakarta",
     defaultUtcOffset,
     reminderIntervalMs,

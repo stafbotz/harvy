@@ -106,8 +106,11 @@ dikerjakan, memasang pengingat, dan menandainya selesai.
 - [x] Tes unit untuk prioritas, layanan, dan penyimpanan. Tes parser terhapus
   bersama jalur berbasis aturan pada ADR-004, digantikan tes untuk pembacaan
   balasan model, kebijakan routing, dan rotasi kunci.
-- [ ] Buat bot melalui BotFather dan pasang token.
-- [ ] Uji manual dengan satu akun Telegram.
+- [x] Buat bot melalui BotFather dan pasang token. Harvy berjalan sungguhan
+  pertama kali pada 26 Juli 2026.
+- [x] Uji manual dengan satu akun Telegram. Pencatatan tugas, tombol Selesai,
+  dan pengiriman pengingat sudah teramati; pengingat dilaporkan pengguna, bukan
+  penulis kode.
 - [ ] Uji mandiri selama tujuh hari dengan tugas nyata.
 
 ### Definition of Done
@@ -144,7 +147,12 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   klasifikasi, sesuai alur teknis di `ADR-003`. Sekarang urutannya terbalik.
 - [ ] Memberi tahu pengguna bahwa pesannya diproses penyedia model pihak ketiga,
   dan meminta persetujuannya. Dijamin Konstitusi Pasal 3.9.
-- [ ] Riwayat percakapan, agar tutoring bertahap benar-benar mungkin.
+- [x] Riwayat percakapan, agar tutoring bertahap benar-benar mungkin. Riwayatnya
+  ada sejak 26 Juli 2026 lewat [`ADR-006`](decisions/ADR-006-memori-dan-riwayat-percakapan.md);
+  alur lima langkahnya sendiri masih harus ditulis.
+- [x] Memori terstruktur per pengguna yang dapat dilihat dan dihapus. Memori
+  biasa disimpan otomatis disertai pemberitahuan, memori sensitif hanya dengan
+  izin. Lihat `ADR-006`.
 - [ ] Pemeriksaan keselamatan sebagai lapisan tersendiri, bukan hanya penilaian
   model. Termasuk penanganan pengguna di bawah 18 tahun.
 - [ ] Batas pemakaian dan pemantauan biaya per pengguna.
@@ -252,7 +260,8 @@ bersedia dan proses persetujuan peserta/wali sudah siap.
 
 - Pendamping belajar berbasis petunjuk bertahap.
 - Check-in ringan dan refleksi.
-- Memori terstruktur yang dapat dilihat, diedit, dan dihapus.
+- Menyunting memori, bukan hanya melihat dan menghapusnya. Pasal 4 nomor 4
+  menyebut "mengubah", dan itu bagian yang belum ada.
 - Pencarian atau RAG, agar informasi yang harus benar tidak bergantung pada
   ingatan model.
 - Harvy Chat di grup WhatsApp: permainan, poin, polling, dan fitur komunitas.

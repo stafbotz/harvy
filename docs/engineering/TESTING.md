@@ -30,8 +30,9 @@ Baseline sebelum setup orkestrasi pada 25 Juli 2026 adalah 10 test lulus dalam
 4 suite. Setelah seluruh percakapan dipindahkan ke model AI pada 26 Juli 2026,
 baseline menjadi 29 test dalam 6 suite. Setelah tiga cacat sambungan diperbaiki
 pada hari yang sama, baseline menjadi 33 test dalam 7 suite. Setelah batas token
-pemahaman dinaikkan pada hari yang sama, baseline menjadi **36 test lulus dalam
-7 suite** — diverifikasi ulang dengan `rm -rf dist && npm test`.
+pemahaman dinaikkan pada hari yang sama, baseline menjadi 36 test dalam 7 suite.
+Setelah memori dan riwayat percakapan masuk lewat `ADR-006`, baseline menjadi
+**63 test lulus dalam 11 suite** — diverifikasi dengan `rm -rf dist && npm test`.
 
 **Tes yang memanggil model sungguhan tidak boleh masuk gerbang otomatis.**
 Biayanya tidak dapat diprediksi dan hasilnya tidak dapat diulang. Yang diuji
@@ -87,6 +88,37 @@ supaya tidak berbiaya.
 12. Jika penyimpanan atau pengingat berubah, restart proses dan pastikan data
     tetap ada serta satu pengingat tidak terkirim dua kali. Ingat bahwa langkah
     percakapan yang menggantung memang hilang setelah restart.
+
+### Memori dan riwayat
+
+Bagian ini belum pernah dijalankan sama sekali. Seluruh baris di bawah masih
+`NOT RUN` sampai ada yang benar-benar mencobanya dengan kunci sungguhan.
+
+13. Sebutkan sesuatu yang biasa, misalnya "aku kelas 11 IPA". Pastikan Harvy
+    mengatakan bahwa ia mengingatnya, dan tombol Lupakan muncul di pesan yang
+    sama. Menyimpan tanpa mengatakannya melanggar Pasal 4 nomor 2.
+14. Sebutkan sesuatu yang sensitif, misalnya kondisi kesehatan atau keadaan
+    keluarga. Pastikan Harvy **bertanya lebih dulu** dan tidak menyimpan apa pun
+    sebelum dijawab. Pasal 4 nomor 3.
+15. Tekan "Jangan" pada tawaran itu, lalu tanyakan apa yang Harvy ingat.
+    Pastikan hal tadi memang tidak ada di daftarnya.
+16. Tulis "apa yang kamu ingat tentang aku". Pastikan daftarnya muncul tanpa ID
+    teknis, dan setiap butir punya tombol Lupakan.
+17. Sebut sesuatu, lalu pada pesan berikutnya rujuk dengan "yang tadi itu".
+    Pastikan Harvy mengerti tanpa diberi tahu ulang. Ini yang membedakan riwayat
+    yang benar-benar tersambung dari riwayat yang hanya tersimpan.
+18. Tanyakan sesuatu yang tidak pernah kamu sebutkan. Pastikan Harvy mengaku
+    tidak mengingatnya, bukan menebak. Pasal 5 nomor 6.
+19. Restart proses, lalu rujuk lagi percakapan sebelumnya. Riwayat harus tetap
+    ada — berbeda dari langkah percakapan yang menggantung, yang memang hangus.
+20. Kirim lebih dari 16 giliran, lalu periksa `data/history.json`. Pastikan
+    ringkasan terisi dan giliran terlama benar-benar hilang, bukan sekadar
+    bertambah di sampingnya.
+21. Tekan "Lupakan semua tentang aku" lalu konfirmasi. Pastikan memori dan
+    riwayat hilang, dan Harvy mengatakan apa adanya bahwa tugas tidak ikut
+    terhapus.
+22. Periksa bahwa dua akun Telegram berbeda tidak pernah melihat memori satu
+    sama lain.
 
 ### Keselamatan
 

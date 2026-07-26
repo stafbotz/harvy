@@ -36,17 +36,17 @@ papan tombol tetap. Ini belum terjadi; lihat tabel di bawah.
 | Tombol adaptif yang disusun AI | Belum | Seluruh papan tombol ditulis tangan dan tetap di `src/bot/messages.ts`. Model tidak ikut menentukan tindakan apa yang ditawarkan |
 | `/start`, `/tugas`, `/bantuan` | Ada, sebagai pelengkap | Bukan cara utama. Tidak ada perintah lain; pesan `/` lain dijawab dengan bantuan |
 | Pengurutan prioritas | Ada | Murni dan teruji unit di `src/core/prioritizer.ts` |
-| Pengingat | Sebagian | Dapat diminta lewat kalimat ("ingetin aku jam 8") atau tombol. Lewat tombol waktunya masih ditetapkan Harvy, satu jam sebelum tenggat. Jam tenang dan frekuensi belum ada |
-| Penyimpanan per pengguna | Ada | JSON atomik, terisolasi lewat `ownerId` |
+| Pengingat | Sebagian | Dapat diminta lewat kalimat ("ingetin aku jam 8") atau tombol. Pengiriman oleh worker **dilaporkan pengguna** berhasil pada 26 Juli 2026; penulis kode belum mengamatinya sendiri. Lewat tombol waktunya masih ditetapkan Harvy, satu jam sebelum tenggat. Jam tenang dan frekuensi belum ada |
+| Penyimpanan per pengguna | Ada | JSON atomik, terisolasi lewat `ownerId`. Berlaku sama untuk tugas, memori, dan riwayat |
 | Rotasi kunci mode uji | Ada | Teruji unit; perilaku terhadap kuota nyata belum diamati |
-| Tutoring bertahap | Belum | Promptnya ada, tetapi tanpa riwayat percakapan pola lima langkah tidak dapat berjalan lintas pesan |
-| Riwayat percakapan | Belum | Setiap pesan berdiri sendiri. Pernah membuat Harvy menjawab "ini pesan pertama kamu" padahal bukan; sejak 26 Juli 2026 prompt mewajibkannya mengaku tidak punya ingatan alih-alih menyangkal |
-| Memori terstruktur dan kendalinya | Belum | Belum ada objek memori untuk dilihat, diperbaiki, atau dihapus |
+| Tutoring bertahap | Belum | Promptnya ada dan riwayat percakapan kini tersedia, tetapi pola lima langkah Pasal 3.4 belum ditulis sebagai alur dan belum pernah diamati berjalan lintas pesan |
+| Riwayat percakapan | Ada, belum teruji manual | Enam giliran terakhir dibawa ke pemahaman **dan** balasan; setelah 16 giliran yang terlama diringkas lalu teks mentahnya dibuang. Tersimpan di `data/history.json`. Aturan pemadatan teruji unit; percakapan nyata yang memakai riwayat belum pernah dijalankan |
+| Memori terstruktur dan kendalinya | Ada, belum teruji manual | Lima jenis. `personal` selalu minta izin; sisanya disimpan otomatis disertai pemberitahuan dan tombol Lupakan. Ada daftar memori, lupakan satu, dan lupakan semua (sekaligus menghapus riwayat). Lihat `ADR-006`. Belum pernah dicoba pada percakapan nyata |
 | Pemeriksaan keselamatan sebagai lapisan | Belum | Hanya satu field JSON yang dinilai model ekstraksi, lalu dijawab tambahan prompt |
 | Pemeriksaan respons sebelum dikirim | Belum | Balasan model langsung diteruskan ke pengguna |
-| Pemberitahuan dan persetujuan privasi | Belum | Isi pesan sudah dikirim ke penyedia pihak ketiga tanpa diberitahukan |
+| Pemberitahuan dan persetujuan privasi | Belum | Isi pesan sudah dikirim ke penyedia pihak ketiga tanpa diberitahukan. Sejak memori dan riwayat ada, yang dikirim bukan lagi hanya pesan hari ini — ini menjadi lebih mendesak, bukan kurang |
 | Zona waktu per pengguna | Belum | Satu zona untuk semua, dari `.env` |
-| Ekspor dan hapus seluruh data | Belum | Tidak ada jalannya dari dalam chat |
+| Ekspor dan hapus seluruh data | Sebagian | "Lupakan semua tentang aku" menghapus memori dan riwayat dari dalam chat. Tugas belum ikut, dan ekspor belum ada sama sekali |
 | Batas pemakaian dan pemantauan biaya | Belum | Tidak ada penghitungan token |
 | Ukuran keberhasilan Pasal 8 | Belum | Tidak ada yang diukur, termasuk yang boleh diukur |
 | WhatsApp dan website | Belum | Belum dimulai, dan memang belum dijadwalkan |
@@ -109,9 +109,18 @@ Pernah gagal, sudah diperbaiki:
 
 Masih belum pernah terjadi:
 
-- pengingat yang benar-benar terkirim oleh worker pada waktunya;
+- percakapan yang benar-benar memakai memori dan riwayat — keduanya baru
+  ditulis pada 26 Juli 2026 dan belum sekali pun dijalankan dengan kunci
+  sungguhan;
+- peringkasan riwayat pada percakapan nyata;
 - percakapan keselamatan;
 - pemakaian lebih dari beberapa menit berturut-turut.
+
+Dilaporkan pengguna, belum diamati penulis kode:
+
+- pengingat benar-benar terkirim oleh worker pada waktunya. Dicatat di sini
+  karena laporan pengguna adalah bukti yang sah, tetapi jenisnya berbeda dari
+  pengamatan langsung dan tidak boleh ditulis seolah sama.
 
 Untuk baris yang masih "Ada" tanpa keterangan terbukti, artinya *ada di kode dan
 lolos gerbang otomatis*, bukan *terbukti bekerja bagi pengguna*.
