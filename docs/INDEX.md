@@ -41,6 +41,7 @@ Konstitusi berkedudukan lebih tinggi daripada dokumen lain di repositori ini.
 | [`decisions/ADR-004-percakapan-sepenuhnya-lewat-ai.md`](decisions/ADR-004-percakapan-sepenuhnya-lewat-ai.md) | Menyentuh cara pesan dipahami, prompt, kepribadian, atau ketiadaan cadangan aturan |
 | [`decisions/ADR-005-konteks-menggantikan-work-order.md`](decisions/ADR-005-konteks-menggantikan-work-order.md) | Mengubah cara pekerjaan dimulai, dibatasi, atau diserahterimakan |
 | [`decisions/ADR-006-memori-dan-riwayat-percakapan.md`](decisions/ADR-006-memori-dan-riwayat-percakapan.md) | Menyentuh apa yang Harvy ingat tentang penggunanya, riwayat percakapan, atau kendali pengguna atas keduanya |
+| [`decisions/ADR-007-bubble-dan-riwayat-percakapan-natural.md`](decisions/ADR-007-bubble-dan-riwayat-percakapan-natural.md) | Menyentuh penggabungan bubble, pertanyaan riwayat, balasan multi-bubble, atau pemberitahuan memori sementara |
 | [`../README.md`](../README.md) | Menjalankan atau mencoba Harvy secara lokal |
 
 Ini peta, bukan daftar bacaan wajib. Jangan memuat seluruh `docs/` ke konteks.

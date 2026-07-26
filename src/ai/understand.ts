@@ -25,8 +25,15 @@ export interface ExtractedMemory {
   content: string;
 }
 
+export type TaskAction = "save" | "offer";
+export type MemoryAction = "list" | "forget" | "remember";
+
 export interface Understanding {
   intent: ConversationIntent;
+  /** Menyimpan langsung, menawarkan, atau tidak memperlakukan teks sebagai tugas. */
+  taskAction: TaskAction | null;
+  /** Tindakan eksplisit terhadap memori; fakta baru sendiri bukan tindakan list. */
+  memoryAction: MemoryAction | null;
   safetySensitive: boolean;
   needsStepByStep: boolean;
   task: ExtractedTask | null;
@@ -37,7 +44,9 @@ const INTENTS: readonly ConversationIntent[] = [
   "task",
   "feeling",
   "question",
+  "request",
   "smalltalk",
+  "history",
   "memory",
 ];
 
@@ -48,6 +57,12 @@ const MEMORY_KINDS: readonly MemoryKind[] = [
   "context",
   "personal",
 ];
+
+const TASK_ACTIONS: readonly TaskAction[] = ["save", "offer"];
+const MEMORY_ACTIONS: readonly MemoryAction[] = ["list", "forget", "remember"];
+const INTENT_ALIASES: Readonly<Record<string, ConversationIntent>> = {
+  reminder: "task",
+};
 
 /**
  * Batas jumlah memori per pesan.
@@ -65,17 +80,61 @@ export function parseUnderstanding(raw: string): Understanding | null {
   const payload = extractJson(raw);
   if (!payload) return null;
 
-  const task = readTask(payload["task"]);
-  const intent = readIntent(payload["intent"], task);
+  let task = readTask(payload["task"]);
+  let taskAction = readTaskAction(payload["taskAction"]);
+  let memoryAction = readMemoryAction(payload["memoryAction"]);
+  const memories = readMemories(payload["memories"]);
+  let intent = readIntent(payload["intent"]);
   if (!intent) return null;
+
+  // Hanya dua kombinasi yang boleh membawa tugas keluar dari parser. Hal ini
+  // mencegah objek kontradiktif seperti request+offer memicu tombol tugas pada
+  // adapter, serta mencegah task tanpa izin eksplisit tersimpan.
+  if (intent === "task") {
+    if (taskAction !== "save" || !task) {
+      taskAction = null;
+      task = null;
+    }
+  } else if (intent === "feeling") {
+    if (taskAction !== "offer" || !task) {
+      taskAction = null;
+      task = null;
+    }
+  } else {
+    taskAction = null;
+    task = null;
+  }
+
+  // Pernyataan fakta/preferensi baru pernah salah diberi intent `memory`, lalu
+  // adapter membuka daftar memori. Kontrol list/forget hanya sah bila tidak
+  // berkontradiksi dengan usulan fakta baru; usulan itu lebih aman diproses
+  // sebagai percakapan daripada dibuang oleh cabang kontrol yang berhenti dini.
+  if (intent === "memory") {
+    const isControl =
+      memoryAction === "list" || memoryAction === "forget";
+    if (!isControl || memories.length > 0) {
+      intent = "smalltalk";
+      if (memoryAction !== "remember") memoryAction = null;
+    }
+  } else if (memoryAction !== "remember") {
+    memoryAction = null;
+  }
 
   return {
     intent,
+    taskAction,
+    memoryAction,
     safetySensitive: payload["safetySensitive"] === true,
     needsStepByStep: payload["needsStepByStep"] === true,
     task,
-    memories: readMemories(payload["memories"]),
+    memories,
   };
+}
+
+/** Membaca jawaban model khusus perubahan tenggat tugas yang sudah ada. */
+export function parseDueDate(raw: string): Date | null {
+  const payload = extractJson(raw);
+  return payload ? readDate(payload["dueAt"]) : null;
 }
 
 /**
@@ -113,24 +172,29 @@ function readMemories(value: unknown): ExtractedMemory[] {
 }
 
 /**
- * Model kecil kadang mengarang label di luar empat yang diminta, misalnya
+ * Model kecil kadang memakai alias di luar label yang diminta, misalnya
  * "reminder" untuk permintaan pengingat.
  *
- * Membuang seluruh pesan karena satu label yang salah terlalu mahal bagi
- * pengguna: ia harus mengetik ulang sesuatu yang sebenarnya sudah dipahami.
- * Ketika data tugasnya sah, maksudnya sudah cukup jelas untuk diperlakukan
- * sebagai pencatatan pekerjaan. Tanpa data itu, menebak tetap lebih buruk
- * daripada mengaku tidak paham.
+ * Hanya alias yang didaftarkan eksplisit diterima. Balasan model adalah masukan
+ * tidak tepercaya; membiarkan sembarang label berubah menjadi task pernah
+ * membuat permintaan kepada Harvy tersimpan sebagai pekerjaan pengguna.
  */
-function readIntent(
-  value: unknown,
-  task: ExtractedTask | null,
-): ConversationIntent | null {
+function readIntent(value: unknown): ConversationIntent | null {
   const label = typeof value === "string" ? value.trim().toLowerCase() : "";
   const known = INTENTS.find((candidate) => candidate === label);
   if (known) return known;
 
-  return task ? "task" : null;
+  return INTENT_ALIASES[label] ?? null;
+}
+
+function readTaskAction(value: unknown): TaskAction | null {
+  const label = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return TASK_ACTIONS.find((candidate) => candidate === label) ?? null;
+}
+
+function readMemoryAction(value: unknown): MemoryAction | null {
+  const label = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return MEMORY_ACTIONS.find((candidate) => candidate === label) ?? null;
 }
 
 function readTask(value: unknown): ExtractedTask | null {
@@ -150,7 +214,14 @@ function readTask(value: unknown): ExtractedTask | null {
 function readDate(value: unknown): Date | null {
   if (typeof value !== "string" || !value.trim()) return null;
 
-  const date = new Date(value);
+  const iso = value.trim();
+  const hasTimeAndOffset =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(
+      iso,
+    );
+  if (!hasTimeAndOffset) return null;
+
+  const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
 
   // Tenggat yang jatuh jauh di luar akal dianggap salah baca, bukan niat

@@ -16,6 +16,7 @@ describe("kebijakan pemilihan model", () => {
   it("memakai model termurah untuk mengurai tugas", () => {
     assert.equal(selectTier({ intent: "task", messageLength: 40 }), "cheap");
     assert.equal(selectTier({ intent: "smalltalk", messageLength: 8 }), "cheap");
+    assert.equal(selectTier({ intent: "history", messageLength: 40 }), "cheap");
   });
 
   it("menaikkan tingkatan untuk pertanyaan yang perlu dituntun bertahap", () => {
@@ -28,6 +29,18 @@ describe("kebijakan pemilihan model", () => {
 
     assert.equal(ringan, "efficient");
     assert.equal(bertahap, "ambitious");
+  });
+
+  it("memperlakukan permintaan hasil langsung seperti pertanyaan", () => {
+    assert.equal(selectTier({ intent: "request", messageLength: 40 }), "efficient");
+    assert.equal(
+      selectTier({
+        intent: "request",
+        messageLength: 40,
+        needsStepByStep: true,
+      }),
+      "ambitious",
+    );
   });
 
   it("menaikkan tingkatan untuk pertanyaan yang panjang", () => {

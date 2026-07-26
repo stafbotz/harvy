@@ -16,7 +16,9 @@ export type ConversationIntent =
   | "task"
   | "feeling"
   | "question"
+  | "request"
   | "smalltalk"
+  | "history"
   | "memory";
 
 export interface RoutingInput {
@@ -42,6 +44,7 @@ export function selectTier(input: RoutingInput): ModelTier {
 
   switch (input.intent) {
     case "question":
+    case "request":
       return input.needsStepByStep || input.messageLength > LONG_MESSAGE
         ? "ambitious"
         : "efficient";
@@ -52,6 +55,7 @@ export function selectTier(input: RoutingInput): ModelTier {
 
     case "task":
     case "smalltalk":
+    case "history":
       // Balasan pendek dan rutin; pekerjaan beratnya sudah selesai di ekstraksi.
       return "cheap";
 

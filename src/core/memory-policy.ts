@@ -54,6 +54,31 @@ export function isSensitiveKind(kind: MemoryKind): boolean {
   return kind === "personal";
 }
 
+/**
+ * Pagar kedua bila model salah memberi label pada isi sensitif.
+ *
+ * Model pernah mengembalikan orientasi seksual sebagai `profile`, lalu Harvy
+ * menyimpannya otomatis. Jenis dari model tidak cukup kuat untuk memutuskan
+ * privasi; kata-kata yang jelas menyentuh tubuh, identitas, relasi, keluarga,
+ * kesehatan, atau tekanan emosional selalu jatuh ke jalur izin.
+ */
+export function isSensitiveMemory(
+  memory: Pick<MemoryItem, "kind" | "content">,
+): boolean {
+  if (isSensitiveKind(memory.kind)) return true;
+
+  return SENSITIVE_CONTENT.some((pattern) => pattern.test(memory.content));
+}
+
+const SENSITIVE_CONTENT: readonly RegExp[] = [
+  /\b(?:jenis kelamin|gender|laki-laki|perempuan|cowok|cowo|cewek|cewe)\b/i,
+  /\b(?:orientasi seksual|seksualitas|gay|lesbi|biseks|transgender|lgbt)\b/i,
+  /\b(?:menyukai|suka)\s+(?:laki-laki|perempuan|cowok|cowo|cewek|cewe)\b/i,
+  /\b(?:kesehatan|penyakit|diagnosis|didiagnosis|terapi|obat|sakit)\b/i,
+  /\b(?:keluarga|orang tua|ayah|ibu|pacar|pasangan)\b/i,
+  /\b(?:depres|cemas|trauma|bunuh diri|menyakiti diri|tekanan emosional)\w*/i,
+];
+
 export function expiryFor(kind: MemoryKind, now: Date): Date | null {
   const lifetime = LIFETIME_MS[kind];
   return lifetime === null ? null : new Date(now.getTime() + lifetime);

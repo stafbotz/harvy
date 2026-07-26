@@ -12,15 +12,45 @@
  *   npx tsx scripts/coba-pemahaman.ts "ingetin aku jam 8 minum obat"
  */
 import { AiClient } from "../src/ai/client.js";
-import { UNDERSTANDING_MAX_TOKENS } from "../src/ai/conversation.js";
-import { understandingInput, understandingPrompt } from "../src/ai/persona.js";
-import { parseUnderstanding } from "../src/ai/understand.js";
+import {
+  parseTurnBoundaryDecision,
+  TURN_BOUNDARY_MAX_TOKENS,
+  TURN_BOUNDARY_TIMEOUT_MS,
+  UNDERSTANDING_MAX_TOKENS,
+} from "../src/ai/conversation.js";
+import {
+  dueDateInput,
+  dueDatePrompt,
+  turnBoundaryInput,
+  TURN_BOUNDARY_PROMPT,
+  understandingInput,
+  understandingPrompt,
+} from "../src/ai/persona.js";
+import {
+  parseDueDate,
+  parseUnderstanding,
+} from "../src/ai/understand.js";
 import { loadConfig } from "../src/config.js";
 
-const message = process.argv.slice(2).join(" ").trim();
+type DiagnosticPath = "understanding" | "due" | "boundary";
+
+const flag = process.argv[2];
+const path: DiagnosticPath =
+  flag === "--due"
+    ? "due"
+    : flag === "--boundary"
+      ? "boundary"
+      : "understanding";
+const rawMessage = process.argv
+  .slice(path === "understanding" ? 2 : 3)
+  .join(" ")
+  .trim();
+const message = rawMessage.replaceAll("\\n", "\n");
 
 if (!message) {
-  console.error('Pakai: npx tsx scripts/coba-pemahaman.ts "kalimat kamu"');
+  console.error(
+    'Pakai: npx tsx scripts/coba-pemahaman.ts [--due|--boundary] "kalimat kamu"',
+  );
   process.exit(1);
 }
 
@@ -35,38 +65,113 @@ const model =
 
 console.log(`Mode    : ${config.ai.mode}`);
 console.log(`Model   : ${model}`);
+console.log(`Jalur   : ${pathLabel(path)}`);
 console.log(`Pesan   : ${message}`);
 console.log("");
 
-const raw = await client.complete({
-  model,
-  temperature: 0,
-  // Harus sama dengan jalur sungguhan. Angka yang lebih kecil membuat skrip ini
-  // melaporkan "GAGAL DIBACA" untuk kalimat yang sebenarnya dipahami Harvy.
-  maxTokens: UNDERSTANDING_MAX_TOKENS,
-  json: true,
-  messages: [
-    {
-      role: "system",
-      content: understandingPrompt(new Date(), config.defaultTimezone),
-    },
-    { role: "user", content: understandingInput(message) },
-  ],
-});
+let raw: string | null = null;
 
-console.log("--- balasan mentah model ---");
-console.log(raw);
-console.log("--- hasil pembacaan ---");
-
-const understanding = parseUnderstanding(raw);
-
-if (!understanding) {
-  console.log(
-    "GAGAL DIBACA. Harvy akan menjawab 'aku belum menangkap maksudnya'.",
+try {
+  raw = await client.complete({
+    model,
+    temperature: 0,
+    // Harus sama dengan jalur sungguhan. Angka yang lebih kecil membuat skrip
+    // ini melaporkan kegagalan yang tidak terjadi pada jalur Harvy.
+    maxTokens:
+      path === "boundary"
+        ? TURN_BOUNDARY_MAX_TOKENS
+        : UNDERSTANDING_MAX_TOKENS,
+    ...(path === "boundary"
+      ? { timeoutMs: TURN_BOUNDARY_TIMEOUT_MS, maxAttempts: 1 }
+      : {}),
+    json: true,
+    messages: [
+      {
+        role: "system",
+        content: diagnosticPrompt(path, config.defaultTimezone),
+      },
+      {
+        role: "user",
+        content: diagnosticInput(path, message),
+      },
+    ],
+  });
+} catch (error) {
+  console.error(
+    "MODEL GAGAL:",
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error),
   );
-  // Bukan process.exit(): mematikan proses saat handle async masih menutup
-  // memicu assertion libuv di Windows, dan pesannya menutupi hasil di atas.
+  if (path === "boundary") {
+    console.log(
+      "Pada runtime, deadline MessageBatcher tetap memproses bubble yang sudah terkumpul.",
+    );
+  }
   process.exitCode = 1;
-} else {
-  console.log(JSON.stringify(understanding, null, 2));
+}
+
+if (raw !== null) {
+  console.log("--- balasan mentah model ---");
+  console.log(raw);
+  console.log("--- hasil pembacaan ---");
+
+  const result =
+    path === "due"
+      ? parseDueDate(raw)
+      : path === "boundary"
+        ? parseTurnBoundaryDecision(raw)
+        : parseUnderstanding(raw);
+
+  if (result === null) {
+    console.log(
+      path === "due"
+        ? "GAGAL DIBACA. Harvy akan meminta waktu ditulis ulang."
+        : path === "boundary"
+          ? "GAGAL DIBACA. Harvy akan memproses kumpulan bubble saat deadline."
+          : "GAGAL DIBACA. Harvy akan menjawab 'aku belum menangkap maksudnya'.",
+    );
+    // Bukan process.exit(): mematikan proses saat handle async masih menutup
+    // memicu assertion libuv di Windows, dan pesannya menutupi hasil di atas.
+    process.exitCode = 1;
+  } else {
+    console.log(
+      result instanceof Date
+        ? JSON.stringify({ dueAt: result.toISOString() }, null, 2)
+        : path === "boundary"
+          ? JSON.stringify({ state: result }, null, 2)
+          : JSON.stringify(result, null, 2),
+    );
+  }
+}
+
+function pathLabel(path: DiagnosticPath): string {
+  switch (path) {
+    case "due":
+      return "ubah tenggat";
+    case "boundary":
+      return "batas bubble";
+    case "understanding":
+      return "pemahaman umum";
+  }
+}
+
+function diagnosticPrompt(path: DiagnosticPath, timeZone: string): string {
+  switch (path) {
+    case "due":
+      return dueDatePrompt(new Date(), timeZone);
+    case "boundary":
+      return TURN_BOUNDARY_PROMPT;
+    case "understanding":
+      return understandingPrompt(new Date(), timeZone);
+  }
+}
+
+function diagnosticInput(path: DiagnosticPath, message: string): string {
+  switch (path) {
+    case "due":
+      return dueDateInput(message);
+    case "boundary":
+      return turnBoundaryInput(message);
+    case "understanding":
+      return understandingInput(message);
+  }
 }

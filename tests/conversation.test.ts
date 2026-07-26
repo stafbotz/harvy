@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AiClient, ChatRequest } from "../src/ai/client.js";
-import { Conversation } from "../src/ai/conversation.js";
+import {
+  Conversation,
+  parseTurnBoundaryDecision,
+  parseWaitDecision,
+} from "../src/ai/conversation.js";
 import type { MemoryItem } from "../src/domain/memory.js";
 
 const ROUTING = {
@@ -14,6 +18,8 @@ const NOW = "2026-07-26T10:00:00.000Z";
 
 const SMALLTALK = JSON.stringify({
   intent: "smalltalk",
+  taskAction: null,
+  memoryAction: null,
   safetySensitive: false,
   needsStepByStep: false,
   task: null,
@@ -151,6 +157,74 @@ describe("pemahaman pesan", () => {
 
     assert.doesNotMatch(requests[0]?.messages.at(-1)?.content ?? "", /<konteks>/);
   });
+
+  it("memakai model murah untuk menentukan apakah pengguna masih mengetik", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, JSON.stringify({ state: "open" })),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    assert.equal(
+      await conversation.classifyTurnBoundary("aku boleh curhat kah"),
+      "open",
+    );
+
+    const request = requests[0];
+    assert.equal(request?.model, "model-uji");
+    assert.equal(request?.json, true);
+    assert.equal(request?.maxAttempts, 1);
+    assert.ok((request?.timeoutMs ?? Infinity) <= 2_500);
+    assert.match(request?.messages[0]?.content ?? "", /batas giliran/i);
+    assert.match(request?.messages[0]?.content ?? "", /aku mau curhat/i);
+    assert.match(request?.messages[0]?.content ?? "", /selesai menulis/i);
+  });
+
+  it("menerima empat keadaan batas giliran dan kontrak boolean lama", () => {
+    assert.equal(
+      parseTurnBoundaryDecision('{"state":"complete"}'),
+      "complete",
+    );
+    assert.equal(parseTurnBoundaryDecision('{"state":"open"}'), "open");
+    assert.equal(
+      parseTurnBoundaryDecision('```json\n{"state":"incomplete"}\n```'),
+      "incomplete",
+    );
+    assert.equal(parseTurnBoundaryDecision('{"state":"urgent"}'), "urgent");
+    assert.equal(parseTurnBoundaryDecision('{"wait":true}'), "open");
+    assert.equal(parseTurnBoundaryDecision('{"wait":false}'), "complete");
+    assert.equal(parseTurnBoundaryDecision('{"state":"unknown"}'), null);
+
+    assert.equal(parseWaitDecision('{"state":"open"}'), true);
+    assert.equal(parseWaitDecision('{"state":"urgent"}'), false);
+  });
+
+  it("mengurai jawaban Ubah tenggat lewat kontrak tanggal khusus", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(
+        requests,
+        JSON.stringify({ dueAt: "2026-07-27T19:00:00+07:00" }),
+      ),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const dueAt = await conversation.understandDueDate("besok jam 7 malam");
+
+    assert.equal(dueAt?.toISOString(), "2026-07-27T12:00:00.000Z");
+    assert.equal(requests[0]?.model, "model-uji");
+    assert.equal(requests[0]?.json, true);
+    assert.match(
+      requests[0]?.messages[0]?.content ?? "",
+      /tenggat tugas yang sudah ada/i,
+    );
+    assert.match(
+      requests[0]?.messages.at(-1)?.content ?? "",
+      /<jawaban>[\s\S]*besok jam 7 malam[\s\S]*<\/jawaban>/,
+    );
+  });
 });
 
 describe("balasan percakapan", () => {
@@ -166,6 +240,8 @@ describe("balasan percakapan", () => {
       "halo",
       {
         intent: "smalltalk",
+        taskAction: null,
+        memoryAction: null,
         safetySensitive: false,
         needsStepByStep: false,
         task: null,
@@ -177,6 +253,69 @@ describe("balasan percakapan", () => {
     const system = requests[0]?.messages[0]?.content ?? "";
     assert.match(system, /Kelas 11 IPA/);
     assert.match(system, /catatan, bukan/);
+  });
+
+  it("menjawab pertanyaan riwayat dari konteks, bukan daftar memori", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "Iya, tadi kamu menyapa aku."),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.reply(
+      "isi chat sebelumnya apa?",
+      {
+        intent: "history",
+        taskAction: null,
+        memoryAction: null,
+        safetySensitive: false,
+        needsStepByStep: false,
+        task: null,
+        memories: [],
+      },
+      {
+        summary: null,
+        turns: [{ role: "user", text: "halo", at: NOW }],
+        memories: [],
+      },
+    );
+
+    const system = requests[0]?.messages[0]?.content ?? "";
+    assert.match(system, /riwayat percakapan/i);
+    assert.match(system, /halo/);
+    assert.doesNotMatch(system, /belum mengingat apa pun tentang kamu/i);
+  });
+
+  it("memenuhi permintaan membuat sesuatu alih-alih mencatat tugas", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "<html>...</html>"),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.reply(
+      "buatin kode tic-tac-toe",
+      {
+        intent: "request",
+        taskAction: null,
+        memoryAction: null,
+        safetySensitive: false,
+        needsStepByStep: false,
+        task: null,
+        memories: [],
+      },
+    );
+
+    const system = requests[0]?.messages[0]?.content ?? "";
+    assert.match(system, /meminta kamu menghasilkan/i);
+    assert.match(system, /penuhi permintaannya/i);
+    assert.doesNotMatch(system, /pekerjaan yang harus dilakukan/i);
+    assert.ok(
+      (requests[0]?.maxTokens ?? 0) >= 4_096,
+      "permintaan hasil panjang perlu cukup ruang untuk kode lengkap",
+    );
   });
 });
 

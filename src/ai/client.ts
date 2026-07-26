@@ -20,6 +20,10 @@ export interface ChatRequest {
   /** Rendah untuk ekstraksi, lebih tinggi untuk percakapan. */
   temperature?: number;
   maxTokens?: number;
+  /** Batas khusus permintaan yang harus cepat, misalnya pengelompokan bubble. */
+  timeoutMs?: number;
+  /** Batasi rotasi kunci untuk keputusan UX yang punya jalur mundur lokal. */
+  maxAttempts?: number;
   /**
    * Meminta penyedia menjamin keluaran berupa JSON. Tidak semua penyedia
    * mendukungnya, jadi permintaan diulang tanpa opsi ini bila ditolak.
@@ -69,7 +73,10 @@ export class AiClient {
   }
 
   private async attempt(request: ChatRequest): Promise<string> {
-    const attempts = Math.max(1, this.options.keys.size);
+    const attempts = Math.max(
+      1,
+      Math.min(request.maxAttempts ?? this.options.keys.size, this.options.keys.size),
+    );
     let lastError: unknown;
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -90,7 +97,7 @@ export class AiClient {
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
-      this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      request.timeoutMs ?? this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     );
 
     try {
@@ -142,18 +149,14 @@ function readContent(payload: unknown): string {
   // penyebabnya tidak terlihat sama sekali. Model penalaran menghabiskan jatah
   // token untuk berpikir, lalu jawabannya terpenggal di tengah.
   if (choice?.finish_reason === "length") {
-    console.warn(
+    throw new AiError(
       "Balasan model terpotong karena batas token (finish_reason=length). " +
         "Naikkan maxTokens untuk permintaan ini.",
     );
   }
 
   if (typeof content !== "string" || !content.trim()) {
-    throw new AiError(
-      choice?.finish_reason === "length"
-        ? "Balasan model habis di batas token sebelum sempat menulis apa pun."
-        : "Balasan model kosong atau tidak dikenali.",
-    );
+    throw new AiError("Balasan model kosong atau tidak dikenali.");
   }
 
   return content.trim();

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   expiryFor,
   isExpired,
+  isSensitiveMemory,
   isSensitiveKind,
   selectRelevantMemories,
 } from "../src/core/memory-policy.js";
@@ -17,6 +18,30 @@ describe("kebijakan memori", () => {
     assert.equal(isSensitiveKind("preference"), false);
     assert.equal(isSensitiveKind("routine"), false);
     assert.equal(isSensitiveKind("context"), false);
+  });
+
+  it("menahan data sensitif meski model salah memberi jenis biasa", () => {
+    assert.equal(
+      isSensitiveMemory({
+        kind: "profile",
+        content: "Pengguna berjenis kelamin laki-laki.",
+      }),
+      true,
+    );
+    assert.equal(
+      isSensitiveMemory({
+        kind: "profile",
+        content: "Pengguna adalah laki-laki yang menyukai laki-laki.",
+      }),
+      true,
+    );
+    assert.equal(
+      isSensitiveMemory({
+        kind: "profile",
+        content: "Nama pengguna adalah Dimas.",
+      }),
+      false,
+    );
   });
 
   it("memberi masa berlaku pada yang sementara, bukan pada jati diri", () => {

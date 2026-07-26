@@ -32,6 +32,7 @@ const history = new HistoryService(
 
 const bot = createBot(config, tasks, conversation, memories, history);
 const stopReminders = startReminderWorker(bot, tasks, config);
+const SHUTDOWN_GRACE_MS = 60_000;
 
 // Sedikit perintah saja. Cara utama memakai Harvy adalah menulis biasa.
 await bot.api.setMyCommands([
@@ -39,9 +40,29 @@ await bot.api.setMyCommands([
   { command: "bantuan", description: "Lihat cara pakai" },
 ]);
 
+let shutdownPromise: Promise<void> | undefined;
+
 const shutdown = (): void => {
-  stopReminders();
-  bot.stop();
+  shutdownPromise ??= (async () => {
+    const forcedExit = setTimeout(() => {
+      console.error(
+        "Harvy melewati batas shutdown 60 detik; proses dihentikan paksa.",
+      );
+      process.exit(1);
+    }, SHUTDOWN_GRACE_MS);
+    forcedExit.unref();
+
+    try {
+      stopReminders();
+      await bot.stop();
+      await bot.drainPending();
+    } finally {
+      clearTimeout(forcedExit);
+    }
+  })();
+  void shutdownPromise.catch((error: unknown) => {
+    console.error("Harvy gagal berhenti dengan bersih:", error);
+  });
 };
 
 process.once("SIGINT", shutdown);
@@ -54,3 +75,10 @@ console.log("Harvy Capybara mulai berjalan.");
 await bot.start({
   allowed_updates: ["message", "callback_query"],
 });
+
+// `bot.stop()` membuat start selesai sebelum antrean MessageBatcher habis.
+// Tahan proses untuk batch, action, dan evaluator utama; ACK callback,
+// pembersihan kosmetik, serta pemadatan riwayat mempunyai lifecycle sendiri.
+if (shutdownPromise) {
+  await shutdownPromise;
+}

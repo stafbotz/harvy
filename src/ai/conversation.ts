@@ -1,4 +1,5 @@
 import type { ConversationTurn } from "../domain/history.js";
+import type { TurnBoundaryState } from "../core/turn-taking-policy.js";
 import type { AiClient } from "./client.js";
 import { EMPTY_CONTEXT, type HarvyContext } from "./context.js";
 import {
@@ -7,14 +8,22 @@ import {
   type ModelTier,
 } from "./model-policy.js";
 import {
+  dueDateInput,
+  dueDatePrompt,
   replyPrompt,
   SAFETY_ADDENDUM,
   summaryInput,
   SUMMARY_PROMPT,
+  turnBoundaryInput,
+  TURN_BOUNDARY_PROMPT,
   understandingInput,
   understandingPrompt,
 } from "./persona.js";
-import { parseUnderstanding, type Understanding } from "./understand.js";
+import {
+  parseDueDate,
+  parseUnderstanding,
+  type Understanding,
+} from "./understand.js";
 
 export interface RoutingConfig {
   mode: "testing" | "production";
@@ -43,7 +52,9 @@ export interface RoutingConfig {
 // Skrip itu pernah tertinggal di 400 setelah angka di sini dinaikkan, sehingga
 // alat diagnostiknya sendiri mereproduksi cacat yang ia dibuat untuk mencari.
 export const UNDERSTANDING_MAX_TOKENS = 2048;
-const REPLY_MAX_TOKENS = 1536;
+const REPLY_MAX_TOKENS = 4096;
+export const TURN_BOUNDARY_MAX_TOKENS = 128;
+export const TURN_BOUNDARY_TIMEOUT_MS = 2_000;
 
 /**
  * Ringkasan sengaja diberi jatah kecil.
@@ -56,10 +67,11 @@ const SUMMARY_MAX_TOKENS = 512;
 /**
  * Menyatukan pemahaman dan balasan menjadi satu alur percakapan.
  *
- * Alurnya dua langkah. Model termurah membaca pesan menjadi data terstruktur,
- * lalu tingkatan model untuk balasan dipilih dari hasil pembacaan itu. Dengan
- * begitu pekerjaan ekstraksi tidak pernah membayar harga model besar, dan
- * percakapan yang memang sulit tidak pernah dilayani model kecil.
+ * Setelah batas bubble diputuskan, giliran utuh berjalan dua langkah. Model
+ * termurah membaca pesan menjadi data terstruktur, lalu tingkatan model untuk
+ * balasan dipilih dari hasil pembacaan itu. Dengan begitu pekerjaan ekstraksi
+ * tidak pernah membayar harga model besar, dan percakapan yang memang sulit
+ * tidak pernah dilayani model kecil.
  *
  * Konteks — ingatan Harvy tentang penggunanya — masuk ke **kedua** langkah.
  * Memberikannya hanya pada langkah balasan adalah kesalahan yang menggoda:
@@ -110,6 +122,53 @@ export class Conversation {
     return understanding;
   }
 
+  /** Mengurai jawaban pada alur Ubah tenggat tanpa melewati intent umum. */
+  async understandDueDate(message: string): Promise<Date | null> {
+    const raw = await this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: UNDERSTANDING_MAX_TOKENS,
+      json: true,
+      messages: [
+        {
+          role: "system",
+          content: dueDatePrompt(this.now(), this.timeZone),
+        },
+        { role: "user", content: dueDateInput(message) },
+      ],
+    });
+
+    return parseDueDate(raw);
+  }
+
+  /**
+   * Menentukan apakah kumpulan bubble complete, open, incomplete, atau urgent.
+   *
+   * Selalu memakai tingkatan termurah dan hanya satu percobaan. Kegagalannya
+   * ditangani `MessageBatcher` dengan memproses pesan yang sudah ada, jadi
+   * keputusan UX ini tidak boleh menahan percakapan selama rotasi seluruh kunci.
+   */
+  async classifyTurnBoundary(message: string): Promise<TurnBoundaryState> {
+    const raw = await this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: TURN_BOUNDARY_MAX_TOKENS,
+      timeoutMs: TURN_BOUNDARY_TIMEOUT_MS,
+      maxAttempts: 1,
+      json: true,
+      messages: [
+        { role: "system", content: TURN_BOUNDARY_PROMPT },
+        { role: "user", content: turnBoundaryInput(message) },
+      ],
+    });
+
+    const decision = parseTurnBoundaryDecision(raw);
+    if (decision === null) {
+      throw new Error("Model tidak mengembalikan keputusan bubble yang sah.");
+    }
+    return decision;
+  }
+
   async reply(
     message: string,
     understanding: Understanding,
@@ -157,5 +216,53 @@ export class Conversation {
         { role: "user", content: summaryInput(previousSummary, turns) },
       ],
     });
+  }
+}
+
+export function parseWaitDecision(raw: string): boolean | null {
+  const decision = parseTurnBoundaryDecision(raw);
+  if (decision === null) return null;
+  return decision === "open" || decision === "incomplete";
+}
+
+export function parseTurnBoundaryDecision(
+  raw: string,
+): TurnBoundaryState | null {
+  const withoutFence = raw
+    .replace(/^\s*```(?:json)?/i, "")
+    .replace(/```\s*$/, "")
+    .trim();
+  const start = withoutFence.indexOf("{");
+  const end = withoutFence.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(withoutFence.slice(start, end + 1));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return null;
+    }
+    const record = parsed as Record<string, unknown>;
+    const state = record["state"];
+    if (
+      state === "complete" ||
+      state === "open" ||
+      state === "incomplete" ||
+      state === "urgent"
+    ) {
+      return state;
+    }
+
+    // Kompatibilitas defensif bila model masih mengulang kontrak lama.
+    return typeof record["wait"] === "boolean"
+      ? record["wait"]
+        ? "open"
+        : "complete"
+      : null;
+  } catch {
+    return null;
   }
 }

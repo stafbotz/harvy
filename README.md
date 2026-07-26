@@ -46,7 +46,8 @@ Tanggal tanpa jam dianggap berlaku sampai akhir hari itu.
 
 Harvy mengingat beberapa hal supaya kamu tidak perlu mengulang dirimu:
 kelasmu, cara belajar yang cocok, kebiasaan, dan apa yang sedang kamu hadapi.
-Setiap kali ada yang disimpan, Harvy mengatakannya berikut tombol **Lupakan**.
+Setiap kali ada yang disimpan, Harvy mengatakannya berikut tombol **Oke** dan
+**Lupakan**.
 
 Untuk hal pribadi — kesehatan, keluarga, tekanan yang berat — Harvy **selalu
 bertanya dulu** dan tidak menyimpan apa pun tanpa jawabanmu.
@@ -61,8 +62,18 @@ menghapus satu, atau menghapus semuanya sekaligus.
 
 Harvy **tidak** mengubah setiap pesan menjadi tugas. Kalau kamu menulis keluhan,
 ia menanggapi keadaanmu dulu, lalu menawarkan mencatat pekerjaannya lewat
-tombol. Kalau kamu bertanya soal pelajaran, ia menuntun alih-alih langsung
-memberi jawaban akhir. Kalau ia tidak paham, ia mengatakannya.
+tombol. Kalau kamu meminta Harvy membuat sesuatu di chat, seperti kode atau
+ringkasan, ia mengerjakannya alih-alih memasukkannya ke daftar tugas. Kalau kamu
+bertanya soal pelajaran, ia menuntun alih-alih langsung memberi jawaban akhir.
+Kalau ia tidak paham, ia mengatakannya.
+
+Kalau kamu memenggal cerita menjadi beberapa bubble cepat, Harvy menyimaknya
+sebagai satu giliran sebelum menjawab. Pesan tunggal yang sudah jelas diproses
+segera setelah pemeriksaan singkat; beberapa bubble lengkap diberi ruang 4
+detik, pembuka cerita 7 detik, dan kalimat yang benar-benar menggantung 12
+detik sejak bubble terakhir. Bahaya segera yang dikenali lokal tidak menunggu
+model batas giliran, tetapi balasan lengkap tetap menjaga urutan dengan balasan
+yang sudah aktif.
 
 ## Menjalankan
 
@@ -104,9 +115,10 @@ npm test
 - **Isi pesanmu dikirim ke penyedia model pihak ketiga**, kini termasuk memori
   dan ringkasan percakapan. Pemberitahuan dan persetujuan pengguna untuk hal ini
   belum dibuat.
-- Memori dan riwayat percakapan sudah ada, tetapi belum pernah dicoba pada
-  percakapan sungguhan. Tutoring bertahap lima langkah juga belum ditulis sebagai
-  alur, jadi ia belum benar-benar berjalan.
+- Memori dan riwayat percakapan sudah dicoba pada percakapan sungguhan dan
+  menemukan kegagalan. Perbaikannya sudah lolos tes otomatis serta probe model,
+  tetapi belum diuji ulang end-to-end di Telegram. Tutoring bertahap lima
+  langkah juga belum ditulis sebagai alur.
 - Ringkasan percakapan disusun model, jadi ia bisa keliru. Keliru meringkas
   berarti Harvy salah mengingat, bukan sekadar lupa.
 - Pengingat lewat tombol Ingatkan waktunya masih ditetapkan Harvy, satu jam
@@ -120,10 +132,15 @@ npm test
 - Memori dan riwayat dapat dihapus dari dalam chat, tetapi tugas belum ikut
   terhapus dan belum ada cara mengekspor data.
 - Tidak membaca grup Telegram atau WhatsApp.
-- Hal sensitif — kesehatan, keluarga, tekanan berat — hanya disimpan bila kamu
-  mengizinkannya lebih dulu, tidak pernah diam-diam.
+- Hal sensitif — kesehatan, keluarga, relasi, gender, orientasi seksual, dan
+  tekanan berat — hanya disimpan bila kamu mengizinkannya lebih dulu, tidak
+  pernah diam-diam.
 - Tidak menghubungi pengguna tanpa pengingat yang ia pasang sendiri.
 - Penyimpanan berkas cocok untuk prototipe satu proses, belum untuk produksi.
+- Bubble dan aksi tombol yang sedang diproses dikuras saat Harvy dimatikan
+  normal, dengan grace period 60 detik, tetapi antreannya masih hanya di memori.
+  Crash atau penghentian paksa pada saat itu dapat menghilangkan satu giliran
+  yang belum selesai.
 
 Keputusan produk dan backlog ada di [docs/PROJECT.md](docs/PROJECT.md). Arah
 moral dan batasnya ada di [docs/CONSTITUTION.md](docs/CONSTITUTION.md).

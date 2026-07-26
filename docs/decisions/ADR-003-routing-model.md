@@ -27,7 +27,7 @@ Kendala yang membentuk keputusan ini:
 
 | Tingkatan | Dipakai untuk | Alasan |
 |---|---|---|
-| `cheap` | Mengurai pesan menjadi data tugas, klasifikasi, balasan pendek rutin | Pekerjaan ekstraksi, tidak butuh penalaran |
+| `cheap` | Mengurai pesan, menentukan batas bubble, klasifikasi, balasan pendek rutin | Pekerjaan ekstraksi, tidak butuh penalaran |
 | `efficient` | Percakapan sehari-hari, check-in, memecah pekerjaan menjadi langkah kecil, penjelasan ringan | Butuh kepekaan bahasa, bukan penalaran berat |
 | `ambitious` | Penjelasan berlapis, tutoring bertahap, perencanaan jangka panjang, dan **seluruh percakapan keselamatan** | Kesalahan di sini paling mahal bagi pengguna |
 
@@ -63,6 +63,9 @@ tempat dan model dapat diganti tanpa membuka akun baru.
 Mode uji memakai kuota gratis Google AI Studio. Menghentikan mode uji cukup
 dengan mengubah `AI_MODE` menjadi `production`; tidak ada kode yang disentuh.
 
+Per 26 Juli 2026, model mode uji adalah `gemini-3.5-flash-lite`. Model ini juga
+dipakai untuk keputusan batas bubble; lihat `ADR-007`.
+
 Keduanya diakses lewat satu klien yang sama. Google AI Studio dan OpenRouter
 sama-sama menyediakan permukaan yang kompatibel dengan OpenAI, sehingga yang
 berbeda hanya alamat dan kunci.
@@ -80,10 +83,11 @@ tetap milik akun yang sama dan tunduk pada ketentuan penyedia.
 
 ## Risiko yang diketahui
 
-- **Nama model belum terverifikasi.** DeepSeek V4 Flash, GPT 5.6 Luna,
-  GPT 5.6 Terra, dan Gemini 3.6 Flash belum dicocokkan dengan daftar model resmi
-  penyedia. Karena itu seluruh ID berada di environment: koreksi cukup satu
-  baris `.env`. Verifikasi ejaan persisnya sebelum mode uji dinyalakan.
+- **Sebagian nama model belum terverifikasi.** ID
+  `deepseek/deepseek-v4-flash` dan `gemini-3.5-flash-lite` diverifikasi pada
+  daftar resmi penyedia tanggal 26 Juli 2026. GPT 5.6 Luna dan GPT 5.6 Terra
+  belum diverifikasi. Seluruh ID tetap berada di environment: koreksi cukup
+  satu baris `.env`.
 - **Dua penyedia selama masa uji.** Google AI Studio bukan OpenRouter, sehingga
   kredit tetap terpisah selama pengujian. OpenRouter juga menyediakan Gemini;
   bila keseragaman lebih penting daripada gratis, `AI_BASE_URL` dan
@@ -127,5 +131,5 @@ Yang belum ada:
   dengan tambahan prompt. Konteks produk menegaskan prompt saja tidak cukup;
 - pemeriksaan respons sebelum dikirim ke pengguna;
 - penghitungan token, batas pemakaian, dan pemantauan biaya per pengguna;
-- riwayat percakapan, sehingga Harvy belum mengingat pesan sebelumnya; dan
+- riwayat percakapan kemudian dikerjakan lewat `ADR-006`; dan
 - penanganan khusus pengguna di bawah 18 tahun.

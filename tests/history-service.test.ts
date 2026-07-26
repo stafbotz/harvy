@@ -43,6 +43,7 @@ describe("HistoryService", () => {
     for (let index = 0; index < 20; index += 1) {
       await service.append("student", "user", `pesan ${index}`);
     }
+    await service.compact("student");
 
     const stored = await store.load("student");
     assert.equal(stored?.summary, "Pengguna sedang menyiapkan ujian biologi.");
@@ -70,19 +71,67 @@ describe("HistoryService", () => {
 
   it("mempertahankan riwayat ketika peringkasan gagal", async () => {
     const store = new HistoryStore();
+    let attempts = 0;
     const service = new HistoryService(store, async () => {
+      attempts += 1;
       throw new Error("model sedang tidak bisa dihubungi");
     });
 
     for (let index = 0; index < 20; index += 1) {
       await service.append("student", "user", `pesan ${index}`);
     }
+    await service.compact("student");
+    await service.compact("student");
 
     const stored = await store.load("student");
     // Membuang giliran tanpa ringkasannya berarti kehilangan konteks diam-diam.
     // Lebih baik riwayat kepanjangan sebentar dan dipadatkan lagi nanti.
     assert.equal(stored?.summary, null);
     assert.equal(stored?.turns.length, 20);
+    assert.equal(attempts, 1, "retry harus menunggu cooldown");
+  });
+
+  it("tidak memanggil peringkas dari jalur append", async () => {
+    let summarized = false;
+    const service = new HistoryService(new HistoryStore(), async () => {
+      summarized = true;
+      return "ringkasan";
+    });
+
+    for (let index = 0; index < 20; index += 1) {
+      await service.append("student", "user", `pesan ${index}`);
+    }
+
+    assert.equal(summarized, false);
+  });
+
+  it("mempertahankan giliran yang masuk saat ringkasan sedang dibuat", async () => {
+    const store = new HistoryStore();
+    let finishSummary: ((summary: string) => void) | undefined;
+    const service = new HistoryService(
+      store,
+      () =>
+        new Promise<string>((resolve) => {
+          finishSummary = resolve;
+        }),
+    );
+
+    for (let index = 0; index < 20; index += 1) {
+      await service.append("student", "user", `pesan ${index}`);
+    }
+
+    const compacting = service.compact("student");
+    while (!finishSummary) {
+      await Promise.resolve();
+    }
+
+    await service.append("student", "user", "bubble yang datang belakangan");
+    finishSummary("Ringkasan lama.");
+    await compacting;
+
+    const stored = await store.load("student");
+    assert.equal(stored?.turns.at(-1)?.text, "bubble yang datang belakangan");
+    assert.equal(stored?.summary, "Ringkasan lama.");
   });
 
   it("melupakan seluruh riwayat seorang pengguna", async () => {

@@ -58,6 +58,489 @@ kerja.
 Yang **tidak** dilakukan: tidak ada branch yang dipindah, tidak ada commit,
 push, merge, rebase, pull request, kode produk, konfigurasi runtime, atau proses
 bot yang diubah.
+## 26 Juli 2026 — Onboarding dipicu kontak pertama, bukan `/start`
+
+**Dibahas.** Pemilik produk meluruskan rancangan UX kenalan. Perkenalan Harvy
+harus terjadi pada kontak pertama pengguna, baik ia mengirim `/start` maupun
+langsung menulis pesan biasa. `/start` hanyalah salah satu pintu masuk dan
+tidak boleh menjadi syarat memperoleh onboarding.
+
+Jika pesan pertama sudah membawa isi—misalnya pengguna langsung bercerita—pesan
+itu perlu ditahan lokal, perkenalan serta persetujuan ditampilkan, lalu pesan
+aslinya diproses otomatis setelah pengguna melanjutkan. Pengguna tidak diminta
+mengetik ulang. Pengguna lama yang menjalankan `/start` tidak mengulang
+onboarding atau kehilangan konteks.
+
+Frasa “AI pendamping” dinilai kaku dan membuat kemampuan Harvy terdengar sempit.
+Perkenalan sebaiknya berfokus pada hal luas yang dapat dibawa pengguna:
+cerita yang masih acak, pertanyaan, tugas, ide, rencana, atau sesuatu yang belum
+tahu harus dimulai dari mana. Transparansi bahwa Harvy menggunakan AI tetap
+diperlukan oleh Konstitusi, tetapi disampaikan terpisah dan alami bersama
+penjelasan keterbatasan serta pemrosesan pihak ketiga—bukan dijadikan label
+utama identitas Harvy.
+
+Status onboarding sebaiknya terpisah dari keberadaan riwayat: menghapus riwayat
+tidak otomatis menjadikan pengguna “baru”. Persetujuan juga perlu memiliki
+versi agar dapat diminta ulang hanya ketika ketentuannya benar-benar berubah.
+
+Belum diputuskan naskah akhir perkenalan, perilaku saat pengguna mengirim pesan
+lanjutan sebelum menekan consent, dan pengecualian untuk pesan pertama yang
+menunjukkan bahaya segera. Tidak ada kode, konfigurasi, status kemampuan, tes,
+atau proses bot yang diubah.
+
+## 26 Juli 2026 — UX kenalan dan rasa percakapan diusulkan
+
+**Dibahas.** Pemilik produk ingin Harvy memberi kesan “ini AI yang aku
+butuhkan”: hangat dan senyaman chat dengan teman, tetapi tetap jujur sebagai AI.
+Pengalaman pengguna pertama juga belum ada; seharusnya Harvy berkenalan sebelum
+menumpahkan petunjuk penggunaan.
+
+Pemeriksaan alur saat ini menunjukkan `/start` langsung mengirim satu blok
+panjang berisi fokus tugas, contoh, memori, dan daftar perintah. Belum ada status
+pengguna baru/kembali, consent pemrosesan pihak ketiga, pertanyaan panggilan,
+atau preferensi cara didampingi. Pengguna mendapat manual sebelum merasakan
+percakapan.
+
+Arah yang diusulkan bernama sementara **“Kenalan & Cara Harvy Menemani”**:
+
+1. perkenalan dalam dua atau tiga bubble pendek: nama Harvy, identitas sebagai
+   AI pendamping, dan manfaat utama tanpa daftar fitur;
+2. pemberitahuan privasi ringkas serta persetujuan sebelum pesan pertama
+   dikirim ke penyedia model;
+3. nama panggilan bersifat opsional, dapat memakai nama Telegram atau dilewati;
+4. Harvy menanyakan satu preferensi yang benar-benar berguna—misalnya lebih
+   suka didengarkan dulu atau langsung diberi saran—bukan mengumpulkan profil;
+5. pesan pertama yang sudah telanjur dikirim ditahan lokal lalu diproses
+   otomatis setelah consent, bukan diminta diketik ulang;
+6. pengguna lama tidak mengulang onboarding ketika memakai `/start`; Harvy
+   cukup menyapa dan menawarkan melanjutkan topik lama atau memulai hal baru;
+7. semua tombol hanya jalan pintas; pengguna selalu boleh langsung menulis
+   bebas.
+
+Rasa “seperti teman” diartikan sebagai ritme dan perhatian, bukan kepura-puraan
+bahwa Harvy manusia. Balasan perlu menghindari pola berulang seperti selalu
+menyebut nama pengguna, selalu berkata “Harvy dengerin”, atau selalu menutup
+dengan pertanyaan. Harvy sebaiknya membedakan keadaan menyimak, berdiskusi, dan
+membantu bertindak; merujuk detail yang baru dikatakan; memberi satu respons
+yang relevan per bubble; dan baru menawarkan solusi ketika dibutuhkan.
+
+Belum diputuskan apakah preferensi gaya ngobrol ditanyakan saat onboarding atau
+setelah interaksi pertama yang berhasil. Belum diputuskan pula naskah akhir,
+jumlah bubble, tombol, ataupun bentuk penyimpanan status onboarding. Alur
+keselamatan tetap kandidat penting dan tidak dianggap selesai oleh rancangan
+onboarding ini.
+
+Yang **tidak** dilakukan: tidak ada kode, konfigurasi, status kemampuan, tes,
+atau proses bot yang diubah.
+
+## 26 Juli 2026 — Prioritas fitur berikutnya dibahas, belum dipilih
+
+**Dibahas.** Pemilik produk meminta diskusi saja mengenai fitur berikutnya.
+Tidak ada implementasi atau keputusan final.
+
+Sebelum menambah kemampuan, perbaikan terbaru tetap perlu diuji ulang lewat
+Telegram dan Sprint 1 masih mempunyai uji mandiri tujuh hari yang belum
+selesai. Sesudah itu, kandidat terkuat adalah **lapisan keselamatan mandiri dan
+alur bantuan manusia**. Alasannya berdasarkan keadaan produk, bukan sekadar
+backlog: pengguna sudah memakai Harvy untuk curhat, audiens mencakup pelajar di
+bawah 18 tahun, sementara `STATUS.md` masih mencatat penilaian keselamatan hanya
+berasal dari satu field model. Pagar `urgent` terbaru hanya melewati keputusan
+batas bubble; ia belum memprioritaskan handler di atas balasan aktif dan belum
+menjadi alur keselamatan khusus.
+
+Arah awal yang layak dirancang kemudian:
+
+1. membedakan tekanan biasa, kebutuhan dukungan manusia, dan bahaya segera
+   secara proporsional;
+2. menjalankan pemeriksaan terpisah sebelum intent umum;
+3. memberi jalur prioritas atau acknowledgment aman tanpa merusak urutan
+   riwayat;
+4. tidak menyimpan isi sensitif otomatis; dan
+5. mengarahkan pengguna kepada manusia aman tanpa membuat Harvy tampak seperti
+   terapis atau layanan darurat.
+
+Urutan kandidat setelah keselamatan adalah pemberitahuan serta persetujuan
+pemrosesan pihak ketiga, tombol tindakan adaptif dan kontrol pengingat milik
+pengguna, lalu tutoring lima langkah. Keselamatan dan privasi dipandang sebagai
+gerbang sebelum memperluas penggunaan, sedangkan PostgreSQL, website, dan
+WhatsApp belum menjadi prioritas berikutnya.
+
+Yang **tidak** dilakukan: tidak ada kode, konfigurasi, status kemampuan, tes,
+proses bot, atau keputusan arsitektur yang diubah. Pilihan akhir fitur berikutnya
+tetap milik pemilik produk.
+
+## 26 Juli 2026 — Batas giliran menjadi adaptif terhadap cara pengguna mengetik
+
+**Kenapa.** Uji Telegram kelima membuktikan bahwa adapter nonblocking saja belum
+cukup. Rangkaian "eh tau ga" sampai ungkapan takut terpecah menjadi tiga
+giliran, dan rangkaian "aku mau curhat" yang berakhir sementara pada "karna"
+terpecah menjadi dua. Riwayat aktual menunjukkan bubble memang sempat digabung,
+tetapi hanya tiga lalu satu lalu satu pada rangkaian pertama, serta dua lalu dua
+pada rangkaian kedua. Proses bot sudah menjalankan source terbaru; penyebabnya
+bukan build lama atau instance ganda, melainkan deadline universal 2,5 detik
+yang lebih pendek daripada jeda alami pengguna sekitar 3–4,5 detik.
+
+**Yang diputuskan.** Tidak ada sinyal Telegram yang menyatakan pengguna benar-
+benar selesai mengetik, sehingga batas giliran tetap merupakan perkiraan dari
+isi dan waktu hening. Satu angka tidak cukup untuk sapaan lengkap, pembuka
+cerita, kalimat menggantung, dan keadaan darurat. Keputusan model diubah menjadi
+empat keadaan dengan jendela berbeda, serta pagar lokal untuk kasus yang jelas.
+
+**Yang berubah.**
+
+- `Conversation.classifyTurnBoundary` meminta model `cheap` mengeluarkan
+  `complete`, `open`, `incomplete`, atau `urgent`; parser masih menerima bentuk
+  boolean lama secara defensif.
+- `turn-taking-policy.ts` menjadi sumber kebijakan murni. Pesan lengkap tunggal
+  diproses setelah debounce dan pemeriksaan model; gabungan lengkap diberi
+  ruang 4 detik, pembuka/narasi terbuka 7 detik, dan fragmen keras seperti
+  "karna" 12 detik sejak bubble terakhir.
+- Pengaman lokal mengenali pembuka seperti "eh tau ga" dan "aku boleh curhat
+  kah", emosi samar, kata sambung menggantung, serta penutup eksplisit seperti
+  "udah itu aja" dan "nggak jadi". Penutup menang atas pembuka lama agar Harvy
+  tidak menunggu setelah pengguna jelas selesai.
+- Bahaya segera yang konkret diproses langsung ketika bubble masuk, sebelum
+  debounce atau request jaringan batas giliran. Kata takut/capek tanpa ancaman
+  konkret tetap dianggap percakapan terbuka, bukan otomatis darurat. Handler
+  lengkapnya masih menjaga urutan FIFO dengan balasan yang sudah aktif.
+- `MessageBatcher` tetap memakai satu evaluator per pemilik, revision guard,
+  antrean per pengguna, serta fail-safe dari waktu bubble terakhir. Keputusan
+  model yang gagal jatuh ke kebijakan lokal; satu kegagalan jaringan tidak lagi
+  memaksa pembuka atau fragmen jelas ditutup cepat.
+- Prompt, skrip diagnostik, README, ADR, status, kontrak agent, dan panduan uji
+  diselaraskan dengan state serta jendela adaptif baru.
+
+**Bukti.**
+
+- `npm run check` PASS.
+- Target absolut `C:\Users\imamh\harvy\dist` diverifikasi lalu hasil build lama
+  dihapus sebelum gerbang akhir.
+- Tes terarah `conversation`, `MessageBatcher`, dan kebijakan giliran PASS —
+  **35 test dalam 4 suite**, 0 gagal. Regresinya memakai dua rangkaian persis
+  dari uji Telegram, sengaja memberi jarak lebih panjang daripada debounce, dan
+  memaksa model palsu salah memilih `complete`.
+- `npm test` PASS — **122 test dalam 20 suite**, 0 gagal.
+- Putaran bersih pertama sempat menghasilkan 121 lulus dan satu kegagalan:
+  tes regresi memakai timer mini 70/140 milidetik dan di mesin yang sedang berat
+  jeda test runner sendiri melewati jendelanya sebelum bubble berikut dikirim.
+  Tes diubah memakai margin panjang serta `drain` eksplisit; aturan angka
+  4/7/12 detik tetap diuji murni tanpa jam dinding. Tes terarah dan gerbang
+  penuh sesudah koreksi sama-sama lulus.
+- `git diff --check` PASS; peringatan yang tampil hanya normalisasi LF ke CRLF.
+- Probe Gemini 3.5 Flash-Lite sungguhan pada `AI_MODE=testing`:
+  - rangkaian "eh tau ga" sampai ungkapan takut sempat timeout pada percobaan
+    pertama, lalu menghasilkan `{"state":"open"}` pada pengulangan;
+  - rangkaian yang berakhir "karna" menghasilkan
+    `{"state":"incomplete"}`; dan
+  - "halo" menghasilkan `{"state":"complete"}`.
+  Timeout pertama penting: tes otomatis juga membuktikan pagar lokal tetap
+  menahan rangkaian dan batas giliran darurat tetap dilewati ketika classifier
+  tidak pernah selesai.
+
+Yang **tidak** diuji: Telegram belum dicoba lagi setelah kebijakan adaptif
+ditulis. Karena itu belum ada klaim bahwa jeda 4/7/12 detik terasa tepat pada
+pengguna nyata atau bahwa satu rangkaian terbaru benar-benar tersimpan sebagai
+satu giliran. Model produksi `deepseek/deepseek-v4-flash`, tombol, pengingat,
+dan shutdown nyata juga `NOT RUN` pada sesi koreksi ini.
+
+Proses dev yang lama ternyata sudah tidak aktif. `npm run dev` dinyalakan lagi
+setelah gerbang lulus; pemeriksaan proses menunjukkan satu watcher `tsx` dan
+satu child `src/app.ts`, sehingga bot siap menerima uji Telegram terbaru tanpa
+instance aplikasi ganda.
+
+**Sengaja ditinggalkan.** Jendela belum dipersonalisasi dari kecepatan ketik
+masing-masing pengguna; itu memerlukan data perilaku tambahan dan keputusan
+privasi yang tidak diambil diam-diam. Antrean tetap in-memory dan tidak tahan
+crash paksa. Keadaan `urgent` belum membatalkan handler yang sudah aktif atau
+mengirim acknowledgment keselamatan independen; keduanya memerlukan desain
+alur keselamatan agar tidak merusak urutan riwayat.
+
+## 26 Juli 2026 — Bubble cepat benar-benar disimak sebagai satu giliran
+
+**Kenapa.** Uji Telegram keempat memperlihatkan bahwa perbaikan penggabungan
+bubble sebelumnya belum bekerja pada adapter nyata. Empat potongan curhat yang
+dikirim pada detik yang sama masih menghasilkan tiga balasan Harvy sebelum
+pengguna selesai. Penyebabnya bukan keputusan model: handler Telegram menunggu
+model batas giliran dan seluruh balasan Harvy, sedangkan long-polling grammY
+baru menyerahkan update berikutnya setelah handler itu kembali. Dengan urutan
+tersebut, bubble berikutnya memang tidak pernah sempat masuk ke batch yang sama.
+
+**Yang berubah.**
+
+- `MessageBatcher.enqueue` kini hanya menaruh bubble dan langsung kembali.
+  Setiap bubble memulai ulang jeda hening 650 milidetik serta deadline keras 2,5
+  detik dari bubble terakhir. Setelah jeda hening, model `cheap` menilai
+  gabungannya; keputusan yang kalah cepat dari bubble atau deadline baru
+  diabaikan melalui revision guard. Hanya satu evaluator per pemilik yang aktif
+  dan revisi perantara dikoaleskan ke gabungan terbaru.
+- Prompt batas giliran menilai apakah pengguna **selesai menulis**, bukan apakah
+  Harvy sudah dapat memberi balasan sopan. Pembuka curhat dan narasi pribadi
+  ditunggu; sapaan, permintaan lengkap, penutup, serta pesan keselamatan yang
+  mendesak langsung diproses.
+- Indikator mengetik dipindahkan ke awal penanganan batch, sehingga Harvy tidak
+  tampak mengetik pada setiap potongan ketika sebenarnya sedang menyimak.
+  Kegagalan indikator kini best-effort dan tidak membuang giliran.
+- Handler satu pengguna tetap berurutan, tetapi berjalan dari antrean latar.
+  Command dan callback masuk ke chain pemiliknya tanpa menahan long-polling
+  global. Permintaan ACK callback dikirim segera secara fire-and-forget dan
+  aksi tidak menunggunya.
+- Shutdown normal menghentikan polling lalu menguras seluruh batch dan aksi
+  latar serta evaluator aktif sebelum proses selesai, dengan batas 60 detik
+  agar deployment tidak menggantung tanpa akhir. ACK callback, cleanup notice
+  fire-and-forget, dan pemadatan riwayat latar berada di luar drain.
+- `/start` dan `/bantuan` membatalkan potongan yang belum mulai. `/tugas`
+  mengurasnya lebih dulu agar pernyataan tugas yang baru dikirim tidak hilang.
+  Token generasi turut membatalkan batch yang sudah masuk chain tetapi belum
+  mulai. Callback juga menguras giliran terdahulu sebelum mutasi, sehingga
+  Lupakan semua tidak dapat diikuti penyimpanan terlambat dari handler lama.
+- Status **Ubah tenggat** sekarang diperiksa ketika batch mendapat giliran,
+  bukan saat update tiba. Ini menjaga jawaban tanggal yang dikirim segera
+  setelah tombol, meskipun tindakan tombol masih mengantre di belakang balasan
+  lama.
+- Pembersihan pemberitahuan memori diulang saat handler benar-benar berjalan.
+  Notifikasi yang dibuat terlambat oleh giliran sebelumnya tetap hilang ketika
+  chat berikutnya dimulai. Referensi yang gagal dihapus dari Telegram disimpan
+  ulang dengan deduplikasi untuk percobaan berikutnya. Lease/tombstone mencegah
+  retry menghidupkan ref yang sudah ditanggapi saat delete masih berjalan;
+  retry berhenti setelah tiga kegagalan permanen.
+- `scripts/coba-pemahaman.ts --boundary` dapat memeriksa keputusan ini langsung
+  ke model; `AGENTS.md`, `ADR-007`, `STATUS.md`, `TESTING.md`, dan `README.md`
+  diselaraskan.
+
+**Bukti.**
+
+- `npm run check` PASS.
+- `dist/` dihapus setelah target absolut
+  `C:\Users\imamh\harvy\dist` diverifikasi; `npm test` PASS —
+  **113 test dalam 19 suite**, 0 gagal.
+- Suite `MessageBatcher` sendiri PASS — **15 test**, termasuk burst empat
+  bubble, model lambat, keputusan basi, deadline, urutan A aktif → B tertunda →
+  tombol, kelanjutan setelah handler gagal, pembatalan evaluator dan batch
+  queued, deduplikasi request, isolasi dua pengguna, serta drain seluruh batch
+  dan evaluator saat shutdown.
+- Tes indikator mengetik membuktikan kegagalan API kosmetik tidak melempar;
+  enam tes store notice membuktikan referensi retry tidak digandakan maupun
+  dihidupkan kembali setelah callback, lease selesai bersih, dan retry berhenti
+  setelah tiga kegagalan.
+- Gemini 3.5 Flash-Lite sungguhan pada `AI_MODE=testing`:
+  - pembuka curhat → `{"wait":true}`;
+  - sapaan mandiri → `{"wait":false}`;
+  - lima bubble curhat gabungan → `{"wait":true}`; dan
+  - pemahaman lima bubble itu → intent `feeling`, tanpa tugas, dengan satu
+    usulan memori `personal` yang wajib meminta izin.
+- Satu probe batas giliran sempat timeout pada dua detik; percobaan ulang
+  berhasil. Deadline `MessageBatcher` tetap berjalan selama model berpikir, jadi
+  kegagalan semacam ini tidak dapat memperpanjang hening melewati 2,5 detik.
+
+Yang **tidak** diuji: bot Telegram belum dijalankan ulang setelah perubahan.
+Penggabungan update nyata, ketiadaan indikator/balasan di sela bubble, callback
+yang langsung menutup spinner, urutan Lupakan semua, serta respons akun kedua
+ketika akun pertama menunggu model dan drain shutdown nyata tetap `NOT RUN`.
+Model
+`deepseek/deepseek-v4-flash` produksi juga tidak dipanggil.
+
+**Sengaja ditinggalkan.** Pesan, tugas, atau memori dari uji lama tidak dihapus
+atau dimigrasikan. Pengguna tetap menguasai penghapusannya melalui tombol.
+Antrean belum persisten: crash paksa masih dapat kehilangan update yang sudah
+diterima, dan shutdown yang melewati 60 detik keluar paksa. Cleanup kosmetik
+dan pemadatan latar tidak ikut ditunggu drain.
+
+## 26 Juli 2026 — Harvy membedakan siapa yang harus mengerjakan
+
+**Kenapa.** Uji Telegram lanjutan menemukan dua salah arah yang berasal dari
+kontrak intent, bukan sekadar pilihan kata balasan. Permintaan agar Harvy
+membuat kode langsung disimpan sebagai tugas pengguna. Setelah itu, pernyataan
+preferensi baru justru membuka daftar memori lama; fakta barunya tidak diproses.
+
+**Yang diputuskan.** Intent menyatakan tujuan percakapan, sedangkan field action
+memberi izin terhadap tindakan tertentu.
+
+- `request` berarti Harvy harus menghasilkan sesuatu di chat, bukan mencatat
+  pekerjaan.
+- Hanya `task + taskAction: save + task` yang boleh menyimpan tugas.
+- Hanya `feeling + taskAction: offer + task` yang boleh menawarkan tugas.
+- Hanya `memory + memoryAction: list|forget`, tanpa usulan fakta baru, yang
+  boleh membuka kontrol memori.
+- Fakta atau preferensi baru tetap menjadi percakapan dengan usulan pada
+  `memories`; keberadaannya tidak berarti pengguna meminta daftar.
+
+**Yang berubah.**
+
+- `persona.ts` menambah intent `request`, `taskAction`, `memoryAction`, aturan
+  aktor pekerjaan, dan lima contoh JSON kontras.
+- `understand.ts` memperlakukan output model sebagai kombinasi terdiskriminasi:
+  task/action yang bertentangan dibuang, intent asing ditolak kecuali alias
+  `reminder` yang terdaftar, dan fakta baru tidak boleh kalah oleh aksi daftar
+  memori yang kontradiktif.
+- `understanding-route.ts` menjadi pertahanan kedua di adapter. Cabang yang
+  berhenti sebelum balasan hanya menerima pasangan intent/action yang sah.
+- Alur Ubah tenggat dipisahkan dari intent umum melalui
+  `Conversation.understandDueDate`. Parser hanya menerima ISO dengan waktu dan
+  offset, dan skrip diagnostik mendapat flag `--due`.
+- Balasan programatik untuk pencatatan, tawaran tugas, dan perubahan tenggat
+  ikut ditulis ke riwayat; pemecahan bubble tidak lagi mengubah teks asli yang
+  disimpan.
+- Intent `request` memakai tier balasan seperti pertanyaan: `efficient` untuk
+  permintaan biasa dan `ambitious` bila panjang atau perlu langkah bertahap.
+- Plafon balasan dinaikkan dari 1.536 menjadi 4.096 token agar kode lengkap
+  tidak terpotong sebelum dapat dibagi menjadi beberapa pesan.
+- `messages.ts` menjaga setiap bubble di bawah 4.000 karakter. Blok kode pendek
+  tetap utuh; kode panjang dibagi tanpa kehilangan karakter agar tidak ditolak
+  Telegram.
+- Tes parser, routing adapter, pemilihan model, prompt balasan, dan ukuran
+  bubble diperluas. `ADR-007`, `PROJECT.md`, `STATUS.md`, `TESTING.md`,
+  `README.md`, serta `AGENTS.md` diselaraskan.
+
+**Bukti.**
+
+- `npm run check` PASS.
+- `dist/` dihapus setelah target absolut diverifikasi berada di root repo;
+  `npm test` PASS — **96 test dalam 18 suite**, 0 gagal.
+- Gemini 3.5 Flash-Lite sungguhan pada `AI_MODE=testing`:
+  - "oiya buatin dong kode tictactoenya" → `request`, tanpa task/action;
+  - "aku harus bikin kode tic-tac-toe" → `task + save`;
+  - "aku kewalahan karena harus belajar biologi" → `feeling + offer`;
+  - "warna favoritku biru" → `smalltalk` dengan memori `preference`; dan
+  - "apa yang kamu ingat tentang aku" → `memory + list`.
+- `npx tsx scripts/coba-pemahaman.ts --due "besok jam 7 malam"` →
+  27 Juli 2026 pukul 19.00 WIB dengan offset `+07:00`.
+
+Yang **tidak** diuji: bot Telegram tidak dijalankan ulang. Jadi pengiriman kode
+sebagai balasan nyata, absennya tugas baru di penyimpanan, pemberitahuan
+Oke/Lupakan untuk preferensi, pemecahan pesan panjang oleh API Telegram, dan
+model DeepSeek V4 Flash produksi tetap `NOT RUN`.
+
+**Sengaja ditinggalkan.** Tugas atau memori yang sudah salah tersimpan pada uji
+lama tidak dihapus atau dimigrasikan diam-diam. Pengguna tetap menguasai
+penghapusannya melalui tombol yang tersedia.
+
+## 26 Juli 2026 — Harvy menunggu cerita selesai dan benar-benar membaca riwayat
+
+**Kenapa.** Pemilik produk memberikan transkrip uji Telegram dan meminta lima
+perbaikan UX: pertanyaan kemampuan/isi chat harus dijawab dari riwayat, Harvy
+tidak boleh pikun pada "yang tadi", bubble pengguna yang dipenggal perlu
+ditunggu dan digabung, pemberitahuan memori perlu tombol Oke serta dibersihkan
+saat chat berlanjut, dan balasan panjang perlu terasa seperti beberapa bubble.
+
+Transkrip juga membuka dua masalah yang lebih berat daripada UX: orientasi
+seksual tersimpan otomatis sebagai `profile`, dan pemadatan riwayat menahan
+balasan sekitar sepuluh menit sebelum berakhir dengan balasan terpotong/timeout.
+
+**Yang diputuskan.** Lengkap di
+[`ADR-007`](decisions/ADR-007-bubble-dan-riwayat-percakapan-natural.md).
+
+1. Intent `history` dipisahkan dari `memory`. Yang pertama menjawab kemampuan,
+   isi chat, dan "yang tadi" dari konteks; yang kedua hanya mengurus catatan
+   terstruktur.
+2. Model `cheap` memutuskan apakah bubble tampak belum selesai. Keputusannya
+   maksimal dua detik dan satu percobaan; waktu menunggu lanjutan maksimal 2,5
+   detik. Pesan lengkap diproses langsung.
+3. Paragraf balasan menjadi maksimal tiga bubble; blok kode tidak dipecah.
+4. Pemberitahuan memori biasa punya Oke dan Lupakan. Oke atau chat pengguna
+   berikutnya menghapus bubble pemberitahuan, bukan memorinya.
+5. Label sensitivitas model tidak dipercaya sendirian. Isi tentang kesehatan,
+   keluarga, relasi, gender, orientasi seksual, dan tekanan emosional dipaksa
+   meminta izin.
+6. Pemadatan berjalan setelah balasan, mempertahankan pesan yang masuk ketika
+   model bekerja, dan memakai cooldown satu menit setelah gagal.
+
+ID `gemini-3.5-flash-lite` dan `deepseek/deepseek-v4-flash` diverifikasi pada
+dokumentasi resmi [Google](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite)
+dan [OpenRouter](https://openrouter.ai/deepseek/deepseek-v4-flash/api). `.env`
+lokal diarahkan ke Gemini 3.5 Flash-Lite untuk testing dan DeepSeek V4 Flash
+sebagai model `cheap` produksi; berkas itu tetap tidak masuk Git.
+
+**Yang berubah.**
+
+- Baru: `src/bot/message-batcher.ts`,
+  `src/bot/ephemeral-message-store.ts`, `ADR-007`, serta empat suite tes untuk
+  klien AI, batch bubble, pesan sementara, dan format bubble/tombol.
+- `understand.ts`, `model-policy.ts`, dan `persona.ts`: intent `history`, prompt
+  batas bubble, instruksi riwayat, klasifikasi sensitif yang lebih tegas, dan
+  ringkasan yang mempertahankan topik belum selesai.
+- `conversation.ts` dan `client.ts`: keputusan batas bubble lewat model murah,
+  timeout/percobaan per request, dan `finish_reason=length` menjadi galat
+  sungguhan alih-alih teks setengah jadi.
+- `create-bot.ts` dan `messages.ts`: penggabungan bubble, pemrosesan per pengguna
+  secara berurutan, balasan multi-bubble, tombol Oke, serta pembersihan
+  pemberitahuan memori.
+- `memory-policy.ts`: pagar deterministik untuk isi sensitif yang salah diberi
+  jenis biasa oleh model.
+- `history-service.ts`: append bebas model; pemadatan eksplisit di latar,
+  penyimpanan berantre per pengguna, penggabungan aman dengan pesan terbaru,
+  invalidasi setelah Lupakan semua, dan cooldown kegagalan.
+- `PROJECT.md`, `STATUS.md`, `TESTING.md`, `INDEX.md`, `AGENTS.md`, `ADR-003`,
+  dan `ADR-006` diselaraskan dengan keputusan serta keadaan baru.
+
+**Bukti.**
+
+- Tes regresi ditulis lebih dulu; `npm run check` awal gagal karena intent,
+  metode, dan modul baru memang belum ada.
+- Setelah implementasi, `npm run check` PASS.
+- `npm test` PASS — **79 test dalam 16 suite**, 0 gagal; naik dari 63/11.
+- Gemini 3.5 Flash-Lite, model sungguhan:
+  - "kamu ingat isi chat kita kah" → intent `history`;
+  - `halo` → tidak menunggu;
+  - "aku boleh curhat kah" → menunggu;
+  - tiga bubble curhat digabung → tidak menunggu lagi;
+  - curhat gabungan → intent `feeling` dan memori `personal`;
+  - dengan konteks sintetis "halo", pertanyaan kemampuan dijawab, "Iya, ingat.
+    Tadi kita baru saja saling menyapa".
+
+Yang **tidak** diuji: bot Telegram tidak dijalankan setelah perubahan. Jeda dan
+penggabungan tiga update nyata, tombol Oke/Lupakan, penghapusan bubble melalui
+API Telegram, riwayat setelah restart, pemadatan model di latar, dan perilaku
+DeepSeek V4 Flash produksi tetap `NOT RUN`. Percakapan keselamatan, pengingat,
+dan isolasi dua akun juga tidak disentuh.
+
+**Sengaja ditinggalkan.** Pemberitahuan izin pemrosesan pihak ketiga, pemeriksaan
+keselamatan tersendiri, pemeriksaan isi respons, dan pemantauan biaya tetap
+belum ada. Keputusan batas bubble menambah satu panggilan model murah per
+kumpulan pesan; biaya itu belum diukur.
+
+## 26 Juli 2026 — Gerbang otomatis dan ekstraksi model diuji ulang
+
+**Kenapa.** Diminta melakukan debug dan uji coba pada keadaan branch
+`feat/memori-dan-riwayat-percakapan`. Sesi ini bersifat diagnosis: tidak ada
+perbaikan perilaku yang diminta atau diterapkan.
+
+**Dibahas.** Gerbang otomatis tetap sehat. Satu perilaku yang perlu diputuskan
+sebelum disebut cacat ditemukan pada jalur pemadatan riwayat: ketika peringkas
+melempar galat, `HistoryService` mempertahankan seluruh riwayat (benar, supaya
+konteks tidak hilang), tetapi mencoba memanggil peringkas lagi pada **setiap
+giliran baru** yang masih melewati ambang. Tes dengan 20 giliran mencetak empat
+percobaan gagal setelah ambang 16; pada alur bot, pesan pengguna dan balasan
+Harvy sama-sama ditambahkan sebagai giliran. Saat penyedia sedang bermasalah,
+perilaku ini dapat menghasilkan panggilan model dan log berulang. Belum diubah;
+pilihan seperti cooldown atau backoff memengaruhi kapan pemadatan dicoba lagi
+dan berada di luar diagnosis ini.
+
+**Bukti.**
+
+- `npm run check` PASS.
+- `dist/` dibuang setelah target absolutnya diverifikasi berada di root
+  repository, lalu `npm test` PASS — **63 test dalam 11 suite**, 0 gagal.
+- `npx tsx scripts/coba-pemahaman.ts "ingetin aku jam 8 minum obat"` PASS
+  terhadap model sungguhan dalam `AI_MODE=testing`: terbaca sebagai tugas
+  "Minum obat" dengan pengingat 20.00 WIB (`13:00Z`).
+- `npx tsx scripts/coba-pemahaman.ts "aku kelas 11 IPA"` PASS: model mengusulkan
+  memori biasa berjenis `profile`.
+- `npx tsx scripts/coba-pemahaman.ts "aku punya penyakit jantung"` PASS: model
+  mengusulkan memori sensitif berjenis `personal`.
+
+Percobaan model pertama gagal karena koneksi keluar ditolak sandbox (`EACCES`);
+perintah yang sama berhasil setelah izin jaringan diberikan. Tidak ada secret
+yang dicetak.
+
+Yang **tidak** diuji: bot Telegram tidak dijalankan, jadi penyimpanan memori,
+tombol izin/Lupakan, riwayat lintas pesan dan restart, peringkasan nyata,
+isolasi dua akun, pengiriman pengingat, serta percakapan keselamatan tetap
+`NOT RUN`. Probe diagnostik hanya membuktikan keluaran langkah pemahaman model,
+bukan alur end-to-end.
+
+**Sengaja ditinggalkan.** Retry pemadatan tanpa cooldown tidak diperbaiki.
+Tidak ada kemampuan di `STATUS.md` yang dinaikkan menjadi "terbukti", karena
+belum ada uji Telegram end-to-end.
 
 ## 26 Juli 2026 — Harvy mulai mengingat penggunanya
 

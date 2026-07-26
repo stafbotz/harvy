@@ -116,13 +116,17 @@ Menguji pemahaman satu kalimat langsung ke model, tanpa lewat Telegram:
 
 ```bash
 npx tsx scripts/coba-pemahaman.ts "ingetin aku jam 8 minum obat"
+npx tsx scripts/coba-pemahaman.ts --due "besok jam 7 malam"
+npx tsx scripts/coba-pemahaman.ts --boundary "aku mau curhat"
 ```
 
 Ini satu-satunya cara memeriksa jalur percakapan tanpa membuka Telegram, dan
-satu-satunya yang menampilkan balasan mentah model — yang membedakan balasan
-terpotong dari balasan rusak. Perlu `.env` berisi kunci sungguhan; pakai
-`AI_MODE=testing` agar gratis. Skrip ini memanggil model, jadi ia tidak boleh
-masuk gerbang otomatis.
+satu-satunya yang menampilkan balasan mentah model — termasuk jalur sempit Ubah
+tenggat dengan `--due` dan keputusan menyimak bubble dengan `--boundary`.
+Tuliskan `\n` di argumen untuk menguji beberapa bubble sekaligus. Ini
+membedakan balasan terpotong dari balasan rusak. Perlu `.env` berisi kunci
+sungguhan; pakai `AI_MODE=testing` agar gratis. Skrip ini memanggil model, jadi
+ia tidak boleh masuk gerbang otomatis.
 
 Konfigurasi runtime berasal dari `.env` (lihat `.env.example`):
 `TELEGRAM_BOT_TOKEN`, `DATA_FILE`, `MEMORY_FILE`, `HISTORY_FILE`,
@@ -158,8 +162,10 @@ tidak mengenal grammY maupun berkas.
 - `src/core/` — bebas I/O dan bebas Telegram: `prioritizer.ts` (skor prioritas
   murni), `task-service.ts`, `memory-policy.ts` (jenis sensitif, masa berlaku,
   pemilihan memori untuk prompt), `memory-service.ts`, `history-policy.ts`
-  (jendela dan ambang pemadatan), serta `history-service.ts`. `HistoryService`
-  menerima fungsi peringkas dari luar supaya `core/` tetap bebas jaringan.
+  (jendela dan ambang pemadatan), `history-service.ts`, serta
+  `turn-taking-policy.ts` (pengaman lokal dan jendela adaptif batas giliran).
+  `HistoryService` menerima fungsi peringkas dari luar supaya `core/` tetap
+  bebas jaringan.
 - `src/ai/` — lapisan Harvy di atas model: `persona.ts` (kepribadian, batas
   moral, aturan keselamatan), `model-policy.ts` (memilih tingkatan model dari
   kesulitan), `understand.ts` (membaca balasan model sebagai masukan tidak
@@ -167,15 +173,20 @@ tidak mengenal grammY maupun berkas.
   `key-pool.ts`, `context.ts` (`HarvyContext`: ringkasan, giliran terakhir, dan
   memori), dan `conversation.ts` (menyatukan pemahaman, balasan, dan
   peringkasan).
-  Percakapan berjalan dua langkah: model `cheap` selalu membaca pesan menjadi
-  JSON pada `temperature: 0`, lalu tingkatan model untuk balasan dipilih dari
-  hasil bacaan itu. Ekstraksi tidak pernah membayar harga model besar, dan
-  `safetySensitive` selalu naik ke `ambitious` sekaligus menambahkan
+  Sebelum percakapan, model `cheap` menggolongkan batas bubble sebagai
+  `complete`, `open`, `incomplete`, atau `urgent`; kebijakan lokal mengoreksi
+  fragmen dan risiko yang jelas. Giliran yang sudah utuh berjalan dua langkah:
+  model `cheap` membaca pesan menjadi JSON, lalu tingkatan model untuk balasan
+  dipilih dari hasil bacaan itu. Ekstraksi tidak pernah membayar harga model
+  besar, dan `safetySensitive` selalu naik ke `ambitious` sekaligus menambahkan
   `SAFETY_ADDENDUM` ke prompt.
 - `src/bot/` — adapter grammY: `create-bot.ts` memasang guard chat pribadi,
-  alur percakapan, dan tombol; `messages.ts` memformat keluaran serta menyusun
-  papan tombol; `pending.ts` menyimpan satu langkah percakapan yang sedang
-  menunggu jawaban.
+  alur percakapan, dan tombol; `message-batcher.ts` menggabungkan bubble yang
+  dipenggal; `ephemeral-message-store.ts` melacak pemberitahuan memori yang
+  dibersihkan; `messages.ts` memformat keluaran, memecah balasan menjadi bubble,
+  serta menyusun papan tombol; `understanding-route.ts` memeriksa pasangan
+  intent/action sebelum adapter mengubah data; `pending.ts` menyimpan satu
+  langkah percakapan yang sedang menunggu jawaban.
 - `src/storage/` — tiga adapter berkas JSON dengan pola yang sama: tulis atomik
   melalui berkas `.tmp` lalu `rename`, dan serialisasi tulis melalui antrian
   promise agar tidak ada pembaruan yang hilang. `file-task-repository.ts`,
@@ -186,11 +197,18 @@ tidak mengenal grammY maupun berkas.
 
 Invarian yang harus dijaga:
 
-- **Pesan bebas tidak boleh langsung menjadi tugas.** Model membaca maksudnya
-  lebih dulu; tugas hanya dicatat langsung ketika maksudnya memang mencatat
-  pekerjaan. Selebihnya Harvy menjawab lalu *menawarkan* pencatatan lewat
-  tombol. Ini menegakkan Konstitusi Pasal 3.11 dan melindungi pengguna yang
-  sedang bercerita.
+- **Aktor pekerjaan harus jelas sebelum mengubah tugas.** Permintaan agar Harvy
+  membuat, menulis, menerjemahkan, merangkum, menghitung, atau menghasilkan
+  sesuatu adalah intent `request`: kerjakan di chat, jangan masukkan ke daftar
+  tugas. Hanya `task + taskAction: save + task` yang boleh langsung mencatat
+  kewajiban pengguna. Hanya `feeling + taskAction: offer + task` yang boleh
+  menawarkan pencatatan setelah menjawab. Parser dan adapter sama-sama
+  memeriksa kombinasi itu.
+- **Langkah tertunda tidak diklasifikasikan ulang sebagai percakapan baru.**
+  Khusus Ubah tenggat, pengguna sudah memilih tindakannya lewat tombol; jawaban
+  waktunya wajib masuk `Conversation.understandDueDate`, bukan disisipkan ke
+  kalimat sintetis lalu dikirim ke `understand`. Tanggal dari model hanya sah
+  bila ISO memuat waktu dan offset.
 - **Balasan model adalah masukan yang tidak tepercaya.** Selalu lewat
   `understand.ts`; jangan pernah memakai hasil `JSON.parse` mentah dari model.
 - **Memori dan riwayat juga masukan yang tidak tepercaya.** Isinya perkataan
@@ -203,14 +221,53 @@ Invarian yang harus dijaga:
   sama-sama menerima `HarvyContext`. Memberikannya hanya pada balasan adalah
   kesalahan yang menggoda: "iya yang tadi itu" justru gagal di langkah
   pemahaman.
+- **Riwayat chat bukan daftar memori.** Intent `history` menjawab kemampuan,
+  isi chat sebelumnya, dan rujukan "yang tadi" dari konteks. Intent `memory`
+  hanya membuka atau menghapus catatan terstruktur melalui
+  `memoryAction: list|forget`. Fakta atau preferensi baru tetap percakapan biasa
+  dengan usulan pada field `memories`; keberadaannya bukan izin membuka daftar.
+- **Satu giliran dapat terdiri dari beberapa bubble.** Model `cheap`
+  menggolongkan gabungan sebagai `complete`, `open`, `incomplete`, atau
+  `urgent`; `turn-taking-policy.ts` mengoreksi pembuka, fragmen tata bahasa,
+  penutup eksplisit, dan bahaya segera yang jelas. `MessageBatcher.enqueue`
+  harus mengembalikan kendali segera karena long-polling grammY memproses update
+  satu per satu. Jeda hening 650 milidetik mengumpulkan burst. Sesudah
+  pemeriksaan, pesan lengkap tunggal diproses langsung, gabungan lengkap diberi
+  ruang 4 detik, pembuka/narasi terbuka 7 detik, dan fragmen keras 12 detik
+  sejak bubble terakhir. Bahaya segera yang dikenali lokal diproses sebelum
+  debounce atau request model; timer 12 detik tetap menjadi fail-safe saat
+  model berpikir. Ini hanya memotong penantian batas giliran: handler lengkapnya
+  tetap FIFO di belakang handler pengguna yang sudah aktif sampai alur
+  keselamatan khusus memiliki mekanisme prioritas sendiri.
+  Satu pemilik hanya boleh memiliki satu pemeriksaan batas yang aktif; revisi
+  perantara dikoaleskan ke bubble terbaru. Indikator mengetik hanya dikirim
+  setelah batch mulai ditangani dan kegagalannya wajib dianggap kosmetik.
+  Balasan pengguna yang sama selalu diproses berurutan. Command menaikkan
+  generasi untuk membatalkan batch tertunda—termasuk yang sudah masuk chain
+  tetapi belum mulai—lalu menunggu handler aktif; callback menguras batch yang
+  lebih dulu masuk sebelum melakukan mutasi. Barrier ini wajib agar balasan lama
+  tidak muncul setelah command dan Lupakan semua tidak dapat diikuti
+  penyimpanan dari handler lama. Command dan callback hanya **mengantrekan** aksi ini; handler
+  grammY tidak boleh menunggu chain tersebut karena long-polling global akan
+  menahan update pengguna lain. Permintaan ACK callback dikirim segera secara
+  fire-and-forget dan tidak boleh menjadi dependency aksi. Shutdown normal
+  wajib memanggil `HarvyBot.drainPending` setelah `bot.stop`; drain menunggu
+  batch, action, dan evaluator aktif. `app.ts` memberi batas shutdown 60 detik
+  sebelum keluar paksa. Antrean ini tidak persisten dan crash paksa tetap dapat
+  kehilangan update yang sudah diterima.
 - **Memori sensitif tidak pernah disimpan tanpa jawaban pengguna.** Jenis
-  `personal` selalu lewat tombol izin; jenis lain boleh otomatis tetapi wajib
-  diumumkan berikut tombol Lupakan. Ini menegakkan Konstitusi Pasal 4 nomor 2
-  dan 3, dan `understand.ts` sengaja menganggap jenis yang tidak dikenal sebagai
-  `personal` agar tebakan selalu jatuh ke sisi yang lebih hati-hati.
+  `personal` selalu lewat tombol izin. Isi tentang kesehatan, keluarga, relasi,
+  gender, orientasi seksual, atau tekanan emosional juga dipaksa ke jalur izin
+  meskipun model salah memberi jenis biasa. Jenis lain boleh otomatis tetapi
+  wajib diumumkan berikut tombol Oke dan Lupakan. Ini menegakkan Konstitusi
+  Pasal 4 nomor 2 dan 3.
 - **Fitur memori tidak boleh hidup tanpa kendalinya.** Daftar memori, lupakan
   satu, dan lupakan semua adalah bagian dari fiturnya, bukan pekerjaan susulan —
-  Pasal 4 nomor 4.
+  Pasal 4 nomor 4. Referensi pemberitahuan sementara yang gagal dihapus dari
+  Telegram wajib disimpan kembali agar chat berikutnya mencoba lagi. Store
+  memakai lease/tombstone agar callback Oke/Lupakan yang terjadi saat request
+  delete berjalan tidak dapat menghidupkan referensi itu kembali, dan berhenti
+  setelah tiga kegagalan agar error permanen tidak menjadi retry tanpa batas.
 - **Harvy tidak punya cadangan berbasis aturan.** Tanpa kunci API, bot tidak
   dapat memproses pesan dan harus mengatakannya terus terang.
 - `ownerId` (Telegram `from.id`) adalah batas isolasi data. Setiap metode
@@ -231,6 +288,10 @@ Invarian yang harus dijaga:
 - `PendingStore` hanya di memori, satu langkah per pengguna, hangus setelah 10
   menit. Tombol "Ya, catat" dan alur "Ubah tenggat" bergantung padanya, jadi
   keduanya memang mati setelah proses restart. Itu keadaan normal, bukan galat.
+- Pemadatan riwayat berjalan setelah balasan dan tidak ditunggu pengguna.
+  `HistoryService.compact` menggabungkan hasil ke versi terbaru agar bubble yang
+  datang selama model bekerja tidak tertimpa; kegagalan menunggu satu menit
+  sebelum dicoba lagi.
 - Proyek ini ESM dengan `module: NodeNext`. Impor antarmodul wajib berakhiran
   `.js` meskipun sumbernya `.ts`.
 - `tsconfig.json` memakai `strict`, `noUncheckedIndexedAccess`,

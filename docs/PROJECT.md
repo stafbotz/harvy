@@ -123,12 +123,16 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 
 - [x] Alur percakapan bahasa alami agar pengguna tidak perlu menghafal format.
   Lihat [`decisions/ADR-002-percakapan-bahasa-alami.md`](decisions/ADR-002-percakapan-bahasa-alami.md).
+- [x] Bubble yang dipenggal dapat digabung menjadi satu giliran, dan balasan
+  panjang dapat dikirim sebagai beberapa bubble. Lihat
+  [`ADR-007`](decisions/ADR-007-bubble-dan-riwayat-percakapan-natural.md).
 - [x] Tombol tindakan cepat untuk selesai, ingatkan, ubah tenggat, dan batalkan.
 - [ ] Tombol adaptif yang disusun AI menurut keadaan percakapan, menggantikan
   papan tombol tetap. Percakapan dan tombol adalah antarmuka utama Harvy
   Capybara, bukan perintah `/`, sehingga tindakan yang ditawarkan tidak
   seharusnya ditentukan sekali di kode untuk semua keadaan.
-- [x] Pengenalan maksud agar curhat dan pertanyaan tidak berubah menjadi tugas.
+- [x] Pengenalan maksud agar curhat, pertanyaan, dan permintaan yang harus
+  dikerjakan Harvy tidak berubah menjadi tugas pengguna.
 - [ ] Waktu bawaan tombol Ingatkan masih ditetapkan Harvy, bukan pengguna.
   Pasal 4 meminta pengguna yang menentukan.
 - [ ] Penyimpanan PostgreSQL serta migrasi data.
@@ -171,7 +175,7 @@ tingkatan tertinggi.
 
 Produksi memakai OpenRouter sebagai gerbang tunggal agar tagihan tidak tersebar.
 Selama pengembangan, `AI_MODE=testing` mengarahkan seluruh tingkatan ke satu
-model gratis (rencana: Gemini 3.6 Flash dari Google AI Studio). Menghentikan
+model cepat (Gemini 3.5 Flash-Lite dari Google AI Studio). Menghentikan
 mode uji cukup mengubah `AI_MODE` menjadi `production`.
 
 Seluruh ID model berada di `.env`, tidak ditulis di kode. Nama dan harga model

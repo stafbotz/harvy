@@ -52,11 +52,13 @@ Jenis memori menentukan perlakuannya:
 | `preference` | lebih paham lewat contoh, tidak suka dikejar-kejar | otomatis |
 | `routine` | les Jumat sore, ekskul Sabtu | otomatis |
 | `context` | ujian biologi minggu depan, sedang lomba | otomatis |
-| `personal` | kesehatan, keluarga, tekanan emosional berat | **ditawarkan** |
+| `personal` | kesehatan, keluarga, relasi, gender, orientasi seksual, tekanan emosional berat | **ditawarkan** |
 
-Yang otomatis tetap **diberitahukan** saat disimpan, lengkap dengan tombol
-Lupakan. Pasal 4 nomor 2 meminta pengguna tahu sebelum sesuatu yang baru
-disimpan; ia tidak meminta Harvy bertanya untuk setiap remah.
+Yang otomatis tetap **diberitahukan** saat disimpan, lengkap dengan tombol Oke
+dan Lupakan. Pemberitahuan dibersihkan bila pengguna melanjutkan chat tanpa
+menekan tombol; memorinya tidak ikut hilang. Pasal 4 nomor 2 meminta pengguna
+tahu sebelum sesuatu yang baru disimpan; ia tidak meminta Harvy bertanya untuk
+setiap remah.
 
 Yang sensitif tidak pernah disimpan tanpa jawaban pengguna. Pasal 4 nomor 3
 melarang informasi sensitif disimpan otomatis, dan larangan itu tetap utuh.
@@ -64,11 +66,21 @@ melarang informasi sensitif disimpan otomatis, dan larangan itu tetap utuh.
 Harvy **boleh** mengingat curhat. Yang dilarang Konstitusi bukan mengingatnya,
 melainkan menyimpannya diam-diam.
 
+Jenis hasil model bukan satu-satunya pagar. Isi yang jelas sensitif dipaksa ke
+jalur izin meskipun model salah menamainya `profile` atau jenis biasa lain.
+Pagar kedua ini ditambahkan setelah orientasi seksual benar-benar tersimpan
+otomatis pada uji Telegram; lihat `ADR-007`.
+
 ### 3. Riwayat disimpan ke disk, diringkas, lalu dibuang
 
 Giliran mentah disimpan agar konteks tidak hilang saat proses restart. Setelah
 melewati jumlah tertentu, giliran terlama diringkas menjadi satu paragraf
 bergulir dan teks mentahnya dibuang.
+
+Sejak `ADR-007`, pemadatan diminta setelah balasan terkirim dan tidak ditunggu
+jalur respons. Hasil ringkasan digabung ke versi riwayat terbaru supaya bubble
+yang datang saat model bekerja tidak tertimpa. Kegagalan diberi cooldown satu
+menit sebelum dicoba lagi.
 
 Ini bukan sekadar penghematan token. Ringkasan adalah bentuk penyimpanan yang
 lebih sedikit, dan Pasal 3.9 meminta data dikumpulkan sesedikit mungkin serta

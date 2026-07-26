@@ -156,7 +156,9 @@ export function memorySavedNote(item: MemoryItem): string {
 }
 
 export function memorySavedActions(item: MemoryItem): InlineKeyboard {
-  return new InlineKeyboard().text("Lupakan", `memforget:${item.id}`);
+  return new InlineKeyboard()
+    .text("Oke", `memack:${item.id}`)
+    .text("Lupakan", `memforget:${item.id}`);
 }
 
 /** Persetujuan sebelum hal sensitif disimpan. Pasal 4 nomor 3. */
@@ -206,4 +208,61 @@ export function memoryWipeConfirmActions(): InlineKeyboard {
   return new InlineKeyboard()
     .text("Ya, lupakan semua", "memallyes:")
     .text("Batal", "memallno:");
+}
+
+/**
+ * Paragraf pendek terasa seperti bubble chat; blok kode tetap utuh selama
+ * ukurannya masih dapat dikirim Telegram.
+ *
+ * Maksimal tiga bubble mencegah satu balasan berubah menjadi rentetan
+ * notifikasi. Jika model menulis lebih banyak paragraf, sisanya digabung ke
+ * bubble terakhir tanpa menghilangkan teks. Batas keras platform lebih tinggi
+ * prioritas: bubble di atas 4.000 karakter dipecah tanpa membuang karakter,
+ * meskipun hasil akhirnya perlu lebih dari tiga bubble.
+ */
+export function splitReplyBubbles(reply: string, limit = 3): string[] {
+  const clean = reply.trim();
+  if (!clean) return [];
+  const logicalBubbles =
+    clean.includes("```") || limit <= 1
+      ? [clean]
+      : splitParagraphs(clean, limit);
+
+  return logicalBubbles.flatMap((bubble) => splitForTelegram(bubble));
+}
+
+const TELEGRAM_SAFE_MESSAGE_CHARS = 4_000;
+
+function splitParagraphs(clean: string, limit: number): string[] {
+  const paragraphs = clean
+    .split(/\n\s*\n+/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+  if (paragraphs.length <= 1) return [clean];
+  if (paragraphs.length <= limit) return paragraphs;
+
+  return [
+    ...paragraphs.slice(0, limit - 1),
+    paragraphs.slice(limit - 1).join("\n\n"),
+  ];
+}
+
+function splitForTelegram(text: string): string[] {
+  const characters = Array.from(text);
+  if (characters.length <= TELEGRAM_SAFE_MESSAGE_CHARS) return [text];
+
+  const chunks: string[] = [];
+  for (
+    let start = 0;
+    start < characters.length;
+    start += TELEGRAM_SAFE_MESSAGE_CHARS
+  ) {
+    chunks.push(
+      characters
+        .slice(start, start + TELEGRAM_SAFE_MESSAGE_CHARS)
+        .join(""),
+    );
+  }
+  return chunks;
 }

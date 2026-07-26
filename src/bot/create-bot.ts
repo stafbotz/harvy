@@ -8,7 +8,7 @@ import type {
 } from "../ai/understand.js";
 import type { AppConfig } from "../config.js";
 import type { HistoryService } from "../core/history-service.js";
-import { isSensitiveKind } from "../core/memory-policy.js";
+import { isSensitiveMemory } from "../core/memory-policy.js";
 import type { MemoryService } from "../core/memory-service.js";
 import type { TaskService } from "../core/task-service.js";
 import type { StudentTask } from "../domain/task.js";
@@ -22,11 +22,18 @@ import {
   memorySavedActions,
   memorySavedNote,
   memoryWipeConfirmActions,
+  splitReplyBubbles,
   taskActions,
   taskListActions,
   understandingNote,
 } from "./messages.js";
+import { EphemeralMessageStore } from "./ephemeral-message-store.js";
+import { MessageBatcher } from "./message-batcher.js";
 import { PendingStore } from "./pending.js";
+import {
+  immediateUnderstandingRoute,
+  taskToOffer,
+} from "./understanding-route.js";
 
 /** Jarak bawaan antara pengingat dan tenggat. */
 const REMINDER_LEAD_MS = 60 * 60 * 1000;
@@ -36,15 +43,38 @@ const AI_FAILURE_MESSAGE = [
   "Coba kirim lagi sebentar lagi, ya.",
 ].join("\n");
 
+export type HarvyBot = Bot & {
+  drainPending: () => Promise<void>;
+};
+
+export interface TypingContext {
+  replyWithChatAction: (action: "typing") => Promise<unknown>;
+}
+
+export async function bestEffortTyping(ctx: TypingContext): Promise<void> {
+  try {
+    await ctx.replyWithChatAction("typing");
+  } catch (error) {
+    // Indikator ini kosmetik. Kegagalan Telegram tidak boleh membuang pesan
+    // pengguna atau menghentikan giliran percakapan.
+    console.warn("Indikator mengetik gagal dikirim:", error);
+  }
+}
+
 export function createBot(
   config: AppConfig,
   tasks: TaskService,
   conversation: Conversation,
   memories: MemoryService,
   history: HistoryService,
-): Bot {
+): HarvyBot {
   const bot = new Bot(config.telegramBotToken);
   const pending = new PendingStore();
+  const memoryNotices = new EphemeralMessageStore();
+  const messageBatcher = new MessageBatcher<Context>(
+    (text) => conversation.classifyTurnBoundary(text),
+    (ownerId, batch) => handleFreeText(batch.carrier, ownerId, batch.text),
+  );
 
   bot.use(async (ctx, next) => {
     if (ctx.chat?.type === "private") {
@@ -59,69 +89,112 @@ export function createBot(
     }
   });
 
-  bot.command("start", async (ctx) => {
-    pending.clear(ownerOf(ctx));
-    await ctx.reply(
-      [
-        "Hai, aku Harvy 👋",
-        "Aku bantu merapikan apa yang harus kamu kerjakan, dan siap dengerin",
-        "kalau lagi berat. Keputusannya tetap punyamu.",
-        "",
-        HELP_MESSAGE,
-      ].join("\n"),
+  bot.command("start", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "cancel",
+      "Perintah /start gagal:",
+      async () => {
+        pending.clear(ownerId);
+        await dismissMemoryNotices(ownerId);
+        await ctx.reply(
+          [
+            "Hai, aku Harvy 👋",
+            "Aku bantu merapikan apa yang harus kamu kerjakan, dan siap dengerin",
+            "kalau lagi berat. Keputusannya tetap punyamu.",
+            "",
+            HELP_MESSAGE,
+          ].join("\n"),
+        );
+      },
     );
   });
 
-  bot.command("bantuan", async (ctx) => {
-    pending.clear(ownerOf(ctx));
-    await ctx.reply(HELP_MESSAGE);
-  });
-
-  bot.command("tugas", async (ctx) => {
+  bot.command("bantuan", (ctx) => {
     const ownerId = ownerOf(ctx);
-    pending.clear(ownerId);
-    await sendTaskList(ctx, ownerId);
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "cancel",
+      "Perintah /bantuan gagal:",
+      async () => {
+        pending.clear(ownerId);
+        await dismissMemoryNotices(ownerId);
+        await ctx.reply(HELP_MESSAGE);
+      },
+    );
   });
 
-  bot.on("message:text", async (ctx) => {
+  bot.command("tugas", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "drain",
+      "Perintah /tugas gagal:",
+      async () => {
+        pending.clear(ownerId);
+        await dismissMemoryNotices(ownerId);
+        await sendTaskList(ctx, ownerId);
+      },
+    );
+  });
+
+  bot.on("message:text", (ctx) => {
     const ownerId = ownerOf(ctx);
     const text = ctx.message.text.trim();
 
+    // Referensi diambil sekarang; panggilan API penghapusannya tidak perlu
+    // menahan long-polling Telegram.
+    void dismissMemoryNotices(ownerId);
+
     if (text.startsWith("/")) {
-      await ctx.reply(
-        ["Aku belum punya perintah itu.", "", HELP_MESSAGE].join("\n"),
+      enqueueBotAction(
+        ctx,
+        ownerId,
+        "cancel",
+        "Perintah tak dikenal gagal ditanggapi:",
+        async () => {
+          await dismissMemoryNotices(ownerId);
+          await ctx.reply(
+            ["Aku belum punya perintah itu.", "", HELP_MESSAGE].join("\n"),
+          );
+        },
       );
       return;
     }
 
-    await ctx.replyWithChatAction("typing");
-
-    const waiting = pending.peek(ownerId);
-    if (waiting?.kind === "edit-due") {
-      await applyNewDue(ctx, ownerId, waiting.taskId, text);
-      return;
-    }
-
-    await handleFreeText(ctx, ownerId, text);
+    messageBatcher.enqueue(ownerId, text, ctx);
   });
 
-  bot.on("callback_query:data", async (ctx) => {
+  bot.on("callback_query:data", (ctx) => {
     const ownerId = String(ctx.from.id);
     const [action = "", target = ""] = ctx.callbackQuery.data.split(":");
 
-    try {
-      await routeAction(ctx, ownerId, action, target);
-    } catch (error) {
-      console.error("Tombol gagal diproses:", error);
-      await ctx.answerCallbackQuery({ text: "Ada yang gagal. Coba lagi, ya." });
-    }
+    // Tutup spinner segera. Tindakannya tetap mengantre di belakang chat milik
+    // pengguna ini, tetapi handler update kembali agar polling pengguna lain
+    // tidak ikut tertahan oleh generasi model yang panjang.
+    void ctx.answerCallbackQuery().catch((error: unknown) => {
+      console.error("Callback Telegram gagal diakui:", error);
+    });
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "drain",
+      "Tombol gagal diproses:",
+      () => routeAction(ctx, ownerId, action, target),
+    );
   });
 
   bot.catch(({ error }) => {
     console.error("Telegram update gagal:", error);
   });
 
-  return bot;
+  return Object.assign(bot, {
+    drainPending: () => messageBatcher.drainAll(),
+  });
 
   /**
    * Setiap pesan bebas dibaca model lebih dulu. Tugas hanya dicatat ketika
@@ -133,6 +206,24 @@ export function createBot(
     ownerId: string,
     text: string,
   ): Promise<void> {
+    // Bubble ini mungkin tiba ketika batch sebelumnya masih membuat notifikasi
+    // memori. Ulangi pembersihan setelah chain sampai pada giliran ini.
+    await dismissMemoryNotices(ownerId);
+
+    // Pending diperiksa saat batch mendapat gilirannya, bukan ketika update
+    // masuk. Callback Ubah tenggat mungkin masih mengantre di belakang balasan
+    // lama ketika pengguna sudah mengetik tanggal barunya.
+    const waiting = pending.peek(ownerId);
+    if (waiting?.kind === "edit-due") {
+      await bestEffortTyping(ctx);
+      await applyNewDue(ctx, ownerId, waiting.taskId, text);
+      return;
+    }
+
+    // Indikator muncul ketika Harvy benar-benar mulai menangani satu giliran,
+    // bukan pada setiap bubble saat ia masih menyimak.
+    await bestEffortTyping(ctx);
+
     // Konteks disusun sebelum pesan ini ikut tercatat, supaya giliran yang
     // sedang ditangani tidak muncul dua kali di dalam promptnya sendiri.
     const context = await contextFor(ownerId, text);
@@ -149,51 +240,69 @@ export function createBot(
 
     await history.append(ownerId, "user", text);
 
-    if (!understanding) {
-      await ctx.reply(
-        "Aku belum menangkap maksudnya. Coba tulis ulang dengan kalimat lain, ya.",
-      );
-      return;
-    }
-
-    if (understanding.intent === "memory") {
-      pending.clear(ownerId);
-      await showMemories(ctx, ownerId);
-      return;
-    }
-
-    if (understanding.intent === "task" && understanding.task) {
-      pending.clear(ownerId);
-      await saveTask(ctx, ownerId, understanding.task);
-      await offerSensitive(ctx, ownerId, understanding.memories);
-      return;
-    }
-
-    let reply: string;
     try {
-      reply = await conversation.reply(text, understanding, context);
-    } catch (error) {
-      console.error("Balasan model gagal:", error);
-      await ctx.reply(AI_FAILURE_MESSAGE);
-      return;
+      if (!understanding) {
+        await ctx.reply(
+          "Aku belum menangkap maksudnya. Coba tulis ulang dengan kalimat lain, ya.",
+        );
+        return;
+      }
+
+      const immediateRoute = immediateUnderstandingRoute(understanding);
+
+      if (immediateRoute.kind === "memory-control") {
+        pending.clear(ownerId);
+        await showMemories(ctx, ownerId);
+        return;
+      }
+
+      if (immediateRoute.kind === "save-task") {
+        pending.clear(ownerId);
+        await saveTask(ctx, ownerId, immediateRoute.task);
+        await offerSensitive(ctx, ownerId, understanding.memories);
+        return;
+      }
+
+      let reply: string;
+      try {
+        reply = await conversation.reply(text, understanding, context);
+      } catch (error) {
+        console.error("Balasan model gagal:", error);
+        await ctx.reply(AI_FAILURE_MESSAGE);
+        return;
+      }
+
+      const bubbles = splitReplyBubbles(reply);
+      for (const bubble of bubbles) {
+        await ctx.reply(bubble);
+      }
+      // Riwayat menyimpan satu balasan logis asli. Batas ukuran Telegram boleh
+      // memotong sebuah blok kode di tengah; menggabungkan bubble dengan baris
+      // baru akan mengubah kode yang sebenarnya ditulis model.
+      await history.append(ownerId, "harvy", reply.trim());
+      await memories.markUsed(context.memories);
+
+      // Pekerjaan yang tersirat di balik cerita ditawarkan, tidak dicatat diam-diam.
+      const offeredTask = taskToOffer(understanding);
+      if (offeredTask) {
+        pending.set(ownerId, { kind: "confirm-task", task: offeredTask });
+        const offerText =
+          `Mau aku catat “${offeredTask.title}” biar nggak perlu kamu ingat-ingat?`;
+        await ctx.reply(
+          offerText,
+          { reply_markup: confirmActions() },
+        );
+        await history.append(ownerId, "harvy", offerText);
+        await absorbMemories(ctx, ownerId, understanding.memories);
+        return;
+      }
+
+      await offerSensitive(ctx, ownerId, understanding.memories);
+    } finally {
+      // Model peringkas berjalan setelah balasan utama selesai. Tidak di-await:
+      // kegagalan atau timeout-nya tidak boleh membuat pengguna menunggu.
+      void history.compact(ownerId);
     }
-
-    await ctx.reply(reply);
-    await history.append(ownerId, "harvy", reply);
-    await memories.markUsed(context.memories);
-
-    // Pekerjaan yang tersirat di balik cerita ditawarkan, tidak dicatat diam-diam.
-    if (understanding.task) {
-      pending.set(ownerId, { kind: "confirm-task", task: understanding.task });
-      await ctx.reply(
-        `Mau aku catat “${understanding.task.title}” biar nggak perlu kamu ingat-ingat?`,
-        { reply_markup: confirmActions() },
-      );
-      await absorbMemories(ctx, ownerId, understanding.memories);
-      return;
-    }
-
-    await offerSensitive(ctx, ownerId, understanding.memories);
   }
 
   async function contextFor(
@@ -216,8 +325,8 @@ export function createBot(
    * Menyimpan memori biasa dan mengembalikan yang sensitif untuk ditawarkan.
    *
    * Yang biasa disimpan tanpa bertanya, tetapi tidak diam-diam: setiap
-   * penyimpanan diumumkan berikut tombol Lupakan, sesuai Pasal 4 nomor 2. Yang
-   * sensitif tidak pernah lewat jalur ini — Pasal 4 nomor 3.
+   * penyimpanan diumumkan berikut tombol Oke/Lupakan, sesuai Pasal 4 nomor 2.
+   * Yang sensitif tidak pernah lewat jalur ini — Pasal 4 nomor 3.
    */
   async function absorbMemories(
     ctx: Context,
@@ -227,7 +336,7 @@ export function createBot(
     let sensitive: ExtractedMemory | null = null;
 
     for (const item of items) {
-      if (isSensitiveKind(item.kind)) {
+      if (isSensitiveMemory(item)) {
         sensitive ??= item;
         continue;
       }
@@ -239,8 +348,12 @@ export function createBot(
       });
       if (!saved) continue;
 
-      await ctx.reply(memorySavedNote(saved), {
+      const notice = await ctx.reply(memorySavedNote(saved), {
         reply_markup: memorySavedActions(saved),
+      });
+      memoryNotices.add(ownerId, {
+        chatId: notice.chat.id,
+        messageId: notice.message_id,
       });
     }
 
@@ -304,15 +417,18 @@ export function createBot(
       importance: extracted.importance,
     });
 
+    const response = [
+      "Sudah aku catat.",
+      "",
+      formatTask(task, config.defaultTimezone),
+      understandingNote(task),
+    ].join("\n");
+
     await ctx.reply(
-      [
-        "Sudah aku catat.",
-        "",
-        formatTask(task, config.defaultTimezone),
-        understandingNote(task),
-      ].join("\n"),
+      response,
       { reply_markup: taskActions(task) },
     );
+    await history.append(ownerId, "harvy", response);
   }
 
   async function applyNewDue(
@@ -321,21 +437,23 @@ export function createBot(
     taskId: string,
     text: string,
   ): Promise<void> {
-    let understanding: Understanding | null;
+    await history.append(ownerId, "user", text);
+
+    let dueAt: Date | null;
 
     try {
-      understanding = await conversation.understand(`ubah tenggat jadi ${text}`);
+      dueAt = await conversation.understandDueDate(text);
     } catch (error) {
       console.error("Pembacaan tenggat baru gagal:", error);
       await ctx.reply(AI_FAILURE_MESSAGE);
       return;
     }
 
-    const dueAt = understanding?.task?.dueAt ?? null;
     if (!dueAt) {
-      await ctx.reply(
-        "Aku belum menangkap waktunya. Coba tulis seperti “besok jam 7 malam” atau “senin depan”.",
-      );
+      const response =
+        "Aku belum menangkap waktunya. Coba tulis seperti “besok jam 7 malam” atau “senin depan”.";
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
       return;
     }
 
@@ -343,18 +461,22 @@ export function createBot(
     const updated = await tasks.setDue(ownerId, taskId, dueAt);
 
     if (!updated) {
-      await ctx.reply("Tugas itu sudah tidak ada.");
+      const response = "Tugas itu sudah tidak ada.";
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
       return;
     }
 
+    const response = [
+      "Tenggatnya sudah aku ubah.",
+      "",
+      formatTask(updated, config.defaultTimezone),
+    ].join("\n");
     await ctx.reply(
-      [
-        "Tenggatnya sudah aku ubah.",
-        "",
-        formatTask(updated, config.defaultTimezone),
-      ].join("\n"),
+      response,
       { reply_markup: taskActions(updated) },
     );
+    await history.append(ownerId, "harvy", response);
   }
 
   async function routeAction(
@@ -369,11 +491,10 @@ export function createBot(
         pending.clear(ownerId);
 
         if (waiting?.kind !== "confirm-task") {
-          await ctx.answerCallbackQuery({ text: "Sudah tidak berlaku." });
+          await safeEdit(ctx, "Tombol ini sudah tidak berlaku.");
           return;
         }
 
-        await ctx.answerCallbackQuery();
         await dropKeyboard(ctx);
         await saveTask(ctx, ownerId, waiting.task);
         return;
@@ -381,32 +502,32 @@ export function createBot(
 
       case "nosave": {
         pending.clear(ownerId);
-        await ctx.answerCallbackQuery({ text: "Oke, nggak aku catat." });
         await safeEdit(ctx, "Oke, nggak aku catat.");
         return;
       }
 
       case "done": {
         const completed = await tasks.complete(ownerId, target);
-        await ctx.answerCallbackQuery({
-          text: completed ? "Mantap, selesai ✓" : "Tugas itu sudah tidak ada.",
-        });
-        await refreshAfterChange(ctx, ownerId, completed?.title);
+        if (!completed) {
+          await safeEdit(ctx, "Tugas itu sudah tidak ada.");
+          return;
+        }
+        await refreshAfterChange(ctx, ownerId, completed.title);
         return;
       }
 
       case "drop": {
         const removed = await tasks.remove(ownerId, target);
-        await ctx.answerCallbackQuery({
-          text: removed ? "Dibatalkan." : "Tugas itu sudah tidak ada.",
-        });
+        if (!removed) {
+          await safeEdit(ctx, "Tugas itu sudah tidak ada.");
+          return;
+        }
         await refreshAfterChange(ctx, ownerId);
         return;
       }
 
       case "edit": {
         pending.set(ownerId, { kind: "edit-due", taskId: target });
-        await ctx.answerCallbackQuery();
         await ctx.reply(
           "Mau diubah jadi kapan? Tulis saja, misalnya “besok jam 7 malam” atau “senin depan”.",
         );
@@ -424,7 +545,7 @@ export function createBot(
         pending.clear(ownerId);
 
         if (waiting?.kind !== "confirm-memory") {
-          await ctx.answerCallbackQuery({ text: "Sudah tidak berlaku." });
+          await safeEdit(ctx, "Tombol ini sudah tidak berlaku.");
           return;
         }
 
@@ -434,7 +555,6 @@ export function createBot(
           content: waiting.memory.content,
         });
 
-        await ctx.answerCallbackQuery({ text: "Oke, aku ingat." });
         await safeEdit(
           ctx,
           saved
@@ -442,12 +562,18 @@ export function createBot(
             : "Ternyata sudah aku ingat sebelumnya.",
           saved ? memorySavedActions(saved) : undefined,
         );
+        if (saved) trackCurrentMemoryNotice(ctx, ownerId);
+        return;
+      }
+
+      case "memack": {
+        forgetCurrentMemoryNotice(ctx, ownerId);
+        await safeDelete(ctx);
         return;
       }
 
       case "memskip": {
         pending.clear(ownerId);
-        await ctx.answerCallbackQuery({ text: "Oke, nggak aku simpan." });
         await safeEdit(
           ctx,
           "Oke, itu nggak aku simpan. Aku tetap di sini kalau kamu mau cerita.",
@@ -456,16 +582,18 @@ export function createBot(
       }
 
       case "memforget": {
+        forgetCurrentMemoryNotice(ctx, ownerId);
         const forgotten = await memories.forget(ownerId, target);
-        await ctx.answerCallbackQuery({
-          text: forgotten ? "Sudah aku lupakan." : "Itu sudah tidak ada.",
-        });
-        await refreshMemories(ctx, ownerId, forgotten?.content);
+        await refreshMemories(
+          ctx,
+          ownerId,
+          forgotten?.content,
+          forgotten === null,
+        );
         return;
       }
 
       case "memall": {
-        await ctx.answerCallbackQuery();
         await ctx.reply(
           [
             "Yakin? Aku akan melupakan semua catatan tentang kamu sekaligus",
@@ -481,7 +609,6 @@ export function createBot(
         await history.forget(ownerId);
         pending.clear(ownerId);
 
-        await ctx.answerCallbackQuery({ text: "Sudah bersih." });
         await safeEdit(
           ctx,
           [
@@ -495,13 +622,12 @@ export function createBot(
       }
 
       case "memallno": {
-        await ctx.answerCallbackQuery({ text: "Nggak jadi." });
         await safeEdit(ctx, "Nggak jadi. Semuanya masih aku ingat.");
         return;
       }
 
       default:
-        await ctx.answerCallbackQuery();
+        return;
     }
   }
 
@@ -509,9 +635,12 @@ export function createBot(
     ctx: Context,
     ownerId: string,
     forgotten?: string,
+    missing = false,
   ): Promise<void> {
     const remaining = await memories.list(ownerId);
-    const heading = forgotten
+    const heading = missing
+      ? "Itu sudah tidak ada."
+      : forgotten
       ? `Sudah aku lupakan: ${forgotten}`
       : "Sudah aku lupakan.";
 
@@ -535,7 +664,7 @@ export function createBot(
   ): Promise<void> {
     const task = await tasks.find(ownerId, taskId);
     if (!task || task.status === "completed") {
-      await ctx.answerCallbackQuery({ text: "Tugas itu sudah tidak ada." });
+      await safeEdit(ctx, "Tugas itu sudah tidak ada.");
       return;
     }
 
@@ -546,14 +675,13 @@ export function createBot(
         : dueMinusLead(task);
 
     if (!target || target.getTime() <= now) {
-      await ctx.answerCallbackQuery({
-        text: "Tenggatnya sudah terlalu dekat untuk diingatkan lebih awal.",
-      });
+      await ctx.reply(
+        "Tenggatnya sudah terlalu dekat untuk diingatkan lebih awal.",
+      );
       return;
     }
 
     const updated = await tasks.setReminder(ownerId, taskId, target);
-    await ctx.answerCallbackQuery({ text: "Pengingat dipasang 🔔" });
 
     if (updated) {
       await ctx.reply(
@@ -563,7 +691,9 @@ export function createBot(
           formatTask(updated, config.defaultTimezone),
         ].join("\n"),
       );
+      return;
     }
+    await safeEdit(ctx, "Tugas itu sudah tidak ada.");
   }
 
   async function refreshAfterChange(
@@ -613,6 +743,71 @@ export function createBot(
       { reply_markup: taskListActions(active) },
     );
   }
+
+  async function dismissMemoryNotices(ownerId: string): Promise<void> {
+    const notices = memoryNotices.takeAll(ownerId);
+    const failed = await Promise.all(
+      notices.map(async (notice) => {
+        try {
+          await bot.api.deleteMessage(notice.chatId, notice.messageId);
+          memoryNotices.complete(ownerId, notice.messageId);
+          return null;
+        } catch {
+          return notice;
+        }
+      }),
+    );
+    for (const notice of failed) {
+      // Error Telegram dapat bersifat sementara. Simpan referensinya agar chat
+      // berikutnya mencoba lagi, kecuali pengguna sudah menekan Oke/Lupakan
+      // ketika request delete masih berjalan.
+      if (notice) memoryNotices.retry(ownerId, notice);
+    }
+  }
+
+  function trackCurrentMemoryNotice(ctx: Context, ownerId: string): void {
+    const message = ctx.callbackQuery?.message;
+    if (!message) return;
+
+    memoryNotices.add(ownerId, {
+      chatId: message.chat.id,
+      messageId: message.message_id,
+    });
+  }
+
+  function forgetCurrentMemoryNotice(ctx: Context, ownerId: string): void {
+    const messageId = ctx.callbackQuery?.message?.message_id;
+    if (messageId !== undefined) {
+      memoryNotices.remove(ownerId, messageId);
+    }
+  }
+
+  function enqueueBotAction(
+    ctx: Context,
+    ownerId: string,
+    mode: "cancel" | "drain",
+    errorLabel: string,
+    action: () => Promise<void>,
+  ): void {
+    const guarded = async (): Promise<void> => {
+      try {
+        await action();
+      } catch (error) {
+        console.error(errorLabel, error);
+        try {
+          await ctx.reply("Ada yang gagal diproses. Coba lagi sebentar, ya.");
+        } catch (replyError) {
+          console.error("Pemberitahuan kegagalan juga tidak terkirim:", replyError);
+        }
+      }
+    };
+
+    if (mode === "cancel") {
+      messageBatcher.cancelAndEnqueue(ownerId, guarded);
+      return;
+    }
+    messageBatcher.drainAndEnqueue(ownerId, guarded);
+  }
 }
 
 function ownerOf(ctx: Context): string {
@@ -643,5 +838,13 @@ async function safeEdit(
     await ctx.editMessageText(text, options);
   } catch {
     await ctx.reply(text, options);
+  }
+}
+
+async function safeDelete(ctx: Context): Promise<void> {
+  try {
+    await ctx.deleteMessage();
+  } catch {
+    await dropKeyboard(ctx);
   }
 }
