@@ -104,9 +104,14 @@ export function reminderActions(task: StudentTask): InlineKeyboard {
     .text("Ingatkan 1 jam lagi", `snooze:${task.id}`);
 }
 
-/** Menjelaskan apa yang belum dipahami, agar pengguna dapat mengoreksi. */
+/**
+ * Menjelaskan apa yang belum dipahami, agar pengguna dapat mengoreksi.
+ *
+ * Tugas yang lahir dari permintaan pengingat memang tidak punya tenggat, dan
+ * menanyakannya di situ hanya membingungkan: pengguna sudah menyebut waktunya.
+ */
 export function understandingNote(task: StudentTask): string {
-  if (task.dueAt) return "";
+  if (task.dueAt || task.reminderAt) return "";
 
   return [
     "",

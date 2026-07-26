@@ -28,6 +28,94 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 26 Juli 2026 — Tugas pertama tercatat; Harvy menyangkal ingatannya
+
+**Kenapa.** Kegagalan pengingat pada dua percobaan sebelumnya akhirnya
+terdiagnosis lewat `scripts/coba-pemahaman.ts`, yang menampilkan balasan mentah
+model. Balasannya terpotong di tengah:
+`{ "intent": "task", "safetySensitive": false` — bukan salah format, melainkan
+kehabisan token.
+
+**Yang berubah.**
+
+- `src/ai/conversation.ts`: batas token pemahaman 400 → 2048, balasan 600 →
+  1536. `gemini-3.6-flash` adalah model penalaran yang memakai token keluaran
+  untuk berpikir, sehingga batas sempit menghabiskan jatah sebelum JSON ditutup.
+  Alasannya ditulis panjang di kode, lengkap dengan balasan yang terpotong itu,
+  supaya angka ini tidak diturunkan lagi demi penghematan semu.
+- `src/ai/client.ts`: `finish_reason=length` dicatat ke log dan diberi pesan
+  galat tersendiri. Tanpa itu, balasan terpotong tidak dapat dibedakan dari
+  balasan rusak — dan perbedaan itu menghabiskan dua putaran perbaikan.
+- `src/ai/persona.ts`: Harvy wajib mengaku belum punya ingatan percakapan.
+- `scripts/coba-pemahaman.ts` (baru): menguji pemahaman satu kalimat langsung ke
+  model tanpa lewat Telegram, dan menampilkan balasan mentahnya.
+- `tests/conversation.test.ts`: penjaga agar jatah token pemahaman tidak
+  disempitkan lagi di bawah 1024.
+
+**Dibahas.** Cacat token ini punya bentuk yang perlu diingat: **ia hanya
+menyerang pesan yang paling penting.** Sapaan lolos karena hampir tidak butuh
+penalaran; kalimat berisi waktu dan pekerjaan gagal. Pengujian dengan sapaan
+saja akan menyimpulkan Harvy sehat sempurna.
+
+Temuan kedua lebih berat. Ditanya "aku tanya apa tadi", Harvy menjawab "ini
+pesan pertama kamu di obrolan kita". Itu bukan sekadar riwayat percakapan yang
+belum ada — itu Harvy menyatakan sesuatu yang tidak benar tentang pengalaman
+penggunanya, dan melanggar Pasal 3.6 serta Pasal 5 nomor 6. Perbaikan promptnya
+murah; yang mahal adalah menyadari bahwa fitur yang belum ada dapat berubah
+menjadi ketidakjujuran kalau modelnya dibiarkan menutupi kekosongan itu.
+
+**Bukti.** `npm run check` PASS. `rm -rf dist && npm test` PASS — 36 test dalam
+7 suite. Percakapan nyata: tugas pertama tercatat berikut pengingatnya, **tombol
+Selesai benar-benar bekerja** — sekaligus membuktikan perbaikan `allowed_updates`
+— dan tutoring satu giliran menuntun alih-alih menjawab langsung.
+
+**Sengaja ditinggalkan.** Riwayat percakapan tetap belum ada; yang diperbaiki
+baru kejujurannya. Pengingat yang benar-benar terkirim worker pada waktunya juga
+belum pernah teramati. Satu hal perlu diperiksa ulang: konfirmasi tombol Selesai
+muncul tanpa judul tugas pada transkrip, padahal kode menyusunnya dengan judul.
+
+---
+
+## 26 Juli 2026 — Harvy berjalan pertama kali, dan gagal pada pesan ketiga
+
+**Kenapa.** Pemilik produk menjalankan bot dengan token dan kunci sungguhan.
+Sapaan dan obrolan ringan berhasil; permintaan pengingat dijawab "Aku belum
+menangkap maksudnya".
+
+**Yang berubah.**
+
+- `src/ai/conversation.ts`: balasan model yang gagal dibaca kini dicatat ke log,
+  dipotong 300 karakter. Sebelumnya kegagalan sama sekali tidak berjejak,
+  sehingga penyebabnya hanya bisa ditebak.
+- `src/ai/understand.ts`: `readIntent` menerima label yang huruf besar-kecilnya
+  berbeda, dan **menyelamatkan pesan ketika label dikarang** — misalnya
+  `"reminder"` — selama data tugasnya sah. Tanpa data tugas, Harvy tetap mengaku
+  tidak paham daripada menebak.
+- `src/ai/persona.ts`: prompt menegaskan `intent` wajib salah satu dari empat
+  nilai, menyebut permintaan pengingat sebagai `task`, dan memberi contoh
+  pembacaan waktu "pukul 11 lewat 21" serta "setengah 8".
+- `src/bot/messages.ts`: `understandingNote` tidak lagi menanyakan tenggat pada
+  tugas yang lahir dari permintaan pengingat. Pengguna sudah menyebut waktunya.
+- `tests/understand.test.ts`: dua tes untuk label yang dikarang dan yang berbeda
+  huruf.
+
+**Dibahas.** Penyebab kegagalan **belum dipastikan**, hanya dipersempit ke dua
+kemungkinan: balasan model bukan JSON yang sah, atau `intent` di luar empat
+nilai yang dikenal. Perbaikan hari ini menutup kemungkinan kedua dan membuat
+kemungkinan pertama terlihat di log. Kalau kegagalan berulang, log akan menyebut
+penyebabnya tanpa perlu menebak lagi.
+
+**Bukti.** `npm run check` PASS. `rm -rf dist && npm test` PASS — 35 test dalam
+7 suite. Percakapan nyata membuktikan sapaan, perkenalan diri, dan obrolan
+ringan berjalan. Permintaan pengingat **belum diuji ulang** setelah perbaikan.
+Tombol, pencatatan tugas, dan pengingat terkirim masih belum pernah terjadi
+sekali pun.
+
+**Sengaja ditinggalkan.** Kata "tunggubisa" yang tersambung tanpa spasi tidak
+ditangani khusus; prompt sudah meminta model memperbaiki salah ketik yang jelas.
+
+---
+
 ## 26 Juli 2026 — Kontrak konteks dibuat mengikat
 
 **Kenapa.** Kewajiban membaca konteks dan menulis `LOG.md` sudah tertulis, tetapi

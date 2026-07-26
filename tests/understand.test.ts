@@ -33,6 +33,33 @@ describe("pembacaan balasan model", () => {
     assert.equal(parseUnderstanding(""), null);
   });
 
+  it("menyelamatkan pesan ketika intent dikarang tetapi tugasnya sah", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({
+        intent: "reminder",
+        safetySensitive: false,
+        needsStepByStep: false,
+        task: {
+          title: "Minum obat",
+          dueAt: null,
+          remindAt: "2026-07-26T11:21:00+07:00",
+          importance: 2,
+        },
+      }),
+    );
+
+    assert.equal(understanding?.intent, "task");
+    assert.equal(understanding?.task?.title, "Minum obat");
+  });
+
+  it("menerima intent yang hurufnya berbeda", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({ intent: " Feeling ", task: null }),
+    );
+
+    assert.equal(understanding?.intent, "feeling");
+  });
+
   it("menolak intent di luar yang dikenal", () => {
     const raw = JSON.stringify({ intent: "belanja", task: null });
     assert.equal(parseUnderstanding(raw), null);
