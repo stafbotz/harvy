@@ -188,8 +188,8 @@ tidak mengenal grammY maupun berkas.
   `safety-policy.ts` (`RiskLevel`, `needsReplyReview`,
   `shouldRaiseProfessionalHelp`), `insight-service.ts` (catatan tersembunyi dan
   riwayat giliran berisiko), serta
-  `turn-taking-policy.ts` (pengaman lokal dan jendela adaptif batas giliran,
-  termasuk `looksUrgent` yang dipakai ulang di gerbang perkenalan).
+  `turn-taking-policy.ts` (jendela adaptif batas giliran dan koreksi bentuk
+  kalimat; pagar bahaya lokalnya dipindahkan ke triase risiko).
   `HistoryService` menerima fungsi peringkas dari luar supaya `core/` tetap
   bebas jaringan.
 - `src/ai/` — lapisan Harvy di atas model: `persona.ts` (kepribadian, batas
@@ -245,14 +245,14 @@ Invarian yang harus dijaga:
   bila ISO memuat waktu dan offset.
 - **Balasan model adalah masukan yang tidak tepercaya.** Selalu lewat
   `understand.ts`; jangan pernah memakai hasil `JSON.parse` mentah dari model.
-- **Dua cabang yang sulit ditarik kembali diperiksa juga terhadap teks aslinya.**
-  Daftar memori hanya boleh terbuka bila pesannya memang menyinggung ingatan
-  (`looksLikeMemoryRequest`), dan tugas hanya boleh disimpan bila judulnya
-  memuat pekerjaan (`isVagueTaskTitle`). Keduanya lahir dari kegagalan nyata:
+- **Dua cabang yang sulit ditarik kembali hanya dijaga prompt.** Daftar memori
+  yang terbuka salah dan tugas kosong yang tertulis sama-sama pernah terjadi:
   "kamu pahami aja" membuka seluruh catatan pribadi seseorang lengkap dengan
   tombol Lupakan semua, dan "buat pengingat dong" tersimpan sebagai tugas
-  berjudul "Membuat pengingat". Satu field JSON dari model termurah bukan bukti
-  yang cukup untuk tindakan sebesar itu.
+  berjudul "Membuat pengingat". Pagar lokalnya dihapus pada 27 Juli 2026 atas
+  keputusan pemilik produk, sehingga yang menahannya sekarang hanya aturan
+  eksplisit di dalam prompt ekstraksi. Jangan melemahkan aturan itu tanpa
+  menggantinya dengan penjaga lain.
 - **Langkah balasan tahu jam berapa sekarang.** `replyPrompt` menerima `now` dan
   `timeZone`. Tanpa itu Harvy menyuruh penggunanya rebahan pada pukul 23.00 lalu
   mengajak menunggu malam. Ketika pengguna menyebut sendiri keadaannya, jam itu
@@ -344,9 +344,10 @@ Invarian yang harus dijaga:
   penyedia. Pesan yang telanjur dikirim ditahan `HeldMessageStore` di memori
   proses — tidak pernah ke berkas — lalu diproses sendiri setelah tombolnya
   ditekan; pengguna tidak diminta mengetik ulang. `/start` hanya salah satu
-  pintu masuk, bukan syarat. Pesan pertama yang `looksUrgent` dijawab arahan
-  keselamatan tetap tanpa memanggil model, karena izin mengirimnya keluar belum
-  ada. Menghapus seluruh memori tidak mereset persetujuan.
+  pintu masuk, bukan syarat. Pesan pertama tetap ditriase lebih dulu untuk
+  memeriksa bahaya — pengecualian yang disahkan Konstitusi v0.3 Pasal 3.9 —
+  dan naskah perkenalan mengatakannya apa adanya. Menghapus seluruh memori
+  tidak mereset persetujuan.
 - **Keselamatan adalah pemeriksaan tersendiri, bukan satu field di antara
   belasan field lain.** `Conversation.triageRisk` berjalan **paralel** dengan
   `understand`, bukan sesudahnya: keduanya memakai model termurah, jadi giliran

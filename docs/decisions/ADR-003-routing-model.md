@@ -29,7 +29,14 @@ Kendala yang membentuk keputusan ini:
 |---|---|---|
 | `cheap` | Mengurai pesan, menentukan batas bubble, klasifikasi, balasan pendek rutin | Pekerjaan ekstraksi, tidak butuh penalaran |
 | `efficient` | Percakapan sehari-hari, check-in, memecah pekerjaan menjadi langkah kecil, penjelasan ringan | Butuh kepekaan bahasa, bukan penalaran berat |
-| `ambitious` | Penjelasan berlapis, tutoring bertahap, perencanaan jangka panjang, dan **seluruh percakapan keselamatan** | Kesalahan di sini paling mahal bagi pengguna |
+| `ambitious` | Penjelasan berlapis, tutoring bertahap, dan perencanaan jangka panjang | Kesalahan di sini paling mahal bagi pengguna |
+
+**Koreksi 27 Juli 2026.** Percakapan keselamatan tidak lagi naik ke `ambitious`.
+Pemilik produk memutuskan `efficient` sudah cukup — di produksi tingkatan itu
+adalah GPT 5.6 Luna — dan biaya menaikkan setiap kalimat yang menyerempet
+keselamatan dinilai tidak sepadan. Yang menggantikan jaminan lama bukan
+tingkatan model, melainkan lapisan tersendiri: triase risiko sebelum balasan
+dan pemeriksaan balasan sesudahnya.
 
 Model konkret untuk tiap tingkatan **tidak ditulis di kode**. Semuanya dibaca
 dari environment (`AI_MODEL_CHEAP`, `AI_MODEL_EFFICIENT`,

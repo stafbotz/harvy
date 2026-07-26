@@ -85,6 +85,11 @@ kalimat, karena itu bukan pengenalan tentang penggunanya melainkan penilaian
 apakah ia tampak selesai mengetik — dan itu sudah dua kali gagal di Telegram
 ketika diserahkan kepada model sendirian.
 
+*Dokumen yang ikut dikoreksi.* `ADR-003` menyatakan seluruh percakapan
+keselamatan memakai tingkatan tertinggi; catatan koreksi ditambahkan di sana
+alih-alih membiarkan kode diam-diam bertentangan dengan keputusan yang tercatat.
+`PROJECT.md`, `AGENTS.md`, `STATUS.md`, dan `TESTING.md` mengikuti.
+
 *Lain-lain.* Keselamatan memakai tier `efficient`, bukan `ambitious`; mode
 testing menerima peta model per tingkatan supaya routing dapat diamati; naskah
 persetujuan diperbaiki karena kalimat "belum aku baca" tidak lagi benar setelah
