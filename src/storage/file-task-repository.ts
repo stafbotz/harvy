@@ -52,6 +52,11 @@ export class FileTaskRepository implements TaskRepository {
     );
   }
 
+  async list(ownerId: string): Promise<StudentTask[]> {
+    const database = await this.readDatabase();
+    return database.tasks.filter((task) => task.ownerId === ownerId);
+  }
+
   async listActive(ownerId: string): Promise<StudentTask[]> {
     const database = await this.readDatabase();
     return database.tasks.filter(
@@ -68,6 +73,18 @@ export class FileTaskRepository implements TaskRepository {
         task.reminderSentAt === null &&
         new Date(task.reminderAt).getTime() <= now.getTime(),
     );
+  }
+
+  async removeAll(ownerId: string): Promise<number> {
+    return this.exclusive(async () => {
+      const database = await this.readDatabase();
+      const kept = database.tasks.filter((task) => task.ownerId !== ownerId);
+      const removed = database.tasks.length - kept.length;
+      if (removed > 0) {
+        await this.writeDatabase({ ...database, tasks: kept });
+      }
+      return removed;
+    });
   }
 
   private async readDatabase(): Promise<TaskDatabase> {

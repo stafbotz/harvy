@@ -1,6 +1,9 @@
 import type { ConversationTurn } from "../domain/history.js";
 import type { MemoryItem } from "../domain/memory.js";
 
+/** Scope penyimpanan tidak pernah ikut masuk ke prompt. */
+export type HarvyContextMemory = Pick<MemoryItem, "kind" | "content">;
+
 /**
  * Konteks yang dibawa Harvy ke dalam satu giliran percakapan.
  *

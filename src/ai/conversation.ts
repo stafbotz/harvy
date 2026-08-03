@@ -1,13 +1,27 @@
-import type { ConversationTurn } from "../domain/history.js";
+import type {
+  ConversationTurn,
+  EpisodeSummaryDraft,
+  StoredConversationTurn,
+} from "../domain/history.js";
 import type { UserInsight } from "../domain/insight.js";
 import type { StylePreference } from "../domain/profile.js";
-import type { RiskLevel } from "../core/safety-policy.js";
+import type { ActiveSession } from "../domain/session.js";
+import type { AiPurpose } from "../domain/telemetry.js";
 import type { TurnBoundaryState } from "../core/turn-taking-policy.js";
-import type { AiClient, ChatMessage } from "./client.js";
+import type { AiClient, ChatMessage, ChatRequest } from "./client.js";
+import { currentUsageAttribution } from "./usage-attribution.js";
 import { EMPTY_CONTEXT, type HarvyContext } from "./context.js";
+import {
+  CAPYBARA_MIXED_MESSAGE_GUIDANCE,
+  CAPYBARA_MODEL_REPLY,
+  isModelIdentityQuestion,
+  isPureModelIdentityQuestion,
+  prependCapybaraIdentity,
+} from "./identity.js";
 import {
   resolveModel,
   selectTier,
+  type ConversationIntent,
   type ModelTier,
 } from "./model-policy.js";
 import {
@@ -15,13 +29,16 @@ import {
   dueDateInput,
   dueDatePrompt,
   replyPrompt,
-  summaryInput,
-  SUMMARY_PROMPT,
   turnBoundaryInput,
   TURN_BOUNDARY_PROMPT,
   understandingInput,
   understandingPrompt,
 } from "./persona.js";
+import {
+  EPISODE_SUMMARY_PROMPT,
+  episodeSummaryInput,
+  parseEpisodeSummary,
+} from "./episode-summary.js";
 import {
   CALM_TRIAGE,
   insightInput,
@@ -42,11 +59,48 @@ import {
   parseUnderstanding,
   type Understanding,
 } from "./understand.js";
+import {
+  NOOP_OPERATIONAL_LOGGER,
+  type OperationalLogger,
+} from "../observability/operational-logger.js";
+import {
+  DEFAULT_HARVY_AGENT_HARNESS,
+  type AgentCapabilityExecutor,
+  type AgentHarness,
+  type AgentPlannerInput,
+} from "../harness/agent-harness.js";
+import {
+  compileHarvyContext,
+  TURNS_ONLY_CONTEXT_PROJECTION,
+} from "../harness/context-budget.js";
+import {
+  privateAgentScope,
+  type AgentChannel,
+  type AgentScope,
+} from "../harness/scope.js";
+import {
+  createScopedResearchExecutors,
+  finalizeResearchReply,
+  hasSuccessfulEmptySearch,
+  parseResearchPlannerDecision,
+  RESEARCH_PLANNER_PROMPT,
+  researchPlannerInput,
+} from "./research.js";
 
 export interface RoutingConfig {
   mode: "testing" | "production";
   testingModel: string;
+  testingModels?: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
+}
+
+export interface ConversationRuntime {
+  ownerId?: string;
+  channel?: AgentChannel;
+  scope?: AgentScope;
+  timeZone?: string;
+  session?: ActiveSession | null;
+  plannedActionLabels?: readonly string[];
 }
 
 /**
@@ -98,7 +152,8 @@ const INSIGHT_MAX_TOKENS = 512;
  * Ia menggantikan giliran mentah yang dibuang, jadi ringkasan yang panjang
  * menghapus alasan pemadatan itu sendiri.
  */
-const SUMMARY_MAX_TOKENS = 512;
+const EPISODE_SUMMARY_MAX_TOKENS = 768;
+const RESEARCH_PLANNER_MAX_TOKENS = 4096;
 
 /**
  * Menyatukan pemahaman dan balasan menjadi satu alur percakapan.
@@ -117,29 +172,47 @@ export class Conversation {
   constructor(
     private readonly client: AiClient,
     private readonly routing: RoutingConfig,
-    private readonly timeZone: string,
+    private readonly defaultTimeZone: string,
     private readonly now: () => Date = () => new Date(),
+    private readonly logger: OperationalLogger =
+      NOOP_OPERATIONAL_LOGGER.child("ai.conversation"),
+    private readonly harness: AgentHarness = DEFAULT_HARVY_AGENT_HARNESS,
+    private readonly agentExecutors: readonly AgentCapabilityExecutor[] = [],
   ) {}
 
   /** Mengembalikan `null` bila model gagal menghasilkan bentuk yang sah. */
   async understand(
     message: string,
     context: HarvyContext = EMPTY_CONTEXT,
+    runtime: ConversationRuntime = {},
   ): Promise<Understanding | null> {
+    const timeZone = runtime.timeZone ?? this.defaultTimeZone;
+    const { context: boundedContext, manifest: contextManifest } =
+      compileHarvyContext(context);
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: UNDERSTANDING_MAX_TOKENS,
       json: true,
+      validateResponse: (content) => parseUnderstanding(content) !== null,
+      contextManifest,
+      usage: this.usage(runtime.ownerId, "cheap", "understanding"),
       messages: [
         {
           role: "system",
-          content: understandingPrompt(this.now(), this.timeZone),
+          content: understandingPrompt(this.now(), timeZone),
         },
         // Dibungkus, bukan dikirim mentah: pesan pengguna adalah data yang
         // diklasifikasikan, dan tidak boleh terbaca sebagai instruksi. Konteks
         // ikut dibungkus karena isinya juga berasal dari pengguna.
-        { role: "user", content: understandingInput(message, context) },
+        {
+          role: "user",
+          content: understandingInput(
+            message,
+            boundedContext,
+            runtime.session,
+          ),
+        },
       ],
     });
 
@@ -149,9 +222,9 @@ export class Conversation {
       // Tanpa ini, kegagalan membaca balasan model tidak meninggalkan jejak sama
       // sekali dan hanya terlihat sebagai "aku belum menangkap maksudnya" di
       // sisi pengguna. Dipotong agar log tidak menyimpan seluruh isi percakapan.
-      console.warn(
-        "Balasan model tidak dapat dibaca:",
-        JSON.stringify(raw.slice(0, 300)),
+      this.logger.warn(
+        "understanding_parse_failed",
+        "Balasan model untuk pemahaman tidak dapat dibaca.",
       );
     }
 
@@ -159,16 +232,22 @@ export class Conversation {
   }
 
   /** Mengurai jawaban pada alur Ubah tenggat tanpa melewati intent umum. */
-  async understandDueDate(message: string): Promise<Date | null> {
+  async understandDueDate(
+    message: string,
+    runtime: ConversationRuntime = {},
+  ): Promise<Date | null> {
+    const timeZone = runtime.timeZone ?? this.defaultTimeZone;
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: UNDERSTANDING_MAX_TOKENS,
       json: true,
+      validateResponse: (content) => parseDueDate(content) !== null,
+      usage: this.usage(runtime.ownerId, "cheap", "due-date"),
       messages: [
         {
           role: "system",
-          content: dueDatePrompt(this.now(), this.timeZone),
+          content: dueDatePrompt(this.now(), timeZone),
         },
         { role: "user", content: dueDateInput(message) },
       ],
@@ -184,7 +263,10 @@ export class Conversation {
    * ditangani `MessageBatcher` dengan memproses pesan yang sudah ada, jadi
    * keputusan UX ini tidak boleh menahan percakapan selama rotasi seluruh kunci.
    */
-  async classifyTurnBoundary(message: string): Promise<TurnBoundaryState> {
+  async classifyTurnBoundary(
+    message: string,
+    ownerId?: string,
+  ): Promise<TurnBoundaryState> {
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
@@ -192,6 +274,11 @@ export class Conversation {
       timeoutMs: TURN_BOUNDARY_TIMEOUT_MS,
       maxAttempts: 1,
       json: true,
+      validateResponse: (content) => parseTurnBoundaryDecision(content) !== null,
+      // `urgent` adalah satu-satunya jalur acknowledgment di luar FIFO.
+      // Karena itu classifier ini bagian dari keselamatan dan tidak boleh mati
+      // hanya karena batas pemakaian percakapan biasa tercapai.
+      usage: this.usage(ownerId, "cheap", "turn-boundary", true),
       messages: [
         { role: "system", content: TURN_BOUNDARY_PROMPT },
         { role: "user", content: turnBoundaryInput(message) },
@@ -222,24 +309,40 @@ export class Conversation {
    * Dipanggil paralel dengan `understand`, memakai model termurah yang sama.
    * Latensinya menjadi yang terlama dari dua, bukan jumlahnya.
    */
-  async triageRisk(message: string): Promise<RiskTriage | null> {
+  async triageRisk(
+    message: string,
+    ownerId?: string,
+    context: HarvyContext = EMPTY_CONTEXT,
+  ): Promise<RiskTriage | null> {
+    const { context: boundedContext, manifest: contextManifest } =
+      compileHarvyContext(
+        context,
+        undefined,
+        TURNS_ONLY_CONTEXT_PROJECTION,
+      );
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: TRIAGE_MAX_TOKENS,
       timeoutMs: TRIAGE_TIMEOUT_MS,
       json: true,
+      validateResponse: (content) => parseRiskTriage(content) !== null,
+      contextManifest,
+      usage: this.usage(ownerId, "cheap", "risk-triage", true),
       messages: [
         { role: "system", content: RISK_TRIAGE_PROMPT },
-        { role: "user", content: riskTriageInput(message) },
+        {
+          role: "user",
+          content: riskTriageInput(message, boundedContext.turns),
+        },
       ],
     });
 
     const triage = parseRiskTriage(raw);
     if (!triage) {
-      console.warn(
-        "Triase risiko tidak dapat dibaca:",
-        JSON.stringify(raw.slice(0, 200)),
+      this.logger.warn(
+        "risk_triage_parse_failed",
+        "Balasan model untuk triase risiko tidak dapat dibaca.",
       );
     }
     return triage;
@@ -255,17 +358,40 @@ export class Conversation {
   async reviewReply(
     message: string,
     reply: string,
-    level: RiskLevel = "dukungan",
+    triage: Pick<RiskTriage, "level" | "alone" | "certain"> = {
+      level: "dukungan",
+      alone: false,
+      certain: true,
+    },
+    ownerId?: string,
+    context: HarvyContext = EMPTY_CONTEXT,
   ): Promise<boolean | null> {
+    const { context: boundedContext, manifest: contextManifest } =
+      compileHarvyContext(
+        context,
+        undefined,
+        TURNS_ONLY_CONTEXT_PROJECTION,
+      );
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: REVIEW_MAX_TOKENS,
       timeoutMs: REVIEW_TIMEOUT_MS,
       json: true,
+      validateResponse: (content) => parseReplyVerdict(content) !== null,
+      contextManifest,
+      usage: this.usage(ownerId, "cheap", "reply-review", true),
       messages: [
         { role: "system", content: REPLY_REVIEW_PROMPT },
-        { role: "user", content: replyReviewInput(message, reply, level) },
+        {
+          role: "user",
+          content: replyReviewInput(
+            message,
+            reply,
+            triage,
+            boundedContext.turns,
+          ),
+        },
       ],
     });
 
@@ -276,12 +402,15 @@ export class Conversation {
   async readInsight(
     summary: string | null,
     turns: ConversationTurn[],
+    ownerId?: string,
   ): Promise<InsightDraftShape | null> {
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: INSIGHT_MAX_TOKENS,
       json: true,
+      validateResponse: (content) => parseInsightDraft(content) !== null,
+      usage: this.usage(ownerId, "cheap", "insight"),
       messages: [
         { role: "system", content: INSIGHT_PROMPT },
         { role: "user", content: insightInput(summary, turns) },
@@ -299,22 +428,41 @@ export class Conversation {
     triage: RiskTriage = CALM_TRIAGE,
     insight: UserInsight | null = null,
     raiseHelp = false,
+    runtime: ConversationRuntime = {},
   ): Promise<string> {
-    const tier = selectTier({
+    const modelIdentityQuestion =
+      triage.level === "biasa" && isModelIdentityQuestion(message);
+    if (modelIdentityQuestion && isPureModelIdentityQuestion(message)) {
+      return CAPYBARA_MODEL_REPLY;
+    }
+
+    const selected = selectTier({
       intent: understanding.intent,
       messageLength: message.length,
       needsStepByStep: understanding.needsStepByStep,
       safetySensitive: understanding.safetySensitive,
       risk: triage.level,
     });
+    const tier =
+      runtime.session?.kind === "tutor" && triage.level === "biasa"
+        ? "ambitious"
+        : selected;
+    const timeZone = runtime.timeZone ?? this.defaultTimeZone;
+    const { context: boundedContext, manifest: contextManifest } =
+      compileHarvyContext(context);
+    const scope = this.runtimeScope(runtime);
 
     const base = replyPrompt(understanding.intent, {
-      context,
+      context: boundedContext,
       style,
       now: this.now(),
-      timeZone: this.timeZone,
+      timeZone,
       insight,
       raiseHelp,
+      activeSession: runtime.session ?? null,
+      ...(runtime.plannedActionLabels
+        ? { plannedActionLabels: runtime.plannedActionLabels }
+        : {}),
     });
 
     // Satu jalur arahan saja. Dulu ada dua: `safetyGuidance` yang lengkap, dan
@@ -323,7 +471,11 @@ export class Conversation {
     // apa pun — persis perilaku yang sedang diperbaiki, muncul kembali tepat
     // ketika sistemnya paling rapuh. Kegagalan triase kini ditangani dengan
     // menaikkan tingkat, bukan dengan prompt cadangan yang berbeda.
-    const system = `${base}${safetyGuidance(triage)}`;
+    const system = `${base}\n\n${this.harness.capabilityContext(scope)}${safetyGuidance(triage)}${
+      modelIdentityQuestion
+        ? `\n\n${CAPYBARA_MIXED_MESSAGE_GUIDANCE}`
+        : ""
+    }`;
 
     // Perintah kedalaman ikut di dalam giliran pengguna, bukan sebagai pesan
     // sistem tersendiri. Sebagai aturan di prompt sistem ia kalah oleh panduan
@@ -333,37 +485,232 @@ export class Conversation {
     // model mana pun adalah giliran terakhir.
     const depth = depthDirective(message);
 
-    return this.client.complete({
+    const reply = await this.client.complete({
       model: resolveModel(tier, this.routing),
       temperature: 0.7,
       maxTokens: REPLY_MAX_TOKENS,
+      contextManifest,
+      usage: this.usage(
+        runtime.ownerId,
+        tier,
+        "reply",
+        triage.level !== "biasa",
+      ),
       messages: [
         { role: "system", content: system },
-        ...recentTurnMessages(context.turns),
+        ...recentTurnMessages(boundedContext.turns),
         { role: "user", content: depth ? `${depth}\n\n${message}` : message },
+      ],
+    });
+    return modelIdentityQuestion
+      ? prependCapybaraIdentity(reply)
+      : reply;
+  }
+
+  /**
+   * Mengekstrak satu episode v2 tanpa membaca atau merangkum ulang episode lama.
+   * Metadata provenance dibuat oleh `HistoryService`, bukan oleh model.
+   */
+  async summarizeEpisode(
+    turns: StoredConversationTurn[],
+    ownerId?: string,
+  ): Promise<EpisodeSummaryDraft> {
+    const raw = await this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: EPISODE_SUMMARY_MAX_TOKENS,
+      json: true,
+      validateResponse: (content) =>
+        parseEpisodeSummary(content, turns) !== null,
+      usage: this.usage(ownerId, "cheap", "summary"),
+      messages: [
+        { role: "system", content: EPISODE_SUMMARY_PROMPT },
+        { role: "user", content: episodeSummaryInput(turns) },
+      ],
+    });
+    const episode = parseEpisodeSummary(raw, turns);
+    if (!episode) {
+      throw new Error("Model mengembalikan episode percakapan yang tidak sah.");
+    }
+    return episode;
+  }
+
+  /**
+   * Menjalankan vertical slice research web baca-saja melalui kernel agent.
+   * Run ini masih sinkron/in-memory; durable run dan progress background belum
+   * menjadi bagian dari tahap executor pertama.
+   */
+  async research(
+    message: string,
+    context: HarvyContext = EMPTY_CONTEXT,
+    runtime: ConversationRuntime = {},
+  ): Promise<string> {
+    const compiled = compileHarvyContext(context);
+    const result = await this.harness.run({
+      scope: this.runtimeScope(runtime),
+      request: message,
+      executors: createScopedResearchExecutors(this.agentExecutors, message),
+      limits: {
+        maxSteps: 6,
+        deadlineMs: 45_000,
+        maxReplyCharacters: 8_000,
+        maxObservationCharacters: 4_000,
+      },
+      planner: (input, signal) =>
+        this.planResearch(
+          input,
+          compiled.context,
+          compiled.manifest,
+          runtime.ownerId,
+          signal,
+        ),
+    });
+
+    if (result.status === "completed") {
+      const finalized = finalizeResearchReply(
+        result.reply,
+        result.checkpoint.observations,
+      );
+      if (finalized) return finalized;
+      if (hasSuccessfulEmptySearch(result.checkpoint.observations)) {
+        return "Aku sudah menjalankan pencarian web, tetapi belum menemukan hasil yang bisa kujadikan sumber. Coba persempit topik atau beri istilah lain.";
+      }
+      if (result.checkpoint.observations.every(
+        (observation) => observation.status !== "ok",
+      )) {
+        return "Aku belum mendapat hasil web yang berhasil dibaca, jadi aku tidak akan menjawab seolah pencarian sudah selesai.";
+      }
+      return [
+        "Aku menahan hasil research ini karena ada URL yang tidak berasal dari",
+        "hasil pencarian atau halaman yang benar-benar kubuka. Coba minta aku",
+        "mencari ulang dengan topik yang lebih sempit.",
+      ].join(" ");
+    }
+    if (result.status === "needs_input") return result.prompt;
+    if (result.status === "needs_approval") {
+      return "Research baca-saja berhenti karena alurnya meminta izin yang seharusnya tidak diperlukan.";
+    }
+    return result.reason === "deadline"
+      ? "Research web belum selesai sebelum batas waktu. Aku belum akan mengarang hasilnya."
+      : "Research web berhenti sebelum menghasilkan jawaban yang dapat diverifikasi.";
+  }
+
+  private async planResearch(
+    input: AgentPlannerInput,
+    context: HarvyContext,
+    contextManifest: ReturnType<typeof compileHarvyContext>["manifest"],
+    ownerId: string | undefined,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    const tier: ModelTier = input.observations.length > 0
+      ? "efficient"
+      : "cheap";
+    const raw = await this.client.complete({
+      model: resolveModel(tier, this.routing),
+      temperature: 0,
+      maxTokens: RESEARCH_PLANNER_MAX_TOKENS,
+      json: true,
+      signal,
+      contextManifest,
+      validateResponse: (content) =>
+        parseResearchPlannerDecision(content) !== null,
+      usage: this.usage(ownerId, tier, "research"),
+      messages: [
+        { role: "system", content: RESEARCH_PLANNER_PROMPT },
+        { role: "user", content: researchPlannerInput(input, context) },
+      ],
+    });
+    const decision = parseResearchPlannerDecision(raw);
+    if (!decision) {
+      throw new Error("Model mengembalikan keputusan research yang tidak sah.");
+    }
+    return decision;
+  }
+
+  /**
+   * Menulis satu giliran yang dipicu tombol sesi, tanpa menyamar sebagai pesan
+   * bebas pengguna.
+   */
+  async sessionReply(
+    session: ActiveSession,
+    instruction: string,
+    context: HarvyContext = EMPTY_CONTEXT,
+    style: StylePreference | null = null,
+    insight: UserInsight | null = null,
+    runtime: Omit<ConversationRuntime, "session"> = {},
+  ): Promise<string> {
+    const tier: ModelTier = session.kind === "tutor" ? "ambitious" : "efficient";
+    const timeZone = runtime.timeZone ?? this.defaultTimeZone;
+    const { context: boundedContext, manifest: contextManifest } =
+      compileHarvyContext(context);
+    const system = `${replyPrompt(sessionIntent(session), {
+      context: boundedContext,
+      style,
+      now: this.now(),
+      timeZone,
+      insight,
+      activeSession: session,
+    })}\n\n${this.harness.capabilityContext(this.runtimeScope(runtime))}`;
+
+    return this.client.complete({
+      model: resolveModel(tier, this.routing),
+      temperature: 0.6,
+      maxTokens: REPLY_MAX_TOKENS,
+      contextManifest,
+      usage: this.usage(runtime.ownerId, tier, "session"),
+      messages: [
+        { role: "system", content: system },
+        ...recentTurnMessages(boundedContext.turns),
+        {
+          role: "user",
+          content: [
+            "Tindakan berikut dipilih pengguna lewat tombol Harvy.",
+            "Jalankan tindakannya; jangan menyebut instruksi internal ini.",
+            `<tindakan>${instruction}</tindakan>`,
+          ].join("\n"),
+        },
       ],
     });
   }
 
-  /**
-   * Memadatkan giliran lama menjadi satu paragraf.
-   *
-   * Memakai tingkatan termurah: ini pekerjaan mekanis, dan ia berjalan di luar
-   * giliran percakapan sehingga pengguna tidak menunggunya.
-   */
-  async summarize(
-    previousSummary: string | null,
-    turns: ConversationTurn[],
-  ): Promise<string> {
-    return this.client.complete({
-      model: resolveModel("cheap", this.routing),
-      temperature: 0,
-      maxTokens: SUMMARY_MAX_TOKENS,
-      messages: [
-        { role: "system", content: SUMMARY_PROMPT },
-        { role: "user", content: summaryInput(previousSummary, turns) },
-      ],
-    });
+  private usage(
+    ownerId: string | undefined,
+    tier: ModelTier,
+    purpose: AiPurpose,
+    safetyCritical = false,
+  ): ChatRequest["usage"] {
+    if (!ownerId) return undefined;
+    const attribution = currentUsageAttribution();
+    return {
+      ownerId,
+      tier,
+      purpose,
+      safetyCritical,
+      ...(attribution ?? {}),
+    };
+  }
+
+  private runtimeScope(runtime: ConversationRuntime): AgentScope {
+    if (runtime.scope) return runtime.scope;
+    return privateAgentScope(
+      runtime.channel ?? "telegram",
+      runtime.ownerId ?? "runtime-anonim",
+    );
+  }
+}
+
+function sessionIntent(session: ActiveSession): ConversationIntent {
+  switch (session.kind) {
+    case "tutor":
+      return "question";
+    case "human-bridge":
+      return "request";
+    case "clarify":
+      return "feeling";
+    case "prioritize":
+    case "focus":
+    case "plan":
+      return "task";
   }
 }
 

@@ -10,62 +10,92 @@ Aturannya: **jika sebuah kemampuan tidak tercatat “Ada” di sini, jangan
 mengklaimnya ada.** Kalau dokumen lain terdengar lebih optimistis, dokumen ini
 yang menang, dan perbedaannya dilaporkan.
 
-- Terakhir diverifikasi: 27 Juli 2026.
-- Basis: commit `cb5e685` ditambah lapisan keselamatan, memori Markdown, dan
-  catatan pemahaman yang belum di-commit.
-- Cara verifikasi: membaca kode secara langsung, bukan membaca dokumen lain.
+- Terakhir diverifikasi: 3 Agustus 2026.
+- Basis: working tree 2 Agustus 2026 yang belum di-commit, termasuk Harvy Loop,
+  kontrol data, check-in, telemetry, tindak lanjut `ADR-008`, identitas model
+  Capybara, fondasi grup WhatsApp `ADR-009`, log operasional `ADR-010`, serta
+  partisipasi natural dan evaluasi grup `ADR-011`, provider cadangan khusus
+  mode testing, harness agent dan scope memori `ADR-012`, serta Harvy Console,
+  control plane, paket pilot, ledger biaya, dan katalog model environment
+  `ADR-013`, structured episodic compaction v2 `ADR-014`, serta executor web
+  baca-saja pertama `ADR-015`, dan Scope & Authority v1 `ADR-016`.
+- Cara verifikasi: membaca kode secara langsung dan menjalankan gerbang
+  otomatis (`npm run check` dan `npm test`: 578 test dalam 88 suite); status
+  “belum diuji Telegram/WhatsApp nyata” tetap dipertahankan bila memang belum
+  ada bukti end-to-end.
 
 ## Cara memakai Harvy
 
-Harvy Capybara dipakai lewat **percakapan biasa dan tombol**, bukan lewat
+Harvy saat ini dipakai lewat **percakapan biasa dan tombol** di chat pribadi
+Telegram, bukan lewat
 perintah `/`. Pengguna menulis apa adanya; Harvy memahami maksudnya, lalu
 menyediakan tindakan sebagai tombol. Perintah `/` hanya pelengkap opsional dan
 tidak boleh menjadi cara utama apa pun — Konstitusi Pasal 3.11 melarang pengguna
 dipaksa menghafal perintah.
 
-Tombolnya sendiri seharusnya **adaptif dan disusun AI menurut keadaan**, bukan
-papan tombol tetap. Ini belum terjadi; lihat tabel di bawah.
+Tombol percakapan kini adaptif: model memilih ID dari daftar tindakan tertutup,
+sedangkan teks, callback, kepemilikan, masa berlaku, dan batas pilihannya tetap
+dikendalikan kode. Tombol operasional yang sudah mempunyai objek nyata — seperti
+Selesai pada kartu tugas — tetap ditulis kode.
 
 ## Kemampuan
 
 | Kemampuan | Status | Catatan |
 |---|---|---|
 | Bot Telegram khusus chat pribadi | Ada | Chat non-pribadi hanya dijawab bila pesannya perintah |
-| Perkenalan pada kontak pertama | Ada, sekali diuji Telegram lalu diperbaiki | Dipicu pesan bebas maupun `/start`. Dua bubble, tombol "Oke, mulai" dan "Aku mau tanya dulu". Pesan yang telanjur dikirim ditahan di memori proses lalu diproses sendiri setelah tombol ditekan. Pengguna lama disapa dari jumlah tugas aktifnya, bukan dari ingatan yang dikarang |
-| Preferensi gaya menemani | Ada, belum diuji Telegram | Satu pertanyaan setelah percakapan punya isi — sejak 27 Juli 2026 baru muncul ketika riwayat sudah mencapai enam giliran, karena pada uji pertama ia menyusul pesan pembuka "p". Ditanyakan sekali, dijawab atau tidak, dan tidak muncul bila ada pertanyaan lain yang menunggu |
-| Pesan bebas dipahami model | Ada | Jalur utama. Dua langkah: ekstraksi `cheap`, lalu balasan sesuai tingkatan. Intent dipisahkan dari aksi agar output model yang kontradiktif tidak langsung mengubah data |
-| Penggabungan bubble pengguna | Ada; timer lama terbukti terlalu pendek, perbaikan adaptif belum diuji Telegram | Enqueue langsung mengembalikan kendali ke grammY; jeda 650 ms menggabungkan burst, lalu model `cheap` memilih `complete/open/incomplete/urgent` dengan pagar lokal. Pesan tunggal lengkap langsung diproses; gabungan lengkap, pembuka, dan fragmen menggantung masing-masing diberi 4/7/12 detik sejak bubble terakhir. Bahaya segera lokal tidak menunggu model. Pemeriksaan per pemilik tidak tumpang tindih; command/callback masuk antrean per pengguna tanpa menahan polling global; shutdown normal menguras antrean |
-| Balasan dalam beberapa bubble | Ada, belum teruji Telegram setelah perbaikan | Paragraf dikirim terpisah, maksimal tiga bubble. Blok kode tetap utuh bila muat; pesan di atas 4.000 karakter dipecah agar tidak ditolak Telegram. Sejak 26 Juli 2026 ada indikator mengetik dan jeda 0,3–1,2 detik antar bubble, dan prompt memang meminta balasan ditulis sebagai satu sampai tiga paragraf pendek |
+| Perkenalan pada kontak pertama | Ada, teruji adapter palsu; belum diuji ulang Telegram | Dipicu pesan bebas maupun `/start`. Ingress pesan, triase/intro, dan klik persetujuan memakai satu rantai per pengguna; bubble yang datang saat persetujuan sedang ditulis tidak hilang atau diproses ganda. Selain "Oke, mulai" dan "Aku mau tanya dulu", selalu ada "Aku sedang nggak aman" yang memakai teks tetap. Hanya bubble pertama boleh ditriase eksternal; bubble berikutnya ditahan lokal dan overflow diumumkan |
+| Preferensi gaya menemani | Ada, teruji otomatis; belum diuji Telegram | Satu pertanyaan setelah percakapan punya isi; status “sudah ditanya” baru ditulis setelah pesan berhasil dikirim. Pilihan "Dengerin dulu" disimpan lintas giliran/restart dan menahan tindakan produktivitas pada cerita biasa sampai pengguna memilih "Langsung saran"; kedua pilihan juga ada di pusat kontrol data |
+| Pesan bebas dipahami model | Ada | Jalur utama. Ekstraksi dan triase berjalan paralel, lalu balasan sesuai tingkatan. Model hanya mengusulkan: tugas baru boleh berubah bila teks pengguna sendiri meminta catat/simpan/ingatkan dan membawa isi konkret; permintaan prioritas serta pengingat kosong gagal tertutup |
+| Capability awareness dan kernel agent | Ada dengan executor web baca-saja pertama; durable run belum ada | Satu catalog tepercaya menghasilkan snapshot ter-hash dan immutable per scope/surface lalu masuk ke prompt privat maupun grup. Scope bertipe kini mencakup private, group, dan workspace; surface Workspace tetap tidak aktif sehingga tipe ini tidak menyamar sebagai kanal pengguna. `web.search`/`web.open` dinamis: pada runtime hari ini hanya available di privat Telegram bila executor terkait benar-benar dikonfigurasi. Kernel channel-neutral memvalidasi `final/need_input/action`, melanjutkan `need_input` pada run sama, mengikat approval ke nilai JSON hasil validator, menolak executor versi lain, serta menegakkan policy fail-closed, idempotency key, step/deadline/cycle limit, cancellation, dan generation freshness. Run Workspace wajib memasang revalidator authority sebelum planner. Runtime tugas/memori/sesi tetap workflow deterministik. Research masih memakai keputusan JSON di atas chat completion; `AiClient` belum mengirim native `tools`/`tool_choice`, dan checkpoint belum disimpan secara durable |
+| Workspace Scope & Authority v1 | Ada sebagai fondasi core teruji; belum terhubung ke aplikasi atau pengguna | Principal HMAC dipisahkan per kanal; membership mempunyai ID, role `owner/admin/editor/viewer`, permission tertutup, dan `aclEpoch`. Tambah/revoke/leave/perubahan role memakai compare-and-swap dan kenaikan epoch sehingga dua service yang berlomba tidak dapat sama-sama commit, scope/checkpoint lama stale, dan rejoin memperoleh membership ID baru. Scope mengikat seluruh namespace kanonik conversation/shared-memory/artifact/authority ke workspace dan member; perubahan satu field, permission buatan, atau callback freshness yang hilang/gagal/timeout membuat run ditolak. Capability research disembunyikan dari viewer. Adapter berkas hanya satu proses. Belum ada ingress/UI/config Workspace, account linking, artifact store, PostgreSQL, ACL per artifact, atau composition-root wiring; admin grup dan owner Workspace tidak saling mewarisi hak |
+| Research web baca-saja | Ada bila diaktifkan; teruji otomatis, belum diuji provider/Telegram nyata | Intent `research` menjalankan loop maksimal enam langkah/deadline internal 45 detik dengan `web.search` Brave dan `web.open` HTTP GET teks. Satu run hanya mengirim satu query; context lama privat tidak diberikan ke planner, dan open hanya menerima URL dari pesan pengguna atau hasil search sukses run yang sama. Search key hanya ke endpoint tetap lewat header. Open menolak credential/port non-default serta seluruh DNS privat/khusus, mem-pin koneksi ke IP tervalidasi, memeriksa ulang maksimal tiga redirect, membatasi respons 1 MB, dan hanya membaca teks/HTML/JSON. Observation ditandai tak tepercaya; final tanpa observasi sukses, URL karangan, atau domain polos yang tidak teramati ditahan, sedangkan daftar sumber dapat ditambahkan deterministik. Kedua executor mati default dan diaktifkan terpisah lewat env. Cancellation command/generation luar, grounding semantik per klaim, durable/background report, X/Threads, file/PDF, JavaScript browser, cache, pagination, dan source-diversity gate belum ada |
+| Anggaran konteks | Ada, teruji otomatis; token-aware policy belum ada | Ringkasan, giliran, dan memori tetap dibatasi karakter/jumlah dengan giliran terbaru lebih dulu. Manifest v1 bebas isi kini terpasang pada route privat `understanding`, triase, review, reply, dan sesi, serta route grup planner, revalidasi, dan reply. Ia mencatat versi/metode estimasi, batas, karakter sumber/terpilih, utilisasi, serta hitungan bagian eligible/masuk/terpotong/terbuang; triase/review privat ditandai turns-only dan konteks grup mempertahankan pemilih 18 giliran/12.000 karakter, maksimum 8 memori gabungan, dengan maksimum 4 shared room memory lalu member-local memory. Manifest menempel sebagai metadata lokal `ChatRequest` dan tidak ikut body provider. Hanya metrik kapasitas agregat masuk allowlist log operasional; jumlah giliran/memori dan status summary tetap transient. Estimasi seluruh prompt kini memakai field stabil `inputTokenEstimate`; respons provider dibedakan lewat `tokenUsageEstimated`, dan usage aktual menghasilkan error bertanda serta rasio permille. Label operasi lokal membedakan planner, revalidasi, dan reply tanpa mengubah purpose billing atau body provider, sehingga data dapat dikelompokkan per model/route. Estimator `/4` belum menyesuaikan diri dari data itu dan selection/pemadatan masih berbasis karakter/giliran—belum ada tokenizer, faktor kalibrasi, atau budget token per route/model. Memori non-profile yang tidak mempunyai overlap kata bermakna dengan pesan sekarang tidak lagi ikut hanya karena masih ada slot top-k |
+| Penggabungan bubble pengguna | Ada; timer lama terbukti terlalu pendek, perbaikan adaptif belum diuji Telegram | Enqueue langsung mengembalikan kendali ke grammY; jeda 650 ms menggabungkan burst, lalu model `cheap` memilih `complete/open/incomplete/urgent` dengan koreksi bentuk kalimat lokal. Pesan tunggal lengkap langsung diproses; gabungan lengkap, pembuka, dan fragmen menggantung masing-masing diberi 4/7/12 detik sejak bubble terakhir. Status `urgent` dari model memotong debounce; pengenalan bahaya lokal sudah dihapus. Pemeriksaan per pemilik tidak tumpang tindih; command/callback masuk antrean per pengguna tanpa menahan polling global; shutdown normal menguras antrean |
+| Balasan dalam beberapa bubble | Ada, teruji otomatis; belum teruji Telegram setelah perbaikan | Paragraf dikirim terpisah, maksimal tiga bubble. Markdown dekoratif dan LaTeX sederhana dinormalisasi menjadi teks Telegram biasa di luar blok kode; bentuk yang benar-benar dikirim juga yang masuk history. Blok kode tetap utuh bila muat dan pesan di atas 4.000 karakter dipecah |
 | Balasan yang tidak terdengar seperti mesin | Sebagian; terbukti gagal di Telegram lalu diperbaiki | Uji pertama justru menghasilkan balasan jutek — "Gitu aja sih." — karena aturan anti-pola terlalu keras. Aturannya diseimbangkan pada 27 Juli 2026: larangan balasan datar yang menutup obrolan, panjang mengikuti apa yang dibawa pengguna, dan keluhan ringan tidak boleh dijawab dengan saran istirahat. Pesan di atas 400 karakter mendapat `depthDirective` berisi kerangka isi pesannya sendiri. Probe ulang membaik pada semua skenario kecuali satu, lihat di bawah |
 | Balasan tahu waktu | Ada, belum diuji Telegram | `replyPrompt` menerima jam dan zona waktu. Sebelumnya hanya langkah pemahaman yang tahu, dan Harvy menyuruh penggunanya rebahan pada pukul 23.02 |
 | Permintaan hasil langsung | Ada, terbukti pada probe model | Intent `request` memenuhi permintaan yang dapat dikerjakan di chat, misalnya menulis kode; tidak membuat atau menawarkan tugas. Plafon balasan 4.096 token, lalu pesan panjang dibagi sesuai batas Telegram |
 | Curhat tidak otomatis jadi tugas | Ada | Harvy menjawab dulu, pencatatan ditawarkan lewat tombol |
-| Pencatatan tugas + tombol tindakan | Ada, terbukti sebelum perubahan balasan | Tugas tercatat dan tombol Selesai berfungsi pada percakapan nyata 26 Juli 2026. Sejak 26 Juli 2026 kartunya didahului balasan percakapan; sebelumnya kalimat yang membawa perasaan sekaligus tugas hanya dijawab struk pencatatan. Bila balasan gagal dibuat, tugasnya tetap dicatat dengan kalimat pembuka dari kode |
-| Tombol adaptif yang disusun AI | Belum | Seluruh papan tombol ditulis tangan dan tetap di `src/bot/messages.ts`. Model tidak ikut menentukan tindakan apa yang ditawarkan |
+| Pencatatan tugas + tombol tindakan | Ada, teruji adapter palsu; perubahan terakhir belum diuji Telegram | Tugas hanya langsung tercatat dari permintaan eksplisit. Tugas tersirat memakai konfirmasi bertoken, terikat proposal/pemilik, kedaluwarsa, dan sekali pakai sehingga tombol lama tidak dapat menyimpan proposal baru |
+| Tombol adaptif menurut percakapan | Ada, teruji otomatis; belum diuji Telegram | Model mengusulkan ID dari allowlist, tetapi kode merencanakan maksimum satu sebelum balasan dibuat. Prompt mengetahui label tombol; `actionGoal` dipakai sebagai tujuan, bukan salinan pesan mentah. Tombol hilang bila balasan menunggu jawaban bebas, ada memori/konfirmasi lain, mode listen aktif pada cerita, atau giliran berisiko |
 | `/start`, `/tugas`, `/bantuan` | Ada, sebagai pelengkap | Bukan cara utama. Tidak ada perintah lain; pesan `/` lain dijawab dengan bantuan |
 | Pengurutan prioritas | Ada | Murni dan teruji unit di `src/core/prioritizer.ts` |
-| Pengingat | Sebagian | Dapat diminta lewat kalimat ("ingetin aku jam 8") atau tombol. Pengiriman oleh worker **dilaporkan pengguna** berhasil pada 26 Juli 2026; penulis kode belum mengamatinya sendiri. Lewat tombol waktunya masih ditetapkan Harvy, satu jam sebelum tenggat. Jam tenang dan frekuensi belum ada |
-| Penyimpanan per pengguna | Ada | Tugas, riwayat, dan profil berupa JSON atomik. Sejak 27 Juli 2026 memori dan catatan pemahaman berupa berkas Markdown di folder tersendiri per pengguna, sehingga batas isolasinya terlihat dari struktur direktori. Berkas JSON memori lama diimpor sekali lalu ditinggalkan |
-| Rotasi kunci mode uji | Ada | Teruji unit; perilaku terhadap kuota nyata belum diamati |
-| Tutoring bertahap | Belum | Promptnya ada dan riwayat percakapan kini tersedia, tetapi pola lima langkah Pasal 3.4 belum ditulis sebagai alur dan belum pernah diamati berjalan lintas pesan |
-| Riwayat percakapan | Ada, terbukti gagal sebelum perbaikan; perbaikan belum teruji Telegram | Enam giliran terakhir dibawa ke pemahaman **dan** balasan; intent `history` membedakannya dari daftar memori. Sejak 26 Juli 2026 langkah balasan mengirimnya sebagai pesan chat sungguhan, bukan kutipan di dalam prompt; pemahaman tetap memakai `<konteks>`. Setelah 16 giliran, pemadatan berjalan di latar setelah balasan dan mempertahankan pesan baru |
-| Memori terstruktur dan kendalinya | Ada, terbukti sebagian | Lima jenis. `personal` dan isi yang terdeteksi sensitif selalu minta izin; sisanya disimpan otomatis. Sejak 26 Juli 2026 pemberitahuannya menempel sebagai satu baris `📎` di ujung balasan berikut tombol Lupakan, menggantikan bubble tersendiri yang harus ditutup. Daftar, lupakan satu, dan lupakan semua ada. Transkrip nyata membuktikan simpan biasa dan tawaran sensitif tampil; bentuk barunya belum diuji Telegram |
-| Pemeriksaan keselamatan sebagai lapisan | Ada, belum diuji Telegram | Triase risiko berdiri sendiri, berjalan paralel dengan ekstraksi memakai model `cheap`, menghasilkan tiga tingkat: `biasa`, `dukungan`, `bahaya`. Ia juga menilai apakah pengguna menyatakan tidak punya orang yang bisa dihubungi, dan apakah isinya sensitif. Handler lengkap masih FIFO di belakang balasan aktif; belum ada preemption |
-| Harvy berhenti menolak lalu menutup | Ada, terbukti pada probe model | Arahan keselamatan melarang mengalihkan ke pihak lain lalu menutup percakapan. Ketika pengguna menyatakan tidak punya siapa-siapa, saran menghubungi orang terdekat dilarang diulang dan diganti bantuan yang tidak menuntut kepercayaan lebih dulu. Bantuan profesional diangkat lagi hanya pada percakapan tenang setelah tiga hari |
-| Pemeriksaan respons sebelum dikirim | Ada untuk giliran berisiko | Balasan pada tingkat `dukungan` dan `bahaya` diperiksa model `cheap` sebelum dikirim; yang ditolak diganti balasan baku yang tetap menemani. Percakapan biasa tetap diteruskan apa adanya |
-| Catatan keselamatan dan pemahaman | Ada, belum diuji Telegram | Gaya bicara, perkiraan tahap perkembangan, kerentanan, dan riwayat 20 giliran berisiko terakhir. Disusun di latar menumpang pemadatan riwayat. **Tidak ditampilkan kepada pengguna** — pengecualian yang disahkan Konstitusi v0.3 Pasal 4 nomor 6. Umur tidak pernah ditanyakan |
-| Pemberitahuan dan persetujuan privasi | Ada, belum diuji Telegram | Sejak 26 Juli 2026 pesan tidak dikirim ke penyedia sebelum pengguna menyetujuinya. Gerbangnya berada sebelum `MessageBatcher.enqueue`, jadi klasifikasi batas giliran pun tidak berjalan lebih dulu. Persetujuannya berversi (`CONSENT_VERSION`) dan disimpan terpisah dari memori serta riwayat. Belum ada cara menarik persetujuan selain berhenti memakai Harvy |
-| Zona waktu per pengguna | Belum | Satu zona untuk semua, dari `.env` |
-| Ekspor dan hapus seluruh data | Sebagian | "Lupakan semua tentang aku" menghapus memori, riwayat, dan preferensi gaya dari dalam chat. Catatan persetujuan sengaja bertahan supaya menghapus data tidak berubah menjadi perkenalan ulang. Tugas belum ikut, dan ekspor belum ada sama sekali |
-| Batas pemakaian dan pemantauan biaya | Belum | Tidak ada penghitungan token |
+| Pengingat | Ada, worker lama pernah dilaporkan berhasil; perubahan waktu belum diuji Telegram | Dapat diminta lewat kalimat atau tombol. Tombol kini menanyakan waktu kepada pengguna; snooze satu jam tetap pilihan eksplisit. Waktu lampau dan jam tenang ditolak pada pemilih waktu maupun `remindAt` hasil ekstraksi langsung, pengiriman menunggu pemilik tidak sedang mengetik atau diproses, dan worker menghormati jam tenang. Kegagalan membaca daftar jatuh tempo ditangkap agar tick berikutnya tetap berjalan |
+| Penyimpanan per pengguna | Ada | Tugas, riwayat, profil, sesi, dan telemetry memakai adapter berkas atomik. Memori dan catatan pemahaman memakai folder Markdown per pengguna. Penghapusan penuh menunggu pemadatan riwayat aktif dan memblokir penulisan/request baru sampai persetujuan berikutnya; tombstone profil membuat startup meneruskan penghapusan yang sempat terputus |
+| Rotasi kunci dan provider cadangan mode uji | Ada, teruji unit dan smoke provider nyata; belum diuji lewat Telegram/WhatsApp setelah ledger baru | `AI_MODE=testing` boleh memakai satu gateway OpenAI-compatible cadangan; production mengabaikannya. Timeout/network/5xx primary langsung failover, 429 lebih dulu mengikuti batas rotasi primary pada request (default seluruh kunci), sedangkan cancellation lifecycle/4xx lain/keluaran rusak/batas lokal tidak. Circuit in-memory melewati primary 30 detik setelah gangguan provider-wide atau 429 pada seluruh kunci; batas satu percobaan tidak membuka circuit hanya karena satu key 429. Retry key, downgrade JSON, dan fallback mempertahankan satu `requestId`, tetapi setiap `fetch` memiliki `attemptId`, provider, model, origin, status, usage, serta biaya sendiri. Bearer header dan model body+query berhasil terhadap AlwaysCodex pada 31 Juli; kebijakan privasi/retensi gateway belum diverifikasi dan request pertama masih dapat memakan timeout primary+cadangan |
+| Satu sesi aktif | Ada, teruji otomatis; belum diuji Telegram | Satu pengguna hanya dapat mempunyai satu sesi persisten, dan sesi baru baru disimpan setelah pesan pembukanya berhasil dikirim. Bila penyimpanan gagal sesudah delivery, state parsial dibersihkan dan keyboard dilepas sebagai kompensasi terbaik. Sesi menjadi konteks lunak: topik baru dijawab tanpa tujuan/tombol sesi dan tanpa menghapus sesi lama; rujukan, jawaban eksplisit, dan bentuk jawaban seperti “karena …” dapat melanjutkan sesi. Kata generik “masih/belum/udah/sudah” tidak cukup; `done` memerlukan rujukan sesi atau tujuan yang cocok. Keyboard sesi dibatasi tiga pilihan |
+| Tutoring bertahap | Ada, teruji otomatis; belum diuji Telegram | Sesi persisten menjalankan lima tahap `ukur → coba → petunjuk → penjelasan → coba lagi`. Pengguna dapat meminta petunjuk, jawaban langsung, mencoba ulang, atau berhenti. State baru disimpan setelah pesan Telegram berhasil dikirim; pada giliran berisiko keselamatan, route kontrol/sesi dibuang, tier tetap `efficient`, dan tahap tidak maju |
+| Jembatan bantuan manusia | Ada, teruji otomatis; belum diuji Telegram | Harvy membantu menyusun draf pesan yang dapat diedit pengguna di chat. Harvy tidak mengirimnya ke orang atau layanan eksternal |
+| Check-in satu kali | Ada, teruji otomatis; belum diuji Telegram | Hanya dibuat setelah pengguna memilihnya, pada waktu pilihannya sendiri. Pesan notifikasi generik tidak membocorkan tujuan. Selesai, lanjut, tersangkut, ubah rencana, dan berhenti tersedia; mengabaikan atau memilih lanjut tidak menjadwalkan nudge berikutnya. Penarikan persetujuan mempertahankan sesi/check-in tetapi worker menahan kirim sampai pengguna menyetujui lagi; kegagalan membaca kandidat tidak mematikan tick berikutnya |
+| Riwayat percakapan | Ada dengan episodic compaction v2, teruji otomatis; belum diuji Telegram | Seluruh giliran mentah yang belum berhasil dipadatkan ikut pemahaman **dan** balasan, dengan hard cap 24. Setelah 16 giliran, awalan kontigu menjadi episode terstruktur sembilan kategori dalam chunk maksimal 12 giliran/12.000 karakter; backlog dikejar antar-slot tanpa merangkum ulang episode lama. Setiap klaim wajib menunjuk sequence sumber, sedangkan ID/rentang/source hash dibuat kode. Maksimal 12 episode disimpan dan 3.000 karakter terbaru masuk prompt dengan koreksi/unresolved diprioritaskan. Commit memeriksa generation, coverage, awalan, dan hash; maksimal dua model compaction aktif, shutdown mengurasnya, penarikan izin menghentikan queued compaction, dan penghapusan penuh mencegah resurrection. Schema history v1 dimigrasikan atomik sebagai episode warisan tanpa provenance palsu. Hash menjadi receipt concurrency/coverage, bukan bukti semantik setelah raw source dibuang; ketepatan ringkasan masih bergantung model dan threshold belum token-aware |
+| Memori terstruktur dan kendalinya | Ada, terbukti sebagian | Lima jenis. `personal` dan isi yang ditandai sensitif oleh triase selalu minta izin bertoken; klik lama tidak dapat menyimpan proposal baru. Sisanya disimpan otomatis dan diumumkan sebagai satu baris `📎` berikut tombol Lupakan; bila pemberitahuan gagal, catatan baru dibatalkan. Daftar, sunting satu, lupakan satu, dan lupakan semua ada; konfirmasi Lupakan semua juga bertoken agar callback lama tidak menghapus data baru. Karena tidak ada lagi daftar kata lokal, salah klasifikasi serentak oleh ekstraksi dan triase masih dapat melewatkan izin untuk isi yang sebenarnya sensitif—lihat keterbatasan terbuka. Simpan dan tawaran pernah terlihat di Telegram; penyuntingan belum |
+| Memori anggota dan ruang bersama grup | Ada di core grup WhatsApp, teruji otomatis; belum diuji grup nyata | Member-local memory tetap terpisah per kanal+grup+anggota dan tidak memakai repository/state privat. Hanya pesan direct yang tenang/pasti dapat mengusulkan memori anggota; ordinary disimpan setelah notice v7 dan diumumkan dengan `📎`, sedangkan personal meminta konfirmasi anggota yang sama dalam 10 menit. Shared room memory hanya berasal dari perintah eksplisit anggota, menampilkan preview+ID yang persis, lalu memerlukan konfirmasi admin terkini pada epoch yang sama. Catatan `decision/agenda/norm/activity/note` terlihat oleh seluruh grup, kedaluwarsa 60 hari, maksimum 20, dan empat terbaru dapat masuk prompt sebagai data tak tepercaya. Semua API mutasi menerima guard authority wajib dan memeriksanya di dalam antrean tepat sebelum commit. Kegagalan delivery setelah pembuatan record member/room me-rollback record. Anggota menguasai lihat/koreksi/hapus/lupakan data dirinya; penghapusan diri pada adapter file menghapus profil sosial, member-local memory, dan atribusi pengusul room dalam satu commit serta tidak mengklaim ledger teknis terhapus bila adapter menolaknya. Admin dapat melihat, menghapus catatan bersama, dan mereset profil sosial+room memory, tetapi reset tidak menghapus member-local memory. Disable tetap menghapus seluruh scope secara atomik. PN/LID yang terhubung digabung; record semantik memakai hash alias scoped, sementara store sosial legacy masih menyimpan pasangan ID mentah untuk bridging. Pending dan authority epoch grup belum durable lintas restart |
+| Pemeriksaan keselamatan sebagai lapisan | Ada, teruji adapter palsu; belum diuji Telegram | Triase berjalan paralel dengan ekstraksi dan menerima konteks giliran terakhir untuk jawaban pendek seperti "belum". Kegagalan naik ke `dukungan` belum pasti; konflik ketika ekstraksi menandai sensitif tetapi triase berkata biasa juga diperlakukan belum pasti. Semua hasil non-biasa/belum pasti membuang route kontrol dan konteks sesi, memblokir mutasi, lalu mereview balasan dengan konteks episode serta status `alone` dan `certain`. Hasil boundary `urgent` tetap melewati cap biasa dan mengirim acknowledgment di luar FIFO; handler lengkap tetap FIFO |
+| Harvy berhenti menolak lalu menutup | Ada, bukti model lama; perubahan terakhir belum diuji model | Arahan melarang mengalihkan lalu menutup dan menghormati pengguna yang tidak punya orang aman. Untuk bahaya, kode menempelkan batas ketersediaan 112 sebelum review. Nudge profesional otomatis ditangguhkan sampai false positive dievaluasi |
+| Pemeriksaan respons sebelum dikirim | Ada untuk giliran berisiko | Balasan pada tingkat `dukungan` dan `bahaya` diperiksa model `cheap` sebelum dikirim. Reviewer mengetahui ketika triase belum pasti dan dilarang mengarang bahwa orang tua, guru, keluarga, atau teman pasti aman. Penolakan/kegagalan memakai fallback terpisah: copy dukungan tidak membawa 112, sedangkan copy bahaya tetap menjelaskan batas layanan darurat. Tidak ada jalur fail-open; percakapan biasa tetap diteruskan apa adanya |
+| Catatan keselamatan dan pemahaman | Ada, dipersempit dan teruji otomatis; belum diuji Telegram | Runtime hanya menulis triase `bahaya` yang berhasil diparse, setelah balasan terkirim. `dukungan` dan triase gagal tidak dicatat; inferensi latar gaya/tahap/kerentanan tidak lagi dipanggil atau masuk prompt. Field warisan itu dibersihkan fisik saat catatan lama dibaca. Catatan bahaya dibatasi 20 dan dihapus fisik setelah 30 hari; tetap tidak masuk ekspor dan ikut penghapusan penuh |
+| Pemberitahuan dan persetujuan privasi | Ada, teruji adapter palsu; belum diuji Telegram setelah versi 4 | Hanya pesan pertama boleh menjalani satu triase keselamatan sebelum persetujuan. Urutan bubble serentak, pesan yang tiba saat menerima atau menarik persetujuan, dan drain sudah diuji; bubble berikutnya tidak masuk model sebelum izin. Penarikan mempertahankan tugas, memori, sesi, dan check-in. Tombol keselamatan tetap tersedia tanpa persetujuan. Versi 4 menjelaskan satu atau lebih layanan AI, kemungkinan request dikirim ulang ke provider cadangan, query research ke penyedia pencarian terpisah, pengambilan URL oleh server Harvy, dan bahwa context lama privat tidak ikut route research |
+| Zona waktu dan jam tenang per pengguna | Ada, teruji otomatis; belum diuji Telegram | Pengguna memilih WIB, WITA, atau WIT dan preset atau rentang jam tenang sendiri. Zona IANA bawaan tetap menjadi fallback untuk profil lama |
+| Ekspor dan hapus seluruh data | Ada, teruji otomatis; belum diuji Telegram | Ekspor JSON in-memory memuat profil, seluruh tugas, memori, riwayat, sesi aktif, ringkasan 24 jam, dan catatan pemakaian yang masih disimpan; catatan tersembunyi sengaja tidak diekspor. Konfirmasi penarikan izin dan penghapusan penuh bertoken sekali pakai. Penghapusan penuh lebih dulu memblokir request baru, menunggu pemadatan/penulisan latar, lalu menghapus semuanya termasuk tugas, consent, sesi/check-in, telemetry, dan catatan tersembunyi. “Lupakan semua tentang aku” tetap merupakan kontrol memori/riwayat yang lebih sempit |
+| Batas pemakaian, entitlement, dan ledger biaya | Ada untuk satu proses lokal, teruji otomatis; provider ledger belum diuji kanal nyata | Reservasi kuota logical tetap atomik dan limit efektif berasal dari paket+cohort+override. Gerbang kuota membaca debit entitlement 24 jam sebagai authority: `reply`/`session`/`group-reply` baru mendebit setelah adapter memastikan delivery; gagal kirim, balasan kosong/diganti, dan `schema_rejected` tidak. Due-date, boundary/understanding/triase/review/ringkasan/insight serta planner/revalidasi grup adalah overhead termasuk; keselamatan exempt. Ledger provider tetap mencatat setiap attempt fisik secara nonblocking, termasuk retry/fallback/gagal, model+origin aktual, snapshot harga berversi, cache/reasoning tanpa double count, provider-reported/catalog cost nano-USD, dan `estimated/unpriced/pending`. Laporan biaya memisahkan biaya tercatat dari estimasi read-only dengan tarif aktif sekarang; attempt historis tetap tidak ditulis ulang, provenance `current_catalog_estimate` dan cakupan `complete/estimated/partial/unavailable` ikut API. Usage yang hilang tetap unavailable dan tarif nol eksplisit tetap angka sah. Agregasi/ekspor tidak terpotong batas tabel. Grup memakai subject HMAC dan principal anggota pseudonim; PN/LID digabung, bucket anggota+shared sama dengan total grup, dan kontrol hapus diri membersihkan alias+attempt anggota. Telemetry v1 bermigrasi tanpa mengarang provenance provider. Adapter masih file lokal, bukan billing database produksi |
+| Cohort, katalog paket, dan mode grup | Ada sebagai control plane pilot; belum ada subscription/payment | Cohort standard/beta, paket, override kuota, expiry beta, consent evaluasi, dan runtime mode terpisah. Default individu: `personal_perkenalan`/Perkenalan (Free), `personal_toro`/Toro (Plus), `personal_sora`/Sora (Pro), dan `personal_kuro`/Kuro (Max); paket grup tetap Sapa/Nimbrung/Ruang. Startup memigrasikan ID lama pada katalog, enrollment, dan audit secara atomik; provider serta entitlement ledger dimigrasikan atomik saat pertama dibaca. Alias lama tetap diterima pada input tetapi selalu dinormalisasi, dan migrasi tidak mengubah harga, kapasitas, maupun isi catatan pemakaian. Beta overlay bawaan 4× paket aktif. Mengganti paket grup menyelaraskan direct/ambient, tetapi mode dapat dijeda/dimatikan. Routing model tetap berdasarkan pekerjaan, bukan paket. Tidak ada checkout, renewal, invoice, refund, webhook, atau SLA |
+| Harvy Console operator | Ada di localhost, teruji HTTP otomatis dan smoke browser terisolasi; belum diuji operasi jangka panjang | Server built-in bind wajib `127.0.0.1`, memakai token→session `HttpOnly`, CSRF, Host/Origin, CSP/no-CORS, schema/body/rate/version guards, drain mutasi, serta audit success/rejected/failed. Console membaca semua slot model testing/fallback/production yang nonkosong saat startup, menampilkan rute aktif/nonaktif tanpa key/base URL, dan memakai satu pemilih pasangan provider+model; operator hanya mengisi harga dan server menolak pasangan buatan. UI memprioritaskan biaya/token/request/fallback, melokalkan status, menandai estimasi dengan `≈`, memberi loading/error/retry, menyegarkan otomatis tanpa menimpa form, menserialisasi reload pascamutasi, menginvalidasi cache grup sesudah harga/control berubah, memuat kegagalan grup secara terisolasi, menampilkan empty state yang jujur, menyediakan tab keyboard, serta mengubah tabel menjadi baris berlabel pada ponsel. Smoke fixture 1440×1000 dan 390×844 membuktikan dua model environment, estimasi historis, grup berisi/kosong, tanpa teks harga `unknown`, tanpa page error, dan tanpa overflow dokumen ponsel. Operator juga dapat mengatur enrollment, cohort, paket, mode grup, undangan/cabut evaluasi, serta melihat ledger dan bucket anggota pseudonim. Token tidak disimpan browser. Runtime/probe/evaluator mengambil lock atomik yang sama. Versi ini sengaja bukan internet-ready; PostgreSQL, OIDC/MFA/RBAC/TLS, outbox, rekonsiliasi, backup/restore drill, dan threat-model review masih gerbang produksi |
+| Log operasional produksi | Ada, teruji otomatis; belum diuji deployment jangka panjang | NDJSON append-only terpisah dari telemetry, schema v1, timestamp UTC/run/sequence/component/event, trace AsyncLocalStorage per ingress, durasi/outcome, serta error metadata-only (tipe/kode/status/frame/fingerprint) tanpa `Error.message`. Format terminal lokal kini ikut menampilkan `code` dan `status` yang lolos format aman, sehingga kegagalan seperti `LOCAL_DATA_LOCKED` dapat didiagnosis tanpa membuka pesan error bebas; fingerprint tetap disertakan. Detail memakai allowlist scalar; isi/identitas/kredensial dan object mentah dibuang. Record 32 KiB, antrean record+byte berbatas, mutex append/rotasi/maintenance/close, repair tail crash, rotasi ukuran+hari UTC, retensi berdasar tanggal nama segmen, health tulis+retensi, batas total disk termasuk jalur darurat, fallback stderr saat sink opsional mati, mode file-required, backpressure console, process warning/crash, dan flush logger terakhir saat shutdown sudah ada. Adapter Baileys membuang info/debug serta object protokol mentah; `515` dinormalkan sebagai restart biasa. QR/pairing code hanya ke TTY development dan dilarang pada production/non-TTY. Notice grup v7 dan detail onboarding membedakan retensi file lokal dari collector; redaksi query kini juga mengenali nama `apikey` |
+| Evaluasi percakapan sintetis | Ada untuk struktur; model nyata belum dijalankan ulang | Corpus 42 skenario, runner `npm run eval:conversation`, hard invariant, dan satu harness `bot.handleUpdate` dengan API Telegram palsu ada. Runner mencerminkan konflik keselamatan, penahanan tombol pada mode menyimak/sesi, cakupan cerita panjang, larangan saran saat menyimak, serta sinyal selesai sesi. Upaya menjalankan model testing ditolak sandbox karena pengiriman prompt/corpus ke layanan eksternal belum mendapat persetujuan khusus. Provider cadangan nonaktif secara default; `--allow-fallback` menandai run availability yang boleh mencampur model. Probe/evaluator sekarang mengambil local runtime lock dan sengaja menolak berjalan saat aplikasi memakai set berkas yang sama |
+| Evaluasi percakapan grup sintetis | Ada dan pernah dijalankan pada model testing; kombinasi kode/corpus terbaru belum dijalankan penuh | Corpus memuat 150 skenario semantik lintas 15 topik × empat variasi permukaan (600 snapshot ambient), ditambah 60 episode generasi direct. Runner mengacak topik dengan seed, menyimpan seluruh JSONL, memisahkan aturan wajib dari preferensi, melaporkan konsistensi cluster dan latency, serta memisahkan gangguan provider dari bug harness. Bukti tersimpan di `docs/evidence/group-conversation-2026-07-30/`: run 600 sebelum pagar human-flow memperoleh strict pass rate 0,993 dan p95 request planner 1.443 ms; run human-flow sesudah pagar 60/60; run direct lama memberi balasan 60/60 dengan p95 1.378 ms tetapi oracle fact-check-nya belum cukup kuat. Run fact-correction sesudahnya tidak sah karena 35/60 request terkena HTTP 429. Corpus v5/evaluator v4 belum dijalankan penuh. Semua evaluator tetap primary-only kecuali operator memberi `--allow-fallback`, dan ringkasan menyatakan cakupan modelnya |
+| Identitas model Capybara | Ada, teruji otomatis; belum diuji kanal nyata | Pertanyaan identitas murni dijawab deterministik tanpa panggilan model dasar, termasuk “kamu ChatGPT?” dan pertanyaan Inggris. Harvy mengatakan dirinya AI dengan sistem multi-model bernama Capybara. Pesan campuran tetap menjalani pemahaman/triase dan bagian permintaan lain tidak dibuang; keselamatan tetap menang |
+| Grup WhatsApp melalui Baileys | Ada sebagai fondasi beta lokal; ambient/direct dan lifecycle teruji otomatis, model sintetis pernah diuji; skenario perilaku lengkap belum diuji di grup nyata | Pipeline terpisah dari state pribadi dan memakai harness/capability catalog bersama. Ingress tidak lagi menunggu AI; direct memakai settle 350 ms dan membatalkan planner maupun revalidation ambient aktif, sedangkan ambient 1,2 detik. Membership pengirim dan Harvy sendiri wajib ada pada metadata segar sebelum core menerima pesan; refresh cache yang kedaluwarsa ditunggu dengan timeout untuk pesan yang sama, sedangkan metadata kosong, pengirim nonmember, dan self-echo ditolak. Semua ingress direvalidasi lagi oleh core sebelum binding atau state ditulis. Event membership menghapus cache, menaikkan epoch, serta membatalkan batch/pending pada call stack yang sama; refresh lama ditolak dan epoch tetap monoton selama proses. Tag/reply serta alias vocative masuk direct; penyebutan Harvy sebagai topik tidak. Planner dapat nimbrung tanpa nama hanya untuk pertanyaan belum terjawab, konteks berguna, koreksi fakta, atau banter yang mengundang. Acknowledgment/izin/penutup pendek ditahan lokal, budget adaptif memberi ruang manusia, dan kandidat bernilai tinggi yang tersusul menunggu quiet gap lalu direvalidasi maksimal 15 detik/empat giliran. Watermark settled mencegah timer 900 ms mendahului bubble yang sudah terlihat tetapi belum selesai dibatch. Fact correction diregenerasi tier `efficient`; pagar output menolak pengalaman manusia palsu, tawaran DM/japri, diagnosis/tuduhan pasti, dan jaminan transaksi. Urgent ACK dideduplikasi serta dibatasi empat triase aktif; generation guard menutup race removal pada binding, notice, alias, konteks, dan marker risiko. Notice v7 menjelaskan provider, member-local memory, shared room memory, proposal+konfirmasi admin, retensi, serta batas reset. Bukti nyata masih hanya satu nomor, status `open`, dan satu jalur balasan dasar—belum notice v7, shared/member memory, timing ambient baru, removal, keselamatan, atau shutdown baru di WhatsApp nyata |
+| Banyak nomor WhatsApp | Ada sebagai beta satu proses; socket banyak nomor teruji otomatis; satu nomor nyata berhasil QR, login, dan `open` | `WHATSAPP_ACCOUNTS` menerima banyak alias account ID non-telepon yang diawali huruf dan menolak alias maupun nomor fisik duplikat. Tiap akun mempunyai auth folder, socket, cache berbatas, reconnect, generation, status, serta antrean event/grup sendiri. Cache metadata/admin dibuang tiap reconnect dan refresh dilindungi epoch per grup agar completion lama sesudah removal tidak memulihkan hak admin basi. QR lokal kini default development karena pairing-code Baileys gagal upstream pada percobaan nyata; production/non-TTY sengaja tidak menampilkan secret pairing. Restart `515` setelah pair-success adalah bagian alur normal; identitas hasil QR dipertahankan untuk login berikutnya, sedangkan state parsial hanya dibersihkan bila benar-benar membawa `pairingCode`. Reconnect menunggu save kredensial; self-add/re-add dan self-remove ditangani. Satu grup terikat satu akun, tidak failover atau rebind otomatis ke nomor lain. Dua nomor nyata sekaligus belum diuji |
 | Ukuran keberhasilan Pasal 8 | Belum | Tidak ada yang diukur, termasuk yang boleh diukur |
-| WhatsApp dan website | Belum | Belum dimulai, dan memang belum dijadwalkan |
+| Website pengguna | Belum | Harvy Web sebagai kanal/ruang pengguna belum dimulai. Harvy Console localhost operator adalah kemampuan terpisah yang sudah ada |
 
 ## Cacat yang diketahui
 
 **Uji Telegram 26 Juli 2026 (transkrip pengguna nyata) menemukan sepuluh cacat.**
-Seluruhnya sudah diperbaiki di working tree dan dijaga tes, tetapi **belum satu
-pun diuji ulang lewat Telegram**:
+Jalur yang memicu kesepuluh cacat sudah diperbaiki di working tree dan dijaga
+tes, tetapi **belum satu pun diuji ulang lewat Telegram**. Untuk cacat nomor 5,
+contoh transkrip kini masuk jalur izin pada probe, sementara kelas kegagalan
+“dua model sama-sama salah menilai” masih terbuka:
 
 1. Balasan terdengar jutek. "Aku jalan pakai sistem dari Google. Gitu aja sih."
    Aturan anti-pola yang ditambahkan sehari sebelumnya terlalu keras dan
@@ -117,25 +147,89 @@ saat pengujian:
   Dinaikkan ke 12 detik; karena ia berjalan paralel dengan ekstraksi yang batas
   bawaannya 30 detik, waktu tunggu pengguna praktis tidak bertambah.
 
-**Kesenjangan yang diketahui dan diterima, 27 Juli 2026.** Empat pagar lokal
-dihapus atas keputusan pemilik produk, dan konsekuensinya nyata:
+**Perubahan keputusan setelah audit, 27 Juli 2026.** `ADR-008` mempersempit
+beberapa konsekuensi yang sebelumnya diterima:
 
 1. Bahaya segera tidak lagi memotong penantian batas giliran kecuali model batas
-   giliran sendiri menyebut `urgent`. Bila model itu menggantung, giliran
-   berbahaya baru diproses ketika deadline fail-safe menyala.
+   giliran sendiri menyebut `urgent`. Bila ia menyebut `urgent`, acknowledgment
+   tetap kini melompati FIFO; bila model menggantung, deadline masih menjadi
+   fail-safe dan handler penuh tetap tidak dipreempt.
 2. Pemeriksaan bahaya atas pesan pertama kini memanggil model sebelum
-   persetujuan diberikan. Naskah perkenalan mengatakannya apa adanya.
+   persetujuan diberikan. Naskah perkenalan mengatakannya apa adanya; bubble
+   berikutnya tidak dikirim dan tombol keselamatan tetap tersedia.
 3. Kepekaan isi memori sepenuhnya bergantung pada model. Bila triase gagal,
-   hanya jenis `personal` yang tersisa sebagai penjaga.
+   mutasi memori kini gagal tertutup; pada triase yang berhasil jenis
+   `personal` dan hasil sensitif masih menjadi penjaga.
 4. Catatan pemahaman tidak dapat dilihat maupun dikoreksi pemiliknya, sehingga
-   ia dapat menjadi salah tanpa pernah diketahui.
+   risikonya dipersempit: hanya bahaya yang berhasil dinilai, setelah kirim,
+   retensi 30 hari, tanpa inferensi latar atau nudge otomatis.
 
 Nomor 2 dan 4 adalah pengecualian terhadap Larangan Mutlak, disahkan lewat
 Konstitusi v0.3.
 
-Tidak ada cacat terbuka lain yang tercatat pada kode saat ini. Transkrip Telegram
-26 Juli 2026 menemukan delapan cacat yang sudah diperbaiki di working tree tetapi
-belum diuji ulang end-to-end:
+**Keterbatasan terbuka pada working tree sekarang.**
+
+- Capability catalog, kernel agent, serta executor `web.search`/`web.open`
+  baca-saja sudah ada untuk privat Telegram dan mati secara default. Belum ada
+  native protocol tool-calling pada `AiClient`, durable run store, outbox,
+  receipt, atau reconciliation worker. Harvy belum dapat membuka file,
+  mengakses X/Threads secara khusus, mengubah kalender/email, atau bertindak di
+  aplikasi eksternal.
+- Core/capability contract sudah channel-neutral, tetapi surface belum setara:
+  Telegram masih hanya chat privat dan WhatsApp masih hanya grup beta. Telegram
+  grup serta WhatsApp privat sengaja ditandai unavailable oleh snapshot.
+- Typed `AgentScope` sudah menjaga batas baru, tetapi repository privat legacy
+  masih memakai `ownerId` Telegram dan belum mempunyai account linking. Data
+  tidak boleh digabung lintas kanal hanya dari kesamaan nomor, ID, atau nama.
+- Workspace authority sudah bertipe dan teruji, tetapi belum dipasang pada
+  composition root maupun surface pengguna. Tidak ada ingress membership,
+  artifact store, ACL per artifact, transfer owner, atau epoch durable di
+  PostgreSQL; adapter file v1 hanya fondasi satu proses.
+- Memori semantik anggota dan ruang bersama grup sudah diuji pada service,
+  adapter Baileys palsu, serta repository file atomik, tetapi belum pada grup
+  WhatsApp nyata. Pending konfirmasi serta authority epoch grup tidak tahan
+  restart; lifecycle leave anggota dan pengujian notice/kontrol nyata belum
+  ada. Store sosial lama masih menyimpan PN/LID mentah untuk bridging; record
+  semantik baru memakai hash alias scoped. Preview dan konfirmasi eksplisit
+  juga bukan classifier privasi sempurna, sehingga catatan ruang dibatasi untuk
+  keputusan/agenda/norma/kegiatan operasional grup. Rollback delivery saat ini
+  lengkap untuk record member/room yang baru dibuat; edit, delete, reset,
+  alias, dan penghapusan diri belum mempunyai transaksi kompensasi generik bila
+  acknowledgment gagal setelah mutasi commit.
+- Pengingat dan check-in mempunyai jendela at-least-once: bila Telegram sudah
+  menerima pesan tetapi proses mati sebelum status tersimpan, pesan yang sama
+  dapat dicoba lagi setelah restart.
+- Penyimpanan tetap aman hanya untuk satu proses dan belum memakai PostgreSQL.
+- Log operasional masih berupa file lokal satu proses. Belum ada collector
+  terpusat, dashboard, alert fingerprint, audit trail immutable, enkripsi
+  terpisah, atau hardening ACL Windows yang dibuktikan pada deployment.
+- Perkiraan token sebelum panggilan sengaja konservatif; angka final memakai
+  usage penyedia bila tersedia.
+- Harvy Loop, kontrol data, preferensi waktu, dan telemetry belum pernah
+  dijalankan end-to-end melalui Telegram dan penyedia model sungguhan. Harness
+  Telegram palsu membuktikan sambungan terpilih, bukan pengalaman produksi.
+- Acknowledgment urgent dapat mendahului handler lama, tetapi request model
+  biasa yang sedang aktif belum mempunyai pembatalan kooperatif.
+- Pengenalan memori sensitif sepenuhnya bergantung pada dua keluaran model:
+  jenis dari ekstraksi dan flag sensitif dari triase. Jika keduanya sama-sama
+  salah menilai isi sensitif sebagai biasa, catatan dapat tersimpan otomatis.
+  Pemberitahuan, tombol Lupakan, dan rollback saat kirim gagal membatasi
+  dampaknya, tetapi tidak menggantikan izin sebelumnya yang diwajibkan
+  Konstitusi. Ini belum boleh diklaim tertutup.
+- Corpus 42 skenario belum dijalankan terhadap model setelah perubahan ini
+  karena sandbox menolak pengiriman prompt/corpus ke penyedia eksternal tanpa
+  persetujuan khusus.
+- Corpus grup berisi 150 skenario semantik dengan empat transformasi permukaan,
+  bukan 600 percakapan independen. Kombinasi final corpus v5, evaluator v4,
+  kebijakan giliran v2, dan pipeline v4 belum memperoleh run penuh karena kuota
+  model testing habis. Tidak ada penilaian naturalness buta oleh manusia.
+- Satu stream grup belum mempunyai conversation disentanglement sempurna.
+  Reply ke anggota lain masih diperlakukan sangat konservatif. Kandidat
+  ambient tertunda mempertahankan target di core, tetapi platform quote dapat
+  hilang bila cache pesan Baileys sudah kedaluwarsa.
+
+Transkrip Telegram 26 Juli 2026 menemukan delapan cacat yang sudah diperbaiki di
+working tree tetapi belum diuji ulang end-to-end:
 
 1. pertanyaan isi chat dibajak menjadi daftar memori;
 2. bubble pengguna diproses satu per satu tanpa menunggu lanjutan; implementasi
@@ -251,9 +345,9 @@ deadline universal 2,5 detik menutup giliran terlalu dini.
 Kebijakan sekarang memakai empat keadaan. Pesan lengkap tunggal diproses
 setelah pemeriksaan; beberapa bubble lengkap diberi 4 detik, pembuka/narasi
 terbuka 7 detik, dan fragmen seperti "karna" 12 detik sejak bubble terakhir.
-Bahaya segera yang konkret dikenali lokal dan langsung diproses tanpa menunggu
-debounce atau jaringan batas giliran; handler lengkap tetap mengikuti antrean
-pengguna. Pagar lokal juga mengenali "aku boleh curhat kah",
+Status `urgent` yang diberikan model memotong debounce; pengenalan bahaya lokal
+sudah dihapus dan handler lengkap tetap mengikuti antrean pengguna. Pagar lokal
+yang tersisa hanya menilai bentuk kalimat: mengenali "aku boleh curhat kah",
 penutup seperti "udah itu aja", serta membedakan kata sambung "jadi" dari
 penutup "nggak jadi". Perbaikan adaptif lulus tes otomatis dan probe Gemini
 langsung, tetapi belum dicoba lagi melalui Telegram.
@@ -321,7 +415,8 @@ Yang masih lemah setelah perbaikan:
   satu model kecil untuk semua tingkatan sehingga tidak dapat dibedakan dari
   sini. Harus diuji ulang dengan `AI_MODE=production` sebelum disebut selesai.
 
-Masih belum pernah terjadi setelah perbaikan adaptif terbaru `ADR-007`:
+Masih belum pernah terjadi melalui Telegram nyata setelah perbaikan terbaru
+`ADR-008`:
 
 - satu rangkaian bubble dengan jeda 3–4,5 detik diproses sebagai satu giliran
   pada Telegram;
@@ -340,9 +435,10 @@ sini", mengajak melewati beberapa jam ke depan, lalu menyebut satu saluran
 anonim sebagai pilihan. Pemeriksaan balasan meluluskannya. Usulan memori untuk
 ketertarikan romantis keluar sebagai jenis `personal`, sehingga masuk jalur izin.
 
-Satu risiko yang terlihat dari probe itu: nomor layanan bantuan yang disebut
-berasal dari model, bukan dari kode, sehingga ia dapat salah. Hanya 112 di teks
-tetap Harvy yang benar-benar dijaga kode.
+Satu risiko yang terlihat dari probe itu: nomor layanan lain masih dapat
+berasal dari model. Untuk 112, kode kini selalu menempelkan batas bahwa layanan
+hanya tersedia di daerah yang sudah mengoperasikannya dan memberi jalur lain
+bila tidak tersambung.
 
 **Uji agen penguji, 27 Juli 2026.** Empat belas skenario, tiga belas lulus.
 Yang terbukti bekerja pada probe model: triase membedakan keluhan sehari-hari
@@ -356,7 +452,7 @@ dan curhat 666 karakter berisi tiga topik ditanggapi ketiganya.
 Sesudah perbaikan, probe ulang skenario bahaya menyebut 112 dan lulus
 pemeriksaan balasan.
 
-Belum pernah terjadi sama sekali, dari perubahan 26 Juli 2026:
+Belum pernah terjadi sama sekali secara end-to-end di Telegram:
 
 - perkenalan kontak pertama pada Telegram, termasuk penahanan pesan pertama dan
   pemrosesannya setelah tombol ditekan;
@@ -366,13 +462,30 @@ Belum pernah terjadi sama sekali, dari perubahan 26 Juli 2026:
 - jeda dan indikator mengetik antar bubble;
 - injeksi lewat giliran lama sekarang bahwa riwayat berperan `user` sungguhan.
   Tesnya hanya membuktikan penegasannya ada di prompt, bukan bahwa model
-  menaatinya.
+  menaatinya;
+- tombol adaptif dan enam jenis sesi persisten, termasuk tutoring lima tahap
+  serta draf bantuan manusia;
+- pemilihan zona waktu/jam tenang dan check-in satu kali yang benar-benar
+  dikirim worker;
+- penyuntingan memori, ekspor, penarikan consent, serta penghapusan penuh; dan
+- telemetry terhadap usage penyedia nyata, penolakan saat batas 24 jam habis,
+  serta kesesuaian estimasi biaya dengan tagihan.
 
 Dilaporkan pengguna, belum diamati penulis kode:
 
 - pengingat benar-benar terkirim oleh worker pada waktunya. Dicatat di sini
   karena laporan pengguna adalah bukti yang sah, tetapi jenisnya berbeda dari
   pengamatan langsung dan tidak boleh ditulis seolah sama.
+
+**Smoke provider cadangan, 31 Juli 2026.** Endpoint daftar model AlwaysCodex
+menampilkan ID kanonis `DeepSeek-V4-Flash`. Percobaan awal dengan ejaan
+lowercase, lalu satu percobaan dengan ejaan kanonis ketika kanal belum siap,
+ditolak HTTP 503 `model_not_found`. Sesudah konfigurasi memakai ID kanonis,
+request OpenAI-compatible dengan Bearer header berhasil HTTP 200. Smoke kedua
+melalui `AiClient` sengaja mengarahkan primary ke alamat lokal yang gagal;
+failover Harvy menerima balasan dua karakter dari cadangan. Ini membuktikan
+kontrak endpoint dan wiring failover pada saat pengujian, bukan SLA, kualitas
+percakapan panjang, kebijakan retensi, atau kesiapan production.
 
 Untuk baris yang masih "Ada" tanpa keterangan terbukti, artinya *ada di kode dan
 lolos gerbang otomatis*, bukan *terbukti bekerja bagi pengguna*.

@@ -115,6 +115,55 @@ describe("MemoryService", () => {
       null,
     );
   });
+
+  it("mengubah isi tanpa mengganti ID, jenis, atau metadata", async () => {
+    const service = new MemoryService(new MemoryStore(), () =>
+      new Date("2026-07-27T10:00:00.000Z"),
+    );
+    const saved = await service.remember({
+      ownerId: "student",
+      kind: "preference",
+      content: "Suka belajar malam",
+    });
+    assert.ok(saved);
+
+    const updated = await service.edit(
+      "student",
+      saved.id,
+      "Lebih suka belajar pagi",
+    );
+    assert.equal(updated?.id, saved.id);
+    assert.equal(updated?.kind, saved.kind);
+    assert.equal(updated?.createdAt, saved.createdAt);
+    assert.equal(updated?.expiresAt, saved.expiresAt);
+    assert.equal(updated?.content, "Lebih suka belajar pagi");
+  });
+
+  it("menolak edit kosong, terlalu panjang, duplikat, atau milik orang lain", async () => {
+    const service = new MemoryService(new MemoryStore());
+    const first = await service.remember({
+      ownerId: "student",
+      kind: "profile",
+      content: "Kelas 11",
+    });
+    await service.remember({
+      ownerId: "student",
+      kind: "profile",
+      content: "Sekolah di Bandung",
+    });
+    assert.ok(first);
+
+    assert.equal(await service.edit("student", first.id, " "), null);
+    assert.equal(
+      await service.edit("student", first.id, "x".repeat(201)),
+      null,
+    );
+    assert.equal(
+      await service.edit("student", first.id, "sekolah di bandung"),
+      null,
+    );
+    assert.equal(await service.edit("other", first.id, "Kelas 12"), null);
+  });
 });
 
 /** Penyimpanan di memori proses, agar tes tidak menyentuh berkas nyata. */

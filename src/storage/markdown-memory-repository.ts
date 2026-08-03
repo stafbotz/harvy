@@ -1,5 +1,14 @@
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rmdir,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
 import type {
   MemoryItem,
   MemoryKind,
@@ -99,10 +108,24 @@ export class MarkdownMemoryRepository implements MemoryRepository {
   async removeAll(ownerId: string): Promise<number> {
     return this.exclusive(async () => {
       const items = await this.readAll(ownerId);
-      if (items.length === 0) return 0;
 
-      for (const kind of new Set(items.map((item) => item.kind))) {
-        await this.writeKind(ownerId, kind, []);
+      for (const file of Object.values(FILE_OF)) {
+        try {
+          await unlink(join(this.folderOf(ownerId), file));
+        } catch (error) {
+          if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+        }
+      }
+      await this.removeLegacy(ownerId);
+      try {
+        await rmdir(this.folderOf(ownerId));
+      } catch (error) {
+        if (
+          !isNodeError(error) ||
+          (error.code !== "ENOENT" && error.code !== "ENOTEMPTY")
+        ) {
+          throw error;
+        }
       }
       return items.length;
     });
@@ -113,8 +136,9 @@ export class MarkdownMemoryRepository implements MemoryRepository {
     try {
       const names = await readdir(this.folderOf(ownerId));
       return names.filter((name) => KIND_OF.has(name)).sort();
-    } catch {
-      return [];
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") return [];
+      throw error;
     }
   }
 
@@ -164,24 +188,20 @@ export class MarkdownMemoryRepository implements MemoryRepository {
     if (!this.legacyFile) return;
 
     try {
-      await readdir(this.folderOf(ownerId));
-      return;
-    } catch {
+      const names = await readdir(this.folderOf(ownerId));
+      if (names.some((name) => KIND_OF.has(name))) return;
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
       // Folder belum ada. Lanjut mengimpor.
     }
 
     const raw = await this.readFileOrEmpty(this.legacyFile);
     if (!raw) return;
 
-    let stored: MemoryItem[] = [];
-    try {
-      const parsed = JSON.parse(raw) as { memories?: MemoryItem[] };
-      stored = (parsed.memories ?? []).filter(
-        (item) => item.ownerId === ownerId,
-      );
-    } catch {
-      return;
-    }
+    const parsed = JSON.parse(raw) as { memories?: MemoryItem[] };
+    const stored = (parsed.memories ?? []).filter(
+      (item) => item.ownerId === ownerId,
+    );
 
     if (stored.length === 0) {
       await mkdir(this.folderOf(ownerId), { recursive: true });
@@ -193,6 +213,36 @@ export class MarkdownMemoryRepository implements MemoryRepository {
     }
   }
 
+  /** Mencegah data yang sudah dihapus terimpor kembali dari berkas lama. */
+  private async removeLegacy(ownerId: string): Promise<void> {
+    if (!this.legacyFile) return;
+
+    const raw = await this.readFileOrEmpty(this.legacyFile);
+    if (!raw) return;
+
+    const parsed = JSON.parse(raw) as {
+      version?: number;
+      memories?: MemoryItem[];
+    };
+    const memories = (parsed.memories ?? []).filter(
+      (item) => item.ownerId !== ownerId,
+    );
+    if (memories.length === (parsed.memories ?? []).length) return;
+
+    await mkdir(dirname(this.legacyFile), { recursive: true });
+    const temporary = `${this.legacyFile}.tmp`;
+    await writeFile(
+      temporary,
+      `${JSON.stringify(
+        { version: parsed.version ?? 1, memories },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await rename(temporary, this.legacyFile);
+  }
+
   private folderOf(ownerId: string): string {
     return join(this.root, safeFolderName(ownerId));
   }
@@ -200,8 +250,9 @@ export class MarkdownMemoryRepository implements MemoryRepository {
   private async readFileOrEmpty(path: string): Promise<string> {
     try {
       return await readFile(path, "utf8");
-    } catch {
-      return "";
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") return "";
+      throw error;
     }
   }
 
@@ -215,14 +266,27 @@ export class MarkdownMemoryRepository implements MemoryRepository {
   }
 }
 
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
 /**
- * `ownerId` berasal dari Telegram dan selalu berupa angka, tetapi ia tetap
- * dibersihkan sebelum menjadi nama folder. Nilai yang tidak terduga tidak boleh
- * bisa keluar dari direktori datanya.
+ * ID legacy yang sudah aman tetap memakai layout lama. Scope channel-neutral
+ * dengan delimiter/path di-hash agar tuple berbeda tidak bertabrakan dan tidak
+ * dapat keluar dari direktori data.
  */
 export function safeFolderName(ownerId: string): string {
-  const clean = ownerId.replaceAll(/[^a-zA-Z0-9_-]/g, "");
-  return clean || "tidak-dikenal";
+  const clean = ownerId.trim();
+  if (!clean) return "tidak-dikenal";
+  // Pertahankan layout legacy seperti `123` dan `student`. Scope baru tidak
+  // disanitasi dengan membuang karakter: itu tidak injektif (`../etc` dan
+  // `etc` pernah menuju folder sama). ID runtime produksi tetap numerik;
+  // karakter ASCII aman dipertahankan demi migrasi berkas yang sudah ada.
+  if (/^[A-Za-z0-9_-]+$/u.test(clean)) return clean;
+  return `scope-${createHash("sha256")
+    .update(clean, "utf8")
+    .digest("hex")
+    .slice(0, 40)}`;
 }
 
 const ITEM_LINE =

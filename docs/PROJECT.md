@@ -1,6 +1,6 @@
 # Harvy — Keputusan Proyek dan Backlog
 
-Terakhir diperbarui: 27 Juli 2026.
+Terakhir diperbarui: 3 Agustus 2026.
 
 ## Identitas dan produk
 
@@ -9,10 +9,25 @@ Terakhir diperbarui: 27 Juli 2026.
   bahasa Inggris, sehingga model AI dan penulis baru cenderung memakainya tanpa
   sadar. Ejaan itu tidak boleh dipakai lagi di mana pun: kode, dokumen, teks
   antarmuka, maupun materi produk.
-- **Harvy Capybara** adalah nama internal AI agent untuk belajar dan keseharian.
-- **Harvy Chat** adalah nama internal bot hiburan grup WhatsApp.
-- **Harvy Core** kelak memuat akun, aturan keselamatan, memori terstruktur, dan
-  routing model yang dipakai bersama.
+- **Harvy adalah satu produk**, baik dalam percakapan pribadi maupun grup.
+  “Harvy Capybara” dan “Harvy Chat” tidak lagi menjadi nama agent atau produk
+  terpisah.
+- **Kapibara adalah maskot, ikon, dan filosofi Harvy.** Ia membentuk sifat dan
+  bahasa visual produk, bukan nama mode.
+- **Capybara adalah nama sistem model Harvy.** Ketika ditanya AI/model apa yang
+  dipakai, Harvy menjawab “model Capybara”: lapisan Harvy yang merutekan
+  beberapa model sesuai kebutuhan, bukan nama satu foundation model atau satu
+  penyedia. Harvy tetap jujur bahwa dirinya AI.
+- Lapisan inti Harvy memuat akun, aturan keselamatan, memori terstruktur,
+  kemampuan percakapan, dan routing model yang dipakai bersama oleh semua
+  kanal. “Harvy Core” boleh menjadi istilah arsitektur internal, bukan merek
+  yang dilihat pengguna.
+- Sejak `ADR-012`, lapisan itu juga mempunyai satu capability catalog, scope
+  bertipe, context budget, dan kernel agent berbatas untuk seluruh kanal.
+  Model hanya mengusulkan tindakan; kode, kebijakan, persetujuan, dan executor
+  yang menentukan apa yang sungguh dijalankan. Katalog yang sama tidak boleh
+  menyamarkan adapter yang belum ada: Telegram grup dan WhatsApp privat tetap
+  belum tersedia.
 
 Pengguna yang dituju adalah pelajar Indonesia, terutama Gen Z dan Gen Alpha.
 Ini memengaruhi pilihan kanal, gaya bahasa, dan tingkat perlindungan: sebagian
@@ -29,12 +44,69 @@ jujur, tidak manipulatif, dan menghormati kendali pengguna.
 
 ## Kanal
 
-| Sistem | Kanal utama | Status |
+| Pengalaman | Kanal | Status |
 |---|---|---|
-| Harvy Capybara | Telegram pribadi | Dikerjakan sekarang |
-| Harvy Capybara | WhatsApp pribadi | Beta nanti; nomor terpisah |
-| Harvy Chat | Grup WhatsApp melalui Baileys | Setelah Capybara MVP |
+| Harvy pribadi | Telegram | Dikerjakan sekarang |
+| Harvy di grup | Telegram | Nanti; belum dimulai |
+| Harvy di grup | WhatsApp melalui Baileys | Fondasi beta lokal; satu nomor tersambung dan membalas grup nyata, ambient/direct teruji otomatis dan sintetis, perilaku lengkap belum diuji di grup nyata |
+| Harvy pribadi | WhatsApp melalui Baileys | Beta nanti |
 | Visualisasi | Web | Setelah alur chat terbukti perlu |
+
+WhatsApp dirancang untuk dapat memakai **banyak nomor Harvy**. Setiap nomor
+adalah sesi Baileys terisolasi dengan auth state, koneksi, kesehatan, dan
+identitas operasionalnya sendiri, sementara kemampuan Harvy, kebijakan, dan
+penyimpanan domain tetap dibagi melalui lapisan layanan yang sama. Grup harus
+terikat pada nomor yang menanganinya agar reconnect atau kegagalan satu nomor
+tidak memindahkan identitas Harvy secara diam-diam.
+
+Banyak nomor dipakai untuk pembagian beban, isolasi kegagalan, dan pengelolaan
+operasional yang sah. Ia **tidak** boleh menjadi rotasi otomatis untuk
+menghindari pembatasan, pemblokiran, penegakan aturan, atau ketentuan WhatsApp.
+Baileys adalah klien tidak resmi berbasis WhatsApp Web; risiko perubahan
+protokol, putus sesi, pemblokiran, dan kompatibilitas adalah risiko produk yang
+harus diuji, dipantau, dan tidak disamarkan sebagai jaminan.
+
+Fondasi beta 29 Juli 2026 mengelola seluruh nomor dalam **satu proses** karena
+repository berkas Harvy belum aman untuk multi-proses. Setiap akun mempunyai
+auth namespace, socket, generation guard, backoff, pairing, cache metadata, dan
+shutdown sendiri. Binding grup persisten menolak dua akun menangani grup yang
+sama; kegagalan satu akun tidak memindahkan grup ke akun lain.
+
+Pipeline grup memisahkan state per kanal+grup, menggabungkan burst bubble satu
+anggota, mempertahankan pasangan PN/LID, dan memilih giliran ambient melalui
+planner sosial. Planner boleh merespons tanpa tag bila kontribusinya benar-benar
+bernilai, tetapi memberi ruang manusia lewat budget adaptif, pagar bentuk
+giliran, serta revalidation kandidat yang tersusul setelah semua bubble terlihat
+selesai diproses. Panggilan direct membatalkan planner maupun revalidation
+ambient aktif dan memakai jalur batch lebih cepat. Removal dilindungi
+generation guard, sementara cache metadata/admin dilindungi generation socket
+dan epoch per grup. Membership pengirim serta Harvy sendiri diverifikasi dari
+metadata segar sebelum ingress; event perubahan authority menghapus cache dan
+membatalkan batch/pending secara sinkron agar role lama tidak dapat dipasangkan
+dengan epoch baru. Konteks mentah hanya di RAM sampai 24 giliran atau dua jam
+dan tidak menerima giliran yang ditandai sensitif/berisiko. Statistik aktivitas
+dibatasi 30 hari, dedupe 24 jam, ranking 7 hari, dan seluruh memori sosial
+dihapus saat Harvy dikeluarkan atau dinonaktifkan. Pesan direct juga dapat
+menghasilkan memori semantik biasa yang terpisah per anggota dan per grup;
+memori itu diumumkan, dapat dilihat/dikoreksi/dihapus anggota, tidak dibawa ke
+ruang lain, dan isi sensitif tidak boleh disimpan otomatis. Lihat
+[`ADR-011`](decisions/ADR-011-partisipasi-natural-dan-evaluasi-grup.md) dan
+[`ADR-012`](decisions/ADR-012-harness-agent-dan-scope-memori.md). Sejak
+[`ADR-016`](decisions/ADR-016-scope-dan-otoritas-v1.md), anggota juga dapat
+mengusulkan keputusan, agenda, norma, kegiatan, atau catatan ruang dengan
+preview persis; admin terkini harus mengonfirmasi sebelum catatan bersama itu
+disimpan selama 60 hari. Reset admin hanya menghapus profil sosial dan catatan
+bersama, bukan member-local memory.
+
+Auth state beta memakai adapter multi-file Baileys di folder yang diabaikan
+Git. Bentuk itu memadai untuk pengembangan lokal tetapi bukan penyimpanan
+produksi: auth linked-device adalah kredensial jangka panjang dan kelak wajib
+dipindah ke database terenkripsi dengan single writer, kontrol akses, backup,
+dan audit yang sesuai. Pairing awal memakai QR yang dirender lokal di terminal
+interaktif sebagai default pengembangan; `APP_ENV=production` dan stdout
+noninteraktif tidak pernah menampilkannya. Pairing code tetap tersedia secara
+eksplisit pada jalur operator lokal, tetapi tidak menjadi default karena
+kegagalan upstream Baileys masih dapat menutup koneksi sebelum code diterima.
 
 ## Posisi dan pembeda
 
@@ -85,13 +157,17 @@ Daftar ini belum tervalidasi lewat wawancara; lihat Research Waitlist di bawah.
 
 ## Prinsip produk
 
-Seluruh prinsip produk tunduk pada [`CONSTITUTION.md`](CONSTITUTION.md) (Konstitusi Harvy v0.3).
+Seluruh prinsip produk tunduk pada [`CONSTITUTION.md`](CONSTITUTION.md)
+(Konstitusi Harvy v0.5).
 
 Harvy membantu tetapi tidak mengambil alih. Pengguna tetap menentukan keputusan,
 boleh melihat serta menghapus data, dan harus memberi izin sebelum Harvy
-melakukan tindakan proaktif. Satu pengecualian disahkan pada v0.3 dan hanya
-satu: catatan keselamatan beserta pemeriksaan bahaya atas pesan pertama. Harvy bukan terapis, psikolog, dokter, alat
-diagnosis, atau pengganti bantuan darurat dan hubungan manusia.
+melakukan tindakan proaktif. Pengecualian keselamatan v0.3 mengatur pemeriksaan
+bahaya pesan pertama dan catatan keselamatan tersembunyi. Pengecualian grup
+v0.4 mengizinkan pemrosesan pesan baru tanpa consent individual setelah
+pengelola memasukkan Harvy, dengan pemberitahuan, isolasi grup, dan kendali
+memori. Harvy bukan terapis, psikolog, dokter, alat diagnosis, atau pengganti
+bantuan darurat dan hubungan manusia.
 
 ## Now — Sprint 1
 
@@ -128,18 +204,35 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   panjang dapat dikirim sebagai beberapa bubble. Lihat
   [`ADR-007`](decisions/ADR-007-bubble-dan-riwayat-percakapan-natural.md).
 - [x] Tombol tindakan cepat untuk selesai, ingatkan, ubah tenggat, dan batalkan.
-- [ ] Tombol adaptif yang disusun AI menurut keadaan percakapan, menggantikan
-  papan tombol tetap. Percakapan dan tombol adalah antarmuka utama Harvy
-  Capybara, bukan perintah `/`, sehingga tindakan yang ditawarkan tidak
-  seharusnya ditentukan sekali di kode untuk semua keadaan.
+- [x] Tombol adaptif menurut keadaan percakapan. Model hanya boleh mengusulkan
+  ID tindakan dari daftar tertutup; kode memilih maksimum satu sebelum balasan
+  dibuat, memberi tahu model labelnya, dan menyembunyikannya bila ada pertanyaan
+  bebas. Tujuan memakai `actionGoal`, bukan curhat mentah. Kepemilikan,
+  kedaluwarsa, dan pencegahan klik ganda dijaga kode.
 - [x] Pengenalan maksud agar curhat, pertanyaan, dan permintaan yang harus
   dikerjakan Harvy tidak berubah menjadi tugas pengguna.
-- [ ] Waktu bawaan tombol Ingatkan masih ditetapkan Harvy, bukan pengguna.
-  Pasal 4 meminta pengguna yang menentukan.
+- [x] Izin mutasi tugas diperiksa dari teks pengguna, bukan label model saja.
+  Permintaan prioritas dan pengingat kosong tidak menulis data; konfirmasi tugas
+  tersirat bertoken dan terikat proposal.
+- [x] Waktu pengingat dan check-in dipilih pengguna. Harvy menanyakan waktunya,
+  menolak waktu lampau atau jam tenang, dan tidak menggesernya diam-diam.
 - [ ] Penyimpanan PostgreSQL serta migrasi data.
-- Preferensi zona waktu per pengguna.
-- Ekspor dan hapus seluruh data pengguna.
-- Observabilitas tanpa mencatat isi pesan sensitif.
+- [x] Preferensi zona waktu WIB, WITA, atau WIT dan jam tenang per pengguna.
+- [x] Ekspor data yang terlihat pengguna, penarikan persetujuan, serta
+  penghapusan seluruh data termasuk catatan tersembunyi.
+- [x] Observabilitas pemakaian dan biaya tanpa mencatat isi pesan, prompt,
+  atau balasan. Retensi dan routing model berasal dari environment; harga
+  provider+model dikelola sebagai versi append-only di Console, dengan nilai
+  environment lama hanya sebagai bootstrap.
+- [x] Log operasional produksi terpisah dari telemetry: NDJSON terstruktur,
+  trace per giliran, allowlist scalar tanpa pesan error bebas, redaksi
+  isi/identitas/kredensial, rotasi ukuran+hari, retensi dan batas disk,
+  jalur darurat berbatas, fallback stderr, antrean/file mutex berbatas,
+  backpressure console, pemulihan tail crash, adapter Baileys aman, serta
+  pencatatan warning/crash/shutdown. Lihat
+  [`ADR-010`](decisions/ADR-010-log-operasional-produksi.md).
+- [ ] Collector terpusat, dashboard health, alert berdasarkan fingerprint,
+  dan hardening ACL/enkripsi log untuk deployment multi-instance.
 - Deployment dan backup.
 - [x] Kebijakan routing model dan konfigurasi tiga tingkatan. Lihat
   [`decisions/ADR-003-routing-model.md`](decisions/ADR-003-routing-model.md).
@@ -153,9 +246,11 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   klasifikasi, bukan di dalamnya.
 - [x] Memberi tahu pengguna bahwa pesannya diproses penyedia model pihak ketiga,
   dan meminta persetujuannya. Dijamin Konstitusi Pasal 3.9. Masuk 26 Juli 2026
-  bersama perkenalan kontak pertama; gerbangnya berada sebelum klasifikasi batas
-  giliran, jadi tidak ada teks yang keluar sebelum tombolnya ditekan. Belum
-  diuji lewat Telegram, dan menarik persetujuan dari dalam chat belum ada.
+  bersama perkenalan kontak pertama. Pesan pertama boleh menjalani satu triase
+  keselamatan sebelum persetujuan, lalu ditahan; pemahaman, personalisasi,
+  analitik, dan pesan berikutnya menunggu tombol persetujuan. Persetujuan kini
+  dapat ditarik dari dalam chat tanpa menghapus data. Perubahan terakhir ini
+  sudah teruji otomatis, tetapi belum diuji lewat Telegram.
 - [x] Pengalaman pengguna pertama: Harvy berkenalan sebelum menjelaskan cara
   pakai, dipicu kontak pertama dan bukan oleh `/start`. Pesan yang telanjur
   dikirim ditahan lalu diproses sendiri setelah persetujuan.
@@ -165,17 +260,62 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   dijawab dulu sebelum kartunya muncul.
 - [x] Riwayat percakapan, agar tutoring bertahap benar-benar mungkin. Riwayatnya
   ada sejak 26 Juli 2026 lewat [`ADR-006`](decisions/ADR-006-memori-dan-riwayat-percakapan.md);
-  alur lima langkahnya sendiri masih harus ditulis.
+  compaction v2 kini menyimpan episode terstruktur berprovenance tanpa
+  merangkum ulang episode lama. Alur tutoring lima langkah
+  `ukur → coba → petunjuk → penjelasan → coba lagi` disimpan sebagai satu sesi
+  aktif yang dapat dilanjutkan setelah restart.
+- [x] “Sesi Langkah Kecil” persisten untuk menjernihkan keadaan, memilih
+  prioritas, fokus pada satu langkah, tutoring, menyusun rencana, dan membuat
+  draf pesan untuk meminta bantuan manusia. Satu pengguna hanya punya satu sesi
+  aktif agar tujuan lama tidak tertimpa diam-diam. Sesi adalah konteks lunak:
+  topik baru tidak diambil alih, tetapi sesi lama tetap dapat dilanjutkan.
+- [x] Check-in satu kali yang hanya dibuat setelah pengguna memilihnya sendiri.
+  Waktu, zona waktu, dan jam tenang berada dalam kendali pengguna; mengabaikan
+  check-in tidak memicu pengingat kedua.
+- [x] Vertical slice research web baca-saja pada chat privat Telegram:
+  `web.search` dan `web.open` opsional, loop agent berbatas, egress URL publik,
+  observation tak tepercaya, serta URL sumber yang harus berasal dari hasil
+  teramati. Context privat lama tidak masuk planner; satu run hanya mengirim
+  satu query dan open dibatasi ke URL pesan/hasil search run yang sama. Run
+  masih sinkron/in-memory; cancellation command luar, X/Threads, dan workspace
+  report durable belum ada.
+- [x] Scope & Authority v1 sebagai fondasi core: `WorkspaceScope`, principal
+  pseudonim, membership/role/permission, `aclEpoch`, invalidasi scope lama,
+  capability filter, dan adapter file atomik. Belum ada ingress, UI, artifact,
+  atau wiring Workspace untuk pengguna; lihat `ADR-016`.
+- [x] Matriks authority grup dan shared room memory eksplisit: anggota
+  mengusulkan preview, admin terkini mengonfirmasi ID yang sama, delivery gagal
+  me-rollback write, dan reset admin tidak mengambil member-local memory.
+  Perilaku ini baru teruji otomatis, belum melalui WhatsApp nyata.
 - [x] Memori terstruktur per pengguna yang dapat dilihat dan dihapus. Memori
   biasa disimpan otomatis disertai pemberitahuan, memori sensitif hanya dengan
-  izin. Lihat `ADR-006`.
+  izin. Lihat `ADR-006`. Pengenalan sensitivitas saat ini bergantung pada jenis
+  ekstraksi dan triase model; salah klasifikasi serentak keduanya masih
+  keterbatasan terbuka di `STATUS.md`, sehingga kata “hanya” di sini adalah
+  kontrak produk yang belum dijamin sempurna oleh implementasi.
 - [x] Pemeriksaan keselamatan sebagai lapisan tersendiri: triase risiko tiga
   tingkat, arahan yang melarang menolak lalu menutup, dan pemeriksaan balasan
   sebelum dikirim. Penanganan pengguna di bawah 18 tahun berjalan tanpa pernah
   menanyakan umur — perlindungannya menyesuaikan isi percakapan.
-- [ ] Jalur prioritas untuk giliran berbahaya. Handler lengkapnya masih FIFO di
-  belakang balasan yang sedang berjalan.
-- [ ] Batas pemakaian dan pemantauan biaya per pengguna.
+- [x] Acknowledgment prioritas untuk boundary `urgent`, dikirim di luar FIFO.
+  Handler lengkap dan mutasi tetap FIFO agar state tidak korup.
+- [ ] Pembatalan kooperatif request biasa yang belum commit ketika pesan urgent
+  masuk.
+- [x] Batas pemakaian token 24 jam dan pemantauan biaya per pengguna. Jalur
+  keselamatan tetap berjalan saat batas biasa habis dan tetap dicatat.
+- [x] Control plane localhost, cohort standard/beta, katalog paket/harga
+  berversi, inventaris aman seluruh model environment, pemilih harga tanpa ID
+  bebas, provider-attempt ledger, entitlement delivery-confirmed, atribusi grup
+  per principal pseudonim, dan lock satu proses. Pembayaran dan Console
+  internet-ready belum ada.
+- [x] Corpus evaluasi sintetis 42 skenario, hard invariant, dan harness adapter
+  Telegram palsu. Evaluasi model nyata tetap manual karena mengirim prompt ke
+  penyedia eksternal.
+- [x] Corpus grup sintetis 150 skenario semantik × empat variasi permukaan
+  (600 ambient) dan 60 episode generasi direct, lengkap dengan JSONL, seed,
+  metrik strict/preference, konsistensi cluster, latency, serta pemisahan
+  gangguan provider/harness. Kombinasi corpus/evaluator terbaru belum
+  dijalankan penuh dan belum menggantikan uji grup WhatsApp nyata.
 
 ## Model AI
 
@@ -192,12 +332,19 @@ yang selalu menaikkannya ke tingkatan tertinggi.
 
 Produksi memakai OpenRouter sebagai gerbang tunggal agar tagihan tidak tersebar.
 Selama pengembangan, `AI_MODE=testing` mengarahkan seluruh tingkatan ke satu
-model cepat (Gemini 3.5 Flash-Lite dari Google AI Studio). Menghentikan
-mode uji cukup mengubah `AI_MODE` menjadi `production`.
+model cepat (Gemini 3.5 Flash-Lite dari Google AI Studio). Mode testing boleh
+memasang satu provider OpenAI-compatible sebagai cadangan agar gangguan
+sementara primary tidak menghentikan seluruh percakapan. Cadangan tidak pernah
+aktif di production, tidak menggantikan batas keselamatan, dan dapat menerima
+permintaan yang sama setelah primary gagal; persetujuan pengguna dan notice
+grup menjelaskan kemungkinan lebih dari satu penyedia. Menghentikan mode uji
+cukup mengubah `AI_MODE` menjadi `production`.
 
 Seluruh ID model berada di `.env`, tidak ditulis di kode. Nama dan harga model
 berubah cepat, jadi **verifikasi ejaan persisnya di daftar model penyedia
-sebelum dinyalakan**.
+sebelum dinyalakan**. Harvy Console membaca seluruh slot model yang nonkosong
+pada startup dan hanya mengizinkan operator mengatur harga pasangan itu;
+credential dan base URL tidak ikut ke browser.
 
 ## Komponen sistem
 
@@ -226,8 +373,15 @@ belum dimulai.
 
 ## Website
 
-Website bukan kanal percakapan, melainkan tempat untuk hal yang memang lebih
-baik dilihat daripada dibicarakan. Dibangun setelah alur chat terbukti perlu.
+Ada dua produk web yang tidak boleh dicampur. **Harvy Console** sudah ada
+sebagai control plane localhost khusus operator untuk akses pilot, paket,
+harga, usage, biaya, dan audit. Daftar modelnya merupakan snapshot aman `.env`,
+sedangkan input operator dibatasi pada harga. Ia memakai label operator
+pseudonim serta breakdown cohort/paket tanpa mengambil nama platform. Ia bukan kanal
+percakapan dan belum boleh dibuka ke internet. **Harvy Web** untuk pengguna
+masih belum ada; kelak ia menjadi tempat
+untuk hal yang memang lebih baik dilihat daripada dibicarakan setelah alur chat
+terbukti perlu.
 
 Isi yang direncanakan: daftar tugas, kalender, prioritas, peta belajar,
 perkembangan, tujuan jangka panjang, memori, izin, notifikasi, dan ruang belajar
@@ -240,8 +394,13 @@ pencocokan teman dan perencanaan kuliah bersama.
 
 ## Monetisasi
 
-Belum dikerjakan, tetapi arahnya sudah ditetapkan agar tidak diputuskan
-tergesa-gesa saat biaya mulai terasa.
+Fondasi pengukuran dan katalog pilot sudah dikerjakan, tetapi Harvy belum
+menerima pembayaran. Katalog individu default adalah Perkenalan (Free) Rp0,
+Toro (Plus) Rp19.000, Sora (Pro) Rp39.000, dan Kuro (Max) Rp69.000; paket grup
+tetap Sapa Rp99.000, Nimbrung Rp249.000, dan Ruang Rp599.000 per bulan.
+Seluruhnya berstatus **harga hipotesis pilot**, bukan penawaran publik atau
+janji kapasitas produksi. Detail kapasitas dan batas validasinya ada di
+[`product/PILOT_BETA_DAN_PAKET.md`](product/PILOT_BETA_DAN_PAKET.md).
 
 Tujuan awal bisnis bukan pendapatan, melainkan:
 
@@ -251,10 +410,25 @@ Tujuan awal bisnis bukan pendapatan, melainkan:
 4. mencegah pertumbuhan yang merugikan; dan
 5. menguji kemauan membayar.
 
-Nama paket harus punya cerita dan estetika yang cocok dengan Harvy, kapibara,
-bunga, dan selera Gen Z. Nama generik seperti "Pro", "Plus", atau "Max"
-**ditolak** — bukan karena selera, melainkan karena nama seperti itu memisahkan
-pengalaman membayar dari karakter produknya.
+Free/Plus/Pro/Max hanya menjadi kategori pembanding; nama publiknya adalah
+Perkenalan/Toro/Sora/Kuro. Tiga pilihan pribadi berbayar memberi pintu masuk
+ringan, pilihan utama rutin, dan anchor penggunaan intensif. Psikologi pilihan
+hanya boleh mempermudah perbandingan nilai; countdown palsu, rasa takut,
+auto-renew tersembunyi, atau pemanfaatan keadaan emosional dilarang.
+
+Paket grup mempunyai entitlement sendiri dan tidak menghabiskan paket pribadi
+anggota. Cohort beta juga terpisah dari paket: overlay beta memberi kapasitas
+uji lebih besar tetapi tidak menjadi hak berbayar, tidak memilih model, dan
+tidak memberi izin evaluasi. Model tetap dirutekan menurut pekerjaan.
+
+Ledger provider mencatat setiap percobaan fisik, termasuk retry/fallback,
+sedangkan ledger entitlement mencatat settlement idempoten per logical request
+dan baru mendebit balasan bernilai setelah adapter memastikan delivery.
+Overhead internal, kegagalan parser/delivery, dan keselamatan tidak mengurangi
+paket meski biayanya tetap terlihat di provider ledger. Console dapat
+menghitung token/biaya per subject grup dan principal anggota pseudonim tanpa
+menyimpan transcript. Angka `estimated`, `unpriced`, `pending`, `partial`, atau
+`unknown` tidak boleh dipresentasikan sebagai nol maupun invoice final.
 
 Keuntungan boleh menopang keberlanjutan Harvy, tetapi tidak boleh mengalahkan
 keselamatan, privasi, kejujuran, atau agensi pengguna. Konstitusi Pasal 3.13 dan
@@ -279,13 +453,17 @@ bersedia dan proses persetujuan peserta/wali sudah siap.
 
 ## Later
 
-- Pendamping belajar berbasis petunjuk bertahap.
-- Check-in ringan dan refleksi.
-- Menyunting memori, bukan hanya melihat dan menghapusnya. Pasal 4 nomor 4
-  menyebut "mengubah", dan itu bagian yang belum ada.
-- Pencarian atau RAG, agar informasi yang harus benar tidak bergantung pada
-  ingatan model.
-- Harvy Chat di grup WhatsApp: permainan, poin, polling, dan fitur komunitas.
+- Mengembangkan executor web awal menjadi research workspace durable di atas
+  fondasi scope+ACL v1 yang sudah ada: ingress membership, artifact
+  bersitasi, groundedness per klaim, retrieval/RAG, pagination dan keragaman
+  sumber, cancellation dari lifecycle luar, lalu konektor khusus X/Threads
+  setelah durable run terbukti.
+- Memperluas fondasi grup WhatsApp dan menyambungkan core yang sama ke
+  Telegram. Shared room memory eksplisit untuk keputusan/agenda/norma/kegiatan
+  sudah ada di core; room social adaptation yang berizin, inside joke yang
+  tetap dapat diperiksa, permainan, poin sementara, polling, diskusi, dan
+  kegiatan komunitas masih nanti. Memori anggota per grup tidak boleh dilebur
+  dengan shared room memory.
 - Harvy Market sebatas katalog, pencarian, reputasi, dan pelaporan; belum
   menangani atau menjamin transaksi.
 

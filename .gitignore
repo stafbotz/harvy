@@ -2,8 +2,18 @@ node_modules/
 dist/
 .env
 data/*.json
+# Lock satu proses untuk repository lokal; dapat tertinggal setelah crash.
+*.runtime.lock
 # Memori dan catatan keselamatan per pengguna. Ini data pribadi, bukan cache.
 data/memori/
+# Kredensial linked-device WhatsApp. Kebocoran folder ini setara mengambil alih
+# sesi nomor Harvy; tidak boleh pernah masuk Git.
+data/whatsapp-auth/
+# Log operasional append-only. Isinya sudah disaring, tetapi tetap merupakan
+# artefak runtime dan tidak boleh masuk riwayat Git.
+data/logs/
+# Lindungi segmen juga bila LOG_FOLDER diarahkan ke folder lain di repository.
+harvy-????????-????.ndjson
 *.log
 CLAUDE.local.md
 .claude/settings.local.json

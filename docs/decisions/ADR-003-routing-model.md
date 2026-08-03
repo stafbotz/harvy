@@ -52,23 +52,26 @@ Pelajar yang tidak membayar tetap mendapat model terkuat ketika persoalannya
 memang sulit. Sinyal yang dipakai adalah maksud pesan, panjangnya, permintaan
 dituntun bertahap, dan kepekaan keselamatan — bukan status akun.
 
-**Keselamatan tidak pernah dihemat.** Percakapan yang menyinggung menyakiti
-diri, kekerasan, pelecehan, atau eksploitasi selalu naik ke tingkatan
-`ambitious`, berapa pun biayanya. Pasal 3.8 menuntut respons yang proporsional
-dan hati-hati, dan itu tidak dapat didelegasikan ke model termurah.
+**Keselamatan tidak pernah diblokir batas pemakaian.** Sesuai koreksi di atas,
+triase dan pemeriksaan respons memakai `cheap`, sedangkan balasan
+`dukungan`/`bahaya` memakai `efficient`. Keduanya selalu berjalan sekalipun
+batas token percakapan biasa sudah habis. Tutoring memakai `ambitious` hanya
+pada giliran tenang; keselamatan tetap menang atas tier sesi.
 
-### Dua mode, dua penyedia
+### Dua mode dan cadangan testing yang terbatas
 
-| Mode | Penyedia | Model | Kunci |
+| Mode | Primary | Cadangan | Model dan kunci |
 |---|---|---|---|
-| `testing` | Google AI Studio | Satu model gratis untuk semua tingkatan | Banyak, dipakai bergantian |
-| `production` | OpenRouter | Tiga model sesuai tingkatan | Satu |
+| `testing` | Google AI Studio | Opsional, satu gateway OpenAI-compatible | Primary memakai satu model dan banyak kunci bergantian; cadangan memakai model serta kunci sendiri |
+| `production` | OpenRouter | Tidak ada | Tiga model sesuai tingkatan dan satu kunci |
 
 Produksi memakai OpenRouter sebagai gerbang tunggal agar tagihan berada di satu
 tempat dan model dapat diganti tanpa membuka akun baru.
 
-Mode uji memakai kuota gratis Google AI Studio. Menghentikan mode uji cukup
-dengan mengubah `AI_MODE` menjadi `production`; tidak ada kode yang disentuh.
+Mode uji memakai kuota gratis Google AI Studio. Provider cadangan hanya dibaca
+saat `AI_MODE=testing`; konfigurasi yang sama diabaikan pada production.
+Menghentikan mode uji cukup dengan mengubah `AI_MODE` menjadi `production`;
+tidak ada kode yang disentuh.
 
 Per 26 Juli 2026, model mode uji adalah `gemini-3.5-flash-lite`. Model ini juga
 dipakai untuk keputusan batas bubble; lihat `ADR-007`.
@@ -88,6 +91,54 @@ sebanyak jumlah kunci yang tersedia.
 Ini alat pengembangan, bukan cara mengelak dari batas layanan. Seluruh kunci
 tetap milik akun yang sama dan tunduk pada ketentuan penyedia.
 
+### Amandemen 31 Juli 2026: failover provider mode uji
+
+Log grup 30 Juli memperlihatkan timeout Google pada triase, generasi, review,
+dan planner. Rotasi dua kunci membuat satu tahap provider-wide dapat menunggu
+dua timeout berturut-turut. Pemilik kemudian meminta AlwaysCodex sebagai
+cadangan selama pengujian.
+
+Keputusan implementasinya:
+
+1. `AI_TESTING_FALLBACK_BASE_URL`, `AI_TESTING_FALLBACK_API_KEY`, dan
+   `AI_TESTING_FALLBACK_MODEL` wajib diisi bersama. Base URL wajib HTTPS dan
+   dilarang membawa userinfo, query, fragment, atau `/chat/completions`.
+2. Kunci cadangan dikirim lewat `Authorization: Bearer`, bukan query. Model
+   dikirim lewat body serta query; gateway yang dipakai meneruskan bentuk
+   OpenAI-compatible itu ke upstream. Redirect sengaja ditolak agar header
+   kredensial tidak ikut berpindah host.
+3. Timeout, kegagalan jaringan, dan HTTP 5xx dianggap provider-wide: jangan
+   menghabiskan kunci Google lain, langsung pindah ke cadangan. HTTP 429 tetap
+   mengikuti batas rotasi kunci primary pada request sebelum failover; tanpa
+   batas khusus, seluruh kunci primary dicoba.
+4. Pembatalan lifecycle, HTTP 4xx selain 429, keluaran model kosong/terpotong,
+   opsi yang tidak didukung setelah downgrade, dan penolakan batas penggunaan
+   lokal tidak boleh memicu failover.
+5. Sesudah kegagalan provider-wide atau 429 yang telah mengenai seluruh kunci
+   primary, circuit in-memory melewati primary selama 30 detik secara bawaan.
+   Request yang membatasi percobaan sebelum seluruh kunci dicoba boleh failover
+   pada 429 tanpa membuka circuit global. Primary dicoba lagi setelah cooldown
+   atau langsung dianggap pulih ketika berhasil. Circuit ini sengaja sederhana
+   dan tidak terkoordinasi lintas proses.
+6. Evaluator model nyata menonaktifkan cadangan secara default. Flag
+   `--allow-fallback` hanya untuk mengukur availability dan menandai hasil
+   sebagai `primary-or-fallback`; baseline perilaku harus tetap satu model.
+   Dua script probe manual mengikuti opt-in yang sama dan menampilkan model
+   cadangan bila flag itu aktif.
+
+Ini adalah duplikasi pemrosesan, bukan sekadar routing: bila primary sudah
+menerima request tetapi terlambat merespons, isi yang sama dapat dikirim lagi
+ke gateway cadangan. Karena itu persetujuan pribadi dinaikkan ke versi 3 dan
+notice grup ke versi 5. Dokumentasi gateway menyebut endpoint v3 sebagai proxy
+transparan ke upstream; kebijakan privasi, retensi, dan kesiapan produksinya
+belum diverifikasi. Cadangan ini hanya untuk data sintetis/dogfood testing,
+bukan persetujuan menjadikannya infrastruktur production.
+
+Permintaan pertama yang menemukan primary gagal juga masih dapat memakan satu
+timeout primary ditambah satu timeout cadangan. Circuit mengurangi pengulangan
+pada request berikutnya, tetapi belum ada deadline total lintas seluruh tahap
+satu turn.
+
 ## Risiko yang diketahui
 
 - **Sebagian nama model belum terverifikasi.** ID
@@ -95,15 +146,18 @@ tetap milik akun yang sama dan tunduk pada ketentuan penyedia.
   daftar resmi penyedia tanggal 26 Juli 2026. GPT 5.6 Luna dan GPT 5.6 Terra
   belum diverifikasi. Seluruh ID tetap berada di environment: koreksi cukup
   satu baris `.env`.
-- **Dua penyedia selama masa uji.** Google AI Studio bukan OpenRouter, sehingga
-  kredit tetap terpisah selama pengujian. OpenRouter juga menyediakan Gemini;
-  bila keseragaman lebih penting daripada gratis, `AI_BASE_URL` dan
-  `AI_MODEL_TESTING` dapat diarahkan ke sana tanpa mengubah kode.
+- **Lebih dari satu rantai penyedia selama masa uji.** Google AI Studio,
+  gateway cadangan, dan upstream gateway tersebut mempunyai kegagalan,
+  ketentuan, serta retensi masing-masing. Bila keseragaman lebih penting
+  daripada gratis, `AI_BASE_URL` dan `AI_MODEL_TESTING` dapat diarahkan ke satu
+  penyedia tanpa mengubah kode.
 - **Perubahan perilaku antar mode.** Model uji tunggal tidak akan berperilaku
   sama dengan tiga model produksi. Hasil pengujian dalam mode uji tidak boleh
   dianggap mewakili produksi, terutama untuk percakapan keselamatan.
-- **Biaya belum terukur.** Belum ada batas pemakaian, penghitungan token, atau
-  pemantauan biaya per pengguna.
+- **Biaya belum terbukti pada penyedia nyata.** Kode kini mencatat penggunaan
+  token, perkiraan, latensi, kegagalan, dan biaya per pengguna tanpa isi
+  percakapan, serta menerapkan batas bergulir 24 jam. Harga tetap harus diisi
+  dari daftar penyedia, dan angka aktual belum dibandingkan dengan tagihan.
 
 ## Konsekuensi
 
@@ -120,23 +174,20 @@ Trade-off:
 - Routing berdasarkan kesulitan menuntut penilaian kesulitan yang tepat; salah
   menilai berarti pengguna mendapat model yang terlalu lemah.
 
-## Yang belum dikerjakan
+## Status pelaksanaan per 27 Juli 2026
 
-Alur teknis yang dituju, sesuai konteks produk:
+Alur teknis yang berjalan:
 
 ```text
-pesan pengguna → pemeriksaan keselamatan → klasifikasi kebutuhan →
-pemilihan model → pemanggilan model → pemeriksaan respons → balasan
+pesan pengguna → (triase keselamatan || ekstraksi kebutuhan) →
+pemilihan tier → pemanggilan model → pemeriksaan respons bila berisiko → balasan
 ```
 
-Yang sudah ada: **klasifikasi**, **pemilihan model**, dan **pemanggilan model**.
+Sudah ada: klasifikasi, routing, pemanggilan model, triase risiko tersendiri,
+pemeriksaan respons fail-closed, riwayat percakapan (`ADR-006`), tutoring
+persisten lima tahap, telemetry tanpa isi, serta batas pemakaian yang tidak
+memblokir keselamatan. Perlindungan pengguna muda menyesuaikan isi dan tahap
+perkembangan tanpa menanyakan umur.
 
-Yang belum ada:
-
-- pemeriksaan keselamatan sebagai lapisan tersendiri. Saat ini kepekaan
-  keselamatan hanya dinilai oleh model dalam langkah klasifikasi, lalu dijawab
-  dengan tambahan prompt. Konteks produk menegaskan prompt saja tidak cukup;
-- pemeriksaan respons sebelum dikirim ke pengguna;
-- penghitungan token, batas pemakaian, dan pemantauan biaya per pengguna;
-- riwayat percakapan kemudian dikerjakan lewat `ADR-006`; dan
-- penanganan khusus pengguna di bawah 18 tahun.
+Yang belum terbukti: perilaku tiga tier produksi, angka biaya terhadap tagihan
+penyedia, dan seluruh alur baru melalui Telegram dengan kunci sungguhan.

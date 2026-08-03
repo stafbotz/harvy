@@ -5,7 +5,12 @@
  * Murni dan tanpa I/O. Peringkasnya sendiri memanggil model, jadi ia disuntikkan
  * dari luar — lihat `HistoryService`.
  */
-import type { ConversationHistory, ConversationTurn } from "../domain/history.js";
+import type {
+  ConversationHistory,
+  ConversationTurn,
+  StoredConversationTurn,
+} from "../domain/history.js";
+import { HISTORY_TURN_MAX_CHARS } from "../domain/history.js";
 
 /**
  * Jumlah giliran mentah yang dibawa ke dalam prompt.
@@ -24,8 +29,19 @@ export const HISTORY_WINDOW = 6;
  */
 export const HISTORY_COMPACT_AT = 16;
 
+/**
+ * Penahan darurat bila peringkas lama gagal. Dalam keadaan normal seluruh
+ * giliran mentah sebelum ambang pemadatan ikut prompt, sehingga tidak ada
+ * bagian tengah yang tersimpan tetapi tidak pernah terlihat model.
+ */
+export const HISTORY_PROMPT_HARD_CAP = 24;
+
+/** Satu request compaction tidak boleh tumbuh mengikuti backlog tanpa batas. */
+export const HISTORY_COMPACTION_CHUNK_MAX_TURNS = 12;
+export const HISTORY_COMPACTION_CHUNK_MAX_CHARS = 12_000;
+
 /** Panjang satu giliran yang disimpan. Sisanya dipotong. */
-export const TURN_MAX_CHARS = 2000;
+export const TURN_MAX_CHARS = HISTORY_TURN_MAX_CHARS;
 
 export function needsCompaction(history: ConversationHistory): boolean {
   return history.turns.length > HISTORY_COMPACT_AT;
@@ -38,11 +54,28 @@ export function needsCompaction(history: ConversationHistory): boolean {
  * pemadatan justru membuang konteks yang sedang dipakai.
  */
 export function splitForCompaction(history: ConversationHistory): {
-  evict: ConversationTurn[];
-  keep: ConversationTurn[];
+  evict: StoredConversationTurn[];
+  keep: StoredConversationTurn[];
 } {
   const keepCount = Math.min(history.turns.length, HISTORY_WINDOW);
-  const cut = history.turns.length - keepCount;
+  const available = history.turns.length - keepCount;
+  let cut = 0;
+  let characters = 0;
+  while (
+    cut < available &&
+    cut < HISTORY_COMPACTION_CHUNK_MAX_TURNS
+  ) {
+    const next = history.turns[cut];
+    if (!next) break;
+    if (
+      cut > 0 &&
+      characters + next.text.length > HISTORY_COMPACTION_CHUNK_MAX_CHARS
+    ) {
+      break;
+    }
+    characters += next.text.length;
+    cut += 1;
+  }
 
   return {
     evict: history.turns.slice(0, cut),
@@ -52,7 +85,9 @@ export function splitForCompaction(history: ConversationHistory): {
 
 /** Giliran terakhir yang dibawa ke dalam prompt. */
 export function promptWindow(history: ConversationHistory): ConversationTurn[] {
-  return history.turns.slice(-HISTORY_WINDOW);
+  return history.turns.slice(-HISTORY_PROMPT_HARD_CAP).map(
+    ({ role, text, at }) => ({ role, text, at }),
+  );
 }
 
 export function trimTurnText(text: string): string {

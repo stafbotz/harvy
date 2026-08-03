@@ -6,6 +6,10 @@ import {
   OPEN_IDLE_MS,
   type TurnBoundaryState,
 } from "../core/turn-taking-policy.js";
+import {
+  NOOP_OPERATIONAL_LOGGER,
+  type OperationalLogger,
+} from "../observability/operational-logger.js";
 
 /**
  * Satu giliran percakapan boleh datang sebagai beberapa bubble Telegram.
@@ -24,6 +28,7 @@ interface BatchEntry<T> {
   carrier: T;
   revision: number;
   evaluationRequested: boolean;
+  urgentAcknowledged: boolean;
   lastReceivedAt: number;
   settleTimer: ReturnType<typeof setTimeout> | null;
   deadlineTimer: ReturnType<typeof setTimeout> | null;
@@ -36,9 +41,15 @@ export class MessageBatcher<T> {
   private readonly chains = new Map<string, Promise<void>>();
   private readonly evaluations = new Map<string, Promise<void>>();
   private readonly generations = new Map<string, number>();
+  private urgentHandler:
+    | ((ownerId: string, batch: MessageBatch<T>) => Promise<void>)
+    | undefined;
 
   constructor(
-    private readonly classify: (text: string) => Promise<TurnBoundaryState>,
+    private readonly classify: (
+      text: string,
+      ownerId?: string,
+    ) => Promise<TurnBoundaryState>,
     private readonly handle: (
       ownerId: string,
       batch: MessageBatch<T>,
@@ -50,7 +61,23 @@ export class MessageBatcher<T> {
       MULTI_BUBBLE_IDLE_MS,
       maxWaitMs,
     ),
+    private readonly logger: OperationalLogger =
+      NOOP_OPERATIONAL_LOGGER.child("telegram.message-batcher"),
   ) {}
+
+  /**
+   * Memasang acknowledgment out-of-band untuk keadaan `urgent`.
+   *
+   * Handler lengkap tetap memakai chain pemilik agar mutasi dan riwayat tidak
+   * saling menyalip. Acknowledgment ini hanya pesan aman tanpa mutasi, sehingga
+   * boleh dikirim segera saat chain lama masih bekerja.
+   */
+  onUrgent(
+    handler: (ownerId: string, batch: MessageBatch<T>) => Promise<void>,
+  ): this {
+    this.urgentHandler = handler;
+    return this;
+  }
 
   /**
    * Menampung bubble lalu langsung mengembalikan kendali ke adapter Telegram.
@@ -68,6 +95,7 @@ export class MessageBatcher<T> {
       carrier,
       revision: 0,
       evaluationRequested: false,
+      urgentAcknowledged: false,
       lastReceivedAt: now,
       settleTimer: null,
       deadlineTimer: null,
@@ -79,24 +107,21 @@ export class MessageBatcher<T> {
     entry.evaluationRequested = false;
     entry.lastReceivedAt = now;
     this.entries.set(ownerId, entry);
+    this.logger.debug(
+      "bubble_enqueued",
+      "Bubble Telegram masuk ke penampung giliran.",
+      { bubbleCount: entry.chunks.length },
+    );
 
     const revision = entry.revision;
-    // Bahaya segera yang sudah dapat dikenali secara lokal tidak boleh
-    // menunggu debounce maupun jaringan. Model tetap menilai kasus yang lebih
-    // samar pada jalur biasa.
-    if (
-      guardTurnBoundary(entry.chunks.join("\n"), "complete") === "urgent"
-    ) {
-      void this.flush(ownerId, revision).catch((error: unknown) => {
-        console.error("Kumpulan bubble darurat gagal diproses:", error);
-      });
-      return;
-    }
-
     entry.settleTimer = setTimeout(() => {
       entry.settleTimer = null;
       void this.evaluate(ownerId, revision).catch((error: unknown) => {
-        console.error("Keputusan kumpulan bubble gagal diproses:", error);
+        this.logger.error(
+          "turn_boundary_evaluation_failed",
+          "Keputusan kumpulan bubble gagal diproses.",
+          error,
+        );
       });
     }, this.settleMs);
     entry.settleTimer.unref?.();
@@ -107,7 +132,11 @@ export class MessageBatcher<T> {
     entry.deadlineTimer = setTimeout(() => {
       entry.deadlineTimer = null;
       void this.flush(ownerId, revision).catch((error: unknown) => {
-        console.error("Kumpulan bubble gagal diproses:", error);
+        this.logger.error(
+          "message_batch_failed",
+          "Kumpulan bubble gagal diproses.",
+          error,
+        );
       });
     }, this.maxWaitMs);
     entry.deadlineTimer.unref?.();
@@ -118,6 +147,11 @@ export class MessageBatcher<T> {
     if (entry) clearTimers(entry);
     this.entries.delete(ownerId);
     this.cleanupOwner(ownerId);
+  }
+
+  /** Membatalkan state tertunda tanpa menunggu chain yang sedang memanggilnya. */
+  invalidate(ownerId: string): void {
+    this.cancelPending(ownerId);
   }
 
   /**
@@ -140,7 +174,12 @@ export class MessageBatcher<T> {
    */
   cancelAndEnqueue(ownerId: string, action: () => Promise<void>): void {
     this.cancelPending(ownerId);
-    this.enqueueBackground(ownerId, action, "Aksi setelah pembatalan gagal:");
+    this.enqueueBackground(
+      ownerId,
+      action,
+      "post_cancel_action_failed",
+      "Aksi setelah pembatalan gagal.",
+    );
   }
 
   /**
@@ -155,7 +194,11 @@ export class MessageBatcher<T> {
       try {
         await this.flush(ownerId, entry.revision);
       } catch (error) {
-        console.error("Kumpulan bubble gagal sebelum tindakan tombol:", error);
+        this.logger.error(
+          "pre_callback_batch_failed",
+          "Kumpulan bubble gagal sebelum tindakan tombol.",
+          error,
+        );
       }
     }
     await this.waitForIdle(ownerId);
@@ -172,10 +215,65 @@ export class MessageBatcher<T> {
     const entry = this.entries.get(ownerId);
     if (entry) {
       void this.flush(ownerId, entry.revision).catch((error: unknown) => {
-        console.error("Kumpulan bubble gagal sebelum tindakan berikutnya:", error);
+        this.logger.error(
+          "pre_action_batch_failed",
+          "Kumpulan bubble gagal sebelum tindakan berikutnya.",
+          error,
+        );
       });
     }
-    this.enqueueBackground(ownerId, action, "Tindakan setelah bubble gagal:");
+    this.enqueueBackground(
+      ownerId,
+      action,
+      "post_batch_action_failed",
+      "Tindakan setelah bubble gagal.",
+    );
+  }
+
+  /**
+   * Varian yang dapat ditunggu oleh worker internal.
+   *
+   * Aksi dijalankan pada chain pemilik yang sama, sehingga pesan terjadwal
+   * tidak menyelip di tengah balasan dan penghapusan data tetap mempunyai
+   * urutan yang tegas.
+   */
+  async drainAndRun(
+    ownerId: string,
+    action: () => Promise<void>,
+  ): Promise<void> {
+    const entry = this.entries.get(ownerId);
+    if (entry) {
+      void this.flush(ownerId, entry.revision).catch((error: unknown) => {
+        this.logger.error(
+          "pre_worker_batch_failed",
+          "Kumpulan bubble gagal sebelum worker.",
+          error,
+        );
+      });
+    }
+    await this.enqueueAction(ownerId, action);
+  }
+
+  /**
+   * Menjalankan kiriman terjadwal hanya bila pengguna benar-benar sedang idle.
+   *
+   * Berbeda dari callback, worker tidak boleh memaksa bubble yang masih
+   * terbuka segera diproses. `false` meminta worker mencoba lagi nanti.
+   */
+  async runWhenIdle(
+    ownerId: string,
+    action: () => Promise<void>,
+  ): Promise<boolean> {
+    if (
+      this.entries.has(ownerId) ||
+      this.chains.has(ownerId) ||
+      this.evaluations.has(ownerId)
+    ) {
+      return false;
+    }
+
+    await this.enqueueAction(ownerId, action);
+    return true;
   }
 
   /**
@@ -247,13 +345,17 @@ export class MessageBatcher<T> {
 
       let state: TurnBoundaryState = "complete";
       try {
-        state = await this.classify(evaluated.chunks.join("\n"));
+        state = await this.classify(
+          evaluated.chunks.join("\n"),
+          ownerId,
+        );
       } catch (error) {
         // Keputusan ini hanya optimasi UX. Kalau model cepat gagal, pesan
         // tetap harus diproses.
-        console.warn(
-          "Pemeriksaan sambungan bubble gagal, diproses sekarang:",
-          error,
+        this.logger.warn(
+          "turn_boundary_check_failed",
+          "Pemeriksaan sambungan bubble gagal; giliran diproses sekarang.",
+          { error },
         );
       }
 
@@ -263,6 +365,9 @@ export class MessageBatcher<T> {
           evaluated.chunks.join("\n"),
           state,
         );
+        if (guarded === "urgent") {
+          this.acknowledgeUrgent(ownerId, evaluated);
+        }
         const waitMs = Math.min(
           this.maxWaitMs,
           idleWindowMs(guarded, evaluated.chunks.length, {
@@ -295,6 +400,7 @@ export class MessageBatcher<T> {
       carrier: entry.carrier,
     };
     const generation = this.generation(ownerId);
+    const startedAt = Date.now();
 
     // Satu pengguna diproses berurutan. Bubble baru boleh dikumpulkan ketika
     // balasan lama sedang dibuat, tetapi konteksnya baru dibaca setelah giliran
@@ -305,6 +411,14 @@ export class MessageBatcher<T> {
       // handler yang memang sudah aktif.
       if (this.generation(ownerId) !== generation) return;
       await this.handle(ownerId, batch);
+      this.logger.info(
+        "telegram_turn_completed",
+        "Giliran Telegram selesai diproses.",
+        {
+          bubbleCount: entry.chunks.length,
+          durationMs: Date.now() - startedAt,
+        },
+      );
     });
   }
 
@@ -321,7 +435,11 @@ export class MessageBatcher<T> {
     if (remaining === 0) {
       entry.deadlineTimer = null;
       void this.flush(ownerId, revision).catch((error: unknown) => {
-        console.error("Kumpulan bubble gagal diproses:", error);
+        this.logger.error(
+          "message_batch_failed",
+          "Kumpulan bubble gagal diproses.",
+          error,
+        );
       });
       return;
     }
@@ -329,10 +447,30 @@ export class MessageBatcher<T> {
     entry.deadlineTimer = setTimeout(() => {
       entry.deadlineTimer = null;
       void this.flush(ownerId, revision).catch((error: unknown) => {
-        console.error("Kumpulan bubble gagal diproses:", error);
+        this.logger.error(
+          "message_batch_failed",
+          "Kumpulan bubble gagal diproses.",
+          error,
+        );
       });
     }, remaining);
     entry.deadlineTimer.unref?.();
+  }
+
+  private acknowledgeUrgent(ownerId: string, entry: BatchEntry<T>): void {
+    if (entry.urgentAcknowledged || !this.urgentHandler) return;
+    entry.urgentAcknowledged = true;
+    const batch = {
+      text: entry.chunks.join("\n"),
+      carrier: entry.carrier,
+    };
+    void this.urgentHandler(ownerId, batch).catch((error: unknown) => {
+      this.logger.error(
+        "urgent_acknowledgment_failed",
+        "Acknowledgment keselamatan gagal dikirim.",
+        error,
+      );
+    });
   }
 
   private async waitForIdle(ownerId: string): Promise<void> {
@@ -343,17 +481,22 @@ export class MessageBatcher<T> {
       await active;
     } catch (error) {
       // Command/tombol yang datang sesudahnya tetap harus dapat diproses.
-      console.error("Giliran percakapan sebelumnya gagal:", error);
+      this.logger.error(
+        "previous_turn_failed",
+        "Giliran percakapan sebelumnya gagal.",
+        error,
+      );
     }
   }
 
   private enqueueBackground(
     ownerId: string,
     action: () => Promise<void>,
-    errorMessage: string,
+    event: string,
+    message: string,
   ): void {
     void this.enqueueAction(ownerId, action).catch((error: unknown) => {
-      console.error(errorMessage, error);
+      this.logger.error(event, message, error);
     });
   }
 

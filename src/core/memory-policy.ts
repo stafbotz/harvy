@@ -102,6 +102,14 @@ export function selectRelevantMemories(
 
   return items
     .filter((item) => !isExpired(item, now))
+    // `top-k` tanpa ambang dulu membuat semua memori ikut bila jumlahnya
+    // kurang dari delapan. Akibatnya catatan personal yang sama sekali tidak
+    // relevan ikut ke prompt sapaan. Profile dasar boleh selalu ikut; jenis
+    // lain harus benar-benar beririsan dengan topik sekarang.
+    .filter((item) =>
+      item.kind === "profile" ||
+      wordOverlap(item.content, words) > 0
+    )
     .map((item) => ({ item, score: scoreOf(item, words, now) }))
     .sort((left, right) => right.score - left.score)
     .slice(0, limit)
@@ -122,6 +130,14 @@ function scoreOf(item: MemoryItem, words: Set<string>, now: Date): number {
   const recency = Math.max(0, 3 - ageDays / 30);
 
   return overlap * 5 + KIND_WEIGHT[item.kind] + recency;
+}
+
+function wordOverlap(content: string, words: Set<string>): number {
+  let overlap = 0;
+  for (const word of significantWords(content)) {
+    if (words.has(word)) overlap += 1;
+  }
+  return overlap;
 }
 
 /**

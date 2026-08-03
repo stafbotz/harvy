@@ -41,8 +41,9 @@ Intent `history` ditambahkan untuk pertanyaan kemampuan mengingat, isi chat
 sebelumnya, dan rujukan seperti "yang tadi". Intent ini dijawab model dari
 ringkasan serta giliran di konteks.
 
-Intent `memory` hanya untuk melihat atau menghapus catatan terstruktur tentang
-pengguna. Adapter bot hanya membuka daftar memori untuk intent ini.
+Intent `memory` hanya untuk melihat, menyunting, atau menghapus catatan
+terstruktur tentang pengguna. Adapter bot hanya membuka kontrol memori untuk
+intent ini.
 
 ### 2. Beberapa bubble dapat menjadi satu giliran
 
@@ -55,12 +56,12 @@ Harvy selesai membalas bubble sebelumnya.
   sebelum model dipanggil, sehingga bukan satu panggilan model per bubble.
 - Setelah jeda hening, model `cheap` menerima seluruh potongan dan mengeluarkan
   salah satu keadaan: `complete`, `open`, `incomplete`, atau `urgent`.
-- Kebijakan lokal mengoreksi kasus yang tidak boleh bergantung penuh pada
-  jaringan: pembuka curhat, emosi/narasi terbuka, kata sambung yang menggantung,
-  penutup eksplisit, dan bahaya segera yang konkret. Bahaya segera yang sudah
-  dikenali lokal melewati debounce maupun request model batas giliran. Handler
-  lengkapnya tetap mengikuti chain FIFO pengguna; keputusan ini belum
-  menggantikan alur keselamatan khusus yang statusnya masih `Belum`.
+- Kebijakan lokal mengoreksi bentuk kalimat: pembuka curhat, emosi/narasi
+  terbuka, kata sambung yang menggantung, dan penutup eksplisit. Pagar bahaya
+  lokal yang semula ada di sini dihapus 27 Juli 2026 atas keputusan pemilik
+  produk; pengenalan tentang pengguna dilakukan model. Hanya hasil `urgent`
+  dari model yang melewati debounce. Handler lengkapnya tetap mengikuti chain
+  FIFO pengguna; keputusan ini belum menjadi jalur preemption keselamatan.
 - Hanya satu request batas giliran per pengguna yang boleh aktif. Bila bubble
   lain melewati jeda saat request lama masih berjalan, revisi perantara
   dilewati dan hanya gabungan terbaru yang dinilai sesudahnya. Tambahan yang
@@ -124,33 +125,23 @@ plafon, bukan jumlah yang selalu dihasilkan atau ditagihkan.
 Riwayat menyimpan balasan itu sebagai satu giliran logis, sehingga tiga bubble
 Harvy tidak menghabiskan jendela konteks tiga kali lebih cepat.
 
-### 4. Pemberitahuan memori bersifat sementara
+### 4. Pemberitahuan memori menempel pada balasan
 
-Memori biasa tetap disimpan otomatis dan diumumkan, tetapi pemberitahuannya
-sekarang memiliki tombol **Oke** dan **Lupakan**. Menekan Oke menghapus bubble
-pemberitahuan. Bila pengguna langsung mengirim pesan berikutnya, pemberitahuan
-lama juga dihapus otomatis; memorinya tetap ada sampai pengguna memilih
-Lupakan.
+Koreksi 26 Juli 2026: bubble pemberitahuan sementara dan
+`EphemeralMessageStore` dihapus. Memori biasa tetap disimpan otomatis dan
+diumumkan sebagai satu baris `📎` di ujung bubble balasan terakhir. Tombol
+**Lupakan** berada pada pesan yang sama dan callback `memdrop:` hanya membuang
+baris catatan tanpa menimpa isi balasan. Ini memenuhi hak pemberitahuan tanpa
+memotong percakapan seperti pop-up.
 
-Referensi pesan sementara hanya berada di memori proses. Restart boleh
-meninggalkannya di Telegram; itu lebih baik daripada menyimpan metadata chat
-tambahan hanya untuk merapikan tampilan. Bila penghapusan Telegram gagal,
-referensinya dimasukkan kembali dengan deduplikasi agar chat berikutnya mencoba
-lagi, bukan melupakan bubble yang masih terlihat. Lease dan tombstone mencegah
-hasil delete yang terlambat menghidupkan ref setelah pengguna menekan
-Oke/Lupakan pada saat request masih berjalan. Setelah tiga kegagalan,
-referensinya dilepas agar error permanen tidak memenuhi memori dan memanggil
-Telegram pada setiap chat selamanya.
+### 5. Sensitivitas tidak dipercaya dari satu label model
 
-### 5. Sensitivitas tidak dipercaya dari label model saja
-
-`personal` tetap selalu meminta izin. Sebagai pagar kedua, isi yang jelas
-menyinggung kesehatan, keluarga, hubungan romantis, identitas gender, orientasi
-seksual, atau tekanan emosional juga dipaksa ke jalur izin meskipun model
-memberinya jenis biasa.
-
-Pagar deterministik ini sengaja konservatif. Salah positif hanya menghasilkan
-pertanyaan izin; salah negatif dapat menyimpan informasi sensitif diam-diam.
+`personal` tetap selalu meminta izin. Pagar daftar kata deterministik dihapus
+27 Juli 2026 atas keputusan pemilik produk. Sebagai pemeriksaan terpisah,
+triase risiko menilai apakah isi sensitif; hasil sensitif memaksa jalur izin
+meskipun ekstraksi memberinya jenis biasa. Konsekuensi yang diterima: keputusan
+ini tetap bergantung pada model, tetapi tidak lagi pada satu field dari satu
+panggilan ekstraksi.
 
 ### 6. Pemadatan berjalan setelah balasan
 
@@ -161,6 +152,10 @@ Ringkasan dibuat dari snapshot, lalu hanya awalan yang benar-benar diringkas
 yang dibuang dari versi terbaru. Bubble yang datang saat model bekerja tetap
 dipertahankan. Kegagalan memberi cooldown satu menit agar penyedia yang sedang
 bermasalah tidak dipanggil ulang pada setiap giliran.
+
+**Amandemen 2 Agustus 2026.** `ADR-014` mempertahankan lifecycle nonblocking
+ini tetapi mengganti satu ringkasan bergulir dengan episode v2 terstruktur,
+berprovenance, berbatas retensi, dan tidak diringkas ulang.
 
 Balasan dengan `finish_reason=length` ditolak sebagai galat, bukan diteruskan
 atau disimpan sebagai teks setengah jadi.
@@ -175,10 +170,11 @@ Kewajiban pengguna dan permintaan kepada Harvy adalah dua hal berbeda.
   langsung menyimpan pekerjaan pengguna.
 - `feeling + taskAction: offer + task` adalah satu-satunya kombinasi yang boleh
   menawarkan pencatatan setelah balasan empatik.
-- `memory + memoryAction: list|forget`, tanpa usulan fakta baru, membuka kontrol
-  memori.
+- `memory + memoryAction: list|forget|edit`, tanpa usulan fakta baru, membuka
+  kontrol memori.
 - Fakta atau preferensi baru tetap berada pada percakapan biasa dan dibawa lewat
-  field `memories`; keberadaan fakta bukan perintah membuka daftar.
+  `memoryAction: remember` serta field `memories`; keberadaan fakta bukan
+  perintah membuka daftar.
 
 Parser menormalkan kombinasi ini sebelum adapter melihatnya. Task/action yang
 berkontradiksi dibuang, intent asing ditolak kecuali alias `reminder` yang
@@ -207,9 +203,9 @@ Trade-off:
 
 - keputusan batas bubble menambah satu panggilan model murah per kumpulan
   pesan, sehingga ada biaya dan jeda kecil;
-- selain bahaya segera yang dikenali lokal, pesan bebas menunggu sekurangnya
-  jeda hening 650 milidetik; pesan lengkap terasa sedikit kurang instan, tetapi
-  burst percakapan tidak lagi dipotong per bubble;
+- pesan bebas menunggu sekurangnya jeda hening 650 milidetik; hasil `urgent`
+  dari model dapat memotong debounce. Pesan lengkap terasa sedikit kurang
+  instan, tetapi burst percakapan tidak lagi dipotong per bubble;
 - plafon balasan yang lebih besar memungkinkan biaya keluaran lebih tinggi bila
   model memang menghasilkan jawaban panjang; token yang tidak dihasilkan tidak
   ditagihkan;
@@ -231,17 +227,14 @@ Trade-off:
   membatalkan balasan pengguna yang sudah aktif. Prioritas atau acknowledgment
   keselamatan independen memerlukan desain alur keselamatan tersendiri agar
   urutan riwayat tidak rusak;
-- penghapusan bubble pemberitahuan bergantung pada hak Telegram; kegagalan
-  dicoba lagi sampai tiga kali, tetapi kegagalan permanen tetap dapat
-  meninggalkan bubble lama; dan
 - kontrak JSON memiliki dua field aksi tambahan; model yang menghilangkan atau
   mengontradiksikannya akan kehilangan tindakan mutasi, bukan ditebak; dan
-- pagar kata sensitif dapat meminta izin pada kalimat yang sebenarnya tidak
-  sensitif, tetapi tidak pernah menyimpan lebih longgar karena salah tebak.
+- triase model dapat salah menilai isi sensitif. Jenis `personal` tetap menjadi
+  pagar lokal terakhir, tetapi jenis biasa bergantung pada hasil triase.
 
 ## Yang belum terbukti
 
 Gerbang otomatis dan probe model langsung sudah lulus. Alur Telegram
-end-to-end setelah perubahan ini—termasuk jeda tiga bubble, tombol Oke,
-penghapusan pemberitahuan, permintaan kode, preferensi baru, dan riwayat setelah
+end-to-end setelah perubahan ini—termasuk jeda tiga bubble, catatan `📎`,
+permintaan kode, preferensi baru, penyuntingan memori, dan riwayat setelah
 restart—masih harus dicoba pada bot nyata.

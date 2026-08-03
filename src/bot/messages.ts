@@ -1,5 +1,11 @@
 import { InlineKeyboard } from "grammy";
+import type { ActionOffer } from "./action-offers.js";
+import type { AdaptiveActionId } from "../core/action-policy.js";
+import { formatClockMinute } from "../core/time-policy.js";
+import type { UsageSummary } from "../core/telemetry-service.js";
 import type { MemoryItem, MemoryKind } from "../domain/memory.js";
+import type { QuietHours, UserProfile } from "../domain/profile.js";
+import type { ActiveSession, SessionKind } from "../domain/session.js";
 import type { StudentTask, TaskImportance } from "../domain/task.js";
 
 const IMPORTANCE_LABEL: Record<TaskImportance, string> = {
@@ -36,13 +42,23 @@ export const HELP_MESSAGE = [
   "• senin ada ulangan biologi, penting banget",
   "• bawa buku sejarah",
   "",
-  "Setelah tercatat, tinggal pakai tombol buat nandain selesai, masang pengingat, atau ngebatalin. Kamu yang nentuin, aku cuma bantu.",
+  "Setelah tercatat, tinggal pakai tombol buat nandain selesai, memilih waktu pengingat, atau ngebatalin. Kamu yang nentuin, aku cuma bantu.",
+  "",
+  "Kalau keadaanmu lagi berantakan, Harvy bisa menawarkan sesi untuk menjernihkan, memilih prioritas, mulai satu langkah kecil, belajar bertahap, menyusun rencana, atau menyiapkan pesan untuk orang lain. Hanya satu sesi aktif, dan check-in dikirim sekali kalau kamu sendiri memilih waktunya.",
   "",
   "Aku juga nyimpen beberapa hal biar kamu nggak perlu ngulang cerita: kelasmu, cara belajar yang cocok, apa yang lagi kamu hadapi. Buat hal pribadi aku selalu nanya dulu. Tanya aja “apa yang kamu ingat tentang aku”, dan kamu bisa nyuruh aku lupain apa pun kapan aja.",
   "",
   "/tugas — lihat semua tugasmu",
   "/bantuan — tampilkan pesan ini",
 ].join("\n");
+
+export function helpActions(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Data & izin", "control:data")
+    .text("Atur waktu", "control:timezone")
+    .row()
+    .text("Sesi yang aktif", "control:active-session");
+}
 
 export function formatTask(task: StudentTask, timeZone: string): string {
   const details = [IMPORTANCE_LABEL[task.importance], formatDue(task, timeZone)];
@@ -98,10 +114,10 @@ export function taskActions(task: StudentTask): InlineKeyboard {
 }
 
 /** Persetujuan sebelum sebuah pesan dicatat sebagai tugas. */
-export function confirmActions(): InlineKeyboard {
+export function confirmActions(token: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Ya, catat", "save:")
-    .text("Nggak usah", "nosave:");
+    .text("Ya, catat", `save:${token}`)
+    .text("Nggak usah", `nosave:${token}`);
 }
 
 /** Satu baris tombol per tugas, agar pengguna tidak perlu mengetik ID. */
@@ -222,10 +238,10 @@ export function bubblePauseMs(text: string): number {
 }
 
 /** Persetujuan sebelum hal sensitif disimpan. Pasal 4 nomor 3. */
-export function memoryConsentActions(): InlineKeyboard {
+export function memoryConsentActions(token: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Boleh diingat", "memsave:")
-    .text("Jangan", "memskip:");
+    .text("Boleh diingat", `memsave:${token}`)
+    .text("Jangan", `memskip:${token}`);
 }
 
 export function formatMemories(items: MemoryItem[]): string {
@@ -250,10 +266,16 @@ export function memoryListActions(items: MemoryItem[]): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   for (const item of items) {
-    keyboard.text(`Lupakan: ${shorten(item.content)}`, `memforget:${item.id}`).row();
+    keyboard
+      .text(`Ubah: ${shorten(item.content, 20)}`, `memedit:${item.id}`)
+      .text("Lupakan", `memforget:${item.id}`)
+      .row();
   }
 
-  return keyboard.text("Lupakan semua tentang aku", "memall:");
+  return keyboard
+    .text("Lupakan semua tentang aku", "memall:")
+    .row()
+    .text("Data & izin", "control:data");
 }
 
 /**
@@ -263,10 +285,244 @@ export function memoryListActions(items: MemoryItem[]): InlineKeyboard {
  * Satu ketukan tambahan yang menjelaskan akibatnya bukan mempersulit, melainkan
  * memenuhi Pasal 3.11 soal menunjukkan konsekuensi sebelum tindakan penting.
  */
-export function memoryWipeConfirmActions(): InlineKeyboard {
+export function memoryWipeConfirmActions(token: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Ya, lupakan semua", "memallyes:")
-    .text("Batal", "memallno:");
+    .text("Ya, lupakan semua", `memallyes:${token}`)
+    .text("Batal", `memallno:${token}`);
+}
+
+const ACTION_LABEL: Record<AdaptiveActionId, string> = {
+  listen: "Dengerin dulu",
+  clarify: "Bantu jernihin",
+  prioritize: "Bantu pilih prioritas",
+  start_small: "Mulai langkah kecil",
+  tutor: "Ajari pelan-pelan",
+  plan: "Susun rencana",
+  human_bridge: "Bantu ngomong ke orang",
+  schedule_checkin: "Tanyain lagi nanti",
+  view_session: "Lihat sesi",
+  stop_session: "Berhenti",
+  data_controls: "Data & izin",
+};
+
+export function adaptiveActionLabel(action: AdaptiveActionId): string {
+  return ACTION_LABEL[action];
+}
+
+export function adaptiveActionButtons(offer: ActionOffer): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const action of offer.actions) {
+    keyboard
+      .text(
+        ACTION_LABEL[action],
+        `flow:${offer.token}.${action}`,
+      )
+      .row();
+  }
+  return keyboard;
+}
+
+export function mergeKeyboards(
+  ...keyboards: (InlineKeyboard | null | undefined)[]
+): InlineKeyboard | undefined {
+  const merged = new InlineKeyboard();
+  for (const keyboard of keyboards) {
+    if (!keyboard) continue;
+    for (const row of keyboard.inline_keyboard) {
+      merged.inline_keyboard.push([...row]);
+    }
+  }
+  return merged.inline_keyboard.length > 0 ? merged : undefined;
+}
+
+const SESSION_KIND_LABEL: Record<SessionKind, string> = {
+  clarify: "menjernihkan keadaan",
+  prioritize: "memilih prioritas",
+  focus: "langkah kecil",
+  tutor: "belajar bertahap",
+  plan: "menyusun rencana",
+  "human-bridge": "menyusun pesan untuk orang lain",
+};
+
+const SESSION_STAGE_LABEL: Record<ActiveSession["stage"], string> = {
+  assess: "melihat pemahaman awal",
+  attempt: "mencoba",
+  hint: "petunjuk",
+  explain: "penjelasan",
+  retry: "mencoba lagi",
+  collect: "mengumpulkan yang penting",
+  choose: "memilih",
+  act: "mengerjakan langkah terdekat",
+  reflect: "menyesuaikan rencana",
+  draft: "menyusun draf",
+};
+
+export function formatSession(
+  session: ActiveSession,
+  timeZone: string,
+): string {
+  const checkIn = session.checkIn
+    ? session.checkIn.sentAt
+      ? " · check-in sudah dikirim"
+      : ` · check-in ${new Intl.DateTimeFormat("id-ID", {
+          dateStyle: "short",
+          timeStyle: "short",
+          timeZone,
+        }).format(new Date(session.checkIn.at))}`
+    : "";
+
+  return [
+    `🌿 Sesi aktif: ${SESSION_KIND_LABEL[session.kind]}`,
+    `Tujuan: ${session.goal}`,
+    `Tahap: ${SESSION_STAGE_LABEL[session.stage]}${checkIn}`,
+  ].join("\n");
+}
+
+export function sessionActions(session: ActiveSession): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  const prefix = `${session.id}.`;
+
+  if (session.kind === "tutor") {
+    if (session.stage === "assess") {
+      keyboard.text("Aku coba dulu", `session:${prefix}attempt`);
+    } else if (session.stage === "attempt" || session.stage === "hint") {
+      keyboard.text("Kasih petunjuk", `session:${prefix}hint`);
+    } else {
+      keyboard.text("Coba lagi", `session:${prefix}retry`);
+    }
+    return keyboard
+      .text("Jelaskan langsung", `session:${prefix}direct`)
+      .row()
+      .text("Berhenti", `session:${prefix}stop`);
+  }
+
+  if (session.kind === "focus") {
+    return keyboard
+      .text("Selesai", `session:${prefix}done`)
+      .text("Aku tersangkut", `session:${prefix}stuck`)
+      .row()
+      .text("Tanyain lagi nanti", `session:${prefix}checkin`);
+  }
+
+  return keyboard
+    .text("Lanjut", `session:${prefix}continue`)
+    .text("Selesai", `session:${prefix}done`)
+    .row()
+    .text("Tanyain lagi nanti", `session:${prefix}checkin`);
+}
+
+export function checkInOutcomeActions(session: ActiveSession): InlineKeyboard {
+  const prefix = `${session.id}.`;
+  return new InlineKeyboard()
+    .text("Selesai", `checkin:${prefix}done`)
+    .text("Masih jalan", `checkin:${prefix}ongoing`)
+    .row()
+    .text("Aku tersangkut", `checkin:${prefix}stuck`)
+    .text("Ubah rencana", `checkin:${prefix}replan`)
+    .row()
+    .text("Berhenti", `checkin:${prefix}stop`);
+}
+
+export const CHECK_IN_MESSAGE =
+  "Gimana langkah kecil tadi—selesai, masih jalan, atau mau ubah rencana?";
+
+export function dataControlActions(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Lihat & ubah memori", "control:memories")
+    .row()
+    .text("Didengerin dulu", "style:listen")
+    .text("Langsung saran", "style:advice")
+    .row()
+    .text("Ekspor dataku", "control:export")
+    .text("Pemakaian AI", "control:usage")
+    .row()
+    .text("Atur zona waktu", "control:timezone")
+    .text("Atur jam tenang", "control:quiet-hours")
+    .row()
+    .text("Tarik izin AI", "control:withdraw")
+    .text("Hapus seluruh data", "control:delete-all");
+}
+
+export function timezoneActions(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("WIB", "timezone:Asia/Jakarta")
+    .text("WITA", "timezone:Asia/Makassar")
+    .text("WIT", "timezone:Asia/Jayapura");
+}
+
+export function quietHoursActions(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("21.00–06.00", "quiet:1260-360")
+    .text("22.00–06.00", "quiet:1320-360")
+    .row()
+    .text("Tulis sendiri", "quiet:custom")
+    .text("Tanpa jam tenang", "quiet:none");
+}
+
+export function formatTimeSettings(profile: UserProfile): string {
+  const quiet = profile.quietHoursSetAt
+    ? profile.quietHours
+      ? formatQuietHours(profile.quietHours)
+      : "tidak dipakai"
+    : "belum dipilih";
+  return [
+    `Zona waktu: ${timeZoneLabel(profile.timeZone)}`,
+    `Jam tenang: ${quiet}`,
+  ].join("\n");
+}
+
+function timeZoneLabel(timeZone: string | null): string {
+  switch (timeZone) {
+    case "Asia/Jakarta":
+      return "WIB";
+    case "Asia/Makassar":
+      return "WITA";
+    case "Asia/Jayapura":
+      return "WIT";
+    case null:
+      return "belum dipilih";
+    default:
+      return timeZone;
+  }
+}
+
+function formatQuietHours(hours: QuietHours): string {
+  return `${formatClockMinute(hours.startMinute)}–${formatClockMinute(
+    hours.endMinute,
+  )}`;
+}
+
+export function withdrawConsentConfirmActions(token: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Ya, tarik izin", `consentwithdraw:${token}.yes`)
+    .text("Batal", `consentwithdraw:${token}.no`);
+}
+
+export function deleteAllConfirmActions(token: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Ya, hapus seluruh data", `datawipe:${token}.yes`)
+    .text("Batal", `datawipe:${token}.no`);
+}
+
+export function formatUsage(summary: UsageSummary): string {
+  const limit =
+    summary.limit > 0
+      ? `${summary.capacityUsedTokens.toLocaleString("id-ID")} dari ${summary.limit.toLocaleString("id-ID")} token kapasitas`
+      : `${summary.capacityUsedTokens.toLocaleString("id-ID")} token kapasitas (tanpa batas aktif)`;
+  const cost =
+    summary.estimatedCostUsd > 0
+      ? `Perkiraan biaya: US$${summary.estimatedCostUsd.toFixed(6)}`
+      : "Perkiraan biaya belum dihitung karena harga model belum diisi.";
+
+  return [
+    "Pemakaian AI dalam 24 jam terakhir:",
+    limit,
+    `Request bernilai ${summary.totalTokens.toLocaleString("id-ID")} token · masuk ${summary.inputTokens.toLocaleString("id-ID")} · keluar ${summary.outputTokens.toLocaleString("id-ID")}`,
+    "Kapasitas hanya berkurang setelah balasan berhasil dikirim.",
+    cost,
+    "",
+    "Angka ini tidak menyimpan isi pesanmu.",
+  ].join("\n");
 }
 
 /**
@@ -280,7 +536,7 @@ export function memoryWipeConfirmActions(): InlineKeyboard {
  * meskipun hasil akhirnya perlu lebih dari tiga bubble.
  */
 export function splitReplyBubbles(reply: string, limit = 3): string[] {
-  const clean = reply.trim();
+  const clean = normalizeTelegramText(reply).trim();
   if (!clean) return [];
   const logicalBubbles =
     clean.includes("```") || limit <= 1
@@ -288,6 +544,40 @@ export function splitReplyBubbles(reply: string, limit = 3): string[] {
       : splitParagraphs(clean, limit);
 
   return logicalBubbles.flatMap((bubble) => splitForTelegram(bubble));
+}
+
+/**
+ * Model kadang mengirim Markdown/LaTeX walau Telegram menerima teks biasa.
+ * Normalisasi ini hanya menyentuh bagian di luar pagar kode agar kode yang
+ * memang diminta pengguna tidak rusak.
+ */
+export function normalizeTelegramText(text: string): string {
+  return text
+    .split(/(```[\s\S]*?```)/g)
+    .map((part, index) => (index % 2 === 1 ? part : normalizePlainPart(part)))
+    .join("");
+}
+
+function normalizePlainPart(text: string): string {
+  return text
+    .split(/(https?:\/\/[^\s<>"']+)/giu)
+    .map((part, index) => index % 2 === 1 ? part : normalizeMarkup(part))
+    .join("");
+}
+
+function normalizeMarkup(text: string): string {
+  return text
+    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, "$1/$2")
+    .replace(/\\sqrt\{([^{}]+)\}/g, "√($1)")
+    .replace(/\\(?:times|cdot)\b/g, "×")
+    .replace(/\\[()[\]]/g, "")
+    .replace(/\$\$?([^$\n]+)\$\$?/g, "$1")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/__([^_\n]+)__/g, "$1")
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "$1")
+    .replace(/(?<!_)_([^_\n]+)_(?!_)/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1");
 }
 
 const TELEGRAM_SAFE_MESSAGE_CHARS = 4_000;

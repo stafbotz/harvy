@@ -352,6 +352,79 @@ describe("pembacaan balasan model", () => {
     });
     assert.equal(parseUnderstanding(berisiko)?.safetySensitive, true);
   });
+
+  it("mempertahankan intent research baca-saja", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({
+        intent: "research",
+        taskAction: null,
+        memoryAction: null,
+        task: null,
+        memories: [],
+      }),
+    );
+
+    assert.equal(understanding?.intent, "research");
+    assert.equal(understanding?.taskAction, null);
+    assert.equal(understanding?.memoryAction, null);
+  });
+
+  it("menyaring tindakan adaptif asing, duplikat, dan lebih dari tiga", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({
+        intent: "feeling",
+        suggestedActions: [
+          "listen",
+          "clarify",
+          "listen",
+          "buat_transfer",
+          "prioritize",
+          "start_small",
+        ],
+        actionGoal: "  mulai   satu hal  ",
+      }),
+    );
+
+    assert.deepEqual(understanding?.suggestedActions, [
+      "listen",
+      "clarify",
+      "prioritize",
+    ]);
+    assert.equal(understanding?.actionGoal, "mulai satu hal");
+  });
+
+  it("hanya menerima kontrol dan sinyal sesi dari enum tertutup", () => {
+    const control = parseUnderstanding(
+      JSON.stringify({
+        intent: "control",
+        controlAction: "delete-all",
+        sessionSignal: "done",
+      }),
+    );
+    assert.equal(control?.controlAction, "delete-all");
+    assert.equal(control?.sessionSignal, "done");
+
+    const ordinary = parseUnderstanding(
+      JSON.stringify({
+        intent: "smalltalk",
+        controlAction: "delete-all",
+        sessionSignal: "melompat",
+      }),
+    );
+    assert.equal(ordinary?.controlAction, null);
+    assert.equal(ordinary?.sessionSignal, null);
+  });
+
+  it("mempertahankan aksi edit memori sebagai kontrol", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({
+        intent: "memory",
+        memoryAction: "edit",
+      }),
+    );
+    assert.equal(understanding?.intent, "memory");
+    assert.equal(understanding?.memoryAction, "edit");
+  });
 });
 
 describe("pembacaan tenggat baru", () => {

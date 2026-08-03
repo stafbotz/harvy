@@ -21,6 +21,16 @@ class MemoryProfileRepository implements ProfileRepository {
   async save(profile: UserProfile): Promise<void> {
     this.profiles.set(profile.ownerId, profile);
   }
+
+  async remove(ownerId: string): Promise<boolean> {
+    return this.profiles.delete(ownerId);
+  }
+
+  async listDeletionRequested(): Promise<UserProfile[]> {
+    return [...this.profiles.values()].filter(
+      (profile) => profile.deletionRequestedAt !== null,
+    );
+  }
 }
 
 function service(): { repository: MemoryProfileRepository; profiles: ProfileService } {
@@ -41,6 +51,10 @@ describe("status kenalan", () => {
     };
 
     assert.equal(needsOnboarding(profile), false);
+    assert.equal(
+      needsOnboarding({ ...profile, consentVersion: 2 }),
+      true,
+    );
     assert.equal(
       needsOnboarding({ ...profile, consentVersion: CONSENT_VERSION - 1 }),
       true,
@@ -108,5 +122,61 @@ describe("preferensi gaya menemani", () => {
     assert.equal(profile.stylePreference, null);
     // Yang tersisa adalah catatan persetujuannya, bukan catatan tentang dirinya.
     assert.equal(profile.consentVersion, CONSENT_VERSION);
+  });
+});
+
+describe("kontrol waktu dan persetujuan", () => {
+  it("memigrasikan profil lama yang belum punya pengaturan baru", async () => {
+    const { profiles, repository } = service();
+    await repository.save({
+      ownerId: "student",
+      consentVersion: 1,
+      onboardedAt: NOW.toISOString(),
+      stylePreference: null,
+      styleAskedAt: null,
+    } as UserProfile);
+
+    const profile = await profiles.load("student");
+    assert.equal(profile.timeZone, null);
+    assert.equal(profile.quietHours, null);
+    assert.equal(profile.deletionRequestedAt, null);
+  });
+
+  it("menyimpan zona waktu dan pilihan tanpa jam tenang", async () => {
+    const { profiles } = service();
+    await profiles.acceptConsent("student");
+    await profiles.setTimeZone("student", "Asia/Makassar");
+    await profiles.setQuietHours("student", null);
+
+    const profile = await profiles.load("student");
+    assert.equal(profile.timeZone, "Asia/Makassar");
+    assert.equal(profile.quietHours, null);
+    assert.equal(profile.quietHoursSetAt, NOW.toISOString());
+    await assert.rejects(
+      profiles.setTimeZone("student", "Waktu/Karanganku"),
+    );
+  });
+
+  it("penarikan izin langsung mengembalikan gerbang perkenalan", async () => {
+    const { profiles } = service();
+    await profiles.acceptConsent("student");
+    await profiles.withdrawConsent("student");
+
+    const profile = await profiles.load("student");
+    assert.equal(profile.consentVersion, 0);
+    assert.equal(profile.consentWithdrawnAt, NOW.toISOString());
+    assert.equal(needsOnboarding(profile), true);
+  });
+
+  it("tombstone memblokir persetujuan baru sampai penghapusan selesai", async () => {
+    const { profiles } = service();
+    await profiles.acceptConsent("student");
+    await profiles.markDeletionRequested("student");
+
+    assert.equal(await profiles.needsOnboarding("student"), true);
+    await assert.rejects(
+      profiles.acceptConsent("student"),
+      /Penghapusan data/u,
+    );
   });
 });

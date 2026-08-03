@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   CONSENT_DETAIL,
+  consentActions,
+  consentDetail,
   HeldMessageStore,
   introBubbles,
   PRE_CONSENT_SAFETY,
@@ -34,7 +36,20 @@ describe("naskah perkenalan", () => {
     // Pasal 3.9: pengguna berhak tahu ke mana isi pesannya pergi, sebelum ia
     // pergi ke sana.
     assert.match(consent, /layanan AI di luar Harvy/i);
+    assert.match(consent, /satu atau lebih/i);
+    assert.match(consent, /layanan cadangan/i);
     assert.match(consent, /bisa salah/i);
+    assert.match(CONSENT_DETAIL, /dikirim ulang ke layanan cadangan/i);
+    assert.match(CONSENT_DETAIL, /penyedia search terpisah/i);
+    assert.match(CONSENT_DETAIL, /memori dan riwayat lama tidak ikut/i);
+  });
+
+  it("tidak menjanjikan penilai AI selalu mengenali catatan pribadi", () => {
+    assert.match(CONSENT_DETAIL, /penilaian AI bisa keliru/i);
+    assert.doesNotMatch(
+      CONSENT_DETAIL,
+      /sifatnya pribadi selalu aku tanya/i,
+    );
   });
 
   it("mengaku apa adanya soal pemeriksaan bahaya sebelum persetujuan", () => {
@@ -53,9 +68,26 @@ describe("naskah perkenalan", () => {
     assert.match(CONSENT_DETAIL, /bukan terapis, dokter, atau layanan darurat/i);
   });
 
+  it("membedakan retensi file log lokal dari collector deployment", () => {
+    const detail = consentDetail(30, 9);
+    assert.match(detail, /file log gangguan teknis lokal/i);
+    assert.match(detail, /paling lama 9 hari/i);
+    assert.match(detail, /collector perusahaan/i);
+    assert.match(detail, /kebijakan infrastrukturnya sendiri/i);
+  });
+
   it("mengarahkan bahaya segera ke manusia, bukan ke dirinya sendiri", () => {
     assert.match(PRE_CONSENT_SAFETY, /112/);
     assert.match(PRE_CONSENT_SAFETY, /nggak bisa gantiin mereka/i);
+  });
+
+  it("memberi jalur keselamatan eksplisit tanpa harus menyetujui AI", () => {
+    const buttons = consentActions().inline_keyboard.flat();
+    const safety = buttons.find((button) => button.text.includes("nggak aman"));
+    assert.equal(
+      (safety as { callback_data?: string } | undefined)?.callback_data,
+      "safety:now",
+    );
   });
 
   it("menyapa pengguna lama dari keadaan nyata, bukan ingatan yang dikarang", () => {

@@ -28,6 +28,3335 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 3 Agustus 2026 — Gerbang penuh diluluskan sebelum working tree didorong
+
+**Kenapa.** Working tree berisi rangkaian perubahan Scope & Authority v1 dan
+fitur pendukung yang perlu dikonsolidasikan ke `main` sesuai permintaan
+pengguna. Sebelum commit, seluruh gerbang otomatis dijalankan ulang.
+
+**Yang berubah.** `tests/message-batcher.test.ts` diperkeras agar tidak
+bergantung pada deadline 200 milidetik saat seluruh suite berbagi event loop.
+Test kini memberi ruang waktu yang menyerupai konfigurasi produksi, menunggu
+evaluator melihat bubble lengkap, lalu memakai `drain` untuk memeriksa bahwa
+tidak ada batch parsial yang lebih dulu dijawab. Kode produksi tidak berubah
+karena kegagalan hanya berasal dari timing test.
+
+**Dibahas.** Percobaan suite penuh pertama menghasilkan 577/578: tiga bubble
+curhat ter-flush oleh deadline test sebelum bubble keempat masuk ketika event
+loop sedang sibuk. Percobaan terarah setelah test diperbaiki lulus 22/22, dan
+suite penuh berikutnya lulus tanpa mengubah kebijakan runtime.
+
+**Bukti.** `npm run check` PASS. `npm run build && node --test
+dist/tests/message-batcher.test.js` PASS — 22 test. `npm test` PASS — 578 test
+dalam 88 suite, tanpa gagal, dibatalkan, dilewati, atau todo. Tidak ada model,
+Telegram, WhatsApp, atau layanan eksternal yang dipanggil.
+
+**Sengaja ditinggalkan.** Verifikasi end-to-end Telegram/WhatsApp dan smoke
+provider nyata tetap belum dijalankan; sesi ini hanya memeriksa gerbang lokal
+sebelum commit dan push.
+
+## 3 Agustus 2026 — Scope & Authority v1 diselesaikan dan diperkeras
+
+**Kenapa.** Setelah executor web baca-saja tersedia, Harvy belum boleh langsung
+menambah X/Threads atau tindakan eksternal. Batas individu, grup, dan Workspace
+harus menjadi authority kode lebih dulu; kalau tidak, checkpoint lama, role
+admin basi, atau kesamaan identitas kanal dapat membuka data dan efek lintas
+ruang. Gerbang Brave+Telegram nyata juga diperiksa lebih dulu agar status bukti
+tidak disamakan dengan tes palsu.
+
+**Yang berubah.** `WorkspaceScope` kini mengikat principal HMAC per kanal,
+membership ID, role `owner/admin/editor/viewer`, permission tertutup, namespace
+kanonik, dan `aclEpoch`. `WorkspaceAuthorityService` membentuk serta
+merevalidasi scope, sementara `FileWorkspaceRepository` memakai compare-and-
+swap sehingga dua service dengan epoch sama tidak dapat keduanya commit.
+Harness menolak Workspace tanpa resolver tepercaya, namespace/permission yang
+dipalsukan, serta freshness check yang gagal, timeout, batal, atau stale;
+capability Workspace tetap unavailable pada surface pengguna dan disaring
+menurut role.
+
+Di grup, matriks authority tertutup menggantikan klaim `isAdmin` sebagai sumber
+hak. Ingress WhatsApp membuktikan Harvy dan pengirim masih berada pada metadata
+segar, menolak self-echo/nonmember, menunggu refresh berbatas untuk pesan yang
+sama, lalu core merevalidasi lagi sebelum binding atau state ditulis. Event
+membership menghapus cache, menaikkan epoch monoton, serta membatalkan batch,
+pending, dan giliran lama pada call stack yang sama; completion refresh lama
+tidak dapat memasangkan role lama dengan epoch baru. Semua mutator user-facing
+di `GroupMemoryService` sekarang mewajibkan guard authority di dalam antrean
+tepat sebelum commit.
+
+Shared room memory `decision|agenda|norm|activity|note` hanya lahir dari usulan
+eksplisit anggota, preview+ID persis, lalu konfirmasi admin terkini; retensinya
+60 hari, maksimum 20, dan empat terbaru dapat masuk context tak tepercaya.
+Reset admin menghapus state bersama tetapi bukan member-local memory. Adapter
+file menghapus profil sosial, member-local memory, dan atribusi pengusul room
+satu anggota dalam satu commit. Copy penghapusan tidak lagi mengaku atribusi
+ledger teknis terhapus bila adapter menolak. Notice naik ke v7. Konstitusi
+diperjelas sebagai v0.5 agar pemisahan member-local versus shared-room dan hak
+reset admin tidak bertentangan dengan teks normatif lama; `ADR-016` mencatat
+keputusan serta batasnya.
+
+**Dibahas.** Fondasi ini sengaja belum menjadi fitur Workspace pengguna.
+`WorkspaceScope` tanpa ingress, artifact store, dan PostgreSQL hanyalah kontrak
+authority, bukan nilai jual yang sudah bisa dipakai. Untuk delivery grup,
+rollback sudah pasti bagi record member/room yang baru dibuat; edit, delete,
+reset, alias, dan penghapusan diri belum mempunyai transaksi kompensasi generik
+bila acknowledgment gagal sesudah commit. Batas itu dicatat terbuka dan kelak
+ditutup bersama outbox/receipt/reconciler, bukan disebut exactly-once.
+
+**Bukti.** `npm run check` PASS. Gerbang terfokus PASS — **133 test dalam 11
+suite** untuk harness, Workspace, authority grup, Baileys, repository file, dan
+memori grup. `npm test` PASS — **578 test dalam 88 suite**, tanpa gagal,
+cancelled, skipped, atau todo. `git diff --check` PASS; peringatan line-ending
+Windows bukan whitespace error. Pemeriksaan konfigurasi lokal tanpa membuka
+secret menemukan token Telegram tersedia, tetapi `WEB_SEARCH_ENABLED` dan
+`WEB_OPEN_ENABLED` tidak ada serta `WEB_SEARCH_API_KEY` kosong. Karena itu
+smoke Brave+Telegram, consent v4, hasil kosong, kegagalan executor, dan isolasi
+konteks **NOT RUN**; tidak ada request eksternal yang dilakukan dan tidak ada
+secret/config yang dikarang.
+
+**Sengaja ditinggalkan.** Ingress/UI Workspace, account linking, artifact ACL,
+PostgreSQL durable `RunStore`, progress/cancellation lintas restart, report
+bersitasi, native tool calling, pagination, grounding per klaim, keragaman
+sumber, X/Threads, outbox, receipt, dan reconciler tetap tahap berikutnya.
+Authority epoch serta pending grup masih in-memory lintas restart, adapter file
+hanya aman satu proses, dan notice v7/shared-room behavior belum diuji di grup
+WhatsApp nyata.
+
+## 2 Agustus 2026 — Tahap setelah executor web dipilih
+
+**Dibahas.** Sebelum menambah arsitektur, vertical slice `web.search`/
+`web.open` yang baru selesai perlu melewati smoke terkontrol dengan provider dan
+Telegram nyata: consent v4, satu alur search→open→jawaban bersumber, hasil kosong,
+kegagalan executor, serta pembatalan/isolasi konteks. Ini adalah gerbang bukti,
+bukan fitur baru; statusnya tetap “belum terbukti end-to-end” sampai dijalankan.
+
+Milestone kode berikut yang direkomendasikan adalah **Scope & Authority v1**,
+bukan langsung X/Threads atau external write. Matriks otoritas grup perlu
+dibekukan, shared room memory dan room social profile harus terlihat serta dapat
+direset, lalu `WorkspaceScope` dibentuk dari ingress/membership tepercaya dengan
+principal, role, ACL, dan `aclEpoch`. Urutan ini menjaga Harvy pribadi, grup 1,
+grup 2, dan workspace tetap benar-benar terpisah sebelum checkpoint maupun
+artifact dapat hidup lintas giliran dan restart.
+
+Sesudah batas ruang itu teruji, tahapnya adalah PostgreSQL `RunStore` dan state
+machine durable untuk research baca-saja: progress, resume setelah crash,
+cancellation lifecycle, lease, dan artifact report bersitasi. Berikutnya baru
+native/canonical tool calling, pagination, grounding per klaim, evaluasi
+keragaman sumber, dan konektor X/Threads. External write tetap paling akhir dan
+memerlukan approval terikat nilai, outbox, receipt, reconciler, serta outcome
+`unknown` yang eksplisit.
+
+**Bukti.** Rekomendasi dibuat setelah membaca ulang `PROJECT.md`, Konstitusi
+v0.4, `engineering/STATUS.md`, entri LOG terbaru, `ADR-015`, dan urutan
+pembangunan pada `AGENT_ENGINEERING_RESEARCH.md`. STATUS mencatat executor web
+sudah teruji otomatis tetapi belum diuji provider/Telegram nyata, sedangkan
+`WorkspaceScope`, durable run store, X/Threads, outbox, receipt, dan reconciler
+belum ada. Tidak ada tes atau integrasi eksternal yang dijalankan karena sesi
+ini hanya menentukan langkah berikut.
+
+**Sengaja ditinggalkan.** Tidak ada kode produk yang diubah. Smoke eksternal,
+Scope & Authority v1, durable research, X/Threads, dan tindakan eksternal belum
+dikerjakan pada sesi ini.
+
+## 2 Agustus 2026 — Episodic compaction v2 dan executor web baca-saja selesai
+
+**Kenapa.** Pemilik produk memilih dua tahap berikut setelah baseline context
+manifest: mengganti rolling summary yang mudah drift dengan structured episodic
+compaction, lalu memberi Harvy nilai agent pertama melalui research
+`web.search`/`web.open` yang hanya membaca. Implementasi harus tetap menjaga
+isolasi privat, persetujuan, batas egress, dan kejujuran ketika tool belum
+berhasil.
+
+**Yang berubah.** History schema v2 memberi sequence monoton pada giliran,
+menyimpan episode sembilan kategori dengan source range/hash yang dibuat kode,
+dan memigrasikan summary v1 menjadi `legacy-summary` tanpa provenance palsu.
+Parser model serta repository memakai schema tertutup, batas klaim/turn/episode,
+rentang kontigu, coverage/source hash, dan generation guard. Compaction berjalan
+di latar dalam chunk maksimal 12 giliran/12.000 karakter, melepaskan dua slot
+global antar-pass, mengejar backlog yang masih di atas 16 giliran, menahan retry
+satu menit, dan berhenti sebelum queued call memakai model bila izin ditarik.
+Renderer memprioritaskan koreksi dan hal belum selesai; context compiler memakai
+sisa anggaran untuk potongan episode alih-alih membuang summary seluruhnya.
+Delimiter dari pesan, memori, ringkasan, sesi, insight, observation, dan sumber
+compaction di-escape sebelum ditempatkan di envelope prompt.
+
+Capability `web.search` v1 dan `web.open` v1 kini dinamis pada privat Telegram.
+Search memakai endpoint Brave tetap dan credential header; open hanya GET teks
+publik dengan pemeriksaan semua A/AAAA, IP pinning, validasi ulang redirect,
+batas ukuran/type/waktu, sanitasi HTML, serta blok alamat khusus IPv4/IPv6.
+Loop research memakai harness yang sudah ada, maksimal enam langkah/45 detik,
+satu search per run, dan open hanya ke URL dari pesan pengguna atau search
+sukses run yang sama. Context percakapan/memori lama tidak diberikan ke planner.
+Final tanpa observation sukses, URL karangan, atau domain polos yang tidak
+teramati ditahan; normalisasi Telegram tidak lagi mengubah underscore URL.
+Consent privat naik ke versi 4 untuk menjelaskan provider pencarian terpisah,
+pengambilan URL oleh server Harvy, dan isolation context research. `ADR-014`,
+`ADR-015`, STATUS, PROJECT, README, TESTING, AGENTS, serta dokumen riset
+diselaraskan.
+
+**Dibahas.** Sequence/hash adalah receipt concurrency dan coverage, bukan bukti
+bahwa makna ringkasan didukung sumber setelah raw source dibuang. Vertical slice
+web ini adalah executor sungguhan tetapi belum agent workspace durable: native
+provider tool calling, `RunStore`, artifact report, lifecycle cancellation dari
+command/generation luar, grounding per klaim, X/Threads, outbox, receipt, dan
+reconciler tetap tahap berikutnya. Pembatas satu search dan penghilangan context
+lama dipilih sebagai pagar konkret terhadap indirect prompt injection pada
+slice pertama, bukan sebagai desain research final.
+
+**Bukti.** `npm run check` PASS. Tes terarah compaction, repository, context,
+conversation, consent, message normalization, research, dan web reader PASS;
+`npm test` final PASS **554 test dalam 85 suite**, 0 gagal. Regresi mencakup
+backlog/chunk, perubahan source dan coverage saat model bekerja, queued
+compaction setelah izin ditarik, migrasi summary v1 panjang, schema/gap/retensi,
+delimiter injection, isolation context privat, final tanpa observation, domain
+dan URL karangan, pembatas satu search, allowlist open, DNS abort, special IP,
+redirect privat, dan URL underscore. Tidak ada panggilan model eksternal,
+credential Brave, Telegram nyata, X, Threads, atau data pengguna yang dipakai.
+Kontrak search dan egress diperiksa terhadap dokumentasi resmi Brave, registry
+alamat khusus IANA, dan panduan SSRF OWASP yang dirujuk di `ADR-015`.
+
+**Sengaja ditinggalkan.** Provider/Telegram smoke dengan consent v4, evaluasi
+groundedness/recall episode pada model nyata, tokenizer dan route budget,
+durable/background research, artifact workspace, native tool calling,
+X/Threads, cancellation lifecycle luar, serta seluruh external write menunggu
+`RunStore`/outbox/receipt/reconciler.
+
+## 2 Agustus 2026 — Gap menuju agent nyata dipetakan ulang
+
+**Dibahas.** Pemilik produk meminta daftar yang belum dibuat setelah baseline
+context manifest dan kalibrasi usage selesai. Keadaan repo membedakan dua kelas:
+kemampuan yang benar-benar belum ada dan kemampuan yang sudah ada di kode tetapi
+belum terbukti end-to-end. Harvy sekarang mempunyai percakapan, tugas, memori,
+sesi, keselamatan, grup WhatsApp beta, capability catalog, dan kernel loop
+berbatas; ia belum menjadi agent research/workspace yang dapat memakai alat.
+
+Gap inti agent adalah protocol tool-calling pada `AiClient`, executor konkret,
+`web.search`/`web.open`, konektor X/Threads, durable run/checkpoint store,
+outbox/receipt/reconciler, serta approval UX tindakan eksternal. Gap konteks
+adalah tokenizer/faktor kalibrasi dan budget per model/route, structured
+episodic compaction v2, retensi/provenance episode, WorkspaceScope+ACL, account
+linking, dan shared room semantic memory. Gap produksi meliputi PostgreSQL,
+migrasi, multi-process safety, auth Baileys terenkripsi, collector/dashboard/
+alert, backup/deployment, kanal Telegram grup/WhatsApp privat/Harvy Web, serta
+payment/subscription. Uji tujuh hari, wawancara pelajar, dan banyak alur kanal
+nyata juga belum selesai; itu status “belum terbukti”, bukan “belum ditulis”.
+
+**Bukti.** `STATUS.md` masih menandai capability agent sebagai fondasi tanpa
+tool eksternal. Pemeriksaan kode menemukan `web.search` dan `external.act`
+hanya sebagai capability `installed: false`; composition root membuat
+`AgentHarness` tanpa executor. `AiClient` tidak mempunyai `tools`/`tool_choice`,
+`AgentScope` hanya private/group, dan dependency PostgreSQL tidak ada. Tidak ada
+tes atau model eksternal yang dijalankan karena sesi ini hanya memetakan status.
+
+**Sengaja ditinggalkan.** Tidak ada kode produk atau keputusan urutan baru yang
+dibuat pada sesi pemetaan ini. Prioritas implementasi tetap perlu dipilih
+berdasarkan nilai pengguna: research web baca-saja adalah vertical slice nilai
+terdekat; external write baru aman setelah durable run dan rekonsiliasi.
+
+## 2 Agustus 2026 — Manifest grup dan dataset kalibrasi usage disambungkan
+
+**Kenapa.** Baseline manifest sebelumnya hanya menjelaskan konteks percakapan
+privat dan estimator `/4` belum dapat dibandingkan secara konsisten dengan
+usage provider. Sebelum mengubah kebijakan pemadatan, route grup perlu memiliki
+ukuran setara dan angka estimasi perlu bertipe stabil serta dapat diaudit per
+model/route tanpa merekam isi chat.
+
+**Yang berubah.** Planner ambient, revalidasi kandidat, dan reply grup kini
+mengompilasi selection lama menjadi `ContextManifest` v1 lokal. Selection
+prompt tidak diubah: paling banyak 18 giliran, pagar akumulasi 12.000 karakter
+yang tetap mempertahankan giliran terbaru, dan 8 memori anggota lokal dengan
+sanitasi/clipping 400 karakter. Manifest mencatat jumlah sumber/terpilih/
+terpotong/terbuang secara transient; log
+persisten tetap hanya menerima metrik kapasitas agregat dan tidak menerima isi,
+nama, ID, maupun struktur giliran/memori.
+
+`createContextManifest` menjadi satu pembentuk counter privat dan grup.
+`AiClient` memisahkan benturan nama lama: `inputTokenEstimate` selalu angka
+preflight, sedangkan `tokenUsageEstimated` selalu boolean kualitas usage. Bila
+provider mengirim usage aktual, log completion menambah
+`inputTokenEstimateErrorTokens` (estimasi dikurangi aktual) dan
+`inputTokenEstimateRatioPermille` (1.000 berarti tepat, di bawahnya
+under-estimate). Respons yang usage-nya hanya perkiraan tidak menghasilkan
+rasio kalibrasi. Label operasi lokal `group-plan-ambient`,
+`group-revalidate-ambient`, dan `group-reply` membedakan route tanpa mengubah
+purpose billing dan tidak ikut body provider. Bersama tier, model, dan origin,
+angka dapat diagregasi tanpa identifier pengguna atau isi percakapan.
+
+**Dibahas.** Data kalibrasi ini belum mengubah estimator ataupun selection.
+Menerapkan faktor otomatis sebelum sampel cukup akan membuat budget berayun dan
+dapat berbeda diam-diam antarprovider. Langkah berikutnya tetap menetapkan
+agregasi robust per model/route dan batas konservatif, lalu baru structured
+episodic compaction v2.
+
+**Bukti.** `npm run check` PASS. Build dan empat berkas tes terarah awal
+(`client`, `group-conversation`, `harness-context-budget`, dan
+`operational-logger`) PASS **44/44**; sesudah label operasi ditambahkan, tiga
+berkas yang terdampak PASS **40/40**. `npm test` final PASS **500 test dalam 77
+suite**, 0 gagal. Regresi membuktikan tiga request grup membawa manifest,
+counter drop/clipping benar, isi memori tidak masuk manifest, metadata lokal
+tidak ikut body provider, field kalibrasi bertipe stabil, dan rasio hanya dibuat
+dari usage aktual. Tidak ada model eksternal, Telegram, WhatsApp, atau data
+pengguna yang dipakai.
+
+**Sengaja ditinggalkan.** Tokenizer/count-token provider, estimator adaptif,
+agregator/window sampel kalibrasi, budget token per model/route, soft threshold,
+structured episodic compaction v2, tool schema reservation, executor, durable
+run, outbox, dan reconciler belum dibuat. Pekerjaan ini tidak menambah kemampuan
+pengguna atau mengubah isi balasan.
+
+## 2 Agustus 2026 — Context manifest privat menjadi baseline observability
+
+**Kenapa.** Setelah rancangan context/harness/loop/graph disepakati untuk mulai
+dikerjakan, vertical slice pertama dipilih berupa instrumentasi token dan
+context manifest. Tujuannya memperoleh ukuran nyata sebelum mengubah kebijakan
+pemadatan, tanpa menggeser balasan pengguna atau menganggap estimator sebagai
+tokenizer yang pasti.
+
+**Yang berubah.** `src/harness/context-manifest.ts` menambahkan schema v1 bebas
+isi: versi, basis budget, metode estimasi bernama, batas karakter/jumlah,
+karakter sumber/terpilih, estimasi token, utilisasi, serta jumlah bagian
+source/eligible/included/clipped/dropped. `compileHarvyContext` di
+`context-budget.ts` menghasilkan konteks dan manifest dalam satu selection;
+`fitHarvyContext` tetap menjadi wrapper kompatibel sehingga hasil lama tidak
+berubah. Proyeksi `turns-only` membuat triase dan review hanya menganggap
+giliran sebagai bagian eligible, sedangkan understanding, reply, dan sesi
+memakai proyeksi penuh.
+
+`ChatRequest` membawa manifest sebagai metadata lokal. `AiClient` memasukkan
+counter kapasitas agregat ke log operasional, tetapi body provider tetap hanya
+membawa kontrak chat completion. Detail jumlah giliran/memori, karakter sumber,
+dan status summary tetap transient meski bebas isi; allowlist persisten hanya
+menyimpan versi/metode, konfigurasi budget, karakter terpilih, estimasi token,
+dan utilisasi. Tidak ada prompt, teks, ID, summary, atau isi memori pada
+manifest. Dokumentasi STATUS, TESTING, dan draf riset sementara diselaraskan.
+
+**Dibahas.** Estimator `characters_div_4_v1` sengaja diberi nama agar tidak
+disangka usage provider atau tokenizer akurat. Ia hanya baseline observability;
+selection dan compaction masih memakai karakter/jumlah. Manifest juga belum
+menentukan ambang 60/75/90 persen, belum mereservasi tool/observation growth,
+dan belum mengkalibrasi estimate terhadap usage aktual. Memisahkan compiler
+dari policy memungkinkan data dikumpulkan tanpa diam-diam mengubah konteks
+yang dibaca model.
+
+**Bukti.** `npm run check` PASS. Build dan empat berkas tes terarah PASS **60/60**:
+`client`, `conversation`, `harness-context-budget`, dan `operational-logger`.
+`npm test` resmi kemudian PASS **499 test dalam 77 suite**, 0 gagal. Tes baru
+membuktikan selection baru ekuivalen dengan wrapper lama, manifest tidak
+membawa isi, proyeksi triase tidak menganggap summary/memori eligible, metadata
+tidak masuk body provider, dan sanitizer hanya mempertahankan counter kapasitas
+agregat.
+
+Percobaan gerbang pertama melewati timeout alat lima menit dan proses runner
+yatim dihentikan setelah command line-nya dipastikan milik sesi ini. Diagnosis
+empat shard paralel sengaja memberi tekanan berlebih dan satu kali memicu test
+timing `message-batcher`; test itu lulus **22/22** ketika dijalankan sendiri dan
+ikut lulus pada `npm test` resmi tanpa stress tambahan. Tidak ada model
+eksternal, Telegram, WhatsApp, atau data pengguna yang dipakai.
+
+**Sengaja ditinggalkan.** Context manifest grup, tokenizer/count-token provider,
+kalibrasi estimator, route/model-specific token budget, soft threshold,
+structured episodic compaction v2, dan keputusan retensi episode belum dibuat.
+Tidak ada tool eksternal, executor, durable run, atau capability pengguna baru
+yang diaktifkan oleh pekerjaan ini.
+
+## 2 Agustus 2026 — Riset arsitektur agent sosial dan context engineering ditulis
+
+**Kenapa.** Pemilik produk meminta hasil pembelajaran tentang context,
+harness, loop, dan graph engineering, Codex, Claude Code, serta prinsip Andrej
+Karpathy disimpan sementara di `docs/` agar tidak hilang. Ia juga mengusulkan
+pemadatan percakapan berbasis token dan Harvy yang mempunyai kesinambungan
+sosial berbeda untuk setiap individu serta grup.
+
+**Yang berubah.** Ditambahkan draf non-normatif
+`docs/research/AGENT_ENGINEERING_RESEARCH.md` dan tautannya di `docs/INDEX.md`.
+Dokumen itu mencatat status kemampuan yang sudah ada, pemisahan context/memori/
+checkpoint/artifact, context budget token-aware, structured episodic
+compaction, scope lattice privat/workspace/grup/anggota, room social profile
+yang terlihat dan berjendela, harness serta durable state machine, outbox dan
+rekonsiliasi, pelajaran Codex/Claude Code/Karpathy, failure modes, eval, urutan
+pembangunan, sumber primer, dan pertanyaan keputusan pemilik produk.
+
+Dokumen ditandai sementara dan tidak boleh menjadi sumber klaim kemampuan. Ia
+baru dihapus setelah keputusan yang diterima dipromosikan ke dokumen normatif,
+vertical slice serta acceptance criteria tersedia, dan temuan evaluasinya
+tidak hanya hidup di draf tersebut. Penghapusannya kelak wajib dicatat lagi di
+`LOG.md`.
+
+**Dibahas.** Intuisi mempertahankan percakapan sampai anggaran token tertentu
+dinilai benar dengan koreksi: konteks aktif bukan memori, pemadatan harus
+proaktif/asinkron/route-aware, dan state tindakan tidak boleh diringkas menjadi
+prosa. Harvy boleh terasa berbeda melalui alias, panjang jawaban, formalitas,
+timing, norma partisipasi, agenda, dan keputusan lokal; identitas inti,
+keselamatan, kejujuran, serta hak data tetap sama. Adaptasi sosial dibagi
+menjadi recent ephemeral context, memori ruang yang dapat dilihat/reset, dan
+perbaikan policy global secara offline dari eval berizin—bukan online
+self-training tersembunyi dari chat produksi.
+
+Review akhir memperketat bahwa ACL Workspace tidak dapat membuka data grup,
+`WorkspaceScope` harus membawa membership/role/ACL epoch tepercaya, private
+memory tidak berpindah lewat kemiripan identitas, dan pemakaian pesan produksi
+untuk evaluasi memerlukan opt-in terpisah setiap peserta. Observasi sosial wajib
+kedaluwarsa; pengelola ruang tidak menguasai data individual. State graph juga
+ditambah jalur cancel, expiry, lease recovery, dead-letter, serta capability
+gate bagi provider yang outcome tindakannya tidak dapat direkonsiliasi.
+
+Harness diperlakukan sebagai authority kode di sekitar model, loop sebagai
+pengendali berbatas, dan graph sebagai state machine yang dapat dipulihkan.
+Rekomendasi awal tetap mempertahankan fast path bagi percakapan serta workflow
+deterministik, sementara research dan pekerjaan lintas aplikasi memakai
+durable run. Harvy belum memerlukan penggantian fondasi dengan framework agent
+baru; `AgentHarness` yang ada lebih dulu perlu disambungkan ke token-aware
+context compiler, PostgreSQL run store, executor, outbox, dan reconciler.
+
+**Bukti.** Fondasi riwayat, context budget, scope, `AgentHarness`, memori grup,
+dan percakapan grup diperiksa langsung dari kode, `ADR-011`, `ADR-012`, serta
+`engineering/STATUS.md`. Tiga jalur riset read-only memeriksa konteks/memori,
+harness/loop/graph/durable execution, serta Claude Code/Karpathy; penulis utama
+memeriksa manual Codex resmi dan sumber primer Anthropic, OpenAI, LangGraph,
+Temporal, ACL Anthology, makalah long-context, presentasi Karpathy, dan
+repository `autoresearch`. Tidak ada kode produk, model Harvy, Telegram,
+WhatsApp, atau tes otomatis yang dijalankan karena perubahan hanya menambah
+dokumen riset.
+Dua review read-only terpisah memeriksa arsitektur durable serta batas sosial,
+privasi, dan agensi; penulis utama menerapkan koreksinya.
+
+**Sengaja ditinggalkan.** Retensi tiap kelas data, ambang token per route,
+schema database final, pilihan state machine sendiri versus LangGraph/Temporal,
+otoritas konfigurasi sosial grup, bentuk UI kontrol, hubungan Workspace dengan
+banyak grup, serta rancangan uji manusia belum diputuskan. Tidak ada capability
+baru yang diaktifkan.
+
+## 2 Agustus 2026 — Research Workspace lintas web, X, dan Threads dirancang
+
+**Kenapa.** Pemilik produk mengusulkan nilai guna agent yang lebih konkret:
+Harvy membantu individu dan grup melakukan riset dari web serta percakapan
+publik di X, Threads, dan sumber lain, tetap cepat ketika membalas chat, lalu
+dapat melanjutkan hasil riset menjadi tindakan.
+
+**Dibahas.** Arah produk yang disarankan adalah `Research Workspace`, bukan
+browser atau scraper umum. Permintaan langsung membuat run riset berscope
+workspace; Harvy segera mengakui pekerjaan, mencari sumber di latar melalui
+tool baca yang terbatas, menormalkan dan mendeduplikasi hasil, memisahkan fakta
+resmi dari sinyal/opini sosial, lalu menghasilkan laporan bersitasi. Percakapan
+biasa tetap melalui jalur cepat tanpa agent loop. Riset singkat boleh selesai
+sinkron bila masih dalam batas waktu, sedangkan riset panjang menjadi durable
+run yang dapat dilanjutkan setelah restart. Ambient hanya boleh menawarkan
+riset, bukan menghabiskan kuota tanpa permintaan atau izin workspace.
+
+Tool awal dipisahkan menurut kapabilitas dan sumber, misalnya
+`research.web.search`, `research.web.open`, `research.x.search_recent`,
+`research.x.search_archive`, dan `research.threads.keyword_search`; tidak ada
+tool generik yang bebas melakukan aksi eksternal. Semua hasil dipetakan ke
+`SourceRecord` kanonik yang membawa platform, ID eksternal, permalink,
+penulis publik, waktu terbit dan pengambilan, cuplikan minimum, kueri asal,
+serta provenance. Penyimpanan penuh konten sosial tanpa batas dihindari;
+retensi, tampilan, ekspor, dan penghapusan harus mengikuti ketentuan platform
+dan hak anggota workspace.
+
+Urutan vertical slice yang disarankan: (1) scope/ACL Workspace dan kontrak
+laporan; (2) penyimpanan Postgres untuk durable run, step, lease, dan sumber;
+(3) executor tool baca web beserta sitasi; (4) connector X recent search dan
+Threads keyword search setelah aplikasi/izin tersedia; (5) anggaran, cache,
+cancel, retry, status/progress, dan evaluasi kualitas; (6) monitoring terjadwal
+yang opt-in; lalu (7) aksi tulis seperti membuat task, polling, atau kalender
+melalui approval, outbox, receipt, dan reconciler. Dengan demikian nilai riset
+dapat diuji sebelum Harvy diberi wewenang tindakan eksternal yang lebih besar.
+
+X dan Threads diperlakukan sebagai sumber percakapan publik, bukan sumber
+kebenaran. Klaim faktual harus diperiksa ke sumber primer ketika tersedia dan
+laporan harus menandai hal yang hanya menggambarkan opini/tren. Workspace tidak
+boleh dipakai untuk pengawasan anggota, penyusunan profil psikologis/politik,
+pengambilan data privat, atau penilaian individu. Administrator boleh mengatur
+sumber, batas biaya, retensi, dan konektor, tetapi tidak mendapat akses ke chat
+pribadi anggota.
+
+**Bukti.** Status dan arsitektur yang ada diperiksa kembali dari
+`docs/engineering/STATUS.md` dan kode harness yang sebelumnya diperiksa dalam
+sesi ini: kernel `AgentHarness` ada, tetapi belum terhubung ke runtime produksi
+dan belum memiliki executor eksternal, durable checkpoint, outbox, atau
+reconciler. Dokumentasi resmi X yang diperiksa menyatakan recent search
+mencakup tujuh hari terakhir, full-archive adalah akses berbayar/Enterprise,
+dan API saat ini memakai harga berbasis pemakaian. Dokumentasi resmi Threads
+yang diperbarui 21 Januari 2026 menyatakan endpoint `/keyword_search`
+mendukung hasil `TOP`/`RECENT`, rentang waktu, filter tipe media, maksimum 100
+hasil, memerlukan `threads_basic` dan `threads_keyword_search`, serta membatasi
+2.200 kueri per pengguna dalam 24 jam bergulir. Tidak ada kode produk atau tes
+yang dijalankan karena sesi ini hanya membahas rancangan.
+
+**Sengaja ditinggalkan.** Provider web search, bentuk schema database final,
+model harga Workspace, batas hasil per run, kebijakan retensi per platform,
+UX laporan/progress, serta siapa yang boleh memulai riset berbiaya di ruang
+grup belum diputuskan atau diterapkan.
+
+## 2 Agustus 2026 — Peran agent Harvy untuk individu dan grup dirumuskan
+
+**Kenapa.** Sebelum membangun tool calling, executor, durable run, outbox, dan
+rekonsiliasi, pemilik produk meminta tujuan nyata agent bagi pengguna individu
+dan grup diperjelas agar infrastruktur tidak dibangun tanpa nilai produk.
+
+**Dibahas.** Agent tidak menggantikan seluruh Harvy. Percakapan biasa,
+tutoring, curhat, keselamatan, kontrol data, serta pencatatan tugas sederhana
+tetap memakai workflow deterministik. Agent hanya dibuka ketika hasil yang
+diminta membutuhkan beberapa langkah, alat atau informasi eksternal,
+pause/resume, persetujuan, dan verifikasi outcome. Pola bersama yang dipilih
+sebagai arah diskusi adalah `pahami tujuan → cari/siapkan → tampilkan proposal
+→ minta izin → bertindak → pastikan hasil`.
+
+Untuk individu, peran utamanya adalah mengubah niat menjadi tindakan pribadi
+yang terverifikasi. Kandidat flagship: Harvy mencari informasi sekolah resmi
+beserta sumber, mengubahnya menjadi checklist/rencana minggu, lalu setelah
+pengguna menyetujui menyimpan tugas, pengingat, atau acara kalender. Use case
+lainnya adalah riset belajar bersumber, pengelolaan proyek lintas hari, dan
+menyiapkan draf komunikasi yang baru dikirim setelah approval. Nilai jualnya
+bukan model yang sekadar menjawab, melainkan pekerjaan administratif sekolah
+yang selesai tanpa mengambil keputusan dari pengguna.
+
+Untuk grup, peran utamanya adalah mengubah percakapan bersama menjadi
+koordinasi yang disetujui tanpa menjadikan Harvy ketua atau pengawas. Kandidat
+flagship: setelah diminta langsung, Harvy merangkum keputusan live, menyusun
+daftar tindak lanjut, membuat polling waktu, mengusulkan jadwal, lalu membuat
+acara/tugas/pengingat grup setelah otoritas yang benar menyetujui. Harvy juga
+dapat mencari sumber untuk pertanyaan grup dan menjaga shared room memory
+tentang keputusan/kegiatan ketika kemampuan itu sudah dibangun. Ambient hanya
+boleh menawarkan proposal; ia tidak boleh memulai mutasi atau menghubungi
+anggota secara pribadi.
+
+Otoritas grup harus dibedakan per dampak. Tindakan pada kalender atau data
+pribadi memerlukan approval anggota yang terdampak; tindakan pada ruang grup
+memerlukan admin atau koordinator yang memang berwenang; penugasan kepada
+anggota tidak dianggap diterima sebelum anggota itu memilihnya. Pembayar
+Workspace tidak memperoleh hak membaca chat pribadi atau menyetujui tindakan
+atas nama seluruh anggota. Semua tindakan membawa audit siapa meminta, siapa
+menyetujui, scope, input persis, dan hasilnya.
+
+Urutan produk yang disarankan adalah: pertama agent individu untuk
+`web search → sumber → task/reminder` karena kemampuan tugas sudah hidup;
+berikutnya agent grup direct untuk `keputusan → polling/tindak lanjut`; sesudah
+shared room memory dan uji grup nyata barulah ambient menawarkan koordinasi.
+Kalender eksternal, pengiriman pesan, atau tindakan lintas aplikasi menyusul
+setelah connector dan rekonsiliasinya terbukti. Agent tidak dipakai untuk
+diagnosis, hukuman/moderasi otomatis, pembelian, pendaftaran yang berdampak
+besar, DM proaktif, pengawasan anggota, atau tindakan keselamatan otonom.
+
+**Bukti.** Arah ini diperiksa terhadap masalah pengguna di `PROJECT.md`, hak
+dan batas tindakan Konstitusi v0.4, kemampuan nyata serta keterbatasan grup di
+`STATUS.md`, capability catalog, dan keputusan agent pada `ADR-012`. Tidak ada
+tes, model eksternal, kanal nyata, atau perubahan kode yang dijalankan karena
+sesi ini hanya membahas tujuan produk.
+
+**Sengaja ditinggalkan.** Belum dipilih nama fitur, connector kalender/polling,
+aturan admin/koordinator final, bentuk shared task, masa retensi run, atau
+vertical slice yang akan diimplementasikan. Tidak ada capability yang
+diaktifkan.
+
+## 2 Agustus 2026 — Arsitektur agent nyata Harvy dibahas
+
+**Kenapa.** Pemilik produk ingin membahas lima bagian yang diperlukan agar
+Harvy menjadi agent nyata: tool calling, executor, durable run, outbox, dan
+rekonsiliasi tindakan.
+
+**Dibahas.** Fondasi kernel sebenarnya sudah ada dan cukup ketat:
+`AgentHarness` menerima keputusan `final|need_input|action`, memvalidasi
+capability serta input, mengikat approval pada nilai tervalidasi, memberi
+idempotency key, membatasi langkah/deadline/siklus, dan memeriksa cancellation
+serta generation. Namun runtime hanya memakai capability snapshot sebagai
+konteks prompt. Tidak ada pemanggilan `AgentHarness.run()` di kode produksi,
+tidak ada executor produksi, `AiClient` masih hanya mengirim pesan teks tanpa
+`tools`/`tool_choice`, checkpoint belum disimpan, dan belum ada dispatcher
+outbox atau reconciler.
+
+Arsitektur yang disarankan mempertahankan satu bentuk tool call kanonik di
+lapisan Harvy. Adapter model boleh menerjemahkan native provider tool call atau
+keluaran JSON terstruktur ke bentuk itu, tetapi model tidak pernah memegang
+kredensial atau menjalankan efek. Capability generik `external.act` tidak layak
+menjadi tool nyata; setiap executor harus sempit dan berversi, misalnya
+`web.search`, `web.open`, `task.create`, `calendar.event.create`, atau
+`message.send`. Tool yang tersedia saja yang dikirim ke model, mutasi berjalan
+serial lebih dulu, dan safety/consent/penghapusan tetap workflow deterministik.
+
+Durabilitas memerlukan PostgreSQL sebelum mutasi eksternal dipercaya. Store
+minimum memisahkan `agent_runs`, `agent_actions`, approval/input tertunda,
+`agent_outbox`, dan bila ada webhook `agent_inbox`. Run menyimpan checkpoint,
+scope, capability hash, generation pengguna, status, versi optimistic lock,
+lease worker, expiry, dan hasil. Action menyimpan input tervalidasi, digest,
+idempotency key, status eksekusi, attempt, receipt provider, serta outcome aman.
+Saat approval diberikan, transaksi yang sama menandai action terotorisasi dan
+menulis command outbox; tidak ada network call di dalam transaksi database.
+
+Dispatcher mengambil outbox dengan lease, memeriksa ulang cancellation,
+generation, approval, capability, serta policy, lalu memanggil executor.
+Hasil pasti `succeeded` atau `failed` dapat melanjutkan planner. Timeout,
+koneksi putus setelah request terkirim, crash, atau respons ambigu harus menjadi
+`unknown`, menghentikan mutasi berikutnya, dan membuat pekerjaan rekonsiliasi—
+bukan retry otomatis. Reconciler menanyakan outcome memakai idempotency key atau
+receipt provider: bila ditemukan, ia menyelesaikan action; bila terbukti belum
+terjadi dan provider menjamin pemeriksaannya, action boleh diantrekan ulang;
+bila tetap tidak pasti, Harvy harus memberitahu pengguna atau operator dan tidak
+mengarang hasil. Connector yang tidak menyediakan idempotency atau lookup tidak
+boleh menjanjikan exactly-once.
+
+Checkpoint durable mengandung kata pengguna, input tindakan, dan observation,
+sehingga ia adalah data pribadi: wajib masuk retensi, ekspor, penghapusan, dan
+generation guard. Approval perlu menampilkan preview manusia yang persis—target,
+waktu, tujuan, serta konsekuensi—sementara binding hash tetap bekerja di balik
+layar. Penghapusan data harus lebih dulu membatalkan run dan outbox baru;
+tindakan eksternal yang sudah berhasil tidak selalu dapat dibatalkan dan harus
+dijelaskan jujur.
+
+Vertical slice yang disarankan dimulai dari `web.search`/`web.open` baca-saja,
+lalu satu executor lokal idempoten seperti `task.create` atau
+`reminder.schedule`. Itu membuktikan loop, schema tool, observation, approval,
+pause/resume, dan crash recovery sebelum Harvy diberi kemampuan mengubah
+kalender atau mengirim pesan eksternal. Mutasi eksternal pertama hanya dipilih
+setelah connector tertentu membuktikan idempotency serta API rekonsiliasinya;
+infrastruktur generik tanpa workflow pengguna tidak dianggap nilai produk.
+
+**Bukti.** `ADR-012`, seluruh `src/harness/agent-harness.ts`, capability
+catalog, kontrak dan body request `AiClient`, pemakaian harness di runtime,
+status kemampuan, serta pola antrean settlement usage yang sudah ada diperiksa.
+Tidak ada tes, model eksternal, kanal nyata, atau perubahan kode yang dijalankan
+karena sesi ini hanya membahas arsitektur.
+
+**Sengaja ditinggalkan.** Belum diputuskan vertical slice pertama, provider
+tool-calling, schema PostgreSQL final, masa retensi run, strategi worker,
+connector eksternal pertama, maupun kontrak reconciliation per provider. Tidak
+ada capability yang diaktifkan atau executor yang dibuat.
+
+## 2 Agustus 2026 — Kesenjangan kegunaan dan nilai jual Harvy dipetakan
+
+**Kenapa.** Pemilik produk menilai Harvy belum berguna dan belum mempunyai
+sesuatu yang layak ditawarkan atau dijual, lalu meminta pemetaan kemampuan yang
+belum diterapkan serta rancangan fitur yang belum dibuat.
+
+**Dibahas.** Penilaian itu benar pada tingkat produk, tetapi bukan karena Harvy
+tidak mempunyai kode atau kemampuan sama sekali. Chat privat Telegram sudah
+mempunyai tugas, prioritas, pengingat, memori, sesi langkah kecil, tutoring,
+check-in, keselamatan, dan kontrol data; fondasi grup WhatsApp, Console, ledger,
+paket, serta harness agent juga luas. Kesenjangan utamanya adalah urutan
+pembangunan: fondasi operasi dan monetisasi berkembang jauh sebelum manfaat
+utama dibuktikan. Dogfood tujuh hari, uji ulang Telegram setelah perubahan
+besar, wawancara pelajar, pengukuran keberhasilan Pasal 8, dan kemauan membayar
+belum selesai. Akibatnya Harvy mempunyai banyak komponen tetapi belum mempunyai
+satu hasil pengguna yang terbukti, mudah dijelaskan, dan layak dibayar.
+
+Kesenjangan kemampuan pengguna yang paling material adalah ketiadaan pencarian
+web/RAG dan sumber, pemrosesan lampiran/file/gambar, kalkulator atau eksekusi
+terverifikasi, konektor kalender/email/aplikasi, tool calling serta executor,
+Harvy Web, account linking, Telegram grup, WhatsApp privat, dan shared room
+semantic memory. Kesenjangan komersial serta produksi mencakup checkout,
+subscription, renewal, invoice, refund, webhook, pajak, payment ledger,
+PostgreSQL, deployment/backup, observabilitas terpusat, auth Baileys terenkripsi,
+serta operasi multi-instance.
+
+Arah penawaran yang disarankan untuk dibuktikan lebih dulu bukan “AI pendamping
+serba bisa”, melainkan satu hasil sempit: membantu pelajar yang tugasnya
+tersebar mengubah cerita berantakan menjadi rencana satu minggu, memilih satu
+langkah berikutnya, memasang pengingat, dan menindaklanjutinya hanya dengan
+izin. Fondasi untuk alur itu sebagian besar sudah ada; yang belum ada adalah
+bukti bahwa alurnya bekerja berulang kali dan cukup bernilai. Saran urutannya:
+bekukan fitur platform baru, dogfood alur tersebut tujuh hari, uji dengan
+kelompok kecil pelajar selama dua minggu, ukur tugas tertangkap/langkah
+dimulai/tugas selesai beserta rasa kendali, lalu baru tentukan apakah nilai
+berbayarnya berada pada individu atau Workspace.
+
+Keputusan terbaru mengenai satu Workspace pilot Rp49.000 belum diterapkan pada
+katalog, kode, `PROJECT.md`, `STATUS.md`, atau spesifikasi paket. Sumber-sumber
+itu masih memuat Sapa/Nimbrung/Ruang Rp99.000–599.000. Ketidaksinkronan ini
+perlu ditutup sebelum penawaran dibawa kepada calon pembeli; harga dan pilihan
+paket tidak dapat menggantikan bukti manfaat.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, seluruh `LOG.md`, peta
+dokumentasi, spesifikasi paket pilot, dan capability catalog diperiksa. Tidak
+ada tes, model eksternal, Telegram, WhatsApp, atau perubahan kode yang
+dijalankan karena sesi ini membahas posisi produk dan kesenjangan kemampuan.
+
+**Sengaja ditinggalkan.** Tidak ada fitur, katalog, harga, paket, atau dokumen
+status yang diubah. Nama penawaran, segmen pertama, bentuk pilot, harga, ukuran
+kelulusan, dan pilihan Individual versus Workspace tetap memerlukan keputusan
+pemilik produk setelah diskusi lanjutan.
+
+## 2 Agustus 2026 — Arti harga pilot Workspace diperjelas
+
+**Kenapa.** Pemilik produk meminta penjelasan tentang istilah "pilot" dalam
+rekomendasi harga Workspace Rp49.000 per bulan.
+
+**Dibahas.** Pilot berarti peluncuran terbatas kepada kelompok kecil untuk
+membuktikan pengalaman, biaya nyata, dan kesediaan membayar sebelum paket
+ditetapkan sebagai penawaran publik permanen. Peserta harus mengetahui sejak
+awal bahwa Rp49.000 adalah harga selama masa uji, berapa lama atau bagaimana
+masa itu berakhir, dan bahwa perubahan harga berikutnya memerlukan pemberitahuan
+serta pilihan untuk melanjutkan atau berhenti. Pilot bukan alasan untuk
+mengurangi keselamatan, privasi, hak data, atau menyembunyikan batas kapasitas.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, dan seluruh `LOG.md`
+dibaca kembali. Tidak ada tes yang dijalankan karena sesi ini hanya memperjelas
+istilah produk.
+
+**Sengaja ditinggalkan.** Durasi, jumlah workspace, kriteria kelulusan, harga
+setelah pilot, dan perlakuan harga peserta awal belum diputuskan. Tidak ada
+kode, katalog, atau status kemampuan yang diubah.
+
+## 2 Agustus 2026 — Arah paket grup disederhanakan menjadi satu Workspace
+
+**Kenapa.** Pemilik produk menilai perilaku inti Harvy seharusnya tetap sama di
+semua paket dan ingin menghapus pilihan paket grup Sapa, Nimbrung, serta Ruang.
+Tujuannya adalah menyederhanakan pengembangan: produk publik dibedakan menjadi
+Individual dan Workspace, sementara cara Harvy hadir di grup diatur admin.
+
+**Dibahas.** Arah produk yang dipilih adalah satu paket Workspace tanpa
+perhitungan atau biaya per anggota. Perilaku tidak lagi menjadi pembeda harga;
+admin hanya boleh mengubah konfigurasi partisipasi grup yang berbatas, seperti
+dipanggil saja, hadir kontekstual, jeda, atau nonaktif. Keselamatan, privasi,
+hak data anggota, isolasi scope, identitas Harvy, dan mutu model tidak boleh
+dapat diturunkan atau diubah admin.
+
+"Tanpa batas anggota" dibedakan dari "pemakaian tanpa batas": biaya runtime
+berasal dari aktivitas grup, termasuk planner yang dapat memakai model ketika
+Harvy akhirnya diam. Rekomendasi diskusi adalah tidak menghitung kursi, tetapi
+tetap memakai satu kapasitas/fair-use bersama per workspace yang transparan;
+kontrol keselamatan dan data tidak ikut terblokir ketika kapasitas percakapan
+habis. Harga yang disarankan untuk pilot adalah Rp49.000 per workspace per
+bulan, bukan Rp49.900. Rp59.000 layak diuji sebagai pembanding kemauan
+membayar setelah ada data biaya P50/P90; belum ada harga publik final.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, seluruh `LOG.md`, katalog
+paket di `control-plane-service.ts`, dan gerbang mode grup di `app.ts` diperiksa
+langsung. Riset harga membandingkan literatur primer tentang left-digit effect
+serta harga resmi ChatGPT Go Indonesia dan ChatGPT Business. Tidak ada tes atau
+kanal nyata yang dijalankan karena sesi ini hanya membahas arah produk.
+
+**Sengaja ditinggalkan.** Selain catatan ini, katalog, ID paket, kode runtime,
+dan dokumen produk belum diubah. Harga final, besar kapasitas bersama, lingkup
+satu workspace terhadap jumlah grup, daftar persis kontrol admin, migrasi
+entitlement lama, serta apakah pilihan paket Individual juga disatukan masih
+perlu diputuskan sebelum implementasi.
+
+## 2 Agustus 2026 — Perbedaan paket grup diaudit untuk diskusi
+
+**Kenapa.** Pemilik produk ingin membahas paket yang tersedia untuk grup dan
+perbedaan nyata di antara paket-paket tersebut.
+
+**Dibahas.** Katalog control plane saat ini memuat Sapa Rp99.000 dengan
+kapasitas 5× dan mode direct-only, Nimbrung Rp249.000 dengan kapasitas 15× dan
+mode ambient, serta Ruang mulai Rp599.000 dengan kapasitas 30× dan runtime yang
+saat ini juga ambient. Ketiganya masih hipotesis pilot, belum dapat dibeli, dan
+tidak membedakan model, keselamatan, privasi, atau hak data. Paket grup memakai
+entitlement terpisah dari paket pribadi anggota.
+
+Batas produknya perlu tetap terlihat saat membandingkan paket: angka 50/50/150
+anggota aktif baru tersimpan di katalog dan belum ditegakkan runtime; Ruang
+belum mempunyai administrasi workspace, billing terpusat, atau pengikatan tiga
+grup sebagai satu langganan. Karena itu pembeda Ruang yang benar-benar hidup
+sekarang terutama kapasitas 30×, bukan pengalaman institusi yang lengkap.
+Rekomendasi diskusi—belum keputusan baru—adalah Sapa sebagai pintu masuk pilot,
+Nimbrung sebagai paket utama yang membawa pembeda Harvy, dan Ruang tetap
+invitation-only sampai kemampuan multi-grup serta administrasinya dibangun.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, seluruh `LOG.md`,
+`PILOT_BETA_DAN_PAKET.md`, `ADR-013`, default paket serta pemetaan mode di
+`control-plane-service.ts`, dan gerbang mode grup di `app.ts` diperiksa
+langsung. Tidak ada tes atau kanal nyata yang dijalankan karena sesi ini hanya
+membahas keadaan dan pilihan produk.
+
+**Sengaja ditinggalkan.** Tidak ada harga, kapasitas, nama paket, mode runtime,
+kode, atau status kemampuan yang diubah. Checkout, subscription, enforcement
+anggota aktif, workspace multi-grup, dan keputusan penawaran publik tetap belum
+ada.
+
+## 2 Agustus 2026 — ID internal paket individu mengikuti nama barunya
+
+**Kenapa.** Setelah perubahan nama publik selesai, pemilik produk secara
+eksplisit membatalkan pilihan sebelumnya untuk mempertahankan ID lama dan
+meminta ID internal ikut berubah serta masalah migrasinya diatasi.
+
+**Dibahas.** Pemetaan final adalah `personal_perkenalan` untuk Free,
+`personal_toro` untuk Plus, `personal_sora` untuk Pro, dan `personal_kuro`
+untuk Max. Mengganti ID tanpa migrasi akan memutus enrollment, target audit,
+provider-attempt ledger, dan entitlement ledger. Karena ketiga store berkas
+tidak mempunyai transaksi lintas berkas, keselamatan rolling migration dijaga
+dengan alias kanonik: setiap store dapat berpindah sendiri secara idempoten,
+sementara input lama tetap diterima dan langsung dinormalisasi ke ID baru.
+
+**Yang berubah.** Domain control plane kini mempunyai satu konstanta ID paket
+dan pemetaan alias lama. Default katalog, enrollment privat baru, perubahan
+enrollment, serta versi paket baru selalu memakai ID kanonik. Inisialisasi
+control plane dijalankan eksplisit saat startup; satu mutasi atomik mengganti ID
+pada seluruh versi katalog, enrollment, dan target audit sebelum migrasi nama
+berjalan. Repository provider-attempt dan entitlement menulis ulang ID lama
+secara atomik saat pertama dimuat, termasuk seluruh histori, dan
+menormalisasi setiap write berikutnya agar ID lama tidak hidup kembali. Filter
+usage juga menerima alias lama untuk kompatibilitas. Tes berkas sementara
+membuktikan migrasi keempat ID, referensi yang tetap terhubung, restart
+idempoten, serta tidak adanya ID lama pada hasil tulis. Spesifikasi paket,
+ADR-013, STATUS, dan panduan pengujian diselaraskan; entri LOG sebelumnya
+dipertahankan sebagai riwayat keputusan yang memang berlaku sebelum instruksi
+lanjutan ini.
+
+**Bukti.** `npm run check` PASS. `npm run build` PASS. Empat suite terarah
+(`control-plane-service`, `plan-id-migration`, `usage-ledger-service`, dan
+`console-server`) PASS **29/29**. `npm test` PASS **494 test dalam 77 suite**,
+0 gagal. Tidak ada model eksternal, Telegram, WhatsApp, atau browser Console
+yang dijalankan.
+
+**Sengaja ditinggalkan.** Berkas data lokal asli tidak ditulis ulang manual;
+control plane akan bermigrasi pada startup Harvy berikutnya dan kedua ledger
+pada pembacaan pertamanya. Harga, kapasitas, benefit, paket grup, checkout,
+subscription, serta status harga hipotesis pilot tidak berubah.
+
+## 2 Agustus 2026 — Paket individu menjadi Perkenalan, Toro, Sora, dan Kuro
+
+**Kenapa.** Pemilik produk menetapkan nama publik paket individu: Perkenalan
+untuk Free, Toro untuk Plus, Sora untuk Pro, dan Kuro untuk Max. Katalog aktif
+sebelumnya masih memakai Gratis, Tunas, Mekar, dan Rimbun.
+
+**Dibahas.** Free/Plus/Pro/Max dipakai sebagai kategori pembanding, bukan nama
+publik. ID `personal_free`, `personal_sprout`, `personal_bloom`, dan
+`personal_canopy` sengaja tidak diganti: enrollment serta provider/entitlement
+ledger sudah merujuk ID itu, sehingga menggantinya hanya demi nama akan membuat
+migrasi identitas yang tidak perlu. Perubahan nama harus menjadi versi katalog
+baru dan tidak menulis ulang histori lama.
+
+**Yang berubah.** Default `ControlPlaneService` kini menerbitkan Perkenalan,
+Toro, Sora, dan Kuro dengan harga, kapasitas, audience, serta ID yang sama.
+Startup yang menemukan nama default lama membuat versi kedua secara atomik,
+menutup versi lama pada waktu migrasi, dan tidak membuat versi duplikat saat
+restart. Versi operator yang lebih baru atau terjadwal tidak ditimpa. Tes
+control plane membuktikan nama baru, migrasi keempat paket, kestabilan ID,
+harga/kapasitas yang tidak berubah, paket grup yang tidak tersentuh, dan
+idempotensi restart. PROJECT, spesifikasi paket pilot, ADR-013, STATUS, dan
+panduan pengujian diselaraskan. Catatan LOG lama tetap dibiarkan apa adanya
+karena ia merekam keputusan yang memang berlaku saat ditulis.
+
+**Bukti.** `npm run check` PASS. `npm run build` PASS dan tes terarah
+`dist/tests/control-plane-service.test.js` PASS **11/11**. `npm test` PASS
+**492 test dalam 76 suite**, 0 gagal. `git diff --check` pada berkas perubahan
+PASS; peringatan LF/CRLF bukan whitespace error. Tidak ada model eksternal,
+Telegram, WhatsApp, atau browser Console yang dijalankan.
+
+**Sengaja ditinggalkan.** Berkas control plane lokal tidak ditulis ulang
+manual; migrasi berjalan melalui service pada startup Harvy berikutnya. Harga,
+kapasitas, benefit, nama paket grup, checkout, subscription, dan status harga
+hipotesis pilot tidak berubah.
+
+## 2 Agustus 2026 — Fatal startup dibuktikan sebagai lock stale dan terminal dibuat lebih diagnostik
+
+**Kenapa.** Pemilik produk melaporkan startup yang hanya menulis
+`operational_logging_ready`, lalu `application_fatal` dengan fingerprint
+`00e088575025bee2`; Console di port 3210 tidak dapat dipakai dari proses itu.
+Baris terminal tersebut sengaja tidak membawa `Error.message`, tetapi akibatnya
+kode aman yang sebenarnya tersedia di record NDJSON tidak terlihat oleh
+operator.
+
+**Dibahas.** Record persis pada waktu laporan membuktikan `error.code` adalah
+`LOCAL_DATA_LOCKED` dengan stack `acquireLocalRuntimeLock` sebelum
+`ConsoleServer` dibuat atau dinyalakan. Ini bukan kegagalan model, harga,
+asset web, maupun bind port. Lock tidak boleh dihapus otomatis hanya karena PID
+tampak tidak ada: proses lain atau PID reuse harus diperiksa operator agar dua
+writer JSON tidak hidup bersamaan. Perbaikan yang aman adalah menampilkan
+`code`/`status` yang sudah lolos allowlist pada format terminal, tanpa membuka
+pesan error bebas.
+
+**Yang berubah.** Lock `data/control-plane.json.runtime.lock` milik PID 13852
+diperiksa hanya melalui metadata aman; PID sudah mati dan port 3210 tidak
+memiliki listener, sehingga lock stale itu dihapus manual. Formatter `pretty`
+log operasional kini mencetak `code` dan `status` aman bersama tipe serta
+fingerprint. Tes redaksi yang sudah ada diperluas untuk membuktikan metadata itu
+terlihat tetapi pesan error tetap tidak bocor. STATUS dan runbook Console ikut
+menjelaskan perilakunya. Saat runtime baru PID 5700 kemudian mati tanpa shutdown
+normal dan meninggalkan lock lagi, PID kembali diverifikasi mati sebelum hanya
+lock tersebut dihapus; data control plane, ledger, dan percakapan tidak diubah.
+
+**Bukti.** NDJSON lokal untuk `2026-08-01T22:56:38.787Z` membawa
+`code=LOCAL_DATA_LOCKED` dan stack ke `src/core/local-runtime-lock.ts`, tepat
+sebelum tahap Console. Setelah lock pertama dibersihkan, runtime PID 5700
+mencapai `console_started` dan `application_ready`; endpoint
+`GET http://127.0.0.1:3210/api/v1/health` sempat menjawab HTTP 200
+`{"status":"ready"}`. Runtime itu kemudian berhenti paksa dan lock keduanya
+dibersihkan setelah proses dipastikan mati. Probe tanpa jaringan terhadap
+`.env` nyata sesudahnya berhasil dengan
+`startup_config_and_lock_ok`, `consoleEnabled=true`, host `127.0.0.1`, dan port
+3210, lalu melepas locknya sendiri. `npm run build` lulus. Tes terarah logger,
+local runtime lock, dan Console lulus 20/20 dalam tiga suite. Probe dan tes tidak
+memanggil Telegram, WhatsApp, atau penyedia model.
+
+**Sengaja ditinggalkan.** Tidak ada auto-delete lock dan tidak ada runtime bot
+pengganti yang dijalankan diam-diam. Console masih mengikuti lifecycle aplikasi
+utama; khususnya setup Telegram terjadi sebelum `ConsoleServer.start()`, jadi
+kegagalan jaringan/token Telegram yang berbeda masih dapat mencegah Console
+bind dan perlu pekerjaan arsitektur tersendiri.
+
+## 1 Agustus 2026 — Console menghapus harga `unknown` dan memperoleh UX operasional
+
+**Kenapa.** Pemilik produk menemukan harga `unknown` pada web serta menilai
+Harvy Console belum cukup optimal untuk pemantauan akses awal. Audit data lokal
+menemukan sumber konkretnya: tiga dari sembilan attempt Gemini selesai sebelum
+versi harga pertama dibuat, sedangkan enam attempt sesudahnya sudah mempunyai
+biaya tercatat. Grup tanpa attempt juga dibuatkan bucket palsu `unknown (0)`
+oleh UI.
+
+**Dibahas.** Ledger historis tidak boleh ditulis ulang dan biaya yang belum
+diketahui tidak boleh disamarkan sebagai nol. Dipilih tampilan turunan
+read-only: bila usage lama tersedia dan pasangan model mempunyai harga aktif,
+Console menghitung `current_catalog_estimate`, menandainya dengan `≈`, serta
+menyebut jumlah attempt yang diestimasi. Usage yang hilang tetap “Menunggu data
+provider” dan model tanpa tarif tetap “Harga belum tersedia”. Estimasi ini
+bukan rekonsiliasi atau invoice serta dapat berubah bila tarif aktif berubah.
+Dengan tarif Gemini sekarang, tiga attempt lokal lama (3.981 input + 139
+output) mempunyai estimasi terpisah US$0,001541800 tanpa mengubah recordnya.
+
+**Yang berubah.** `UsageLedgerService` kini menghasilkan view biaya tercatat,
+estimasi katalog aktif, atau unavailable beserta reason dan cakupan
+`complete/estimated/partial/unavailable`. Ringkasan serta breakdown memakai
+angka indikatif itu sambil mempertahankan field biaya historis untuk
+kompatibilitas. API usage membawa provenance per attempt; agregasi grup membawa
+angka tercatat dan indikatif secara terpisah. `src/console/assets.ts` dibangun
+ulang menjadi dashboard responsif dengan empat KPI utama, banner cakupan biaya,
+istilah Indonesia, empty state grup yang jujur, pemuatan grup terisolasi,
+loading/error/retry, refresh manual+otomatis, mutation guard, validasi desimal
+Indonesia, tab keyboard, tabel mobile berlabel, serta inventaris model
+environment yang lebih mudah dibaca. Review akhir menemukan dan menutup empat
+race/UX tambahan: refresh latar tidak lagi menimpa form, reload pascamutasi
+menunggu refresh aktif lalu mengambil snapshot baru, cache grup diinvalidasi
+setelah control/harga berubah, dan badge anggota mengikuti cakupan biaya alih-
+alih menyebut estimasi “Lengkap”. ADR-013, runbook Console, STATUS, dan TESTING
+diperbarui mengikuti kontrak estimasi ini.
+
+**Bukti.** `npm run check` lulus; build final lulus. Tes terarah Console dan
+ledger lulus 16/16. `npm test` lulus 491/491 dalam 76 suite. Tes baru membuktikan
+attempt sebelum harga memperoleh estimasi nano-USD tanpa mutasi, timeout tanpa
+usage tetap unavailable, harga nol eksplisit tetap biaya tercatat, API grup
+memisahkan nilai historis/indikatif, dan JavaScript aset dapat diparse. Smoke
+browser memakai `ConsoleServer` in-memory pada port acak, tanpa bot atau model:
+desktop 1440×1000 dan ponsel 390×844 menampilkan Gemini serta DeepSeek, estimasi
+`≈`, grup berisi dan kosong, tidak menampilkan `unknown`, tidak mempunyai
+`pageerror`, serta viewport ponsel 390/390 tanpa overflow dokumen. Form harga
+nyata di fixture menerima `0,35`/`2,75`, menyimpan `0.35`/`2.75`, menambah versi
+kedua, lalu menonaktifkan tombol ketika tak ada perubahan. Probe sesi awal yang
+belum login tetap menghasilkan dua respons 401 yang memang menjadi boundary
+auth; tidak ada error JavaScript. Screenshot bukti tersimpan sebagai
+`harvy-console-desktop.png` dan `harvy-console-mobile.png` di folder visualisasi
+sesi Codex. Smoke regresi kedua memperlambat refresh bersamaan dengan mutasi:
+input `0,35`/`2,75` bertahan sebelum simpan, hasil akhir ternormalisasi, biaya
+grup berubah setelah versi harga baru, badge tetap “Mengandung estimasi”, dan
+tidak ada `pageerror`. Tes API grup juga mencakup satu bucket campuran berisi
+biaya tercatat, estimasi, dan usage tertunda (`partial`).
+
+**Sengaja ditinggalkan.** Data ledger Harvy asli tidak direkonsiliasi atau
+dimutasi, runtime utama tidak direstart, dan Console belum diuji operasi browser
+jangka panjang. Console tetap localhost/internal dan angka indikatif belum
+layak menjadi tagihan; gerbang PostgreSQL, auth produksi, rekonsiliasi provider,
+backup/restore, serta threat-model tetap berlaku sebelum publikasi.
+
+---
+
+## 1 Agustus 2026 — Console menjadikan environment authority katalog model
+
+**Kenapa.** Pemilik produk menegaskan bahwa Harvy Console harus membaca model
+apa saja yang tersedia di `.env`; operator tidak seharusnya mengetik provider
+atau model bebas dan hanya perlu mengatur harganya.
+
+**Dibahas.** Katalog adalah snapshot runtime dari semua slot model yang dikenal,
+bukan salinan seluruh environment dan bukan hasil menebak provider dari URL.
+Model testing default/override, fallback, serta production yang nonkosong tetap
+ditampilkan meski modenya tidak aktif. Browser hanya boleh menerima metadata
+aman. Harga tetap append-only: menghapus model dari `.env` mencegah harga baru,
+tetapi tidak menghapus harga maupun biaya historis. Perubahan environment baru
+berlaku setelah restart.
+
+**Yang berubah.** `src/config.ts` membentuk katalog terdedplikasi berisi
+provider/model, sumber slot, mode, origin, tier, dan status aktif; ID env yang
+tidak dapat dikatalogkan kini menggagalkan startup alih-alih hilang diam-diam.
+Kontrak domain dan `ControlPlaneService` meneruskan snapshot tanpa
+memersistenkannya serta menolak versi harga untuk pasangan di luar katalog.
+`src/console/assets.ts` mengganti dua input bebas dengan satu pemilih pasangan,
+menampilkan inventaris aktif/tidak aktif dan slot sumber, serta mengisi ulang
+harga dari versi terbuka terbaru. Runtime utama dan probe ledger memakai
+katalog yang sama. `.env` lokal diberi
+`AI_TESTING_FALLBACK_PROVIDER_ID=always-codex` agar label fallback tidak
+generik; `.env.example`, AGENTS, README, PROJECT, STATUS, TESTING, runbook, dan
+ADR-013 menjelaskan authority serta batasnya. Audit akhir juga menemukan lock
+runtime PID 14204 tertinggal; setelah proses itu dipastikan sudah tidak ada,
+hanya `data/control-plane.json.runtime.lock` yang stale dihapus.
+
+**Bukti.** `npm run check` lulus. Empat suite terarah
+(`ai-config`, `control-plane-service`, `usage-ledger-service`, dan
+`console-server`) lulus 33/33. `npm test` lulus 489/489 dalam 76 suite. Probe
+konfigurasi lokal yang hanya mencetak metadata aman menemukan tiga pasangan:
+`google-ai-studio/gemini-3.5-flash-lite` aktif sebagai primary testing,
+`always-codex/DeepSeek-V4-Flash` aktif sebagai fallback testing, dan
+`openrouter/deepseek/deepseek-v4-flash` tersedia tetapi tidak aktif dari slot
+production cheap. Tes membuktikan API/UI tidak memakai input provider bebas,
+secret/base URL tidak ikut katalog, pasangan buatan ditolak dan diaudit, model
+duplikat antar-tier digabung, ID cacat ditolak, serta histori harga bertahan
+ketika katalog berubah. Pemeriksaan terakhir memastikan lock runtime sudah
+tidak ada.
+
+**Sengaja ditinggalkan.** Runtime tidak direstart dan browser nyata belum diuji
+pada sesi ini; proses Harvy yang sudah hidup harus direstart agar membaca
+katalog serta provider ID baru. Console tidak mengambil daftar model langsung
+dari endpoint provider—sesuai keputusan, `.env` tetap authority—dan belum
+internet-ready atau menjadi billing database produksi.
+
+---
+
+## 1 Agustus 2026 — Connection refused Console dan lock stale dipulihkan
+
+**Kenapa.** Setelah Console selesai dibangun, pemilik mencoba membuka
+`http://127.0.0.1:3210` dan browser menolak koneksi.
+
+**Yang berubah.** Tidak ada perubahan kode produk. `.env` lokal—yang tidak
+masuk Git—ditambahkan `HARVY_CONSOLE_ENABLED=true`, host `127.0.0.1`, dan port
+`3210`. Konfigurasi baru hanya dibaca saat startup, sehingga runtime yang sudah
+hidup tetap perlu dihentikan normal lalu dijalankan ulang. Percobaan restart
+pertama kemudian gagal `LOCAL_DATA_LOCKED`; setelah PID pemilik dipastikan
+sudah mati, hanya `data/control-plane.json.runtime.lock` yang stale dihapus.
+
+**Bukti.** Pemeriksaan `netstat` menunjukkan tidak ada listener port 3210,
+sementara proses Node pemilik runtime lock masih hidup. Pembacaan nama
+konfigurasi yang disaring (tanpa token/API key) menunjukkan ketiga variabel
+`HARVY_CONSOLE_*` belum ada. Ini membuktikan `connection refused` berasal dari
+Console yang tidak diaktifkan pada proses tersebut, bukan kegagalan login,
+CSRF, atau browser. Metadata fatal restart berikutnya menyimpan kode
+`LOCAL_DATA_LOCKED` dan menunjuk lock PID lama; pemeriksaan proses memastikan
+PID itu sudah mati sebelum berkas lock dihapus.
+
+**Sengaja ditinggalkan.** Lock stale tidak dihapus otomatis oleh produk karena
+PID reuse/race dapat membuat proses kedua mengambil repository yang masih
+dipakai. Operator tetap perlu menjalankan ulang `npm run dev`; bila pola lock
+stale muncul pada setiap Ctrl+C, lifecycle `tsx watch` di Windows perlu diuji
+dan diperbaiki tersendiri.
+
+---
+
+## 1 Agustus 2026 — Council menutup Harvy Console, paket pilot, dan ledger delivery
+
+**Kenapa.** Pemilik produk meminta seluruh fondasi akses awal dikerjakan secara
+otonom: membedakan pengguna/grup standard dan beta, memantau penggunaan tanpa
+membuat arsip percakapan, mengukur biaya Gemini primary maupun DeepSeek
+fallback, menghitung token per grup dan anggota, merumuskan paket pribadi/grup,
+serta menyiapkan Console localhost yang kelak dapat ditransisikan ke
+VPS/domain. Pemilik juga meminta council menilai keputusan produk, ledger, dan
+keamanan Console sebelum implementasi dinyatakan selesai.
+
+**Dibahas.** Tiga peninjau read-only bekerja sebagai council produk, ledger,
+dan Console. Putusannya `lulus bersyarat`: control plane serta pengukuran boleh
+dibangun untuk pilot lokal, tetapi checkout, langganan publik, transcript
+review, penjualan SLA grup, dan membuka Console ke internet tetap ditahan.
+Katalog pilot yang dipilih adalah Gratis Rp0 (1×), Tunas Rp19.000 (2×), Mekar
+Rp39.000 (5×), Rimbun Rp69.000 (10×), Sapa Rp99.000 (5×), Nimbrung Rp249.000
+(15×), dan Ruang mulai Rp599.000 (30×); cohort beta menjadi overlay 4× yang
+terpisah dari paket, kuota, environment, dan consent evaluasi. Model tetap
+dipilih menurut pekerjaan, bukan harga paket. Operator hanya boleh mengundang
+atau mencabut evaluasi—tidak memberi consent atas nama peserta.
+
+Council juga menetapkan tiga buku yang tidak boleh dicampur. Provider-attempt
+ledger mengukur setiap fetch fisik, termasuk retry, fallback, planner yang
+akhirnya diam, kegagalan, dan keselamatan. Product telemetry tetap menjadi
+jejak teknis tanpa isi. Entitlement ledger menjadi authority kapasitas
+komersial. Audit akhir menemukan bahwa authority kuota lama masih membaca
+provider success; itu diperbaiki sehingga `reply`, `session`, dan
+`group-reply` baru mendebit setelah adapter memastikan delivery. Due-date,
+boundary, understanding, triase, review, ringkasan, insight,
+group-participation, schema rusak, gagal kirim, serta keselamatan menjadi biaya
+Harvy tanpa mengurangi paket.
+
+**Yang berubah.**
+
+- `src/domain/control-plane.ts`, `src/core/control-plane-service.ts`, dan
+  `src/storage/file-control-plane-repository.ts` membangun enrollment
+  pseudonim, cohort, paket berversi, override/expiry beta, mode grup, invitation
+  consent, principal PN/LID scoped, label operator manual, audit mutasi, serta
+  katalog harga provider+model append-only. Bootstrap environment 0/0 sekarang
+  berarti token-only, bukan bukti model gratis; tarif nol sungguhan harus dibuat
+  eksplisit sebagai versi harga.
+- `src/domain/usage-ledger.ts`, `src/core/usage-ledger-service.ts`, dan
+  `src/storage/file-usage-ledger-repository.ts` mencatat `requestId` dan setiap
+  `attemptId`, provider/model/origin aktual, primary/fallback, purpose, token
+  provider/estimasi, cache/reasoning, generation, latency, outcome, snapshot
+  harga, biaya provider dan katalog dalam nano-USD, serta status
+  `estimated/unpriced/pending`. Ringkasan/ekspor membaca seluruh record, bukan
+  hanya batas tabel, dan kelengkapan biaya dinyatakan
+  `complete/partial/unknown` alih-alih mengubah unknown menjadi US$0.
+- `src/domain/entitlement.ts`,
+  `src/storage/file-entitlement-ledger-repository.ts`,
+  `src/core/telemetry-service.ts`, adapter Telegram, dan core grup menyelesaikan
+  settlement idempoten sesudah delivery. Gerbang kuota 24 jam kini membaca
+  debit entitlement yang terkirim; token teknis model tetap terlihat terpisah.
+  Settlement berjalan di latar agar balasan tidak menunggu rewrite JSON dan
+  di-drain saat shutdown. Kegagalan write dipertahankan untuk retry.
+- `src/ai/client.ts` dan seluruh parser percakapan/grup memberi setiap logical
+  request provenance aktual sampai fallback. Respons transport sukses yang
+  gagal kontrak parser ditandai `schema_rejected`; ia tetap mempunyai biaya
+  provider, tetapi tidak menjadi balasan/debit. Runtime membuffer observer
+  attempt agar pencatatan tidak menahan percakapan, sedangkan probe/evaluator
+  satu kali menunggu ledger selesai agar proses tidak keluar terlalu cepat.
+- Atribusi grup memakai subject HMAC dan principal acak per scope. PN/LID yang
+  terbukti satu orang digabung. Console menunjukkan bucket anggota pemicu dan
+  `shared`, bukan isi chat atau penilaian perilaku. Kontrol “lupakan tentang
+  aku” kini menghapus seluruh alias, principal mapping, dan attempt provider
+  anggota itu tanpa menghapus anggota lain; penghapusan subject memakai
+  generation guard sehingga request lama tidak menghidupkan ledger kembali.
+- `src/console/console-server.ts` dan `src/console/assets.ts` membangun Harvy
+  Console built-in: bind wajib `127.0.0.1`, token ditukar ke session
+  `HttpOnly`/`SameSite=Strict`, CSRF, Host/Origin, CSP/no-CORS, schema/body/rate
+  dan optimistic-version guards, drain mutation, serta audit
+  success/rejected/failed. UI mengatur enrollment/cohort/paket/mode/consent
+  invitation/harga, memberi label pseudonim manual, memfilter usage menurut
+  cohort/paket, dan menampilkan breakdown beta/standard, plan, fallback,
+  entitlement, unknown cost, grup, dan anggota.
+- `src/core/local-runtime-lock.ts`, `src/app.ts`, dan seluruh probe/evaluator
+  memasang lock atomik `<CONTROL_PLANE_FILE>.runtime.lock`. Runtime dan alat
+  satu kali tidak dapat membuka cache repository JSON yang sama secara
+  bersamaan. Lock berisi PID/peran/token acak tanpa data pengguna, dilepas pada
+  shutdown normal, dan sengaja tidak dibersihkan otomatis setelah crash agar
+  operator lebih dulu memastikan PID sudah mati. `.gitignore` mengecualikannya.
+- `docs/decisions/ADR-013-harvy-console-entitlement-dan-ledger-biaya.md`,
+  `docs/operations/HARVY_CONSOLE.md`,
+  `docs/product/PILOT_BETA_DAN_PAKET.md`, `PROJECT.md`, `STATUS.md`, `TESTING.md`,
+  `README.md`, `.env.example`, dan `AGENTS.md` sekarang memisahkan Console dari
+  Harvy Web, mendokumentasikan batas pilot, definisi debit/biaya, backup,
+  penghapusan, local lock, serta gerbang transisi PostgreSQL, OIDC/MFA/RBAC,
+  TLS, outbox, rekonsiliasi, payment ledger, dan threat-model review.
+
+**Bukti.** Council meninjau kode dan desain secara read-only lalu seluruh
+temuan materialnya ditutup: race penghapusan ledger, planner grup yang sempat
+terhitung debit, atribusi anggota yang belum ikut dihapus, unknown cost yang
+sempat tampil nol, `schema_rejected` yang belum dipakai, filter cohort/paket,
+risiko dua proses JSON, write ledger yang dapat menahan balasan, bootstrap
+harga nol palsu, serta debit sebelum delivery. `npm run check` PASS. Pengujian
+terarah telemetry+usage ledger PASS 22/22. `npm test` PASS **484 test / 76
+suite**, fail 0. Suite itu mencakup primary→fallback sebagai dua attempt satu
+request, schema rejection, biaya tidak diketahui, delivery berhasil/gagal,
+authority kuota, deletion generation guard, PN/LID dan self-delete, lock proses,
+security HTTP Console, adapter Telegram, serta core grup.
+
+Tidak ada panggilan model eksternal, uji browser manual jangka panjang,
+Telegram nyata, atau WhatsApp grup nyata pada verifikasi penutup ini. Karena
+itu kualitas percakapan/model, delivery kanal sungguhan, angka harga provider,
+reliability Baileys, dan willingness-to-pay belum dinyatakan terbukti.
+
+**Sengaja ditinggalkan.** Checkout, payment/subscription lifecycle, invoice,
+webhook, renewal/refund/pajak/overage, dashboard pembayar/admin grup, participant
+consent flow untuk evaluasi luas, transcript review, Harvy Web pengguna,
+PostgreSQL, deployment VPS/domain, OIDC/MFA/RBAC/TLS, secret manager, outbox,
+rekonsiliasi provider/payment, backup/PITR drill, alerting, pentest, SLA grup,
+serta migrasi auth Baileys terenkripsi. Console tetap localhost satu proses dan
+katalog tetap hipotesis pilot sampai biaya serta perilaku nyata mempunyai
+sampel yang cukup.
+
+---
+
+## 1 Agustus 2026 — Paket grup dipisahkan menurut direct, ambient, dan workspace
+
+**Kenapa.** Setelah harga pribadi dirumuskan, pemilik meminta paket khusus grup
+dibahas. Pola biaya, pembeli, privasi, dan nilai Harvy di grup berbeda dari satu
+akun pelajar.
+
+**Dibahas.** Paket grup tidak menyalin Free/Ringan/Pro/Max pribadi dan tidak
+ditagih per seluruh anggota terdaftar. Bentuk awal yang disarankan adalah:
+`Group Direct` Rp99.000 per grup per bulan, sampai 50 anggota aktif, untuk
+balasan saat Harvy ditag/di-quote/dipanggil; `Group Ambient` Rp249.000 per grup
+per bulan, sampai 50 anggota aktif, untuk direct plus planner partisipasi
+natural; dan `Workspace` mulai Rp599.000 per bulan untuk sampai tiga grup/150
+anggota aktif, billing serta kebijakan terpusat, dan kebutuhan sekolah,
+komunitas, lembaga bimbingan, atau sponsor. Semua angka merupakan hipotesis
+pilot dan wajib dikoreksi oleh ledger biaya grup nyata.
+
+Unit bisnisnya adalah **scope grup + kapasitas**, bukan seat pribadi. Banyak
+anggota grup hanya membaca dan tidak memicu Harvy; menagih semua seat akan
+terasa boros. Sebaliknya, jumlah anggota saja juga tidak cukup karena grup kecil
+yang ramai dapat lebih mahal daripada grup besar yang sepi. Setiap paket
+mempunyai batas anggota aktif dan usage credit bersama. Pemakaian grup tidak
+mengurangi paket pribadi anggota, dan pembayaran grup tidak memberi paket
+pribadi berbayar kecuali sponsor membeli grant terpisah.
+
+Ambient menjadi paket utama dan paling mencerminkan pembeda Harvy, tetapi juga
+paling berisiko secara biaya: planner dan triase dapat mencapai provider meski
+Harvy akhirnya diam, lalu direct reply/review dapat menambah panggilan. Ketika
+pool mendekati batas, sistem tidak menurunkan model diam-diam. Ambient budget
+dikurangi lebih dulu dan grup turun secara transparan ke direct-only; direct
+normal tetap mendapat reservasi, keselamatan tetap menembus cap, dan admin
+menerima pemberitahuan 70/90/100 persen. Tidak ada overage otomatis; pembelian
+kapasitas tambahan memerlukan persetujuan pembayar.
+
+Psikologi halaman harga tetap terang. Direct menjadi pintu masuk; Ambient
+diletakkan di tengah dengan label faktual "untuk grup aktif"; Workspace menjadi
+jangkar multi-grup. Bila 50 anggota aktif terpenuhi, ekuivalen dapat dijelaskan
+sebagai Rp1.980/anggota untuk Direct dan Rp4.980/anggota untuk Ambient, tetapi
+harga grup penuh tetap ditampilkan paling utama. Tidak ada label populer palsu,
+seat bayangan, atau harga awal yang menyembunyikan overage.
+
+Group trial berlangsung 14 hari atau sampai credit pilot habis—mana yang lebih
+dulu—tanpa kartu dan tanpa tagihan otomatis. Setelahnya grup turun ke allowance
+direct gratis yang sangat kecil atau berhenti memproses pesan biasa sesuai
+keputusan produk final; kontrol data dan pesan keselamatan direct tidak boleh
+dipakai sebagai alat memaksa pembayaran. Beta grup tetap program evaluasi
+terpisah, tidak menjadi trial komersial terselubung.
+
+Pembayar harus merupakan pengelola grup yang terverifikasi. Membayar tidak
+memberi akses ke isi chat, memori anggota, percakapan pribadi, atau breakdown
+per anggota secara default; dashboard pembayar cukup memperlihatkan health,
+kapasitas agregat, anggota aktif agregat, mode, dan waktu reset. Pergantian
+admin/pembayar membutuhkan transfer kepemilikan berizin dan masa tenggang.
+
+Peluncuran komersial WhatsApp belum layak dijanjikan sekarang. Adapter grup
+masih beta lokal berbasis Baileys yang tidak resmi, baru satu nomor/grup nyata,
+dan perilaku lengkap/reliability belum teruji di grup nyata. Paket boleh
+dirancang serta diukur dalam beta, tetapi tidak boleh menjual SLA atau
+subscription umum sebelum risiko kanal, operasi, dan pemulihan terbukti.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, dan seluruh `LOG.md`
+dibaca. Dokumentasi harga bisnis saat ini menunjukkan produk workspace lazim
+menagih per pengguna; pola itu dibandingkan dengan arsitektur Harvy yang
+memproses satu ruang bersama dan dinilai bukan unit harga yang tepat. Status
+proyek membuktikan Telegram grup belum ada dan WhatsApp grup masih fondasi beta.
+Tidak ada tes atau perubahan kode produk.
+
+**Sengaja ditinggalkan.** Harga final, nilai usage credit, definisi anggota
+aktif, allowance sesudah trial, harga tambahan grup/kapasitas, sponsor grant,
+transfer billing owner, pajak/fee, kontrak institusi, dan jalur produksi kanal
+belum disahkan atau dibangun.
+
+## 1 Agustus 2026 — Strategi pembayaran kembali ke Rp19/39/69 ribu
+
+**Kenapa.** Setelah membandingkan Max 5×/10× Pro, pemilik menilai harga
+Rp129.000–249.000 tidak masuk akal bagi Harvy. Pemilik meminta kembali ke
+struktur sebelumnya dan merancang alasan psikologis yang etis agar pengguna
+ingin membayar, termasuk membuat Max sungguh menarik.
+
+**Dibahas.** Tangga harga pribadi kembali menjadi gratis, paket masuk
+Rp19.000, paket utama Rp39.000, dan Max Rp69.000 per bulan. Pro/Rp39.000 menjadi
+mesin pendapatan yang ditujukan bagi penggunaan harian; Rp19.000 menghilangkan
+hambatan awal; Max menjadi jangkar nilai sekaligus pilihan bulan belajar
+intensif. Max tidak lagi dijanjikan 5×/10× Pro. Kapasitas awalnya kira-kira dua
+kali Pro ditambah capability yang benar-benar mahal seperti riset bersumber,
+analisis file/gambar, konteks proyek panjang, dan prioritas kapasitas—semuanya
+hanya disebut ketika sudah dibangun. Model, review keselamatan, privasi, dan hak
+data tetap sama menurut kebutuhan, bukan harga.
+
+Psikologi yang diterima adalah **choice architecture terang**, bukan manipulasi.
+Tiga paket berbayar harus mewakili alasan nyata: ringan, rutin, dan intensif.
+Kartu Rp39.000 boleh diletakkan di tengah dan diberi label faktual "untuk
+penggunaan harian", tetapi tidak boleh disebut "paling populer" sebelum data
+membuktikannya. Harga bulanan tetap utama; ekuivalen harian boleh ditampilkan
+jujur sebagai sekitar Rp633, Rp1.300, dan Rp2.300 per hari tanpa kata "cuma".
+Max harus mempunyai benefit sendiri dan bukan decoy sengaja buruk.
+
+Trial yang disarankan adalah tujuh hari Pro tanpa kartu pembayaran, baru mulai
+setelah pengguna memperoleh hasil bermakna pertama agar masa coba tidak habis
+sebelum Harvy dipahami. Akhir trial selalu turun ke gratis tanpa tagihan. Max
+dapat dibeli untuk 30 hari pada musim ujian/proyek dengan opsi non-renewing yang
+jelas; auto-renew hanya bila dipilih sadar. Harvy boleh merekomendasikan paket
+berdasarkan angka penggunaan dan capability yang dipakai, bahkan bila hasilnya
+menyarankan paket lebih murah. Isi percakapan, risiko, emosi, atau kerentanan
+tidak dipakai untuk upsell.
+
+Prompt upgrade dibatasi: satu pemberitahuan menjelang kapasitas normal habis
+dan satu saat cap tercapai; tidak muncul pada giliran keselamatan, dukungan
+emosional, atau ketika pengguna sedang tertekan. Pengguna tetap dapat melihat
+dan mengendalikan tugas/data setelah cap. Tidak ada countdown palsu, diskon
+abadi palsu, fee tersembunyi, tombol batal yang disamarkan, forced continuity,
+virtual coin yang menyembunyikan rupiah, atau social proof buatan. Pembatalan
+harus semudah berlangganan. Larangan itu penting karena audiens Harvy mencakup
+anak di bawah umur dan karena kepercayaan adalah bagian nilai produknya.
+
+Alasan membayar yang akan diuji: continuity yang benar-benar membantu
+menyelesaikan minggu sekolah; kapasitas ketika kebutuhan meningkat; visualisasi
+kemajuan yang dikendalikan pengguna; alat riset/file/proyek yang menimbulkan
+biaya; dan reliability saat ramai. Copy tidak menjual "AI lebih pintar", tetapi
+hasil konkret seperti menyusun minggu, melanjutkan belajar, dan menuntaskan
+proyek tanpa Harvy mengambil alih. Ukuran conversion tetap tunduk pada rasa
+terbantu, kemandirian, gangguan, keselamatan, dan kendali pengguna.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, dan seluruh `LOG.md`
+dibaca kembali. Literatur tiered pricing, field experiment free trial, serta
+temuan regulator/riset tentang hidden subscription, forced continuity, false
+scarcity, dan dark patterns—termasuk dampaknya pada konsistensi pilihan dan
+kepercayaan—diperiksa. Tidak ada tes atau perubahan kode produk.
+
+**Sengaja ditinggalkan.** Nama paket publik, kapasitas/usage credit konkret,
+daftar capability yang sudah layak dijual, naskah paywall, trial trigger final,
+target conversion/margin, dan mekanisme pembayaran belum disahkan atau dibangun.
+
+## 1 Agustus 2026 — Max dirancang sebagai pilihan kapasitas 5× dan 10× Pro
+
+**Kenapa.** Pemilik mengusulkan agar paket Max memberi pilihan kapasitas lima
+kali atau sepuluh kali Pro, bukan hanya satu batas Max.
+
+**Dibahas.** Usulan itu dapat menjadi satu keluarga entitlement `max` dengan
+dua varian `max_5x` dan `max_10x`, tetapi multiplier mengacu pada usage credit
+Pro—bukan raw token, jumlah pesan, kualitas model, atau hak keselamatan. Routing
+model tetap menurut kebutuhan pekerjaan. Pengguna harus melihat kapasitas,
+periode reset, dan harganya sebelum membeli; dua varian tidak boleh memakai
+harga sama atau disebut unlimited.
+
+Harga Max Rp69.000 yang dibahas sebelumnya tidak cocok dengan kapasitas 5×–10×
+Pro Rp39.000 kecuali ledger membuktikan utilisasi dan biaya model sangat rendah.
+Hipotesis konservatif untuk diuji adalah Max 5× pada kisaran Rp129.000–149.000
+per bulan dan Max 10× pada kisaran Rp229.000–249.000 per bulan. Harga itu sudah
+memberi diskon volume dibanding mengalikan harga Pro secara lurus, sehingga
+belum boleh diturunkan lagi tanpa data biaya P90 dan pengguna yang benar-benar
+menghabiskan kuota.
+
+Peluncuran yang disarankan adalah membuka Max 5× lebih dulu. Max 10× sudah ada
+di plan catalog/Console tetapi tetap nonaktif atau invitation-only sampai
+minimal satu siklus tagihan membuktikan margin, pola retry/fallback, rate limit,
+dan beban dukungan Max 5×. Jika pemilik ingin Max publik tetap Rp69.000, varian
+itu sebaiknya sekitar 2× Pro dan tidak memakai label 5×/10×.
+
+Usage credit keselamatan yang harus menembus cap tetap tidak dipakai untuk
+menghukum atau memotong entitlement pengguna, walaupun biaya providernya tetap
+masuk ledger perusahaan. Upgrade 5× ke 10× kelak memerlukan proration yang
+terlihat; downgrade berlaku pada periode berikutnya dan tidak menghapus data.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, dan seluruh `LOG.md`
+dibaca kembali. Belum ada baseline biaya provider produksi atau distribusi
+utilisasi paket, sehingga rentang harga di atas masih hipotesis dan bukan harga
+yang disahkan. Tidak ada tes atau perubahan kode produk.
+
+**Sengaja ditinggalkan.** Nilai satu usage credit, kapasitas Pro konkret,
+harga Max final, proration, kebijakan carry-over, periode reset, dan syarat
+mengaktifkan Max 10× belum diputuskan atau dibangun.
+
+## 1 Agustus 2026 — Tangga harga pelajar dan paket grup dipisahkan
+
+**Kenapa.** Pemilik menilai satu paket Rp29.000 membuat pengguna sulit
+membandingkan kebutuhan dan terlalu tinggi sebagai pintu masuk pelajar. Pemilik
+mengusulkan harga awal Rp19.000, lalu Pro dan Max yang lebih tinggi, serta
+menegaskan ekonomi grup tidak perlu mengikuti kantong pelajar karena pola
+penggunaannya berbeda.
+
+**Dibahas.** Arah komersial direvisi menjadi tangga harga yang mudah dipilih
+menurut intensitas penggunaan. Hipotesis awalnya: gratis untuk mencoba dan
+fungsi inti; paket masuk Rp19.000/bulan untuk penggunaan ringan rutin; paket
+menengah Rp39.000/bulan untuk penggunaan harian; dan paket kapasitas tinggi
+Rp69.000/bulan untuk belajar/proyek intensif serta capability mahal yang kelak
+tersedia. Angka itu belum harga final: semuanya wajib lolos baseline biaya P50,
+P90, retry/fallback, fee pembayaran, pajak, operasi, dan target margin. Paket
+bulanan lebih dulu; tidak ada klaim unlimited, kontrak tahunan, atau harga
+permanen saat pola biaya belum terbukti.
+
+Tiga tier dinilai berguna bukan untuk membuat pilihan semu, melainkan memberi
+tiga profil yang benar-benar berbeda: ringan, rutin, dan intensif. Batasnya
+berupa kapasitas/usage credit dan capability berbiaya—bukan model yang sengaja
+lebih bodoh, review keselamatan, hak data, atau privasi. Routing model tetap
+menurut kebutuhan pekerjaan. Nama `entry|pro|max` dapat dipakai sementara
+untuk pembicaraan, tetapi `Pro`/`Max` belum diterima sebagai nama publik karena
+arah merek proyek menolak nama generik; penamaan Harvy perlu dibahas terpisah.
+
+Grup menjadi lini produk dan entitlement terpisah dari paket individu. Hipotesis
+awal: grup `direct` sekitar Rp99.000 per grup per bulan dengan Harvy menjawab
+saat dipanggil; grup `ambient` sekitar Rp249.000 per grup per bulan karena
+planner/triase dapat memakai API pada pesan yang akhirnya tidak dibalas; dan
+institusi/sponsor memakai penawaran tersendiri setelah biaya serta kebutuhan
+administrasinya terbukti. Harga grup mempunyai batas anggota aktif dan usage
+credit, bukan hanya jumlah anggota terdaftar. Angka tersebut adalah titik uji,
+bukan harga yang disahkan.
+
+Pemakaian chat pribadi selalu masuk entitlement individu. Pemakaian di grup
+masuk entitlement grup dan tidak mengurangi kuota pribadi anggota. Membeli
+paket individu tidak otomatis membiayai grup, dan langganan grup tidak otomatis
+memberi paket pribadi berbayar kepada semua anggota. Sponsor kelak boleh
+memberikan seat/credit pribadi secara eksplisit. Pemisahan ini mencegah satu
+pelajar membayar aktivitas puluhan anggota serta membuat margin tiap lini dapat
+dilihat jujur di Console.
+
+Beta tetap bukan paket harga. Pengguna beta dapat memperoleh kapasitas uji
+sementara pada salah satu policy yang ekuivalen tanpa tagihan, sedangkan grup
+beta memperoleh quota pengujian tersendiri. Ketika beta berakhir, downgrade dan
+data yang tetap dapat diakses harus dijelaskan sejak awal.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, dan seluruh `LOG.md`
+dibaca kembali. Jalur grup yang sudah diperiksa pada diskusi sebelumnya
+menunjukkan ambient planner, triase, reply, dan review dapat menghasilkan
+beberapa panggilan model per giliran, sehingga paket grup memang tidak setara
+dengan satu akun pribadi. Pembanding resmi yang telah diperiksa pada sesi ini
+adalah ChatGPT Go Indonesia Rp75.000/bulan; angka Harvy tidak disalin darinya.
+Tidak ada tes atau perubahan kode produk.
+
+**Sengaja ditinggalkan.** Nama publik paket, multiplier/usage credit konkret,
+jumlah anggota aktif, fair-use, target margin, pajak/fee, harga tahunan, diskon,
+paket keluarga, syarat sponsor, dan harga grup final belum disahkan. Semuanya
+menunggu ledger biaya dan pilot penggunaan nyata.
+
+## 1 Agustus 2026 — Tier langganan dan ledger token/biaya dirumuskan
+
+**Kenapa.** Pemilik ingin menentukan apakah Harvy memerlukan paket bertingkat
+seperti Pro/Max dan harga awalnya, sekaligus memastikan Harvy Console dapat
+menunjukkan seluruh token serta biaya API untuk pengembangan, grup, dan anggota
+secara akurat. Console juga perlu menyediakan pengaturan harga input/output per
+satu juta token.
+
+**Dibahas.** Arsitektur entitlement sebaiknya mendukung beberapa paket sejak
+awal, tetapi peluncuran konsumen pertama cukup mempunyai standar gratis dan
+satu paket individu berbayar. Tier kapasitas tertinggi belum ditampilkan sampai
+data penggunaan membuktikan adanya segmen berat atau capability mahal yang
+benar-benar berbeda. Beta tetap overlay evaluasi dan bukan tier pembayaran.
+`free`, `individual`, dan `high_capacity` dapat dipakai sebagai ID internal;
+nama Pro/Max tidak disarankan sebagai nama akhir karena keputusan proyek
+meminta bahasa merek Harvy/kapibara/pertumbuhan yang tidak generik.
+
+Hipotesis harga awal untuk diuji, bukan harga yang sudah disahkan, adalah
+Rp29.000 per bulan bagi satu paket individu. Paket kapasitas tinggi dapat
+dipertimbangkan kemudian sekitar Rp59.000 per bulan hanya bila benefit dan
+biaya nyatanya membenarkan. Pembanding pasar yang diperiksa hari ini adalah
+ChatGPT Go Indonesia Rp75.000 per bulan; Harvy tidak boleh menyalin harga itu
+karena ruang produk dan pola panggilannya berbeda. Harga Harvy baru boleh
+disahkan bila pendapatan bersih sesudah pajak/fee pembayaran menutup biaya
+variabel P90, cadangan retry/kegagalan, operasi, dan margin pengembangan yang
+dipilih. Langganan tahunan, top-up token, dan harga grup ditunda sampai
+pembatalan/refund serta distribusi biaya terbukti. Kuota tetap ditampilkan ke
+pengguna dalam unit sederhana, bukan meter token mentah.
+
+Akuntansi membutuhkan dua ledger yang tidak dicampur. **Provider usage ledger**
+mencatat semua percobaan yang benar-benar mencapai provider untuk menghitung
+biaya Harvy, termasuk retry, fallback, kegagalan yang mengembalikan usage,
+cache, dan reasoning. **Entitlement usage ledger** menentukan jatah pengguna;
+retry/fallback akibat gangguan Harvy tidak boleh dibebankan dua kali kepada
+pengguna. Satu giliran memiliki `turnId`, setiap panggilan logis memiliki
+`requestId`, dan setiap percobaan provider memiliki `attemptId`, provider,
+origin primary/fallback, model aktual, purpose, environment/cost center,
+status, serta usage aktual/estimasi. `maxTokens` dan reservasi input harus
+ditampilkan sebagai **budget diminta**, bukan token terpakai.
+
+Untuk grup, total ruang adalah jumlah unik seluruh attempt pada scope grup.
+Breakdown anggota adalah partisi dari total itu, bukan angka tambahan:
+panggilan yang disebabkan satu giliran diatribusikan ke principal anggota
+kanonis dalam grup, termasuk planner yang akhirnya memilih diam. Overhead tanpa
+pemicu tunggal masuk bucket `shared/unattributed`. Konteks anggota lain yang
+ikut berada di prompt tidak boleh diberi label sebagai konsumsi persis karena
+provider hanya mengembalikan total prompt; bila dibutuhkan, pembagiannya hanya
+estimasi dengan metode yang terlihat. Alias PN/LID harus disatukan sebelum
+agregasi. Identitas di ledger bersifat pseudonim per scope; biaya anggota bukan
+skor perilaku dan tidak otomatis boleh dilihat admin/pembayar grup.
+
+Sumber angka berjenjang: usage dan cost yang dilaporkan provider adalah
+authority utama; bila token ada tetapi cost tidak ada, gunakan price catalog
+berversi; bila usage tidak ada, simpan estimasi yang diberi label jelas; lalu
+rekonsiliasi harian terhadap riwayat/tagihan provider. Untuk OpenRouter,
+respons kini dapat membawa token native, reasoning/cache, dan `usage.cost`,
+serta generation ID dapat diaudit lewat endpoint generation. Console perlu
+menampilkan `reported`, `estimated`, `reconciled`, dan delta yang belum cocok,
+bukan menggabungkannya menjadi satu angka seolah sama akurat.
+
+Price catalog Console harus dikunci ke provider+model+effective time, bukan
+tier routing. Minimal ada harga input dan output per satu juta token; field
+opsional mencakup cached input/read, cache write, reasoning, request, image,
+atau search bila model mengenakannya. Setiap record menyimpan version/snapshot
+harga agar perubahan tarif tidak menulis ulang sejarah. Nilai uang disimpan
+sebagai decimal/string atau unit integer kecil, bukan penjumlahan floating
+point JavaScript. Provider-reported cost disimpan terpisah dari locally
+calculated cost. Tampilan menyediakan toggle token/USD dan filter lingkungan
+`development`, `evaluation`, `beta`, serta `production`, sehingga "biaya
+pengembangan" tidak tercampur dengan biaya melayani pengguna.
+
+Pemeriksaan kode menemukan telemetry sekarang belum memenuhi rancangan itu.
+Ia membaca `prompt_tokens`, `completion_tokens`, dan `total_tokens`, tetapi
+belum membaca provider cost, generation ID, reasoning, cache, provider/origin,
+turn/request/attempt ID, environment, atau actor anggota. Harga masih per
+`cheap|efficient|ambitious`; fallback mengganti model namun tetap dihitung
+dengan tarif tier yang sama. Grup mengirim `scopeKey` sebagai `ownerId` untuk
+seluruh panggilan, sehingga total grup tersedia tetapi kontribusi anggota
+belum dapat dibedakan. Angka tanpa usage diperkirakan dari karakter/4 dan sudah
+ditandai estimated. Biaya dihitung dengan `number`, repository hanya dapat
+query per owner, retensi default 30 hari, dan belum ada rekonsiliasi provider.
+Karena itu ketepatan yang ada cukup sebagai telemetry awal, belum sebagai
+ledger keuangan atau dasar tagihan.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, seluruh `LOG.md`, schema
+telemetry, `TelemetryService`, `AiClient`, konfigurasi harga, jalur percakapan
+grup, scope harness, repository, dan tes telemetry/client diperiksa. Dokumentasi
+resmi OpenRouter tentang usage accounting, `usage.cost`, token reasoning/cache,
+generation audit, dan Analytics API diperiksa. Harga pembanding ChatGPT Go
+Indonesia diperiksa dari catatan rilis resmi OpenAI. Tidak ada tes dijalankan
+dan tidak ada kode produk yang diubah; hanya keputusan diskusi ini dicatat.
+
+**Sengaja ditinggalkan.** Nama paket akhir, harga yang disahkan, ukuran kuota,
+target margin, kebijakan fair-use, harga grup/sponsor, schema ledger, metode
+rekonsiliasi, retensi finance, dan batas akses breakdown anggota belum dipilih
+atau diimplementasikan.
+
+## 1 Agustus 2026 — Batas monetisasi dipisahkan dari cohort beta
+
+**Kenapa.** Pemilik ingin Harvy membiayai pengembangan sekaligus menghasilkan
+keuntungan, dan meminta batas pengguna standar serta beta dibahas sebelum
+Harvy Console maupun sistem cohort dibangun.
+
+**Dibahas.** Beta tidak boleh dijadikan paket berbayar. Status beta menjelaskan
+stabilitas fitur, masa evaluasi, dan cakupan observasi; status komersial
+menjelaskan entitlement penggunaan. Bentuk internal yang disarankan mempunyai
+empat kebijakan terpisah: `cohort`, `billingPlan`, `quotaPolicy`, dan
+`evaluationConsent`. Dengan demikian pengguna standar dapat gratis atau
+berbayar, sedangkan peserta beta dapat menerima kuota uji lebih besar tanpa
+dianggap membeli kualitas atau menjual data pribadinya.
+
+Rancangan awal monetisasi adalah standar gratis berbatas sebagai pintu masuk,
+langganan individu untuk kapasitas dan kenyamanan yang lebih besar, serta
+paket grup/institusi atau sponsor hanya setelah pengalaman grup terbukti.
+Beta menjadi overlay undangan yang berbatas waktu: kuota lebih besar, fitur
+percobaan, kewajiban notice, evaluasi berizin, dan jalan turun ke standar.
+Pengguna beta tidak dijanjikan seluruh fitur akan bertahan. Nama serta harga
+paket belum dipilih; ID internal boleh netral sampai riset merek dan kemauan
+membayar dilakukan.
+
+Hak yang tidak boleh dipagari pembayaran atau cohort: keselamatan dan review
+fail-closed, kontrol lihat/edit/ekspor/hapus data, penarikan consent, akses ke
+data yang sudah dibuat, kejujuran kemampuan/model, serta jalur deterministic
+untuk melihat/menyelesaikan tugas dan mengelola pengingat yang sudah ada.
+Model/tier tetap dipilih menurut kesulitan pekerjaan, bukan status pembayaran.
+Produk berbayar menjual kapasitas, continuity, visualisasi, dan capability
+tambahan yang memang mempunyai biaya—bukan martabat, privasi, atau balasan
+yang sengaja dibuat lebih benar. Iklan berbasis isi, penjualan data, dan
+penargetan dari kerentanan tidak masuk model bisnis yang disarankan.
+
+Ketika kuota biasa habis, Harvy harus menjelaskan batas dan waktu reset secara
+jujur; keselamatan tetap berjalan dan tercatat. Harvy tidak diam-diam
+menurunkan kualitas model hanya bagi pengguna gratis. Paket berbayar dapat
+memberi kuota lebih besar, sesi/pekerjaan lebih panjang, kapasitas grup,
+visualisasi web, dan konektor masa depan. Admin grup yang membayar tidak
+memperoleh akses ke chat pribadi atau data anggota di luar scope grup.
+
+Harga rupiah belum dapat ditetapkan secara bertanggung jawab. Telemetry sudah
+mempunyai token, tier, model, tujuan, latency, hasil, dan estimasi biaya per
+owner, tetapi penggunaan provider produksi belum teruji dan contoh harga
+environment masih nol. Sebelum menetapkan harga perlu mengukur distribusi
+biaya per pengguna/grup, biaya infrastruktur, penyimpanan, pembayaran,
+dukungan, kegagalan/retry, serta cadangan risiko. Batas harga minimum dihitung
+dari seluruh biaya variabel dan margin kontribusi yang dipilih, bukan harga
+model saja. Token mentah tetap dicatat untuk guard teknis; entitlement komersial
+sebaiknya memakai unit biaya bernilai tetap agar 1.000 token murah tidak
+disamakan dengan 1.000 token model mahal.
+
+Harvy Console kelak perlu plan catalog berversi, subscription/entitlement,
+usage ledger, cost-versus-revenue, quota override, masa tenggang pembayaran,
+idempotent webhook, refund/cancel, sponsor grant, dan audit. Kegagalan
+pembayaran tidak boleh menghapus data atau memutus kontrol keselamatan. Sebelum
+menerima pembayaran dari pengguna di bawah umur, alur pembeli/wali, pembaruan
+otomatis, pembatalan, pengembalian dana, dan ketentuan penyedia pembayaran
+memerlukan tinjauan hukum/operasional terpisah.
+
+Putusan konstitusional awal adalah **lulus bersyarat**. Pendapatan dan metrik
+komersial boleh diukur, tetapi tidak menjadi ukuran tunggal keberhasilan atau
+mendorong percakapan dipanjangkan. Konstitusi v0.4 belum perlu diubah.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, seluruh `LOG.md`, schema
+telemetry, `TelemetryService`, konfigurasi harga, dan batas token diperiksa.
+Kode sekarang hanya mempunyai satu batas token 24 jam global; belum ada cohort,
+plan, entitlement, pembayaran, ledger pendapatan, atau harga produksi yang
+terbukti. Tidak ada tes atau perubahan kode produk.
+
+**Sengaja ditinggalkan.** Nama paket, harga rupiah, besar kuota, periode
+langganan, metode pembayaran, sponsor, masa tenggang, refund, dan benefit final
+belum disahkan. Hal-hal itu perlu diputuskan setelah baseline biaya nyata dan
+kemauan membayar mulai tersedia.
+
+## 1 Agustus 2026 — Harvy Console dan pembagian beta/standar dirancang
+
+**Kenapa.** Pemilik menetapkan pembagian akses awal yang sederhana: pengguna
+dan grup berstatus beta atau standar. Beta memperoleh batas token lebih besar
+dan membantu evaluasi melalui pemantauan yang lebih luas; pengguna standar
+tetap dapat memakai Harvy secara normal dengan pengumpulan data sesuai
+Konstitusi. Pemilik juga mengusulkan website localhost milik operator yang
+kelak dapat berpindah mulus ke domain/VPS dan meminta dokumentasi desainnya.
+
+**Dibahas.** Pembagian dua cohort dapat tetap sederhana di layar, tetapi
+implementasinya tidak boleh menyatukan tiga keputusan yang berbeda: status
+akses `standard|beta`, kebijakan kuota, dan persetujuan/kebijakan evaluasi.
+Pemisahan internal itu diperlukan agar penarikan izin evaluasi tidak menghapus
+data atau memaksa orang kehilangan akses standar, serta agar tier/model tetap
+dipilih menurut kesulitan pekerjaan—bukan status beta. Untuk grup beta, status
+grup tidak otomatis membuat perkataan setiap anggota boleh direview manusia;
+sampling isi perlu consent evaluasi anggota dan harus berhenti atau turun ke
+event-only ketika anggota baru belum menyetujuinya.
+
+Website dinilai perlu sekarang sebagai **Harvy Console**, yaitu control plane
+operator yang berbeda dari Harvy Web sebagai kanal pengguna kelak. Console
+menampilkan health kanal, cohort dan kuota, consent, trajectory giliran tanpa
+isi secara bawaan, sumber balasan primary/fallback/copy statis, latency,
+guard/review/delivery, antrean feedback dan sampel beta berizin, insiden,
+retensi, audit akses, serta kontrol pause/direct-only/ambient/disable. Ukuran
+utama mengikuti Konstitusi Pasal 8—rasa terbantu, gangguan, koreksi, langkah
+nyata, keselamatan, memori yang mengejutkan, dan kendali—bukan DAU atau jumlah
+pesan sebagai tujuan.
+
+Console tidak terhubung langsung ke model atau mengubah checkpoint harness.
+Ia memanggil application service deterministik untuk enrollment, quota,
+evaluation, dan runtime control; harness serta adapter menerbitkan event
+bertipe dan capability snapshot untuk diamati. Operational log tetap tanpa isi
+dan tidak dijadikan arsip chat. Event evaluasi dan cuplikan beta yang berizin
+memerlukan store terpisah, pseudonim, retensi pendek, kontrol akses, audit
+lihat, serta penghapusan. Percakapan sensitif tidak masuk review rutin; insiden
+keselamatan memakai jalur terpisah yang lebih sempit.
+
+Karena repository sekarang hanya aman untuk satu proses, versi localhost
+pertama sebaiknya menjadi server HTTP loopback di dalam proses Harvy dan
+memakai service/repository yang sama—bukan proses website kedua yang membaca
+atau menulis JSON/Markdown langsung. API diberi versi sejak awal dan frontend
+dipisahkan dari backend agar sesudah migrasi PostgreSQL control plane dapat
+dipecah menjadi proses sendiri. Produksi memerlukan PostgreSQL+migrasi,
+autentikasi operator kuat, TLS/reverse proxy, secret store, backup, health,
+collector/alert, audit, dan domain admin yang terpisah dari web pengguna.
+
+Konstitusi v0.4 belum perlu dilemahkan atau diubah. Ia sudah mengizinkan
+partisipasi pengguna dan evaluasi berbasis persetujuan; kesulitan sekarang
+berasal dari belum adanya enrollment, consent evaluation, store, dan alat
+operator. Konstitusi patut direvisi hanya bila bukti beta menunjukkan klausul
+spesifik tidak lagi tepat, memakai proses versi/alasan/risiko/ringkasan dampak
+Pasal 9—bukan karena membaca transkrip tanpa batas lebih mudah secara teknis.
+Putusan awal rancangan adalah **lulus bersyarat**.
+
+Dokumentasi yang disarankan sebelum implementasi: ADR baru tentang cohort beta
+dan control plane; spesifikasi program beta/consent; desain informasi dan state
+Harvy Console; arsitektur API, event, data, serta threat model; dan runbook
+transisi localhost ke VPS/domain termasuk migrasi, backup, rollback, dan
+insiden. `PROJECT`, `STATUS`, `INDEX`, dan `TESTING` diselaraskan ketika ruang
+lingkup implementasi benar-benar dipilih.
+
+**Bukti.** `PROJECT.md`, Konstitusi v0.4, `STATUS.md`, seluruh `LOG.md`,
+`ADR-009` sampai `ADR-012`, `package.json`, composition root, scope/capability/
+kernel harness, telemetry, serta repository berkas diperiksa. Kode membuktikan
+batas token sekarang satu nilai global dan website/control plane belum ada.
+Tidak ada tes atau perubahan kode produk; hanya catatan keputusan diskusi ini
+yang ditambahkan.
+
+**Sengaja ditinggalkan.** Framework web, naskah consent final, masa retensi,
+schema database/API/event, autentikasi lokal, rubrik review, dan urutan fase
+implementasi belum disahkan atau dibangun.
+
+## 1 Agustus 2026 — Mode beta teramati dibedakan dari privasi yang dilonggarkan
+
+**Kenapa.** Pemilik berencana membagikan Harvy kepada grup bertopik maupun
+bebas dan pengguna pribadi, lalu memantau apakah Harvy sesuai, membantu, atau
+melakukan hal yang tidak diharapkan. Pemilik mengusulkan privasi akses awal
+lebih longgar bila peserta menyepakatinya agar evaluasi lebih mudah.
+
+**Dibahas.** Arah itu dapat diterima hanya sebagai **mode beta teramati** yang
+terpisah dan berbatas, bukan izin umum untuk melonggarkan privasi. Persetujuan
+wajib ada sebelum pengumpulan, spesifik tentang siapa yang dapat membaca apa,
+tujuan evaluasi, masa simpan, serta cara menarik diri dan menghapus data.
+Persetujuan tetap tidak membenarkan pengumpulan tanpa batas; Konstitusi Pasal
+3.9 menyatakan persetujuan saja tidak membuat semua penggunaan data etis.
+
+Otorisasi pengelola memasukkan Harvy ke grup hanya mengizinkan pemrosesan pesan
+baru agar Harvy memahami dan berpartisipasi. Ia tidak otomatis mengizinkan
+pemilik produk atau peneliti membaca transkrip. Untuk review manusia, seluruh
+peserta sebaiknya masuk secara sukarela ke grup beta khusus dan memberi
+persetujuan evaluasi yang terpisah. Anggota baru harus dimintai persetujuan
+sebelum pesannya ikut review. Grup kelas, keluarga, atau komunitas yang sudah
+berjalan tidak cocok sebagai tempat pertama karena anggota belum tentu bebas
+keluar. Grup bebas topik membawa risiko lebih besar daripada grup skenario
+karena percakapan pribadi dapat muncul tanpa direncanakan.
+
+Pemantauan disarankan berlapis. Event tanpa isi mencatat keputusan
+direct/ambient, `speak`/`silent` dan alasan enum, source balasan
+primary/fallback/copy statis, review/guard, delivery, latency, error, dan aksi
+memori. Laporan sukarela memungkinkan peserta menandai membantu, menyela,
+salah, terlalu ikut campur, mengejutkan soal memori, atau tidak aman, dengan
+cuplikan konteks yang mereka pilih sendiri. Review transkrip hanya berada pada
+scope beta yang opt-in, menggunakan pseudonim, sampel sesempit mungkin, akses
+terbatas dan tercatat, retensi pendek yang diumumkan, serta penghapusan saat
+izin ditarik. Giliran sensitif/keselamatan tidak masuk sampling rutin; insiden
+penting memakai jalur peninjauan keselamatan yang terpisah dan sempit. Check-in
+peserta tetap diperlukan karena log tidak dapat menilai rasa terbantu,
+terganggu, dikendalikan, atau dampak dunia nyata.
+
+Urutan pilot yang disarankan: grup beta baru dengan skenario/topik dan seluruh
+anggota sadar diamati; lalu grup beta baru tanpa topik; baru kemudian grup nyata
+dengan monitoring event-only dan laporan sukarela secara default. Pengguna
+pribadi sebaiknya membagikan satu percakapan atau cuplikan secara sadar saat
+memberi feedback; review seluruh chat pribadi terus-menerus memerlukan consent
+beta khusus dan tetap bukan default produk.
+
+Kemampuan saat ini belum cukup untuk pola tersebut. Operational log sengaja
+tidak menyimpan chat, prompt, balasan, atau identitas; raw context grup hanya di
+RAM; dan belum ada enrollment beta, consent evaluasi, feedback/report, review
+store, dashboard/digest, audit akses, atau kill switch operasional yang mudah.
+Membaca berkas history pribadi secara langsung hanya karena tersedia bukan
+pengganti persetujuan evaluasi.
+
+**Bukti.** `docs/CONSTITUTION.md` Pasal 1, 2, 3.9, 3.14–15, 7–9;
+`ADR-009`; notice grup v6; `STATUS.md`; dan rancangan pemantauan sebelumnya di
+LOG diperiksa. Tidak ada tes atau perubahan kode produk.
+
+**Sengaja ditinggalkan.** Naskah consent beta, pilihan retensi, schema event,
+alur laporan, review store, kontrol akses, dashboard/digest, dan protokol
+insiden belum diputuskan atau dibangun.
+
+## 1 Agustus 2026 — Gemini, balasan aman, dan fallback DeepSeek dievaluasi
+
+**Kenapa.** Pemilik ingin percakapan tetap berlanjut ketika Gemini 3.5 Flash
+Lite gagal, DeepSeek V4 Flash cukup mampu menjadi fallback, dan model yang
+benar-benar dipakai tercatat tanpa menyimpan isi percakapan.
+
+**Dibahas.** Target itu baru tercapai sebagian. Failover transport runtime
+berfungsi: gangguan jaringan/timeout/5xx dan 429 sesuai kebijakan berpindah ke
+`DeepSeek-V4-Flash`, membawa prompt serta konteks yang sama, lalu operational
+log menulis `ai_fallback_activated` dan `ai_request_completed` dengan
+`origin=fallback`; usage observer juga menerima model DeepSeek. Smoke sintetis
+yang memaksa primary ke port lokal gagal membuktikan empat tahap—understanding,
+triase, reply, dan review—seluruhnya memakai DeepSeek dan tercatat.
+
+Kualitasnya belum cukup untuk disebut fallback transparan. Pada delapan kasus
+sintetis yang sama, Gemini lulus invariant 8/8 dan DeepSeek 5/8. DeepSeek salah
+intent pada pertanyaan keadaan fisik/lokasi serta permintaan prioritas. Salah
+satu larangan lokasi juga merupakan kelemahan evaluator karena frasa "di rumah"
+muncul dalam pertanyaan kepada pengguna, bukan klaim lokasi Harvy. Gemini pun
+belum sempurna: kasus "pilihin aku ... jangan tanya balik" lulus oracle tetapi
+balasannya tidak memilih. Karena itu angka tersebut adalah sinyal perbandingan,
+bukan skor mutu final.
+
+Pada skenario bahaya sintetis, Gemini dan DeepSeek sama-sama menggolongkan
+`bahaya`. Balasan Gemini lolos review. Dua run DeepSeek menghasilkan kandidat
+yang menyebut bantuan konkret dan tetap membuka percakapan, tetapi reviewer
+DeepSeek sendiri mengembalikan `false`; runtime kemudian memakai copy bahaya
+statis. Fail-closed bekerja, tetapi kesinambungan nada menurun dan keputusan
+review DeepSeek tampak tidak stabil terhadap kriteria promptnya sendiri.
+
+Celah terpenting berada di antara transport dan parser. `AiClient` menganggap
+setiap teks nonkosong sebagai completion sukses dan mencatatnya sebelum
+`parseUnderstanding`, `parseRiskTriage`, atau `parseReplyVerdict`. JSON/schema
+yang tidak sah karena itu terlihat sebagai request Gemini sukses, lalu gagal di
+lapisan percakapan, tanpa mencoba DeepSeek. Keluaran free-form yang ditolak
+pagar grup juga menjadi copy statis atau `silent`, bukan regenerasi fallback.
+Ini dapat memutus percakapan walau provider cadangan sehat.
+
+Pencatatan runtime normal memadai secara struktur tetapi belum menyeluruh.
+`app.ts` menyuntikkan operational logger dan telemetry, sedangkan lima
+probe/evaluator membuat `AiClient` tanpa keduanya; run `--allow-fallback` dari
+alat itu tidak mempunyai atribusi aktual per kasus. Ringkasannya hanya berkata
+`primary-or-fallback`. Selain itu file log bersifat opsional secara default
+(`LOG_FILE_REQUIRED=false`) dan antreannya sengaja berbatas, sehingga
+"tercatat" belum merupakan jaminan durabilitas mutlak.
+
+DeepSeek juga lebih lambat pada sampel ini. Smoke bahaya mencatat understanding
+8.741 ms, triase 7.943 ms (paralel), reply 1.691 ms, dan review 4.916 ms. Log
+Gemini runtime yang tersedia mempunyai p95 sekitar 1.487 ms, 1.103 ms, 1.506
+ms, dan 698 ms untuk empat tujuan yang sama. Primary pada smoke sengaja gagal
+seketika; kegagalan timeout nyata masih menambahkan waktu tunggu primary.
+Belum ada deadline total satu giliran.
+
+Balasan aman tetap menjaga konteks privat karena teks yang benar-benar terkirim
+ditulis ke history. Di grup, giliran biasa beserta copy kegagalannya dapat masuk
+konteks; isi berisiko sengaja tidak disimpan, tetapi marker minimal selama 30
+menit mempertahankan kemungkinan lanjutan pendek tanpa memutar ulang isi
+sensitif.
+
+**Bukti.** `npm run build` lulus. Enam suite terarah—client, konfigurasi AI,
+keselamatan, giliran grup, telemetry, dan operational logger—lulus **111/111**.
+Evaluator nyata dijalankan pada delapan pesan sintetis untuk Gemini primary dan
+DeepSeek yang dipaksa lewat fallback. Probe bahaya Gemini dijalankan sekali;
+smoke bahaya DeepSeek dijalankan dua kali, seluruhnya tanpa data pengguna.
+Operational log smoke terakhir tersimpan sementara di
+`%TEMP%/harvy-fallback-eval-KczgAL/harvy-20260801-0001.ndjson`. Tidak ada uji
+Telegram/WhatsApp nyata dan tidak ada full corpus.
+
+**Sengaja ditinggalkan.** Tidak ada perubahan kode produk, prompt, kebijakan
+failover, copy keselamatan, konfigurasi log, atau evaluator. Perbaikan yang
+masih perlu diputuskan adalah fallback setelah validasi semantik, atribusi
+model aktual per kasus/turn, deadline total, tes event log klien, penguatan
+oracle percakapan, dan pengujian corpus DeepSeek yang lebih luas.
+
+## 1 Agustus 2026 — Arti balasan aman statis dijelaskan
+
+**Kenapa.** Pemilik meminta penjelasan tentang balasan aman yang tetap dapat
+dikirim sesudah panggilan Gemini gagal, agar tidak tertukar dengan fallback
+provider ke DeepSeek.
+
+**Dibahas.** Balasan aman adalah copy konstan di kode, tanpa panggilan model
+lain. Dalam grup, kegagalan biasa memakai kalimat bahwa Harvy sedang tidak
+dapat memproses percakapan dan meminta dipanggil lagi. Giliran `dukungan` atau
+`bahaya` memakai copy privasi/keselamatan khusus grup; copy itu juga mengganti
+balasan model bila review keselamatan gagal atau menolaknya. Jalur privat
+mempunyai copy dukungan dan bahaya yang lebih panjang di `src/ai/safety.ts`.
+
+Untuk dua trace grup 30 Juli yang mempunyai `group_reply_generation_failed`
+dan `group_reply_review_failed`, balasan yang terkirim pasti berasal dari salah
+satu copy keselamatan grup, bukan DeepSeek. Copy mana yang dipilih tidak dapat
+ditentukan dari log: isi percakapan dan label risiko sengaja tidak dicatat.
+
+**Bukti.** Konstanta dan percabangannya diperiksa di
+`src/core/group-turn-service.ts`, sedangkan fallback privat diperiksa di
+`src/ai/safety.ts` dan pemakaiannya di `src/bot/create-bot.ts`. Tidak ada tes
+atau perubahan kode produk.
+
+**Sengaja ditinggalkan.** Tidak ada perubahan copy, kebijakan fallback,
+logging, maupun telemetry.
+
+## 1 Agustus 2026 — Model pada seluruh log runtime diperiksa
+
+**Kenapa.** Pemilik meminta penyelidikan apakah seluruh panggilan model yang
+tercatat selalu memakai Gemini 3.5 Flash Lite.
+
+**Dibahas.** Ya untuk cakupan log runtime yang tersedia. Tiga segmen 30 Juli–1
+Agustus memuat 282 event AI dalam lima run: 246 completion, 21 failure, 14
+retry, dan satu cancellation. Seluruh event yang membawa model menyebut
+`gemini-3.5-flash-lite`; tidak ada `ai_fallback_activated` maupun event dengan
+`origin=fallback`. Dari completion, tier yang dipilih mencakup 208 `cheap`, 30
+`efficient`, 5 `ambitious`, dan 3 record lama tanpa tier, tetapi semua tier
+tersebut dipetakan ke model fisik yang sama.
+
+Penyebabnya cocok dengan konfigurasi: `AI_MODE=testing` dan
+`AI_MODEL_TESTING=gemini-3.5-flash-lite`, tanpa override testing per tier.
+Fallback `DeepSeek-V4-Flash` memang terkonfigurasi, tetapi tidak pernah aktif
+pada runtime yang tersimpan. Pernah ada smoke terpisah 31 Juli yang sengaja
+memaksa fallback dan berhasil; itu bukti endpoint cadangan, bukan trafik normal
+di ketiga segmen log ini. Konfigurasi produksi juga belum lengkap karena model
+`efficient` dan `ambitious` masih kosong.
+
+Penelusuran lanjutan menjelaskan kenapa pemilik dapat merasa fallback pernah
+terjadi walau DeepSeek tidak tercatat. Seluruh retry/failure pada log berasal
+dari dua run 30 Juli, sebelum provider cadangan ditambahkan pada 31 Juli. Pada
+beberapa giliran grup, generasi atau review model gagal tetapi outcome tetap
+`replied` karena layanan grup mengirim copy aman yang sudah ada di kode; itu
+bukan panggilan AlwaysCodex. `ai_request_retrying` juga berarti percobaan ulang
+atau rotasi kunci pada provider utama, bukan perpindahan provider.
+
+Ada celah observabilitas nyata di luar runtime aplikasi. Lima probe/evaluator
+(`coba-balasan`, `coba-pemahaman`, dan tiga evaluator percakapan/grup) membuat
+`AiClient` tanpa operational logger, sehingga memakai
+`NOOP_OPERATIONAL_LOGGER`. Jika operator memilih `--allow-fallback`, pemakaian
+DeepSeek dari proses tersebut tidak akan masuk `data/logs/`. Sebaliknya,
+`src/app.ts` menyuntikkan logger; fallback runtime normal akan selalu menulis
+`ai_fallback_activated`, lalu completion/failure dengan `origin=fallback` dan
+model cadangan. Karena kedua jejak itu tidak ada, log yang tersedia tidak
+mendukung klaim bahwa runtime aplikasi pernah berpindah ke AlwaysCodex.
+
+**Bukti.** `data/logs/harvy-20260730-0001.ndjson`,
+`harvy-20260731-0001.ndjson`, dan `harvy-20260801-0001.ndjson` diparse sebagai
+NDJSON; rentang event AI adalah 30 Juli 2026 14:50:05 UTC sampai 1 Agustus 2026
+01:05:58 UTC. Nilai model nonrahasia pada `.env`, `resolveModel` di
+`src/ai/model-policy.ts`, loader konfigurasi, `STATUS.md`, dan catatan smoke di
+LOG diperiksa. Konstruksi `AiClient` pada runtime dan lima script juga
+diperiksa. Telemetry memuat 233 penyebutan `gemini-3.5-flash-lite` dan nol
+`DeepSeek-V4-Flash`. Tidak ada request model atau tes baru yang dijalankan.
+
+**Sengaja ditinggalkan.** Tidak ada perubahan konfigurasi, pemetaan model per
+tier, logger probe/evaluator, atau uji runtime fallback/production.
+
+## 1 Agustus 2026 — Cara pemantauan beta dengan kemampuan saat ini dijelaskan
+
+**Kenapa.** Pemilik meminta langkah konkret untuk memantau Harvy ketika akses
+awal grup diberikan.
+
+**Dibahas.** Pemantauan saat ini dapat memakai NDJSON di `data/logs/` untuk
+status akun, turn selesai/gagal, outcome `replied`/`silent`, latency, jumlah
+bubble/karakter, panggilan model, retry, serta error fingerprint. Rutinitas
+minimalnya adalah live tail untuk warning/error dan ringkasan harian outcome,
+latency, serta tujuan panggilan model. Telemetry tetap dipakai untuk usage dan
+biaya, bukan membaca perilaku sosial.
+
+Log itu belum dapat menjawab apakah satu balasan membantu, menyela, salah
+konteks, atau mengejutkan anggota karena isi dan identitas sengaja tidak
+disimpan. Sebelum beta melebar, celah tersebut tetap memerlukan event keputusan
+yang lebih lengkap, feedback sukarela peserta, dan ringkasan harian yang mudah
+dibaca. Pemilik tidak seharusnya memantau dengan merekam seluruh chat secara
+diam-diam.
+
+**Bukti.** Konfigurasi `.env.example`, schema telemetry, call site outcome grup,
+dan log `data/logs/harvy-20260801-0001.ndjson` diperiksa. Pada snapshot saat
+audit terdapat 14 `whatsapp_group_turn_outcome`: 12 `replied`, 2 `silent`, 40
+`ai_request_completed`, nol error/fatal, dan satu warning
+`whatsapp_local_auth_enabled`. Tidak ada tes atau perubahan kode produk.
+
+**Sengaja ditinggalkan.** Script/digest pemantauan, dashboard, alert, feedback
+peserta, mode direct-only, dan kill switch belum dibangun.
+
+## 1 Agustus 2026 — Rancangan pemantauan akses awal grup dibahas
+
+**Kenapa.** Pemilik ingin memberi akses awal kepada grup dan orang yang dipilih
+karena pengujian sendiri tidak dapat mencakup semua situasi, tetapi kesulitan
+memantau cara Harvy dipakai dan bertindak di grup.
+
+**Dibahas.** Akses awal sebaiknya dimulai di grup beta baru yang memang dibuat
+untuk pengujian, bukan langsung di grup pribadi yang sudah berjalan. Seluruh
+anggota perlu mengetahui bahwa pemilik produk ikut mengamati beta dan dapat
+keluar. Otorisasi pengelola grup untuk pemrosesan Harvy tidak otomatis menjadi
+izin bagi peneliti membaca atau menyimpan transkrip untuk tujuan evaluasi.
+
+Pemantauan diusulkan memakai tiga lapis. Pertama, ringkasan event tanpa isi:
+direct/ambient, `speak`/`silent` beserta alasan enum, delivery, latency,
+supersession, guard/review, error, dan tindakan memori dalam agregat grup/hari.
+Kedua, mekanisme laporan sukarela pada balasan Harvy dengan kategori seperti
+membantu, menyela, salah, terlalu ikut campur, mengejutkan soal memori, atau
+tidak aman; konteks mentah hanya disertakan secara sadar dan sesempit mungkin.
+Ketiga, check-in singkat dengan peserta untuk menilai kegunaan, kendali,
+gangguan, privasi, dan dampak dunia nyata—bukan jumlah pesan atau retensi.
+
+Log operasional saat ini tidak dapat menjadi alat review perilaku: desainnya
+sengaja membuang isi chat, prompt, balasan, identitas, dan label risiko. Ia dapat
+menunjukkan kegagalan serta latency, tetapi belum ada collector, dashboard,
+alert, event keputusan grup yang lengkap, atau alur laporan pengguna. Karena
+fondasi WhatsApp baru terbukti pada satu nomor `open` dan satu balasan dasar,
+pilot awal perlu kecil, bertahap, mempunyai kill switch, serta dimulai dari
+direct-only sebelum ambient bila mode tersebut nanti disediakan.
+
+**Bukti.** `docs/PROJECT.md`, `docs/CONSTITUTION.md`,
+`docs/engineering/STATUS.md`, `docs/LOG.md`, `ADR-009` sampai `ADR-012`,
+`src/domain/telemetry.ts`, `src/whatsapp/group-message-batcher.ts`,
+`src/core/group-turn-service.ts`, dan allowlist logger diperiksa langsung.
+Tidak ada kode produk atau tes yang dijalankan; sesi ini hanya membahas desain.
+
+**Sengaja ditinggalkan.** Desain final notice/consent riset, schema event,
+retensi laporan, UI feedback, dashboard/digest, mode direct-only, kill switch,
+dan protokol insiden belum diputuskan atau diimplementasikan.
+
+## 1 Agustus 2026 — Kekosongan pengujian yang masih terbuka dipetakan
+
+**Kenapa.** Pemilik menanyakan pengujian apa yang belum dilakukan di Harvy.
+Sesi ini hanya mengaudit bukti yang sudah tercatat; tidak mengubah perilaku
+produk.
+
+**Dibahas.** Gerbang otomatis terakhir tercatat lulus 454 test dalam 70 suite,
+tetapi bagian terbesar yang belum terbukti adalah pengalaman end-to-end setelah
+perubahan terbaru. Prioritasnya: dogfood Telegram tujuh hari; uji ulang alur
+Telegram untuk bubble, riwayat/memori, onboarding/consent, keselamatan, Harvy
+Loop, waktu/check-in, kontrol data, telemetry, dan shutdown; corpus percakapan
+privat 42 skenario pada model nyata; kombinasi final corpus/evaluator grup;
+serta uji grup WhatsApp nyata yang melampaui satu nomor `open` dan satu balasan
+dasar. Pengujian dengan pelajar, naturalness buta oleh manusia, ukuran dampak
+Pasal 8, dan deployment jangka panjang juga belum mempunyai bukti.
+
+Daftar ini sengaja tidak memasukkan PostgreSQL, website, toolbox eksternal,
+Telegram grup, atau WhatsApp privat sebagai “tes yang gagal dilakukan”, karena
+kemampuan itu memang belum dibangun. Bukti lama juga tidak dipakai untuk
+mengklaim perbaikan baru lulus end-to-end.
+
+**Bukti.** `docs/PROJECT.md`, `docs/CONSTITUTION.md`,
+`docs/engineering/STATUS.md`, `docs/engineering/TESTING.md`, dan `docs/LOG.md`
+diperiksa langsung. Tidak ada tes otomatis, probe model, Telegram, atau
+WhatsApp yang dijalankan karena sesi ini hanya memetakan status pengujian.
+
+**Sengaja ditinggalkan.** Pelaksanaan pengujian dan penentuan urutan run
+berikutnya menunggu permintaan pemilik.
+
+## 31 Juli 2026 — Harness agent bersama dan memori anggota grup dibangun
+
+**Kenapa.** Pemilik meminta Harvy dibangun sebagai harness agent berkualitas
+produksi: agentik dan proaktif tanpa melampaui izin, sadar kemampuan serta
+keterbatasannya, memakai kecerdasan yang sama di Telegram/WhatsApp, dan
+memisahkan konteks/memori per pengguna privat maupun per anggota di tiap grup.
+Tool konkret sengaja belum dipilih; pekerjaan ini membangun kontrak aman tempat
+tool itu kelak dipasang.
+
+**Yang berubah.**
+
+- `src/harness/` ditambahkan. `scope.ts` membentuk tuple privat
+  kanal+owner dan grup kanal+grup+anggota secara injektif.
+  `capabilities.ts` menjadi registry tepercaya dengan versi, effect,
+  confirmation, idempotency, surface availability, snapshot hash, dan konteks
+  kejujuran kemampuan. Snapshot default hanya mengaktifkan surface yang nyata:
+  Telegram privat dan WhatsApp grup; Telegram grup/WhatsApp privat tidak
+  diklaim hidup. Web search, aksi aplikasi eksternal, dan memori lintas ruang
+  dinyatakan belum tersedia.
+- `agent-harness.ts` menyediakan loop plan/action/observation berbatas: hanya
+  `final`, `need_input`, dan `action`; input wajib JSON; capability+versi dan
+  executor divalidasi; write/external meminta approval secara bawaan; run
+  mempunyai max-step, deadline, cycle guard, cancellation, observation/reply
+  cap, checkpoint serializable, idempotency key, dan generation freshness.
+  Approval mengikat run, step, scope, capability, versi, nilai JSON hasil
+  validator, dan expiry. Resume menghitung ulang digest+binding, menolak
+  executor versi lain, serta memeriksa cancellation/generation sebelum side
+  effect. Snapshot capability dibekukan; policy rusak/error gagal tertutup dan
+  policy yang menggantung tunduk deadline. `need_input` dapat dilanjutkan pada
+  checkpoint/run yang sama. Belum ada executor tool eksternal dan `AiClient`
+  belum memakai `tools`/`tool_choice`.
+- Satu instance harness disuntikkan ke `Conversation` dan `GroupConversation`.
+  Prompt balasan privat, sesi, planner/revalidator, dan balasan grup menerima
+  capability snapshot yang sama. Kontrak persona grup dibuat channel-neutral;
+  pipeline prompt naik ke `2026-07-31.1`.
+- `context-budget.ts` membatasi ringkasan, giliran, dan memori; giliran terbaru
+  dipilih lebih dulu. Retrieval privat tidak lagi memasukkan memori
+  non-profile yang sama sekali tidak relevan hanya karena slot top-k masih ada.
+  Folder owner legacy yang aman dipertahankan; scope dengan delimiter/path
+  memakai hash sehingga sanitasi berbeda tidak bertabrakan.
+- Database grup dimigrasikan in-memory dari v1 ke v2 dengan
+  `GroupMemberMemory`. Memori semantik terpisah per kanal+grup+anggota,
+  menggabungkan alias PN/LID dalam scope, dan tidak memakai repository pribadi.
+  Record semantik memakai hash alias scoped; pasangan ID mentah masih ada pada
+  store sosial legacy untuk bridging platform.
+- Notice grup naik ke v6. Pada pesan direct yang tenang/pasti, ekstraksi dan
+  triase dapat mengusulkan memori ordinary; catatan diumumkan dengan `📎` pada
+  balasan yang sama dan di-rollback bila delivery gagal. Personal atau hasil
+  sensitif tidak disimpan otomatis; usulan personal meminta konfirmasi
+  eksplisit anggota yang sama dalam 10 menit setelah prompt berhasil dikirim.
+  Anggota dapat melihat, mengoreksi, menghapus satu, atau melupakan seluruh
+  aktivitas+memorinya. Disable pada repository berkas menulis tombstone dan
+  menghapus social/member memory dalam satu commit atomik; fallback lama tetap
+  mengulang cleanup bila sempat gagal. Record PN-only dan LID-only yang
+  sebelumnya terpisah digabung ketika alias penghubung terlihat.
+- `ADR-012`, peta konteks, project brief, README, status kemampuan, dan
+  instruksi agent diperbarui. Seluruh klaim membedakan core yang sudah bersama
+  dari adapter surface yang belum setara.
+
+**Dibahas.**
+
+- Harvy tetap satu produk; harness adalah lapisan runtime Capybara/Harvy Core,
+  bukan identitas produk baru. Kesetaraan Telegram/WhatsApp dicapai dengan core,
+  capability contract, dan scope bersama, bukan dengan dua prompt/agent yang
+  tumbuh sendiri-sendiri.
+- Konteks grup mempunyai dua kelas: room context pendek yang dapat dibaca semua
+  giliran di ruang itu, dan semantic member memory yang hanya boleh dibaca saat
+  anggota yang sama berbicara dalam grup yang sama. Tidak ada linking lintas
+  privat, grup, atau kanal berdasarkan nama/nomor; linking kelak membutuhkan
+  verifikasi dan persetujuan eksplisit.
+- Proaktif berarti workflow terjadwal/ditawarkan dengan izin, budget, jam
+  tenang, dan generation guard. Ia tidak berarti model dapat mengeksekusi aksi
+  eksternal sendiri. Safety, consent, kontrol data, dan mutasi yang sudah ada
+  tetap workflow deterministik.
+- Riset primer yang menjadi dasar: panduan agent OpenAI; tulisan Anthropic
+  tentang effective agents, context engineering, long-running harness, dan
+  eval; spesifikasi MCP tools/lifecycle; serta prinsip idempotency/cancellation
+  dari Temporal, Stripe, RFC 9110, dan observability GenAI OpenTelemetry.
+  Rujukan langsung dicatat di `ADR-012`.
+
+**Bukti.**
+
+- `npm run check` lulus.
+- `npm test` lulus: **454 test, 70 suite, 0 gagal**. Tes baru mencakup scope
+  collision/isolation, surface availability, capability prompt privat/grup,
+  context budget, unavailable capability, cycle/deadline/stale result, approval
+  tampering dan timestamp, input non-JSON, migrasi repository grup, relevansi
+  memori privat, isolasi memori anggota antargrup/anggota, sensitive consent,
+  PN/LID merge, koreksi/penghapusan, notice v6, dan rollback delivery.
+- Review read-only lanjutan menemukan tujuh P1—TOCTOU hasil validator,
+  stale/cancelled resume, executor version swap, policy fail-open/hang,
+  `need_input` yang belum resumable, crash window cleanup grup, consent
+  sensitif tanpa jalan konfirmasi, dan snapshot mutable. Semuanya diperbaiki;
+  tes terarah pascaperbaikan pertama lulus **84 test, 6 suite, 0 gagal**.
+- Verifikasi kedua menemukan tiga race lanjutan: generation dapat basi setelah
+  policy tetapi sebelum executor, write sensitif tidak ikut rollback bila
+  acknowledgment konfirmasi gagal, dan retry removal dapat melewatkan
+  penghapusan telemetry setelah commit repository. Ketiganya diperbaiki; tes
+  terarah final lulus **88 test, 6 suite, 0 gagal**, lalu gerbang penuh diulang
+  saat itu.
+- Audit terakhir menemukan dua edge case lagi: cancellation/deadline dapat tiba
+  setelah pemeriksaan freshness tetapi sebelum operasi mulai, dan rollback
+  konfirmasi sensitif dapat memakai identitas pesan terbaru alih-alih identitas
+  proposal ketika PN berganti menjadi LID. Keduanya diperbaiki; tes terarah
+  harness+grup lulus **65 test, 0 gagal**, reviewer read-only tidak menemukan
+  P0/P1 tersisa, lalu gerbang penuh menghasilkan angka 454/70 di atas.
+- Tidak menjalankan evaluator model nyata atau kanal Telegram/WhatsApp nyata;
+  suite ini membuktikan kontrak kode dan adapter palsu, bukan kualitas delivery
+  produksi atau naturalness model terbaru.
+
+**Sengaja ditinggalkan.**
+
+- Pemilihan dan pemasangan tool aktual: web/RAG, file, kalender, email, MCP,
+  dan konektor lain.
+- Adapter Telegram grup dan WhatsApp privat. Capability registry secara sengaja
+  menandainya unavailable sampai tersambung dan diuji.
+- Durable run/checkpoint store, outbox/reconciliation side effect, database
+  multi-process, account linking, shared room semantic memory, lifecycle anggota
+  keluar, consent sensitif yang tahan restart, dan uji end-to-end notice/memori
+  grup nyata.
+- False negative serentak ekstraksi+triase untuk isi sensitif tetap dapat
+  melewati jalur izin, sama seperti keterbatasan memori privat; ini tidak
+  diklaim tertutup.
+
+## 31 Juli 2026 — Model belum memiliki toolbox atau pencarian
+
+**Kenapa.** Pemilik menanyakan apakah Harvy sudah memberikan alat kepada model,
+misalnya pencarian web, dan kemampuan apa yang masih belum dibuat. Sesi ini
+hanya memeriksa serta menjelaskan keadaan kode; perilaku produk tidak diubah.
+
+**Dibahas.** Model Harvy saat ini belum menerima function-calling toolbox.
+`AiClient` hanya mengirim model, messages, temperature, batas token, dan opsi
+keluaran JSON; tidak ada `tools` atau `tool_choice`. Model dapat mengusulkan
+hasil terstruktur seperti tugas, memori, sinyal sesi, dan ID tindakan adaptif,
+tetapi kode Harvy memvalidasi pasangan intent/action, izin, risiko, pemilik,
+serta payload sebelum layanan deterministik melakukan mutasi. Karena itu tugas,
+pengingat, memori, riwayat, sesi, check-in, dan kontrol data adalah kemampuan
+Harvy yang dibantu model, bukan alat bebas yang dapat dipanggil model.
+
+Pencarian web, pembukaan halaman, RAG, sumber dan sitasi, registry alat umum,
+kalkulator deterministik, eksekusi kode, pembacaan lampiran/dokumen, integrasi
+kalender eksternal, email, dan pengiriman pesan ke orang lain belum ada.
+`PROJECT.md` memang menempatkan pencarian/RAG di bagian Later. Di luar toolbox,
+pekerjaan produk yang masih terbuka antara lain PostgreSQL dan migrasi,
+deployment/backup, website, ukuran keberhasilan, grup Telegram, WhatsApp
+pribadi, validasi penuh grup WhatsApp nyata, observabilitas terpusat, serta uji
+manual/dogfood yang masih tertunda.
+
+Jika toolbox mulai dibangun, kandidat pertama yang paling sempit risikonya
+adalah pencarian baca-saja atas permintaan eksplisit pengguna, dengan sumber,
+tanggal, dan sitasi yang dapat diperiksa. Mutasi eksternal seperti menulis
+kalender atau mengirim pesan memerlukan konfirmasi terpisah dan tidak boleh
+disamakan dengan pencarian.
+
+**Bukti.** `docs/PROJECT.md`, `docs/CONSTITUTION.md`,
+`docs/engineering/STATUS.md`, `docs/LOG.md`, `src/ai/client.ts`,
+`src/ai/persona.ts`, `src/ai/understand.ts`, `src/bot/create-bot.ts`, serta
+composition root diperiksa langsung. Tidak ada tes yang dijalankan karena sesi
+ini tidak mengubah kode atau perilaku.
+
+## 31 Juli 2026 — Harvy dibedakan dari harness modelnya
+
+**Kenapa.** Pemilik melihat bahwa sistem yang dibangun mengelilingi model-model
+Harvy tampak seperti sebuah harness. Sesi ini hanya memperjelas batas istilah
+dan arsitektur; perilaku produk dan kode tidak diubah.
+
+**Dibahas.** Intuisi itu benar untuk lapisan runtime: sistem memilih tier dan
+provider, menyusun konteks, membatasi serta memeriksa keluaran model, menjalankan
+triase/review keselamatan, mengendalikan tindakan dan state, mencatat biaya,
+serta memberi model antarmuka kanal yang stabil. Dalam arti luas, lapisan itu
+adalah *model harness* sekaligus lapisan orkestrasi dan tata kelola. Nama yang
+paling tepat menurut pembagian yang sudah tercatat adalah **Capybara** untuk
+sistem multi-model tersebut dan **Harvy Core** untuk lapisan aplikasi bersama
+yang juga memuat layanan deterministik.
+
+Namun **Harvy bukan hanya harness**. Harvy adalah produk dan hubungan yang
+dilihat pengguna: identitas, janji moral, memori yang dikendalikan pengguna,
+pengelolaan tugas, tutoring, keselamatan, kanal, dan pengalaman percakapan.
+Model boleh diganti tanpa mengubah siapa Harvy. Istilah *evaluation harness*
+juga sudah mempunyai arti yang lebih sempit di repo, yaitu corpus, evaluator,
+dan adapter kanal palsu yang menguji perilaku sistem. Karena itu menyebut seluruh
+Harvy sebagai “harness” berguna sebagai intuisi teknis, tetapi terlalu sempit
+sebagai definisi produk dan dapat tertukar dengan alat evaluasinya.
+
+**Bukti.** `docs/PROJECT.md`, `docs/CONSTITUTION.md`,
+`docs/engineering/STATUS.md`, `docs/LOG.md`, `ADR-003`, dan `ADR-004` diperiksa
+langsung. Tidak ada tes yang dijalankan karena sesi ini tidak mengubah kode atau
+perilaku.
+
+## 31 Juli 2026 — Urutan dua API testing dikonfirmasi
+
+**Kenapa.** Pemilik menanyakan apakah dua API model pada mode testing berarti
+Google AI Studio dicoba lebih dulu lalu AlwaysCodex dipakai bila Google gagal.
+Sesi ini hanya menjelaskan perilaku yang sudah ada; kode dan konfigurasi tidak
+diubah.
+
+**Dibahas.** Ya, Google adalah primary dan AlwaysCodex adalah fallback khusus
+`AI_MODE=testing`. Respons sukses Google langsung dipakai. Timeout, gangguan
+jaringan, atau HTTP 5xx berpindah langsung ke AlwaysCodex; HTTP 429 mengikuti
+batas rotasi kunci Google pada request itu lebih dulu. Setelah gangguan
+provider-wide, atau 429 telah mengenai seluruh kunci Google, circuit melewati
+Google selama cooldown bawaan 30 detik lalu mencobanya lagi. Cancellation
+lifecycle, HTTP 4xx selain 429, keluaran rusak, dan penolakan batas lokal tidak
+memicu fallback. Bila AlwaysCodex ikut gagal, request berakhir gagal dan tidak
+berputar kembali ke Google. Production tetap tidak memakai fallback testing.
+
+**Bukti.** `docs/PROJECT.md`, `docs/CONSTITUTION.md`,
+`docs/engineering/STATUS.md`, `docs/LOG.md`, `src/config.ts`,
+`src/ai/client.ts`, dan `.env.example` diperiksa langsung. Tidak ada tes yang
+dijalankan karena sesi ini tidak mengubah perilaku.
+
+## 31 Juli 2026 — Provider cadangan testing ditambahkan tanpa mencampur baseline evaluasi
+
+**Kenapa.** Setelah diagnosis rentetan `AbortError` Google menunjukkan satu
+tahap dapat menghabiskan dua timeout karena rotasi kunci, pemilik meminta
+AlwaysCodex sebagai API backup selama testing. Perubahan ini menyentuh isi pesan
+yang dapat dikirim ke provider kedua, sehingga bukan sekadar pergantian URL:
+kontrak retry, cancellation, privasi, notice grup, dan cara membaca hasil
+evaluasi harus ikut dijaga.
+
+**Yang berubah.**
+
+- `AiClient` kini menerima satu provider cadangan. Timeout, gangguan jaringan,
+  dan HTTP 5xx primary langsung berpindah provider; HTTP 429 tetap merotasi
+  kunci primary lebih dulu sampai batas percobaan request (default seluruh
+  kunci). Cancellation lifecycle, HTTP 4xx lain, keluaran kosong/terpotong,
+  dan penolakan usage lokal tidak memicu failover. Kegagalan provider-wide
+  atau 429 yang telah mengenai seluruh kunci primary membuka circuit in-memory
+  selama 30 detik secara bawaan; 429 pada satu key dari request yang dibatasi
+  tidak ikut menutup key lain bagi request berikutnya.
+- Request cadangan mengganti model di body, query, dan telemetry. API key selalu
+  dikirim sebagai `Authorization: Bearer`; redirect ditolak dan base URL
+  testing divalidasi sebagai HTTPS tanpa kredensial, query, fragment, atau
+  akhiran endpoint penuh. Event operasional membawa `origin` dan alasan
+  failover tanpa isi percakapan. Redaksi defense-in-depth kini juga mengenali
+  parameter bernama `apikey`.
+- Konfigurasi `AI_TESTING_FALLBACK_BASE_URL`,
+  `AI_TESTING_FALLBACK_API_KEY`, dan `AI_TESTING_FALLBACK_MODEL` harus hadir
+  bersama; cooldown terpisah dapat diatur. Production selalu mengabaikan
+  konfigurasi tersebut. Nilai nyata disimpan hanya pada `.env` yang di-ignore;
+  `.env.example` memuat placeholder serta batas pemakaiannya.
+- Composition root memakai cadangan secara otomatis. Dua script probe dan
+  evaluator percakapan/ambient/direct sengaja primary-only secara default;
+  `--allow-fallback` hanya untuk run availability dan ringkasan menyatakan
+  `fallbackAllowed` serta `modelScope`; probe menampilkan model cadangan saat
+  flag itu dipakai agar kualitas tidak salah atribusi.
+- Persetujuan pribadi naik dari versi 2 ke 3 dan notice grup dari versi 4 ke 5.
+  Naskahnya menjelaskan bahwa satu atau lebih layanan pihak ketiga dapat
+  memproses pesan dan request yang sama dapat dikirim ulang ke provider
+  cadangan. Pengguna lama maupun grup yang baru melihat versi sebelumnya harus
+  melihat naskah baru sebelum diproses.
+- Tes klien, konfigurasi, onboarding, migrasi consent/notice, dan redaksi
+  diperluas. README, `AGENTS.md`, `PROJECT.md`, `ADR-003`, status kemampuan,
+  serta panduan pengujian diselaraskan.
+
+**Dibahas.**
+
+- Dokumentasi AlwaysCodex menampilkan ID kanonis `DeepSeek-V4-Flash` dan
+  menjelaskan endpoint v3 sebagai proxy transparan ke upstream. Ejaan kanonis
+  dipakai di `.env`; model tidak ditulis mati di kode atau contoh publik.
+- Failover adalah kemungkinan pemrosesan ganda. Primary dapat sudah menerima
+  request ketika timeout lokal terjadi, lalu cadangan menerima request yang
+  sama. Kebijakan privasi/retensi AlwaysCodex dan upstream-nya belum
+  diverifikasi, sehingga provider ini hanya dinyatakan layak untuk data
+  sintetis/dogfood testing, bukan production.
+- Request pertama saat primary rusak masih dapat memakan timeout primary
+  ditambah timeout cadangan. Circuit mengurangi pengulangan pada request
+  berikutnya, tetapi deadline total lintas seluruh tahap satu turn belum ada.
+
+**Bukti.**
+
+- `npm run check` lulus.
+- `npm test` lulus: **409 test, 65 suite, 0 gagal**.
+- Tujuh berkas tes terarah klien/config/adapter/onboarding/profile/grup/logger
+  lulus 119 test, 10 suite, 0 gagal.
+- Endpoint daftar model diperiksa tanpa kunci. Smoke pertama dengan ejaan model
+  lowercase dan satu percobaan kanonis ketika kanal belum siap menghasilkan
+  HTTP 503 `model_not_found`. Sesudah memakai ID kanonis, request sintetis
+  OpenAI-compatible dengan Bearer header berhasil HTTP 200. Smoke melalui
+  `AiClient` dengan primary yang sengaja gagal lokal juga berhasil memakai
+  cadangan dan menerima balasan dua karakter.
+- `git diff --check` lulus selain peringatan normalisasi LF/CRLF. Pemindaian
+  nilai kunci terhadap seluruh tracked file menemukan nol kecocokan, dan
+  `git check-ignore -v .env` memastikan file runtime tetap di-ignore.
+- Dua agent read-only mengaudit arsitektur failover serta privasi/cakupan tes;
+  root tetap satu-satunya penulis.
+
+**Sengaja ditinggalkan.** Tidak ada perubahan provider production, commit,
+push, corpus evaluasi masif, atau uji Telegram/WhatsApp nyata. SLA, kualitas
+percakapan panjang, ketentuan privasi/retensi provider cadangan, deadline total
+satu turn, circuit terdistribusi lintas proses, dan failover antar akun
+WhatsApp belum diklaim selesai.
+
+## 30 Juli 2026 — Rentetan `AbortError` grup didiagnosis sebagai timeout AI
+
+**Kenapa.** Pemilik menunjukkan log empat giliran WhatsApp grup yang berulang
+menulis `ai_request_retrying` dan `AbortError`, dengan latency akhir 57–77
+detik. Sesi ini hanya mendiagnosis; perilaku produk tidak diubah.
+
+**Dibahas.**
+
+- Bukti NDJSON di `data/logs/harvy-20260730-0001.ndjson` menunjukkan runtime
+  memakai `AI_MODE=testing`, endpoint Google bawaan, model
+  `gemini-3.5-flash-lite`, dua kunci, dan tanpa pemetaan model testing per tier.
+- Semua kegagalan berhenti tepat pada timeout request yang ditulis di log:
+  risk triage 12 detik, reply review 8 detik, group reply 15 detik, dan planner
+  8 detik. Tidak ada status HTTP pada kegagalan ini; `fetch` dibatalkan timer
+  lokal sebelum respons diterima. Satu risk triage lain selesai dalam 1.069 ms,
+  sehingga bukti tidak mendukung putus koneksi total. Penyebab di sisi seberang
+  timer—provider yang tersendat, koneksi intermiten, atau antrean/limit
+  provider—belum dapat dibedakan dari log sekarang.
+- `ai_request_retrying` baru ditulis setelah attempt pertama sudah timeout.
+  Karena ada dua kunci, risk triage dan review mencoba kunci kedua segera dan
+  dapat menghabiskan masing-masing 24 dan 16 detik. Trace `27727adf-...`
+  menggabungkan 2 × 12 detik triase, 15 detik generasi, dan 2 × 8 detik review;
+  durasi turn yang tercatat 56.897 ms sesuai rentetan itu.
+- Ketika FIFO grup sibuk, triase prioritas berjalan sebelum turn masuk FIFO.
+  Bila preflight itu gagal dan menghasilkan `null`, pemrosesan normal
+  menjalankan triase fail-closed lagi. Ini menjelaskan dua rentetan triase pada
+  trace `4fa8b33b-...` dan `94a05409-...`, sekaligus memperbesar backlog ketika
+  penyedia sedang lambat.
+- Outcome `replied` tidak membuktikan model berhasil: direct call masih dapat
+  mengirim fallback aman setelah generasi/review gagal. Outcome `silent` pada
+  ambient setelah planner atau triase gagal juga merupakan perilaku fail-closed,
+  bukan crash proses.
+
+**Bukti.** File log diperiksa per trace dan dikelompokkan berdasarkan purpose.
+Empat turn selesai dengan latency 57.251, 70.480, 77.278, dan 64.467 ms. Dari
+request yang terlihat, hanya satu risk triage selesai; lima rentetan risk
+triage, dua reply review, dua group reply, dan satu planner berakhir timeout.
+Kode `AiClient`, `GroupTurnService`, `Conversation`, konfigurasi runtime aman
+tanpa nilai kunci, serta batas waktunya diperiksa langsung. Tidak ada request
+model baru, perubahan kode, atau tes yang dijalankan.
+
+**Sengaja ditinggalkan.** Belum diterapkan deadline total satu turn, backoff
+dan circuit breaker provider, pembedaan timeout internal dari cancellation
+lifecycle pada telemetry, maupun kebijakan agar preflight gagal tidak
+menggandakan triase panjang di FIFO. Itu merupakan perbaikan, sedangkan
+permintaan sesi ini hanya diagnosis.
+
+## 30 Juli 2026 — Percakapan grup dibuat ambient, cepat, dan dapat dievaluasi
+
+**Kenapa.** Pemilik produk melaporkan tiga kegagalan pengalaman grup: Harvy
+diam bila namanya tidak dipanggil/di-reply, balasannya tidak natural, dan pesan
+berikutnya tertahan terlalu lama. Ia meminta evaluasi masif lintas topik,
+perbaikan otonom, serta riset cara manusia mengetik. Tiga agent read-only
+mengaudit pipeline, desain evaluator, dan literatur percakapan multi-party;
+root tetap satu-satunya penulis sesuai aturan kepemilikan repositori.
+
+**Yang berubah.**
+
+- `BaileysAccountManager` tidak lagi menunggu pekerjaan AI pada listener
+  ingress. Refresh metadata berjalan di latar dengan timeout, typing direct
+  best-effort, dan lifecycle dipecah menjadi stop-ingress, drain-event, lalu
+  close. `GroupMessageBatcher` mengobservasi pesan baru sebelum speaker switch,
+  memakai settle direct 350 ms versus ambient 1,2 detik, membawa quote/revision,
+  dan mencatat latency sejak enqueue.
+- `GroupTurnService` kini memakai observation revision serta generation per
+  scope+account. Duplicate, replay sebelum join, dan akun non-binding tidak
+  membatalkan kandidat sah. Alias vocative seperti “Kapi, bantu” masuk direct,
+  sementara penyebutan Harvy sebagai topik tidak. Direct membatalkan planner
+  ambient aktif dan tidak menghabiskan budget sosial.
+- Cooldown global 60 detik diganti budget adaptif. Planner ambient hanya boleh
+  bicara untuk pertanyaan belum terjawab, konteks berguna, koreksi fakta, atau
+  banter yang mengundang. `group-turn-policy.ts` menahan acknowledgment, izin,
+  dan penutup koordinasi pendek tanpa request model.
+- Kandidat bernilai tinggi yang tersusul dapat menjadi satu pending candidate:
+  menunggu quiet gap 900 ms, paling lama 15 detik/empat giliran, lalu
+  direvalidasi terhadap konteks terbaru. Watermark settled memastikan timer
+  900 ms tidak mendahului bubble yang sudah terlihat tetapi masih berada dalam
+  settle ambient 1,2 detik. Direct, bahaya, kelanjutan target, quote target,
+  removal, dan shutdown membatalkan timer sekaligus request revalidation atau
+  fact-reply yang sedang aktif. Fact correction diregenerasi melalui tier
+  `efficient`; pagar output menolak pengalaman fisik palsu, DM/japri,
+  diagnosis/tuduhan pasti, jaminan transaksi, dan keluaran ambient panjang.
+- Urgent ACK mendapat reservation/dedupe, pemeriksaan binding/join, batas empat
+  triase aktif serta antrean 32. Removal menaikkan generation sebelum I/O dan
+  seluruh send/state memeriksanya lagi. Audit race menutup implicit activation
+  sesudah self-remove, penulisan ulang notice/alias/konteks/marker risiko, serta
+  usage yang tertinggal. Cache metadata/admin kini dikosongkan pada reconnect
+  dan memakai epoch per grup agar refresh lama tidak hidup lagi setelah
+  removal. Shutdown menguras event selagi socket masih hidup, kemudian
+  batch/pending, baru socket, telemetry, dan logger.
+- Prompt grup memakai giliran chat beridentitas dan persona grup tersendiri.
+  Panduannya memahami lowercase, singkatan, code-mix, elongation, emoji, dan
+  beberapa bubble tanpa meniru typo atau mengarang pengalaman manusia.
+- `group-eval-corpus.ts` memuat 15 topik, 150 skenario semantik × empat variasi
+  permukaan (600 ambient), serta 60 episode generasi direct.
+  `evaluasi-grup.ts`/`evaluasi-grup-direct.ts` menyimpan seluruh JSONL,
+  seed/versi/hash, strict versus preference, konsistensi cluster, dan latency.
+  Provider failure, harness/config failure, dan product failure dipisahkan;
+  run tanpa sampel menghasilkan `null` dan tetap gagal. Fact-check direct
+  terbaru wajib menantang klaim pada semua topik.
+- Keputusan dicatat sebagai `ADR-011`; status, testing, project, README,
+  AGENTS, index, dan artefak audit di
+  `docs/evidence/group-conversation-2026-07-30/` ikut diperbarui.
+
+**Dibahas.** Riset primer mengubah definisi “natural” dari kosmetik bahasa
+menjadi keputusan sosial. Addressee eksplisit hanya sekitar 20% giliran pada
+corpus Inoue dkk. dan benchmark mereka menunjukkan pengenal addressee LLM tetap
+sulit; corpus Kummerfeld dkk. menunjukkan satu stream berisi thread
+berselang; turn-taking sebaiknya dikondisikan pada respons yang hendak
+diberikan. Karena itu Harvy tidak boleh sekadar menunggu tag, menghitung tanda
+tanya, atau membuat typo palsu. Natural berarti memahami target, ritme,
+register, novelty, dan kapan diam. Rujukan primer dicatat di `ADR-011`.
+
+Angka “600 percakapan” diluruskan menjadi 150 skenario semantik dengan empat
+transformasi. Episode direct menguji generasi **sesudah** routing; pengenalan
+alias produksi dibuktikan tes service. Metrik aturan wajib dan preferensi tidak
+lagi dicampur. Agent evaluator juga menemukan hasil kosong sebelumnya dapat
+terlihat sempurna dan HTTP 400/bug lokal dapat tersamar sebagai provider
+failure; keduanya ditutup beserta tes regresinya.
+
+**Bukti.**
+
+- `npm run check` PASS.
+- `npm run build` PASS.
+- Tes terarah percakapan grup, manager Baileys, dan percakapan model grup
+  sempat PASS **61 test dalam 3 suite**; setelah jendela read-konteks terakhir
+  ditutup, file `group-turn-service` final PASS **41/41**.
+- `npm test` resmi terakhir PASS: **390 test, 64 suite, 0 gagal** (exit `0`;
+  96,3 detik wall time termasuk build, 74,2 detik test runner). Run penuh
+  sebelumnya menyelesaikan 388/389 dan menemukan satu flake pada assertion
+  timer `MessageBatcher` Telegram: deadline perilaku tetap 35 ms, tetapi batas
+  tunggu tes 250 ms habis ketika 64 suite membebani event loop. Batas assertion
+  dibuat 1,5 detik tanpa mengubah runtime; kasus tunggal lalu PASS dan run penuh
+  kedua PASS seluruhnya.
+- Model testing `gemini-3.5-flash-lite`, pipeline `2026-07-30.4`: run ambient
+  lama 600 variasi memperoleh 584/600 menurut evaluator v3, strict pass rate
+  0,993, dan p50/p95/p99 request planner 860/1.443/2.966 ms. Audit manual
+  menemukan 13 dari 16 hard failure adalah oracle kata-kunci sempit dan tiga
+  false-positive sebenarnya berada pada human-flow.
+- Sesudah pagar bentuk lokal, 60/60 variasi human-flow diam; 36 ditahan lokal,
+  24 dinilai model, p95 request 1.599 ms.
+- Run direct lama menghasilkan balasan 60/60 dengan p50/p95/p99
+  878/1.378/1.767 ms. Bukti ini diturunkan menjadi coverage/pagar bentuk karena
+  oracle fact-check versi itu belum kuat.
+- Run fact-correction berikutnya **INCOMPLETE dan tidak sah sebagai skor**:
+  35/60 request terkena HTTP 429; evaluator lama mencampurnya dengan product
+  failure. Runner baru memisahkannya, tetapi tidak dipanggil lagi agar tidak
+  terus menekan kuota.
+
+**Sengaja ditinggalkan.** Belum ada run penuh corpus v5/evaluator v4,
+penilaian naturalness buta oleh manusia, latency end-to-end WhatsApp, atau uji
+perilaku lengkap di grup nyata. Reply ke anggota lain tetap sangat
+konservatif; conversation disentanglement belum sempurna; delayed candidate
+dapat kehilangan native quote bila cache transport kedaluwarsa. Auth Baileys
+tetap beta lokal satu proses, bukan penyimpanan produksi. Tidak ada commit atau
+push pada sesi ini. Audit ulang agent setelah lima perbaikan race tidak selesai
+karena kuota agent habis; bukti akhirnya adalah review root, tes reproduksi, dan
+suite penuh—bukan klaim audit independen kedua.
+
+---
+
+## 29 Juli 2026 — Log operasional produksi dibuat dan dipagari dari data percakapan
+
+**Kenapa.** Setelah koneksi WhatsApp nyata berhasil, keluaran logger bawaan
+Baileys terbukti sangat bising dan membawa object protokol seperti history
+notification, media key, serta direct path. Pemilik produk lalu meminta sistem
+pencatatan kualitas perusahaan agar semua lifecycle, tahap, durasi, fallback,
+dan kegagalan Harvy dapat dievaluasi. “Semua” ditetapkan sebagai semua kejadian
+teknis yang relevan, bukan izin membuat arsip baru berisi kehidupan pengguna.
+
+**Yang berubah.**
+
+- `src/observability/operational-logger.ts` membuat sink NDJSON append-only
+  schema `harvy.operational-log.v1`: timestamp UTC, release/environment,
+  run/sequence/PID/host, component/event, trace per ingress, scalar teknis
+  allowlist, dan error metadata-only. Deskripsi call site, `Error.message`,
+  thrown string, isi chat, prompt/balasan, identitas pengguna/grup, nomor,
+  payload mentah, QR, token, dan kredensial tidak dipersistenkan. Error hanya
+  membawa tipe yang dikenal, kode/status berformat tertutup, frame stack tanpa
+  baris pesan, cause terbatas, dan fingerprint.
+- Writer mempunyai antrean record+byte berbatas, prioritas `warn/error`,
+  emergency append sinkron, rotasi ukuran/hari UTC, retensi dan cap total disk,
+  permission best-effort, mutex untuk append/rotasi/maintenance/close, serta
+  repair tail crash sampai newline valid terakhir. Health memisahkan kesehatan
+  tulis dan retensi; append yang pulih tidak menutupi retensi yang masih gagal.
+  `LOG_FILE_REQUIRED=true` menggagalkan startup bila sink atau retensi awal
+  wajib tidak sehat.
+- Jalur emergency kini ikut tunduk pada batas segmen/total agar error storm
+  tidak menghabiskan disk; record yang tidak lagi muat dihitung sebagai drop.
+  Byte writer normal dipesan sebelum `await` pertama agar emergency append
+  yang masuk bersamaan tidak dapat melampaui cap satu record.
+  Retensi memakai tanggal UTC nama segmen, sehingga copy/restore tidak
+  memperpanjang atau memendekkan umur log. Bila sink opsional gagal, stderr
+  tersaring dipaksa aktif meski konfigurasi console semula mati.
+- Console memakai JSON atau pretty tanpa data tambahan. Sinyal backpressure
+  menghentikan penulisan berikutnya sampai `drain`, menghitung yang dilewati,
+  dan mencatat onset/recovery ke file agar buffer proses tidak tumbuh tanpa
+  batas. Kegagalan sink opsional tetap membiarkan kanal berjalan lewat console
+  yang sudah dipagari.
+- `AsyncLocalStorage` menghubungkan tahap satu update Telegram atau giliran
+  WhatsApp tanpa memakai ID pengguna. Lifecycle model, batch bubble, worker,
+  telemetry/history, delivery/fallback, status akun, retensi, startup, dan
+  shutdown kini masuk logger. Handler `uncaughtException` dan
+  `unhandledRejection` menulis fatal secara sinkron lalu keluar status 1;
+  logger dikuras paling akhir pada shutdown normal.
+- Adapter logger Baileys membuang info/debug dan seluruh object mentah,
+  meneruskan hanya kategori serta scalar yang dikenal, dan menganggap restart
+  `515` setelah pairing sebagai lifecycle biasa. Banyak nomor tetap dapat
+  dibedakan lewat alias operasional stabil; parser kini mewajibkan alias
+  diawali huruf dan melarang nomor/JID dipakai sebagai ID.
+- QR dan pairing code dipisahkan total dari logger. Secret hanya boleh tampil
+  pada TTY lokal ketika `APP_ENV` bukan `production`; production dan pipe
+  noninteraktif menolaknya. Kegagalan renderer QR memakai error sintetis agar
+  input QR pihak ketiga tidak mungkin ikut terlempar ke logger.
+- Konfigurasi `APP_ENV`, `RELEASE_SHA`, dan seluruh `LOG_*` ditambahkan.
+  Kesalahan konfigurasi mempunyai code operasional stabil tanpa perlu
+  menyimpan pesannya. Segmen log diabaikan Git meski `LOG_FOLDER` diarahkan ke
+  folder lain dalam repository.
+- Detail persetujuan Telegram dan notice grup v4 menjelaskan data teknis yang
+  dicatat. Nilai retensi file lokal diambil dari deployment aktual; keduanya
+  jujur bahwa retensi Docker/systemd/cloud collector adalah kebijakan
+  infrastruktur terpisah yang tidak dapat ditegakkan Harvy.
+- `ADR-010`, README, PROJECT, STATUS, TESTING, `.env.example`, `.gitignore`,
+  INDEX, dan AGENTS diselaraskan. Uji baru mencakup schema, trace concurrent,
+  rotasi, maintenance concurrent, retensi, tail crash, sink opsional/wajib,
+  queue pressure, console backpressure, object Baileys mentah, sentinel bahasa
+  alami pada error/rejection/deskripsi, JID device, nomor pendek, konfigurasi,
+  alias akun, secret operator, notice retensi aktual, fallback stderr, tanggal
+  retensi tahan-copy, dan error storm berbatas disk.
+
+**Dibahas.** Log operasional sengaja tetap terpisah dari telemetry pengguna.
+File lokalnya bukan audit trail immutable atau SIEM. `LOG_RETENTION_DAYS` hanya
+menghapus file yang Harvy kuasai; collector perusahaan wajib mempunyai kontrol
+akses, enkripsi, alert, backup, dan retensi sendiri. Menghapus data pengguna
+tidak mencari record operasional karena record tersebut sengaja tidak membawa
+identitas yang dapat dipetakan kembali kepadanya.
+
+**Bukti.**
+
+- `npm run check` — **PASS**.
+- Tes terarah logger dan konfigurasi — **PASS, 18 test dalam 2 suite**.
+- `npm test` — **PASS, 345 test dalam 60 suite, 345 lulus, 0 gagal**.
+- Pengujian memakai sentinel sintetis dan fake stream/socket; tidak ada data
+  pengguna nyata maupun panggilan model eksternal.
+- Audit race normal/emergency diulang 20 kali pada cap segmen/total 800 byte;
+  seluruh percobaan tetap dalam batas dan tidak menyisakan temuan P0/P1/P2.
+
+**Sengaja ditinggalkan.** Belum ada soak test deployment jangka panjang,
+simulasi disk penuh/ACL production, collector/SIEM, dashboard health, alert,
+auth store WhatsApp terenkripsi, atau uji ulang pairing/grup nyata setelah
+logger baru. Jalur manualnya sudah ditulis di `docs/engineering/TESTING.md`,
+tetapi statusnya tetap belum diuji sampai benar-benar dijalankan.
+
+---
+
+## 29 Juli 2026 — Model Capybara dan fondasi grup WhatsApp multi-nomor dibuat
+
+**Kenapa.** Pemilik produk memberi izin menulis kode setelah menetapkan bahwa
+Harvy harus memperkenalkan sistem AI-nya sebagai **model Capybara**, tetap
+jujur sebagai AI, dan memakai beberapa model alih-alih mengaku bergantung pada
+satu model dasar. Pemilik juga meminta implementasi grup WhatsApp memahami
+Baileys resmi dan dapat menjalankan banyak nomor Harvy.
+
+**Yang berubah.**
+
+- `baileys@7.0.0-rc14` ditambahkan sebagai dependency. `WHATSAPP_ACCOUNTS`
+  menerima registry banyak nomor; setiap account ID mempunyai auth folder,
+  socket, cache berbatas, generation, status, pairing, reconnect, dan lifecycle
+  event sendiri dalam satu proses.
+- Account manager hanya meneruskan `messages.upsert` bertipe `notify`, mengabaikan
+  history/echo/nonteks, mempertahankan metadata tag/reply/admin, menunggu save
+  credentials sebelum reconnect, melanjutkan sisa array bila satu pesan gagal,
+  menangani self-add/re-add serta self-remove, dan menguras pekerjaan event saat
+  shutdown dengan `socket.end(undefined)`.
+- Pipeline grup baru terpisah total dari profil, memori, history, tugas, dan
+  sesi pribadi. Binding `channel+group` menolak akun kedua dan tidak failover
+  otomatis. Notice v3 menjelaskan bahwa pesan live pemicu ikut diproses,
+  telemetry tanpa isi, dan binding teknis minimum; notice dikirim saat aktivasi
+  sebelum pemrosesan.
+- Burst bubble anggota yang sama digabung setelah 1,2 detik tanpa membuang ID
+  bubble, hanya bila bubble itu berurutan dari pengirim dan akun yang sama.
+  Batch mempunyai deadline serta batas jumlah/karakter; account ID masuk kunci
+  agar dua nomor tidak bercampur. Tag, reply, dan julukan menjadi panggilan
+  langsung; pesan ambient memakai planner dan cooldown. Bahaya yang datang di
+  belakang giliran lambat mendapat acknowledgment tetap di luar FIFO, sedangkan
+  balasan lengkap tetap berurutan dan direview fail-closed.
+- Memori grup menyatukan PN/LID, menyimpan nama tampilan/koreksi dan statistik
+  harian per grup, membatasi dedupe 24 jam, aktivitas 30 hari, ranking 7 hari,
+  serta menjalankan purge saat akses, startup, dan berkala. Raw context berada
+  maksimal dua jam di RAM; pesan dan balasan sensitif/berisiko tidak masuk.
+  Penanda risiko tanpa isi bertahan 30 menit untuk tindak lanjut pendek.
+  Removal menghapus seluruh memori sosial dan telemetry grup, menyisakan
+  binding akun minimum agar nomor lain tidak mengambil alih diam-diam.
+- Anggota dapat melihat memori, mengoreksi nama, dan meminta penghapusan diri;
+  admin dapat menambahkan julukan Harvy dan meminta reset grup. Penghapusan dan
+  reset memerlukan konfirmasi kedua yang terikat identitas selama 10 menit.
+- Pertanyaan identitas murni seperti “kamu ChatGPT?” dijawab deterministik
+  tanpa model dasar: Harvy adalah AI dengan sistem multi-model bernama
+  Capybara. Fast path hanya dipakai tanpa episode chat yang masih hangat;
+  pesan campuran dan lanjutan episode tetap melewati pemahaman/triase agar
+  permintaan lain maupun keselamatan tidak ditimpa identitas.
+- Review terakhir memperketat nomor fisik duplikat, urutan ingress per akun+
+  grup, kompensasi dedupe/statistik saat send gagal, filter arsip pesan
+  protokol, PN/LID pada penghapusan diri, dan self-remove nomor non-binding.
+- Percobaan pairing code nyata tersambung ke server lalu ditolak `401` sebelum
+  kode tampil, menyisakan auth `registered: false`. Ini cocok dengan isu
+  upstream Baileys yang melaporkan pairing-code gagal sementara QR tetap
+  berhasil. `WHATSAPP_PAIRING_MODE=qr` kini default, QR dirender lokal di
+  terminal, dan state pairing-code parsial dibersihkan otomatis tanpa
+  menghapus folder/key auth. Mode `code` tetap tersedia eksplisit.
+- Pemindaian QR nyata kemudian mencapai `pair-success`; server menutup stream
+  dengan `515` agar companion memulai ulang koneksi, sesuai alur Baileys.
+  Reconnect sempat menampilkan QR kedua karena pembersih state parsial salah
+  memakai keberadaan `creds.me` sebagai tanda pairing-code gagal. Padahal
+  pair-success QR memang mengisi `me` sebelum restart. Pembersih kini hanya
+  berjalan bila `pairingCode` benar-benar tersisa, sehingga identitas hasil QR
+  bertahan untuk jalur login berikutnya. Auth yang sudah tertimpa pada
+  percobaan pertama memerlukan satu pemindaian ulang setelah perbaikan.
+- Pemindaian ulang setelah perbaikan berhasil masuk jalur `logging in`,
+  mengunggah pre-key awal, mencapai status `open`, membuat sesi LID, dan
+  membalas pesan di grup nyata menurut laporan pemilik. Log bootstrap sempat
+  gagal membaca key app-state `critical_block`, tetapi Baileys menerima key
+  sesudahnya, menyinkronkan ulang, lalu mencatat `synced critical_block to v1`;
+  jadi kegagalan itu pulih sendiri dan tidak memutus koneksi.
+- Logger bawaan Baileys berjalan pada level info dan mencetak history
+  notification lengkap, termasuk payload terenkripsi, media key, serta direct
+  path. Kebijakan Harvy tetap menolak `INITIAL_BOOTSTRAP` dan `RECENT`
+  (`process:false`) serta hanya menerima data protokol minimum seperti push
+  name dan mapping PN/LID. Isi panjang itu bukan bukti Harvy mengimpor riwayat
+  chat, tetapi lognya terlalu bising dan tidak layak dibagikan atau disimpan
+  tanpa redaksi.
+- Runtime, `.env.example`, README, PROJECT, STATUS, TESTING, ADR-009, INDEX,
+  AGENTS, dan kontrak notice diselaraskan dengan perilaku aktual.
+
+**Bukti.**
+
+- `npm run check` — **PASS**.
+- Tes terfokus konfigurasi/pairing/account manager — **PASS, 15/15**.
+- `npm test` — **PASS, 325 test dalam 58 suite**.
+- Normalisasi, banyak socket, pemisahan auth, reconnect, save credentials,
+  self-add/remove, kegagalan satu pesan, drain event, batching, PN/LID,
+  isolation, retensi, konfirmasi, removal race, konteks keselamatan, dan
+  acknowledgment bahaya diuji memakai adapter/socket palsu.
+- API dan batas operasional diperiksa pada dokumentasi resmi:
+  [`README` Baileys](https://github.com/WhiskeySockets/Baileys/blob/master/README.md),
+  [`Connecting`](https://baileys.wiki/docs/socket/connecting/),
+  [`History Sync`](https://baileys.wiki/docs/socket/history-sync/), dan
+  [`Security`](https://github.com/WhiskeySockets/Baileys/security).
+- Pairing code dan koneksi awal sudah benar-benar dicoba: WebSocket tersambung,
+  tetapi `companion_hello` ditolak `401` sebelum kode keluar. QR, pair-success,
+  restart `515`, login, status `open`, dan satu balasan grup nyata sudah
+  terlihat. Restart proses memakai auth tersimpan, pengujian dua nomor nyata,
+  notice, kualitas planner sosial, memori, removal, dan jalur keselamatan tetap
+  **NOT RUN**.
+- Isu pembanding upstream:
+  [`#2702`](https://github.com/WhiskeySockets/Baileys/issues/2702) dan
+  [`#2364`](https://github.com/WhiskeySockets/Baileys/issues/2364).
+
+**Sengaja ditinggalkan.** Auth multi-file masih khusus beta lokal; produksi
+memerlukan database terenkripsi dan single writer. Penambahan nomor serta
+pembagian grup masih konfigurasi operator, bukan load balancer otomatis.
+Binding yang sudah dimiliki account ID lain tidak dapat direbind diam-diam.
+Memori semantik grup (keputusan bersama, budaya, inside joke), WhatsApp
+pribadi, dan grup Telegram belum dibuat.
+
+---
+
+## 29 Juli 2026 — Konstitusi v0.4 dan arah banyak nomor Baileys ditetapkan
+
+**Kenapa.** Pemilik produk meminta konflik otorisasi grup diselesaikan dengan
+mengubah Konstitusi, lalu meminta arsitektur WhatsApp dipastikan dapat
+menampung banyak nomor Harvy melalui Baileys. Izin ini mencakup dokumentasi dan
+keputusan produk; kode tetap tidak boleh dibuat.
+
+**Yang berubah.**
+
+- `CONSTITUTION.md` naik dari v0.3 menjadi **v0.4**, bertanggal 29 Juli 2026.
+  Catatan revisi menyebut alasan, hak yang berkurang, manfaat, risiko, dan
+  perlindungannya.
+- Pengelola yang sengaja menambahkan Harvy kini mengotorisasi pemrosesan pesan
+  baru di grup tanpa consent individual. Harvy tetap wajib mengumumkan bahwa
+  dirinya AI dan pesan dapat diproses penyedia eksternal; ia dilarang mengimpor
+  riwayat sebelum masuk.
+- Memori grup diikat ke identitas grup, tidak masuk ke chat pribadi atau grup
+  lain, tidak membentuk profil global, tetap melarang penyimpanan sensitif
+  otomatis, dan mempunyai hak lihat/koreksi/hapus.
+- Contoh penerapan Konstitusi ditambah untuk grup terotorisasi, kebocoran
+  lintas konteks, dan impor riwayat lama.
+- `PROJECT.md`, `INDEX.md`, `README.md`, dan `STATUS.md` diselaraskan: hanya ada
+  satu produk bernama Harvy; kapibara menjadi maskot, ikon, dan filosofi;
+  pengalaman pribadi maupun grup adalah konteks dari Harvy yang sama.
+- `PROJECT.md` menetapkan arah banyak nomor WhatsApp. Setiap nomor harus menjadi
+  sesi terisolasi dengan auth state, socket, kesehatan koneksi, dan identitas
+  operasional sendiri. Grup terikat ke nomor yang menanganinya; kemampuan serta
+  kebijakan Harvy tetap dibagi pada lapisan layanan.
+- Banyak nomor hanya untuk pembagian beban dan isolasi kegagalan. Larangan
+  rotasi nomor untuk menghindari pembatasan atau pemblokiran WhatsApp tetap
+  berlaku.
+
+**Dibahas.** Dokumentasi resmi Baileys menjelaskan satu `makeWASocket` yang
+menerima auth state dan satu folder auth state per koneksi. Karena tidak ada
+singleton global yang dinyatakan, banyak nomor dapat dirancang sebagai banyak
+socket dengan auth state terpisah. Ini inferensi arsitektural dari API, bukan
+janji resmi mengenai jumlah akun, stabilitas, atau penerimaan WhatsApp.
+
+Baileys sendiri menyatakan tidak berafiliasi atau diotorisasi WhatsApp,
+melarang spam dan penggunaan yang melanggar ketentuan, serta mengingatkan bahwa
+auth state adalah kredensial jangka panjang. Wiki juga melarang
+`useMultiFileAuthState` demo dipakai sebagai penyimpanan produksi dan
+merekomendasikan implementasi database sendiri. Banyak nomor karena itu
+memerlukan registry sesi, penyimpanan kredensial terenkripsi, isolasi reconnect,
+health check, pembagian grup deterministik, dan drain per nomor ketika kelak
+diimplementasikan.
+
+**Bukti.**
+
+- Dokumentasi resmi diperiksa:
+  [`README` Baileys](https://github.com/WhiskeySockets/Baileys/blob/master/README.md),
+  [`Introduction`](https://baileys.wiki/docs/intro/),
+  [`useMultiFileAuthState`](https://baileys.wiki/docs/api/functions/useMultiFileAuthState/),
+  dan
+  [`Security`](https://github.com/WhiskeySockets/Baileys/security).
+- `git diff --check` dijalankan setelah perubahan dokumentasi.
+- Tidak ada kode, dependency, konfigurasi runtime, nomor WhatsApp, proses bot,
+  atau koneksi Baileys yang dibuat maupun diuji.
+
+**Sengaja ditinggalkan.** Jumlah nomor, strategi distribusi grup, proses pairing,
+penyimpanan auth produksi, failover, rate limit, pemulihan sesi, serta
+pengelolaan nomor belum diimplementasikan. Kemampuan banyak nomor belum boleh
+ditulis sebagai “Ada” di `STATUS.md`.
+
+---
+
+## 29 Juli 2026 — Otorisasi grup dan batas memori grup dipilih
+
+**Kenapa.** Pemilik produk menutup dua pertanyaan yang sebelumnya masih
+diperdebatkan: Harvy hanya hadir setelah diizinkan masuk ke grup, sehingga
+tidak akan ada gerbang persetujuan pemrosesan pesan per anggota; memori yang
+terbentuk di grup hanya berlaku di dalam grup itu.
+
+**Yang diputuskan.**
+
+1. Penambahan Harvy oleh pengelola grup dianggap sebagai otorisasi ruang untuk
+   mengikuti dan memproses percakapan grup. Harvy tidak meminta persetujuan
+   pemrosesan kepada setiap anggota.
+2. Memori grup diisolasi berdasarkan grup. Ia tidak masuk ke chat pribadi,
+   tidak dibawa ke grup lain, dan tidak memperkaya profil global seseorang.
+   Orang yang sama memulai konteks sosial baru pada grup yang berbeda.
+
+**Dibahas.** Keputusan pertama bertentangan dengan Konstitusi v0.3 yang aktif:
+persetujuan bermakna adalah hak setiap pengguna, sedangkan pesan Harvy
+diproses penyedia model pihak ketiga. Izin admin atas kehadiran bot belum
+tercatat sebagai pengganti persetujuan anggota. Keputusan produk dapat
+diteruskan sebagai rancangan, tetapi tidak boleh diklaim sudah lulus Tes
+Konstitusi sampai pemilik produk mengubah Konstitusi secara resmi atau
+menetapkan pengecualian grup berikut alasan, risiko, perlindungan, versi, dan
+ringkasan dampaknya.
+
+Pemisahan memori grup masih memerlukan aturan operasional kemudian: apa yang
+boleh diingat, siapa yang dapat melihat/mengoreksi/menghapusnya, masa simpan,
+perlakuan ketika Harvy dikeluarkan, serta larangan menyimpan informasi sensitif
+secara otomatis. Hal-hal itu belum diputuskan oleh pernyataan isolasi konteks
+semata.
+
+Tidak ada kode yang boleh dibuat sampai pemilik produk memberi izin.
+
+**Bukti.** Konflik keputusan diperiksa terhadap definisi persetujuan bermakna,
+hak data, privasi sejak perancangan, Tes Konstitusi, dan prosedur perubahan
+Konstitusi v0.3. Tidak ada kode, konfigurasi, proses bot, atau integrasi kanal
+yang diubah atau diuji.
+
+---
+
+## 29 Juli 2026 — Transparansi AI dan izin pemrosesan grup dipertajam
+
+**Kenapa.** Pemilik produk menegaskan dua hal: kejujuran bahwa Harvy adalah AI
+tidak boleh membuatnya kaku atau tidak asyik, dan pemrosesan pesan grup dianggap
+tidak memerlukan izin tambahan karena Harvy hanya hadir setelah dimasukkan oleh
+anggota atau admin.
+
+**Dibahas.**
+
+1. Kejujuran AI tidak perlu menjadi disclaimer berulang. Harvy dapat
+   memperkenalkan dirinya sebagai AI sekali, secara ringan dan alami, lalu
+   berinteraksi sebagai anggota sosial yang punya humor, pendapat, timing, dan
+   kemampuan memilih diam. Yang dilarang adalah mengaku manusia atau mengarang
+   pengalaman/perasaan manusia, bukan mempunyai kepribadian.
+2. Memasukkan Harvy ke grup memang memberi izin pada tingkat pengelolaan grup
+   dan membuat kehadirannya tidak tersembunyi. Namun tindakan satu admin belum
+   otomatis menjadi persetujuan bermakna setiap anggota untuk mengirim
+   perkataannya ke penyedia model, menyimpan isi, atau membentuk profil sosial.
+   Anggota baru juga dapat masuk setelah keputusan awal, dan anak tidak boleh
+   dipaksa memilih antara menyerahkan data atau keluar dari grup kelasnya.
+3. Jalan yang diusulkan tidak harus berupa onboarding kaku. Harvy dapat memberi
+   satu pemberitahuan singkat ketika masuk; tidak membaca riwayat sebelum
+   kehadirannya; menjelaskan mode nimbrung dan kontrolnya; serta meminta
+   tindakan ringan dari anggota sebelum pesan atau profil individunya dipakai.
+   Transparansi ini perlu dirancang sebagai bagian dari percakapan, bukan
+   halaman syarat yang memotong suasana.
+4. Bila produk ingin menganggap keputusan admin cukup untuk pemrosesan ambient
+   seluruh anggota, keputusan itu bertentangan dengan pengertian persetujuan
+   bermakna dan hak data pada Konstitusi v0.3 sekarang. Hal tersebut tidak boleh
+   diam-diam diperlakukan sebagai detail implementasi.
+
+Belum diputuskan bentuk izin yang tetap alami, perlakuan terhadap pesan anggota
+yang belum memilih, atau apakah mode awal Harvy hanya merespons panggilan sampai
+mode nimbrung disetujui.
+
+Tidak ada kode yang boleh dibuat sampai pemilik produk memberi izin.
+
+**Bukti.** Kesimpulan diperiksa terhadap definisi persetujuan bermakna, hak
+pengguna, aturan privasi, dan larangan tindakan sensitif pada Konstitusi v0.3.
+Tidak ada kode, konfigurasi, proses bot, atau integrasi kanal yang diubah atau
+diuji.
+
+---
+
+## 29 Juli 2026 — Harvy sebagai anggota sosial grup dibahas
+
+**Kenapa.** Pemilik produk memperjelas bahwa Harvy di grup tidak dimaksudkan
+sebagai bot perintah atau satu mode hiburan sempit. Harvy diharapkan terasa
+seperti anggota grup: mengikuti topik serta budaya setempat, memilih kapan
+nimbrung, mengetahui panggilan atau julukannya, memahami dinamika anggota, dan
+tetap menjadi dirinya sendiri. Kemampuan ini diharapkan sama majunya pada grup
+WhatsApp maupun Telegram.
+
+**Dibahas.**
+
+1. Harvy tetap satu identitas, tetapi menyesuaikan pengetahuan dan ritme menurut
+   konteks grup. Grup game, sains, debat, kesehatan mental, filsafat, kelas,
+   jual-beli, bola, ekstrakurikuler, belajar, dan politik dapat memerlukan gaya,
+   alat, serta tingkat kehati-hatian yang berbeda tanpa mengubah kepribadian
+   dasar Harvy.
+2. “Hampir seperti manusia” diarahkan menjadi **kehadiran sosial yang alami**,
+   bukan kepura-puraan bahwa Harvy manusia. Harvy boleh mempunyai pendapat,
+   humor, timing, julukan, dan keberanian untuk tidak selalu menjawab, tetapi
+   tetap wajib jujur bahwa ia AI dan tidak mengarang pengalaman atau perasaan
+   manusia.
+3. Pemicu respons perlu bertingkat: tag/balasan/panggilan selalu jelas; kegiatan
+   aktif dan pertanyaan terbuka dapat mengundang partisipasi; percakapan manusia
+   yang sudah mengalir, konflik panas, atau cerita sensitif lebih sering
+   mengharuskan Harvy diam sampai diminta.
+4. Memori grup yang lebih canggih tidak berarti menyimpan semuanya. Memori
+   perlu dipisahkan menjadi budaya dan aturan grup, topik atau keputusan
+   bersama, aktivitas yang sedang berjalan, serta hal tentang anggota yang
+   memang layak dan diizinkan untuk diingat. Memori pribadi tidak boleh muncul
+   di grup, dan memori satu grup tidak boleh bocor ke grup lain.
+5. Label seperti “paling cerewet” atau “paling ini” dapat menjadi permainan
+   sosial, tetapi juga dapat mempermalukan, mengunci reputasi, atau membentuk
+   profil anak. Statistik semacam itu sebaiknya transparan, ringan, dapat
+   ditolak, tidak menjadi penilaian permanen, dan tidak diturunkan dari keadaan
+   sensitif.
+6. Partisipasi spontan menimbulkan pilihan privasi yang belum selesai. Harvy
+   harus membaca cukup banyak percakapan untuk mengetahui kapan nimbrung,
+   sedangkan keberadaan seseorang di grup bukan otomatis persetujuan agar semua
+   pesannya dikirim ke model atau disimpan. Pemberitahuan, consent anggota,
+   perlakuan terhadap anggota yang belum setuju, retensi pesan mentah, serta
+   kendali memori grup menjadi gerbang desain.
+7. Grup kesehatan mental, politik, dan jual-beli bukan sekadar variasi persona.
+   Ketiganya memerlukan batas khusus untuk keselamatan, ketidakpastian sumber,
+   manipulasi politik, privasi, transaksi, penipuan, dan hubungan dengan
+   moderator manusia.
+
+Belum diputuskan seberapa jauh Harvy boleh membaca arus grup tanpa tag, bentuk
+persetujuan anggota, siapa yang menguasai memori bersama, masa simpan konteks,
+atau fitur pertama yang akan menjadi dasar pengalaman grup.
+
+Tidak ada kode yang boleh dibuat sampai pemilik produk memberi izin.
+
+**Bukti.** Arah ini diperiksa terhadap Konstitusi v0.3 dan status kemampuan
+sekarang. WhatsApp dan pemrosesan grup tetap belum tersedia menurut
+`STATUS.md`; Telegram saat ini juga hanya menjalankan percakapan bebas di chat
+pribadi. Tidak ada kode, konfigurasi, proses bot, atau integrasi kanal yang
+diubah atau diuji.
+
+---
+
+## 28 Juli 2026 — Satu produk Harvy dengan kapibara sebagai maskot dibahas
+
+**Kenapa.** Pemilik produk menilai pemisahan Harvy Capybara dan Harvy Chat
+menambah beban pengembangan, sementara pengalaman Capybara yang ada terasa
+terlalu membosankan. Arah yang diajukan adalah melebur keduanya menjadi satu
+produk bernama Harvy; kapibara tetap hidup sebagai maskot, ikon, filosofi, dan
+dasar kepribadiannya.
+
+**Dibahas.** Penyatuan merek dan produk dinilai masuk akal, tetapi perlu
+dibedakan dari pencampuran konteks. Bentuk awal yang dibahas adalah:
+
+1. Hanya ada satu nama produk yang dilihat pengguna: **Harvy**. Istilah
+   “Capybara” tidak lagi menjadi nama agent atau produk terpisah.
+2. Harvy hadir dalam dua konteks pengalaman, pribadi dan grup, dengan identitas
+   serta kemampuan dasar yang sama tetapi tempo dan aturan interaksi berbeda.
+   Grup lebih sosial dan ringan; ruang pribadi tetap menyediakan kedalaman,
+   tutoring, tugas, keadaan diri, serta tindakan yang memerlukan privasi.
+3. Satu produk atau satu codebase tidak berarti memori pribadi boleh masuk ke
+   grup. State grup, state pribadi, persetujuan, dan aturan pengungkapan tetap
+   mempunyai batas yang tegas.
+4. Kekayaan fitur bukan tujuan yang cukup dengan sendirinya. Peleburan baru
+   memperbaiki pengalaman bila Harvy mempunyai peran yang jelas dalam grup dan
+   jalur yang mulus menuju percakapan pribadi; mengganti nama tidak otomatis
+   menyelesaikan rasa membosankan.
+5. Satu nomor WhatsApp, dua nomor, cara persetujuan anggota grup, pemisahan
+   memori, serta kemampuan minimum untuk versi pertama belum diputuskan.
+
+Tidak ada kode yang boleh dibuat sampai pemilik produk memberi izin. Perubahan
+produk dan dokumentasi utama juga belum dilakukan; arah ini masih diteruskan
+sebagai diskusi desain.
+
+**Bukti.** Konteks proyek, konstitusi, status implementasi, dan catatan diskusi
+sebelumnya digunakan. Tidak ada kode, konfigurasi, proses bot, atau integrasi
+WhatsApp yang diubah atau diuji.
+
+---
+
+## 28 Juli 2026 — Batas awal Harvy Capybara dan Harvy Chat di WhatsApp dibahas
+
+**Kenapa.** Pemilik produk membuka diskusi mengenai Harvy Capybara dan Harvy
+Chat yang kelak tersedia melalui WhatsApp, khususnya konteks grup. Dokumen yang
+ada menempatkan Capybara di percakapan pribadi dan Harvy Chat di grup, sehingga
+perlu dipastikan apakah dua produk memang akan hadir di ruang yang sama atau
+terhubung melalui perpindahan konteks.
+
+**Dibahas.** Usulan awal, belum menjadi keputusan final:
+
+1. Pengguna tetap melihat satu merek, **Harvy**, tetapi peran sosialnya dibatasi
+   oleh ruang: Harvy Chat menjadi peserta ringan di grup, sedangkan Capybara
+   tetap menjadi pendamping pribadi untuk belajar, tugas, keadaan diri, memori,
+   dan bantuan yang memerlukan kedalaman.
+2. Bila percakapan grup perlu dilanjutkan secara pribadi, Harvy menawarkan
+   “lanjut pribadi”. Hanya pesan atau konteks yang dipilih pengguna yang boleh
+   dibawa; riwayat grup dan memori pribadi tidak diseberangkan otomatis.
+3. Harvy Chat sebaiknya diam secara bawaan dan aktif ketika disebut, dibalas,
+   atau ketika sebuah aktivitas yang jelas sedang berlangsung. Pesan grup yang
+   tidak ditujukan kepadanya tidak dikirim ke model dan tidak disimpan.
+4. Permainan, poin, polling, dan aktivitas belajar grup harus memperkuat
+   hubungan manusia. Poin sebaiknya bersifat lokal pada permainan, bukan
+   peringkat permanen yang mempermalukan atau mendorong keterlibatan tanpa
+   batas.
+5. Grup memerlukan pemberitahuan yang jujur tentang apa yang dibaca, dikirim ke
+   penyedia AI, dan disimpan. Harvy bukan moderator atau pengawas tersembunyi,
+   dan tidak boleh menghubungi anggota secara pribadi tanpa tindakan jelas dari
+   anggota tersebut.
+
+Status implementasi tidak berubah: WhatsApp, Harvy Chat, dan Harvy Core masih
+belum dimulai menurut `STATUS.md`. Pertanyaan produk yang masih terbuka adalah
+apakah maksud pemilik memang menghadirkan dua mode di dalam grup, atau memakai
+pemisahan grup–pribadi dengan jembatan berizin.
+
+**Bukti.** `PROJECT.md`, `CONSTITUTION.md`, `engineering/STATUS.md`, `LOG.md`,
+`INDEX.md`, serta referensi WhatsApp/grup di kode dan dokumentasi diperiksa.
+Tidak ada kode, konfigurasi, proses bot, atau integrasi WhatsApp yang diubah
+atau diuji.
+
+---
+
+## 28 Juli 2026 — Audit final percakapan, keselamatan, dan delivery
+
+**Kenapa.** Setelah putaran implementasi pertama, tiga reviewer read-only
+menilai ulang Harvy dari sisi kualitas percakapan, keselamatan/privasi, serta
+konkurensi/delivery. Mereka menemukan beberapa celah yang masih dapat membuat
+Harvy terdengar salah konteks, menghapus data melalui tombol lama, mengirim
+check-in tanpa persetujuan aktif, atau meninggalkan state yang tidak pernah
+benar-benar dilihat pengguna. Pemilik produk sudah mengizinkan tindak lanjut
+kode dan meminta evaluasinya diteruskan.
+
+**Yang berubah.**
+
+*Keselamatan dan kejujuran.*
+
+- Konflik ketika ekstraksi menandai pesan sensitif tetapi triase menyebutnya
+  biasa kini naik ke jalur `dukungan` belum pasti. Route kontrol, mutasi, dan
+  konteks sesi dibuang seperti pada kegagalan triase.
+- Pemeriksa balasan menerima status `certain`. Bila triase gagal, ia dilarang
+  mengarang bahwa orang tua, guru, keluarga, atau teman pasti aman. Fallback
+  dipisahkan menurut tingkat: dukungan tidak lagi menerima copy bahaya/112,
+  sedangkan bahaya tetap membawa batas ketersediaan layanan darurat.
+- Naskah persetujuan tidak lagi berjanji AI selalu mengenali informasi pribadi:
+  ia menjelaskan bahwa penilaian dapat keliru dan catatan otomatis selalu
+  diumumkan dengan jalan untuk melupakannya. Keterbatasan dua model yang dapat
+  sama-sama salah tetap tercatat terbuka.
+- Inferensi tersembunyi gaya/tahap/kerentanan warisan dibersihkan fisik ketika
+  catatan lama dibaca. `refresh` tidak lagi memanggil model atau menghidupkan
+  field itu kembali.
+
+*Agensi, persetujuan, dan state.*
+
+- Konfirmasi Lupakan semua, tarik persetujuan, dan hapus seluruh data sekarang
+  bertoken, sekali pakai, terikat pemilik, dan kedaluwarsa. Callback lama tidak
+  dapat menghapus data yang dibuat setelah prompt awal.
+- Penerimaan dan penarikan persetujuan memakai rantai yang sama dengan ingress
+  pesan. Penarikan tidak lagi menghapus sesi/check-in; worker menyimpannya tetapi
+  menahan pengiriman sampai pengguna menyetujui lagi.
+- Semua prompt yang memakai `PendingStore` membatalkan pending tepatnya bila
+  Telegram gagal mengirim pertanyaan. Jawaban berikutnya tidak lagi dapat
+  dikonsumsi oleh prompt yang tidak pernah terlihat.
+- Start sesi melakukan kompensasi bila repository gagal sesudah pesan pembuka
+  terkirim: state parsial dibersihkan dan keyboard pesan dilepas sejauh Telegram
+  mengizinkan.
+
+*Percakapan dan evaluator.*
+
+- Kata generik “masih”, “belum”, “udah”, dan “sudah” tidak lagi membuat topik
+  baru dianggap kelanjutan sesi. Sinyal `done` memerlukan rujukan sesi atau
+  tumpang tindih dengan tujuan; “udah selesai” saja tidak cukup.
+- Detektor balasan yang masih menunggu pengguna kini mengenali ajakan imperatif
+  seperti “ceritain”, “jelasin”, “pilih”, “tulis”, dan “jawab”, bukan hanya
+  tanda tanya, sehingga tombol adaptif tidak meminta keputusan kedua.
+- Runner corpus lebih dekat dengan production precedence: konflik keselamatan
+  gagal tertutup, tombol ditahan pada mode menyimak/sesi, dan assertion mencakup
+  larangan memberi saran saat menyimak, cakupan beberapa topik pada cerita
+  panjang, serta sinyal selesai sesi eksplisit. Metadata `done` yang sempat
+  terpasang pada kasus jawaban pendek dipindahkan ke kasus selesai eksplisit.
+
+*Worker dan shutdown.*
+
+- Kegagalan membaca kandidat reminder/check-in ditangkap dan dicatat per tick;
+  ia tidak lagi menjadi rejection liar dan worker mencoba lagi pada tick
+  berikutnya.
+- Shutdown kini menghentikan sumber kerja reminder/check-in, menghentikan bot,
+  menunggu worker aktif selesai, lalu menguras batch/action/evaluator/telemetry
+  sebagai gerbang terakhir. Worker tidak dapat lagi menambahkan pekerjaan
+  sesudah telemetry dinyatakan terkuras.
+
+**Dibahas.** Amandemen lanjutan dicatat pada
+[`ADR-008`](decisions/ADR-008-rencana-giliran-dan-fail-closed.md). Prinsipnya:
+konfirmasi destruktif harus terikat pada prompt yang dilihat; perubahan state
+harus mengikuti delivery; pencabutan izin menghentikan pemrosesan baru tanpa
+diam-diam menghapus data; dan ketidakpastian keselamatan tidak boleh disamarkan
+sebagai kepastian tentang orang aman maupun keadaan darurat.
+
+**Bukti.**
+
+- `npm run check` — **PASS**.
+- Tes fokus perubahan akhir — **PASS: 93/93 dalam 22 suite**.
+- Satu putaran penuh pertama menemukan kesalahan metadata corpus —
+  **274/275 lulus** — lalu kasusnya diperbaiki.
+- `npm test` setelah perbaikan — **PASS: 275 test dalam 51 suite, 275 lulus,
+  0 gagal**.
+- `git diff --check` — **PASS**; peringatan konversi LF/CRLF bukan whitespace
+  error.
+- Tiga reviewer bekerja read-only; hanya penulis utama yang mengubah berkas.
+- Corpus dengan model sungguhan, model produksi, dan Telegram nyata
+  **NOT RUN**. Permintaan jaringan sebelumnya tidak disetujui karena pengiriman
+  prompt sintetis ke penyedia eksternal memerlukan izin khusus. Tidak ada data
+  pengguna yang dikirim.
+
+**Sengaja ditinggalkan.** Penilaian manusia atas rasa percakapan pascaperbaikan
+masih menunggu uji model/Telegram nyata. Jika ekstraksi dan triase sama-sama
+salah menilai informasi sensitif sebagai biasa, izin masih dapat terlewati;
+ini keterbatasan produk yang dinyatakan terbuka. Antrean tetap in-memory dan
+crash paksa masih dapat kehilangan pekerjaan. Pelepasan keyboard setelah
+kegagalan simpan sesi adalah kompensasi terbaik, bukan transaksi lintas
+Telegram dan penyimpanan.
+
+---
+
+## 27 Juli 2026 — Tindak lanjut menyeluruh audit percakapan
+
+**Kenapa.** Setelah audit menemukan masalah yang melintasi keselamatan, agensi,
+koherensi giliran, sesi, riwayat, dan evaluasi, pemilik produk mengizinkan
+seluruh rekomendasi diterapkan serta meminta hasilnya tetap dievaluasi. Pekerjaan
+ini memperbaiki jalur yang sudah ada; tidak menambah kanal atau integrasi
+eksternal baru.
+
+**Yang berubah.**
+
+*Keselamatan dan persetujuan.*
+
+- Kontak pertama diserialisasi per pengguna. Hanya bubble pertama yang boleh
+  ditriase sebelum persetujuan; bubble berikutnya ditahan lokal, batas tampung
+  diumumkan, dan tombol “Aku sedang nggak aman” menyediakan jalur teks tetap
+  tanpa harus menyetujui pemrosesan AI biasa.
+- Kegagalan triase kini fail-closed sebagai keadaan belum pasti. Giliran
+  dukungan/bahaya tetap direview sebelum dikirim, mutasi tugas, memori,
+  pending, dan sesi tidak berjalan pada keadaan itu, serta 112 tidak lagi
+  dijanjikan tersedia di semua wilayah.
+- Triase menerima konteks episode sehingga jawaban pendek seperti “iya” tidak
+  dinilai terpisah dari pesan sebelumnya. Untuk hasil `urgent`, acknowledgment
+  tetap dapat dikirim sebelum handler FIFO lama selesai; balasan penuh tetap
+  mengikuti urutan agar mutasi pengguna tidak saling menyalip.
+- Insight tersembunyi dipersempit menjadi catatan bahaya yang berhasil dinilai,
+  ditulis setelah balasan terkirim, dipangkas fisik setelah 30 hari, dan tidak
+  lagi dipakai untuk inferensi atau nudge profesional otomatis.
+
+*Agensi dan satu rencana giliran.*
+
+- Tugas hanya dapat langsung ditulis bila teks pengguna sendiri meminta
+  catat/simpan/ingatkan dan membawa isi konkret. Tebakan `taskAction: save` dari
+  model saja tidak cukup; proposal tersirat memakai tombol bertoken,
+  terikat-pemilik, kedaluwarsa, dan sekali pakai.
+- Tindakan adaptif direncanakan sebelum balasan, dibatasi satu, memakai
+  `actionGoal`, dan labelnya diberikan kepada prompt balasan. Tombol ditekan
+  bila balasan sedang menunggu jawaban bebas atau ada kontrol lain, sehingga
+  teks dan antarmuka tidak meminta dua keputusan sekaligus.
+- Pilihan “Dengerin dulu” kini menjadi preferensi persisten yang menahan saran
+  produktivitas pada cerita biasa sampai pengguna memilih “Langsung saran”.
+  Sesi aktif menjadi konteks lunak: topik baru dapat dibahas tanpa menghapus
+  tujuan lama, dan `done`/`cancel` hanya diterima dari kata pengguna yang jelas.
+- Jalur pending memeriksa triase lalu parser khusus tanpa membayar ekstraksi dan
+  balasan umum. Callback pending membawa token sehingga klik lama, silang
+  pemilik, kedaluwarsa, dan klik ganda tidak dapat mengubah state.
+
+*Koherensi, bentuk balasan, dan latensi.*
+
+- Semua giliran mentah yang belum diringkas kini masuk prompt, menutup celah
+  antara jendela enam giliran dan ambang pemadatan lama. Balasan fallback dan
+  keluaran model yang benar-benar dikirim ikut masuk riwayat.
+- Persona mengaku sebagai AI berwujud visual kapibara, melarang kepura-puraan
+  fisik, Markdown dekoratif, LaTeX mentah, serta catchphrase yang dipaksakan.
+  Normalisasi lokal menjaga teks Telegram biasa sambil mempertahankan blok
+  kode.
+- Penulisan telemetry dipindahkan dari jalur tunggu pengguna ke antrean
+  background dengan cache repository, deduplikasi ringkasan, drain shutdown,
+  dan generation guard untuk penghapusan.
+
+*Evaluasi.*
+
+- Ditambahkan harness `bot.handleUpdate` dengan API grammY palsu yang
+  membuktikan penolakan mutasi tugas tanpa izin, serialisasi dua bubble
+  pra-persetujuan, serta triase gagal yang tetap direview dan tidak mengubah
+  data.
+- Ditambahkan corpus 42 skenario sintetis dan runner model nyata
+  `npm run eval:conversation`; runner memeriksa bentuk, triase, review, dan
+  menyimpan hasil terstruktur tanpa memakai data pengguna.
+- `scripts/coba-balasan.ts` kini mengikuti jalur produksi lebih dekat:
+  ekstraksi/triase paralel, konteks episode, review keselamatan, dan normalisasi
+  keluaran.
+
+**Dibahas.** Keputusan implementasi dicatat dalam
+[`ADR-008`](decisions/ADR-008-rencana-giliran-dan-fail-closed.md): maksimum satu
+tindakan adaptif per giliran, mode menyimak persisten, sesi lunak, izin lokal
+sebelum mutasi, triase gagal tertutup, catatan tersembunyi minimal, dan
+acknowledgment urgent terpisah dari preemption penuh. Pembatalan kooperatif
+request model yang sudah berjalan tidak dipaksakan dalam perubahan ini karena
+dapat merusak urutan mutasi; ia tetap batas eksplisit, bukan kemampuan yang
+diklaim selesai.
+
+**Bukti.**
+
+- `npm run check` — **PASS**.
+- Tes fokus adapter, corpus, keselamatan, sesi, dan telemetry — **PASS: 33/33**.
+- `npm test` — **PASS: 249 test dalam 49 suite, 249 lulus, 0 gagal**.
+- `git diff --check` — **PASS**; peringatan konversi LF/CRLF tidak menunjukkan
+  whitespace error.
+- Tiga reviewer read-only mengevaluasi pengalaman percakapan, pipeline teknis,
+  serta agensi/keselamatan; temuan konkret mereka menjadi dasar perubahan di
+  atas. Satu review regresi akhir dilakukan setelah implementasi.
+- Corpus model nyata pascaperbaikan **belum dijalankan**. Percobaan sandbox
+  gagal mengakses jaringan, sedangkan permintaan eskalasi ditolak karena
+  pengiriman prompt/corpus ke penyedia eksternal memerlukan persetujuan khusus
+  pengguna. Tidak ada data pengguna yang dikirim.
+
+**Sengaja ditinggalkan.** Belum ada uji Telegram sungguhan, callback/notifikasi
+nyata, model produksi, atau penilaian manusia atas transkrip pascaperbaikan.
+Balasan penuh untuk pesan urgent masih menunggu FIFO meski acknowledgment-nya
+langsung. Corpus 42 skenario siap dijalankan setelah ada izin eksplisit untuk
+mengirim prompt sintetis ke penyedia model yang dikonfigurasi.
+
+---
+
+## 27 Juli 2026 — Audit menyeluruh kualitas percakapan Harvy
+
+**Kenapa.** Pemilik produk menyatakan tidak puas dengan percakapan Harvy dan
+meminta evaluasi dari segala sisi. Sesi ini sengaja bersifat audit: tiga agent
+meninjau kualitas percakapan, pipeline teknis, serta agensi/keselamatan secara
+read-only; penulis utama menelusuri sambungannya di adapter dan menjalankan
+probe sintetis. Tidak ada kode produk yang diperbaiki dalam sesi ini.
+
+**Dibahas.**
+
+1. Masalah utamanya bukan sekadar pilihan kata. Pemahaman, pembuat balasan,
+   tombol adaptif, sesi, memori, tugas, dan triase membuat keputusan terpisah
+   tanpa satu rencana giliran bersama. Akibatnya balasan dapat meminta satu hal,
+   tombol menawarkan hal lain, dan klasifikasi tugas/memori justru
+   menghilangkan tombol yang paling relevan.
+2. Probe “pilihin aku mulai dari mana sekarang, jangan tanya balik” salah
+   diklasifikasikan sebagai izin menyimpan tugas. Balasannya memilih mandi lebih
+   dulu, sementara adapter akan mencatat presentasi secara otomatis dan
+   menyembunyikan tombol prioritas. Ini dinilai cacat agensi prioritas tinggi:
+   mutasi data tidak boleh bergantung pada tebakan model yang belum dikonfirmasi.
+3. Tombol “Dengerin dulu” hanya mengirim satu acknowledgment tetap; tidak ada
+   state yang menahan saran pada giliran berikutnya. Sesi aktif sebaliknya
+   terlalu kuat: prompt terus membawa tujuan lama sampai tujuh hari dan dapat
+   menarik topik baru kembali ke agenda sesi. Semua tindakan sesi juga memakai
+   intent `question`, sehingga bantuan mudah berubah menjadi rangkaian
+   pertanyaan atau draf yang belum selesai.
+4. `actionGoal` yang diminta dari model dan berhasil diparse tidak pernah
+   dipakai. Bot memakai teks mentah pengguna, maksimal 240 karakter, sebagai
+   tujuan semua tombol. Balasan tidak mengetahui tombol yang akan ditempel;
+   adapter selalu menganggap tidak ada pertanyaan yang sedang menunggu meski
+   balasan model dapat berakhir dengan pertanyaan.
+5. Riwayat yang dibawa ke model memiliki celah: hanya enam giliran terakhir
+   dibawa, sedangkan pemadatan baru dimulai setelah lebih dari 16 giliran.
+   Banyak pesan programatik dan hasil callback juga tidak ditulis ke history.
+   Harvy karena itu dapat gagal memahami “yang tadi” meski pengguna baru saja
+   melihat kontrol atau daftar dari Harvy.
+6. Mode aktif adalah `testing` tanpa override tier, sehingga `cheap`,
+   `efficient`, dan `ambitious` memakai satu model uji. Routing yang tampak
+   lengkap di kode belum menghasilkan perbedaan mutu pada konfigurasi ini.
+   Prompt ekstraksi juga menugaskan satu model murah sekaligus menilai intent,
+   tugas, memori, kontrol, keselamatan, sesi, tindakan, dan tujuan; satu salah
+   klasifikasi dapat sekaligus mengubah data dan mengubah UI.
+7. Probe menghasilkan pengulangan cerita, pertanyaan balik ketika pengguna
+   meminta keputusan, slang/roleplay yang terasa dibuat-buat, pernyataan fisik
+   palsu seperti sedang duduk santai, serta Markdown/LaTeX mentah yang tidak
+   dirender Telegram. Ini dinilai gejala kebijakan percakapan dan UI, bukan
+   sesuatu yang cukup diselesaikan dengan mengganti beberapa kalimat persona.
+8. Tiga penghalang keselamatan ditemukan sebelum dogfood atau rilis lebih luas:
+   hanya bubble pertama pra-persetujuan yang ditriase sehingga bahaya pada
+   bubble kedua ditahan tanpa pemeriksaan; kegagalan triase pertama berubah
+   menjadi `false` dan hanya menampilkan onboarding; serta copy menjamin 112
+   dapat dihubungi kapan saja meski portal resmi Komdigi pada Mei 2026 mencatat
+   implementasi baru 199 dari 514 kabupaten/kota. Pesan urgent juga belum dapat
+   memotong handler pengguna yang sudah aktif.
+9. False positive triase pada probe biasa dapat menulis insight keselamatan
+   tersembunyi dan kemudian mengangkat bantuan profesional. Catatan gaya,
+   tahap, dan kerentanan tidak mempunyai kedaluwarsa atau jalur koreksi
+   pengguna. Ini berisiko membuat Harvy terasa klinis dan terus mendefinisikan
+   orang dari cerita lama.
+10. Gerbang otomatis menguji tipe, parser, allowlist, prompt, dan layanan murni,
+    bukan apakah balasan terasa alami atau apakah satu giliran Telegram utuh
+    koheren. `scripts/coba-balasan.ts` juga tidak menyimulasikan adapter,
+    tombol, memori, sesi, telemetry, atau jalur paralel produksi, dan salah
+    memakai level default saat mereview probe bahaya.
+11. Arah yang direkomendasikan adalah membekukan fitur percakapan baru;
+    menutup penghalang keselamatan dan mutasi tanpa izin; membuat harness
+    end-to-end satu giliran dengan API Telegram palsu; menyatukan balasan,
+    tindakan, dan izin mutasi dalam satu turn plan; membuat mode menyimak serta
+    pergantian topik sesi yang nyata; lalu menjalankan corpus 30–50 percakapan
+    lintas giliran secara buta pada model testing dan model produksi. Rubrik
+    manusia: merasa dibaca, relevansi, langkah berikutnya, kendali, beban
+    kognitif, inferensi tak berdasar, dan latensi end-to-end.
+
+**Bukti.**
+
+- `npm run check` — **PASS**.
+- `npm test` — **PASS: 231 test dalam 45 suite, 231 lulus, 0 gagal**.
+- Probe sintetis dijalankan lewat `scripts/coba-balasan.ts`,
+  `scripts/coba-pemahaman.ts`, dan hasil build langsung; tidak ada data pengguna
+  nyata yang dipakai.
+- Kode adapter, kebijakan riwayat, sesi, insight, keselamatan, telemetry, serta
+  tes ditelusuri langsung. Cakupan 112 diverifikasi pada portal resmi Komdigi.
+- Tidak ada uji Telegram nyata, callback nyata, notifikasi, model produksi, atau
+  wawancara pelajar. Karena itu audit membuktikan cacat sambungan kode dan
+  menunjukkan keluaran model testing, bukan mengukur pengalaman pengguna
+  produksi.
+
+**Sengaja ditinggalkan.** Tidak ada perbaikan kode, perubahan prompt, perubahan
+kontrak data, atau keputusan UX yang diterapkan. Working tree yang memang sudah
+berisi implementasi Harvy Loop dibiarkan apa adanya; hanya entri audit ini yang
+ditambahkan oleh sesi evaluasi.
+
+---
+
+## 27 Juli 2026 — Harvy Loop: satu langkah kecil sampai selesai
+
+**Kenapa.** Pemilik produk menyetujui seluruh arah yang sebelumnya didiskusikan:
+pengguna datang dengan keadaan yang belum rapi, Harvy membantu memilih satu
+langkah kecil, menemani prosesnya, lalu hanya menindaklanjuti dengan izin. Yang
+diminta bukan satu tombol baru, melainkan empat kesenjangan sekaligus: tombol
+adaptif, tutoring lintas giliran, proaktivitas yang benar-benar dipilih
+pengguna, dan kemampuan membawa satu proses sampai selesai. Izin menulis kode
+diberikan eksplisit.
+
+**Yang berubah.**
+
+*Tindakan adaptif dan sesi persisten.*
+
+- Model kini dapat mengusulkan nol sampai tiga ID tindakan dari allowlist.
+  Label, callback, kepemilikan, kedaluwarsa, klik sekali, dan batas tiga tetap
+  dijaga kode; tindakan produktivitas tidak ditawarkan pada giliran berisiko.
+- `SessionService` dan `FileSessionRepository` menyimpan tepat satu sesi aktif
+  per pengguna: menjernihkan, memprioritaskan, fokus, tutoring, rencana, atau
+  jembatan manusia. Start serentak diserialisasi, callback membawa expected ID,
+  sesi lama tidak dapat mengubah sesi baru, dan restart tidak membuang sesi.
+- Tutoring mempunyai lima tahap nyata:
+  `ukur → coba → petunjuk → penjelasan → coba lagi`. Pengguna dapat meminta
+  petunjuk, jawaban langsung, mencoba ulang, atau berhenti. State hanya
+  di-commit setelah pesan Telegram berhasil dikirim. Tutor memakai tier
+  `ambitious` pada giliran tenang; keselamatan tetap memakai `efficient` dan
+  tidak memajukan tahap.
+- Jembatan manusia hanya membantu menyusun draf pesan yang dapat diedit di chat.
+  Harvy tidak mengirim pesan atau menghubungi pihak luar.
+
+*Check-in, pengingat, dan waktu.*
+
+- Check-in disimpan di dalam sesi, hanya satu kali, dan hanya setelah pengguna
+  memilihnya. Pengguna memilih waktunya sendiri; pesan notifikasi generik tidak
+  membawa tujuan. Hasilnya dapat selesai, masih jalan, tersangkut, ubah rencana,
+  atau berhenti. Mengabaikan dan “masih jalan” tidak menjadwalkan nudge baru.
+- Profil kini menyimpan zona waktu WIB/WITA/WIT dan jam tenang preset maupun
+  custom. `DEFAULT_UTC_OFFSET` dihapus; `DEFAULT_TIMEZONE` divalidasi sebagai
+  IANA dan hanya menjadi fallback. Waktu profil diteruskan ke pemahaman,
+  balasan, tenggat, pengingat, check-in, dan formatter.
+- Tombol Ingatkan tidak lagi memilih satu jam sendiri; Harvy meminta waktu
+  pengguna. Snooze satu jam tetap pilihan eksplisit. Waktu lampau dan jam
+  tenang ditolak, bukan digeser diam-diam.
+- Worker pengingat dan check-in hanya mengantrekan kiriman ketika owner idle,
+  menunggu jam tenang berakhir, mempunyai penjaga reentrancy, dan ikut
+  dihentikan serta dikuras pada shutdown.
+
+*Kendali data dan consent.*
+
+- Memori dapat disunting dari chat tanpa mengganti ID, jenis, atau metadata.
+  Isi kosong, terlalu panjang, duplikat, dan ID milik pengguna lain ditolak.
+- Ekspor JSON dibuat di memori lalu dikirim sebagai dokumen. Isinya profil,
+  semua tugas termasuk yang selesai, memori, riwayat, sesi aktif, ringkasan
+  penggunaan 24 jam, dan telemetry yang masih dalam retensi. Catatan
+  keselamatan tersembunyi tidak masuk ekspor sesuai Konstitusi v0.3 Pasal 4
+  nomor 6, tetapi penjelasan pengecualiannya ikut di dokumen.
+- Persetujuan dinaikkan ke versi 2. Naskah perkenalan kini menjelaskan sesi,
+  check-in, telemetry tanpa isi, retensi, serta jalan edit/ekspor/tarik
+  izin/hapus. Penarikan izin menghentikan sesi dan mengembalikan pesan berikutnya
+  ke gerbang perkenalan, tetapi tidak menghapus data.
+- Penghapusan penuh berbeda dari “Lupakan semua tentang aku”. Ia memasang
+  tombstone profil lebih dulu; menghapus sesi/check-in, seluruh tugas, riwayat,
+  insight tersembunyi, memori Markdown maupun sumber JSON lama, telemetry, lalu
+  profil terakhir. Startup meneruskan tombstone yang terputus. State sementara
+  bot, consent cache, dan batch juga diinvalidasi.
+
+*Telemetry, biaya, dan batas pemakaian.*
+
+- Schema telemetry tertutup tidak mempunyai field pesan, prompt, atau balasan.
+  Ia mencatat owner, tier, tujuan, model, token/perkiraan, latensi, keberhasilan,
+  dan biaya. Harga model, retensi, serta batas token bergulir 24 jam dibaca dari
+  environment.
+- Reservasi input ditambah output maksimum diserialisasi per owner sehingga
+  request serentak tidak dapat sama-sama lolos melewati cap. Usage penyedia
+  dinormalisasi; bila tidak tersedia, estimasinya ditandai apa adanya.
+- Triase dan review keselamatan melewati cap biasa tetapi tetap dicatat.
+  Kegagalan kebijakan lokal tidak memutar kunci API seolah-olah kuota penyedia
+  yang habis. Retry dan request gagal tetap mempunyai event biaya/usage.
+- Generation guard mencegah panggilan AI lama menghidupkan telemetry setelah
+  penghapusan. Retensi dibersihkan saat startup dan sesudah penulisan.
+
+*Keselamatan dan balapan penghapusan.*
+
+- Pending Ubah tenggat, sunting memori, dan penjadwalan kini baru diproses
+  setelah triase. Kalimat berisiko tidak dipaksa menjadi tanggal atau isi
+  memori hanya karena Harvy sedang menunggu jawaban teknis.
+- Ekstraksi dan triase ditangkap terpisah. Batas pemakaian atau kegagalan
+  ekstraksi tidak boleh membuang hasil triase; bila triasenya berisiko, adapter
+  dapat membuat pemahaman keselamatan minimum.
+- Pemeriksaan balasan menjadi fail-closed: penolakan maupun kegagalan model
+  review memakai `SAFE_FALLBACK_REPLY`, bukan meneruskan balasan yang belum
+  dinilai.
+- Hanya pesan pertama pra-consent yang menjalani triase. Bubble berikutnya tidak
+  memanggil model, dan triase pengecualian itu tidak diberi owner ID sehingga
+  tidak membuat telemetry pengguna sebelum persetujuan.
+- `InsightService`, `TelemetryService`, dan layanan/store lain yang terlibat
+  penghapusan memakai lock, generation, atau tombstone. Tes regresi khusus
+  membuktikan refresh insight yang selesai terlambat tidak menghidupkan berkas
+  sesudah pengguna menghapus datanya.
+- Adapter Markdown tidak lagi menelan semua kegagalan filesystem sebagai
+  “berkas tidak ada”; hanya `ENOENT` yang dianggap kosong. Berkas memori lama
+  tetap dimigrasikan bila folder baru baru berisi insight, dan folder owner
+  dibuang bila benar-benar kosong.
+
+*Dokumentasi dan komposisi.*
+
+- `app.ts` merangkai repository/layanan sesi, telemetry, dan kontrol data;
+  melanjutkan penghapusan tertunda sebelum polling; memulai dua worker; dan
+  mengurasnya pada shutdown.
+- `.env.example`, `README.md`, `AGENTS.md`, `PROJECT.md`, `STATUS.md`,
+  `TESTING.md`, serta koreksi pada `ADR-003`, `ADR-006`, dan `ADR-007`
+  diselaraskan dengan perilaku kode. Dokumentasi membedakan kemampuan yang
+  teruji otomatis dari kemampuan yang sudah terbukti lewat Telegram.
+
+**Dibahas.**
+
+1. Satu pengguna hanya mempunyai satu sesi aktif. Harvy tidak boleh diam-diam
+   mengganti tujuan lama hanya karena model menawarkan alur baru.
+2. Proaktivitas berarti undangan satu kali, bukan hak untuk mengejar. Waktu
+   pengingat/check-in milik pengguna, notifikasi tidak membocorkan tujuan, jam
+   tenang dihormati, dan tidak ada reschedule otomatis.
+3. Keselamatan menang atas pending, sesi, dan cap pemakaian. Tier keselamatan
+   tetap `efficient` sesuai keputusan pemilik produk; jaminannya berasal dari
+   triase tersendiri dan review fail-closed, bukan tier paling mahal.
+4. Hak memindahkan data tidak memperluas pengecualian Konstitusi: insight
+   tersembunyi tidak diekspor atau ditampilkan, tetapi wajib ikut penghapusan
+   penuh.
+5. “Minta bantuan manusia” berarti membuat draf yang tetap dikuasai pengguna,
+   bukan mengirim keluar atau meminta integrasi kontak.
+6. Telemetry hanya layak hidup bila tidak mencatat isi dan kendalinya lahir
+   bersamaan: ringkasan, retensi, ekspor, cap, dan penghapusan tidak dijadwalkan
+   sebagai pekerjaan susulan.
+7. Harvy Loop belum boleh disebut terbukti bagi pengguna. Yang ada sekarang
+   adalah implementasi dan bukti unit; Telegram, callback nyata, provider,
+   notifikasi, serta bahasa model masih memerlukan uji manual.
+
+**Bukti.**
+
+- `npm run check` — **PASS**.
+- `npm test` — **PASS: 231 test dalam 45 suite, 231 lulus, 0 gagal**.
+- `npm run build && node --test dist/tests/insight-service.test.js` — **PASS:
+  1 test dalam 1 suite**, regresi refresh-versus-delete.
+- `git diff --check` — **PASS**. Git hanya memberi peringatan normal bahwa LF
+  akan menjadi CRLF ketika working copy disentuh lagi; tidak ada whitespace
+  error.
+
+Tes otomatis mencakup allowlist dan ownership tombol, konflik sesi serentak,
+lima tahap tutor, commit sesudah delivery, persistence sesi, quiet-hour
+boundary, worker check-in satu kali, isolation, sunting memori, export tanpa
+insight, urutan/tombstone penghapusan, recovery startup, cap token serentak,
+safety bypass, perhitungan biaya, retensi, penghapusan telemetry saat request
+masih berjalan, triase-versus-pending, tier tutor-versus-safety, serta shutdown
+antrean.
+
+Yang **tidak diuji**: tidak ada bot Telegram atau model sungguhan yang
+dijalankan pada sesi ini. Tombol/callback nyata, bahasa adaptif model,
+kelanjutan sesi setelah restart proses sungguhan, pengiriman pengingat/check-in,
+quiet hours di perangkat, dokumen ekspor Telegram, penarikan consent,
+penghapusan sambil proses benar-benar mati, usage dari provider, rotasi kunci,
+dan biaya terhadap tagihan semuanya **NOT RUN**. Dogfood tujuh hari juga belum
+dimulai.
+
+**Sengaja ditinggalkan.**
+
+- Penyimpanan tetap prototipe berkas satu proses; PostgreSQL, deployment,
+  backup, dan migrasi produksi tidak dikerjakan.
+- Jalur `urgent` memotong penantian batas bubble tetapi belum dapat menyalip
+  handler pengguna yang sudah aktif.
+- Pengingat dan check-in masih mempunyai jendela at-least-once: bila Telegram
+  menerima pesan lalu proses mati sebelum status tersimpan, pesan dapat dicoba
+  lagi setelah restart.
+- Pending langkah pendek dan tawaran tombol tetap in-memory serta kedaluwarsa;
+  hanya sesi aktif yang persisten.
+- Estimasi token sebelum panggilan sengaja konservatif. Harga environment belum
+  diverifikasi terhadap daftar dan tagihan penyedia.
+- `create-bot.ts` membesar karena integrasi lintas alur. Pemecahan adapter
+  menjadi modul lebih kecil layak dilakukan sesudah uji Telegram menentukan
+  alur mana yang benar-benar bertahan, bukan sebelum itu.
+- Tidak ada commit, branch, push, atau pull request; pengguna hanya meminta
+  implementasi.
+
 ## 27 Juli 2026 — Lapisan keselamatan, memori Markdown, dan Konstitusi v0.3
 
 **Kenapa.** Pemilik produk memberi otonomi penuh untuk mengerjakan seluruh

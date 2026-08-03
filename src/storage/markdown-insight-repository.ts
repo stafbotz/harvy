@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isRiskLevel, type RiskLevel } from "../core/safety-policy.js";
+import { isRiskLevel } from "../core/safety-policy.js";
 import {
   emptyInsight,
   type InsightRepository,
@@ -29,8 +29,9 @@ export class MarkdownInsightRepository implements InsightRepository {
     try {
       const raw = await readFile(this.pathOf(ownerId), "utf8");
       return parseInsight(raw, ownerId);
-    } catch {
-      return null;
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") return null;
+      throw error;
     }
   }
 
@@ -51,8 +52,9 @@ export class MarkdownInsightRepository implements InsightRepository {
       try {
         await unlink(this.pathOf(ownerId));
         return true;
-      } catch {
-        return false;
+      } catch (error) {
+        if (isNodeError(error) && error.code === "ENOENT") return false;
+        throw error;
       }
     });
   }
@@ -71,6 +73,10 @@ export class MarkdownInsightRepository implements InsightRepository {
   }
 }
 
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
 const FIELD = /^([A-Za-z ]+):\s*(.*)$/u;
 const NOTE_LINE =
   /^- \[(\S+)\]\s*\((\S+)\)\s*(.*?)\s*\|\s*(.*)$/u;
@@ -84,9 +90,10 @@ export function parseInsight(raw: string, ownerId: string): UserInsight {
     const note = NOTE_LINE.exec(trimmed);
     if (note) {
       const [, at = "", level = "", ringkasan = "", tindakan = ""] = note;
+      if (!isRiskLevel(level)) continue;
       insight.catatan.push({
         at,
-        level: isRiskLevel(level) ? level : ("dukungan" as RiskLevel),
+        level,
         ringkasan,
         tindakan,
       });

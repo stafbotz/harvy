@@ -1,23 +1,37 @@
 /**
  * Menyimpan satu langkah percakapan yang sedang menunggu jawaban pengguna.
  *
- * Dipakai untuk dua hal: menunggu konfirmasi sebelum sebuah pesan dicatat
- * sebagai tugas, dan menunggu tenggat baru setelah tombol "Ubah" ditekan.
+ * Dipakai untuk jawaban pendek yang sudah dipilih lewat tombol: konfirmasi,
+ * waktu baru, edit memori, dan pengaturan satu check-in.
  *
  * Sengaja hanya di memori. Isinya adalah niat sesaat, bukan data pengguna yang
  * perlu disimpan; Konstitusi Pasal 3.9 meminta Harvy mengumpulkan sedikit
  * mungkin. Konsekuensinya, langkah yang menggantung hilang saat proses
  * restart, dan itu ditangani sebagai keadaan normal, bukan galat.
  */
+import { randomUUID } from "node:crypto";
 import type { ExtractedMemory, ExtractedTask } from "../ai/understand.js";
 
 export type Pending =
   | { kind: "confirm-task"; task: ExtractedTask }
   | { kind: "confirm-memory"; memory: ExtractedMemory }
-  | { kind: "edit-due"; taskId: string };
+  | { kind: "confirm-memory-wipe" }
+  | { kind: "confirm-consent-withdrawal" }
+  | { kind: "confirm-full-deletion" }
+  | { kind: "edit-due"; taskId: string }
+  | { kind: "edit-memory"; memoryId: string }
+  | { kind: "set-task-reminder"; taskId: string }
+  | { kind: "schedule-checkin"; sessionId: string }
+  | {
+      kind: "checkin-settings";
+      sessionId: string;
+      step: "timezone" | "quiet-hours";
+    }
+  | { kind: "custom-quiet-hours"; sessionId: string | null };
 
 interface Entry {
   value: Pending;
+  token: string;
   expiresAt: number;
 }
 
@@ -31,11 +45,14 @@ export class PendingStore {
     private readonly now: () => number = () => Date.now(),
   ) {}
 
-  set(ownerId: string, value: Pending): void {
+  set(ownerId: string, value: Pending): string {
+    const token = randomUUID().replaceAll("-", "").slice(0, 8);
     this.entries.set(ownerId, {
       value,
+      token,
       expiresAt: this.now() + this.ttlMs,
     });
+    return token;
   }
 
   /** Membaca tanpa menghapus, agar pengguna boleh mencoba menjawab lagi. */
@@ -48,6 +65,19 @@ export class PendingStore {
       return null;
     }
 
+    return entry.value;
+  }
+
+  /** Mengambil langkah hanya bila tombolnya milik proposal yang masih aktif. */
+  take(ownerId: string, token: string): Pending | null {
+    const entry = this.entries.get(ownerId);
+    if (!entry) return null;
+    if (entry.expiresAt <= this.now()) {
+      this.entries.delete(ownerId);
+      return null;
+    }
+    if (entry.token !== token) return null;
+    this.entries.delete(ownerId);
     return entry.value;
   }
 

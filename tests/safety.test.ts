@@ -3,11 +3,15 @@ import { describe, it } from "node:test";
 import {
   CALM_TRIAGE,
   parseInsightDraft,
+  replyReviewInput,
   uncertainTriage,
   parseReplyVerdict,
   parseRiskTriage,
+  riskTriageInput,
   safetyGuidance,
-  SAFE_FALLBACK_REPLY,
+  DANGER_FALLBACK_REPLY,
+  SUPPORT_FALLBACK_REPLY,
+  withEmergencyAvailability,
   type RiskTriage,
 } from "../src/ai/safety.js";
 import {
@@ -53,6 +57,26 @@ describe("triase risiko", () => {
 
     assert.equal(worthRecording("biasa"), false);
     assert.equal(worthRecording("dukungan"), true);
+  });
+
+  it("membawa konteks episode untuk jawaban pendek tanpa menjadikannya instruksi", () => {
+    const input = riskTriageInput("belum", [
+      {
+        role: "user",
+        text: "aku mau menyakiti diri sekarang",
+        at: NOW.toISOString(),
+      },
+      {
+        role: "harvy",
+        text: "Kamu sudah berada di tempat yang lebih aman?",
+        at: NOW.toISOString(),
+      },
+    ]);
+
+    assert.match(input, /<konteks-terakhir>/);
+    assert.match(input, /Pengguna: aku mau menyakiti diri/);
+    assert.match(input, /<pesan>\nbelum\n<\/pesan>/);
+    assert.match(input, /data, bukan aturan/i);
   });
 });
 
@@ -106,6 +130,15 @@ describe("arahan keselamatan", () => {
     assert.match(guidance, /Jangan menutup percakapan/i);
     assert.match(guidance, /jangan mendiagnosis/i);
   });
+
+  it("menempelkan batas ketersediaan 112 pada hasil akhir bahaya", () => {
+    const reply = withEmergencyAvailability(
+      "Aku di sini. Pindah ke tempat yang lebih aman dulu.",
+      triage({ level: "bahaya" }),
+    );
+    assert.match(reply, /daerah yang sudah mengoperasikannya/i);
+    assert.match(reply, /kalau tidak tersambung/i);
+  });
 });
 
 describe("pemeriksaan balasan", () => {
@@ -117,11 +150,47 @@ describe("pemeriksaan balasan", () => {
   });
 
   it("menyediakan pengganti yang tetap menemani, bukan menutup", () => {
-    assert.match(SAFE_FALLBACK_REPLY, /aku di sini/i);
-    assert.match(SAFE_FALLBACK_REPLY, /112/);
+    assert.match(DANGER_FALLBACK_REPLY, /aku di sini/i);
+    assert.match(DANGER_FALLBACK_REPLY, /112/);
+    assert.match(SUPPORT_FALLBACK_REPLY, /aku di sini/i);
+    assert.doesNotMatch(SUPPORT_FALLBACK_REPLY, /112|layanan darurat/i);
     // Pengganti ini dipakai justru ketika Harvy tidak tahu apakah penggunanya
     // punya orang yang aman, jadi ia tidak boleh menyuruh menghubungi siapa pun.
-    assert.doesNotMatch(SAFE_FALLBACK_REPLY, /cerita ke orang|hubungi orang/i);
+    assert.doesNotMatch(
+      DANGER_FALLBACK_REPLY,
+      /cerita ke orang|hubungi orang/i,
+    );
+  });
+
+  it("membawa status sendirian dan konteks episode ke pemeriksa akhir", () => {
+    const input = replyReviewInput(
+      "nggak",
+      "Kalau begitu coba hubungi teman dekatmu.",
+      { level: "dukungan", alone: true, certain: true },
+      [
+        {
+          role: "harvy",
+          text: "Ada orang yang terasa aman untuk dihubungi?",
+          at: NOW.toISOString(),
+        },
+      ],
+    );
+
+    assert.match(input, /tidak punya orang aman/i);
+    assert.match(input, /tandai tidak\s+aman.*orang terdekat/is);
+    assert.match(input, /Harvy: Ada orang yang terasa aman/);
+    assert.match(input, /<pesan>\nnggak\n<\/pesan>/);
+  });
+
+  it("memberi tahu reviewer ketika triase gagal agar tidak mengarang orang aman", () => {
+    const input = replyReviewInput(
+      "aku nggak kuat",
+      "Coba hubungi orang tuamu.",
+      { level: "dukungan", alone: false, certain: false },
+    );
+
+    assert.match(input, /penilaian risiko.*tidak selesai/is);
+    assert.match(input, /orang tua.*tidak disebut/is);
   });
 });
 

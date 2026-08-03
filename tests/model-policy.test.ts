@@ -56,6 +56,13 @@ describe("kebijakan pemilihan model", () => {
     );
   });
 
+  it("memakai tier efficient untuk permintaan research", () => {
+    assert.equal(
+      selectTier({ intent: "research", messageLength: 40 }),
+      "efficient",
+    );
+  });
+
   it("menaikkan tingkatan untuk pertanyaan yang panjang", () => {
     const tier = selectTier({ intent: "question", messageLength: 500 });
     assert.equal(tier, "ambitious");

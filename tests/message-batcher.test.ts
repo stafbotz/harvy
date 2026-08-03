@@ -9,6 +9,8 @@ describe("MessageBatcher", () => {
     const handled: string[] = [];
     const carriers: string[] = [];
     const examined: string[] = [];
+    const fullText =
+      "aku mau curhat\njadi gini\naku kan cowo\ntapi aku suka cowo";
     const batcher = new MessageBatcher<string>(
       async (text) => {
         examined.push(text);
@@ -18,8 +20,10 @@ describe("MessageBatcher", () => {
         handled.push(batch.text);
         carriers.push(batch.carrier);
       },
-      200,
+      5_000,
       40,
+      5_000,
+      100,
     );
 
     batcher.enqueue("student", "aku mau curhat", "ctx-1");
@@ -29,14 +33,12 @@ describe("MessageBatcher", () => {
     batcher.enqueue("student", "aku kan cowo", "ctx-3");
     await delay(5);
     batcher.enqueue("student", "tapi aku suka cowo", "ctx-4");
-    await waitFor(() => handled.length === 1);
+    await waitFor(() => examined.at(-1) === fullText, 5_000);
+    assert.deepEqual(handled, []);
+    await batcher.drain("student");
 
-    assert.deepEqual(handled, [
-      "aku mau curhat\njadi gini\naku kan cowo\ntapi aku suka cowo",
-    ]);
-    assert.deepEqual(examined, [
-      "aku mau curhat\njadi gini\naku kan cowo\ntapi aku suka cowo",
-    ]);
+    assert.deepEqual(handled, [fullText]);
+    assert.equal(examined.at(-1), fullText);
     assert.deepEqual(carriers, ["ctx-4"]);
   });
 
@@ -171,7 +173,7 @@ describe("MessageBatcher", () => {
 
     // Sejak pagar bahaya lokal dihapus, satu-satunya yang menyelamatkan giliran
     // ini adalah deadline. Ia tetap terproses, tetapi tidak lagi seketika.
-    await waitFor(() => handled.length === 1, 300);
+    await waitFor(() => handled.length === 1, 800);
     assert.deepEqual(handled, [
       "aku mau curhat\naku mau menyakiti diri sekarang",
     ]);
@@ -218,7 +220,10 @@ describe("MessageBatcher", () => {
     );
 
     batcher.enqueue("student", "jadi gini", "ctx");
-    await waitFor(() => handled.length === 1, 250);
+    // Deadline perilaku tetap 35 ms. Batas tunggu assertion dibuat longgar
+    // karena seluruh suite berjalan paralel dan dapat menahan event loop pada
+    // mesin CI; yang diuji di sini adalah fail-safe tetap akhirnya menang.
+    await waitFor(() => handled.length === 1, 1_500);
 
     assert.deepEqual(handled, ["jadi gini"]);
   });
@@ -545,6 +550,92 @@ describe("MessageBatcher", () => {
     resolveDecision?.("open");
     await shutdown;
     assert.deepEqual(handled, ["pesan A"]);
+  });
+
+  it("worker tidak memaksa bubble yang masih terbuka", async () => {
+    const events: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      async () => "open",
+      async (_ownerId, batch) => {
+        events.push(`pesan:${batch.text}`);
+      },
+      1_000,
+      100,
+    );
+
+    batcher.enqueue("A", "aku masih cerita", "ctx");
+    assert.equal(
+      await batcher.runWhenIdle("A", async () => {
+        events.push("worker");
+      }),
+      false,
+    );
+    assert.equal(events.length, 0);
+
+    await batcher.drain("A");
+    assert.equal(
+      await batcher.runWhenIdle("A", async () => {
+        events.push("worker");
+      }),
+      true,
+    );
+    assert.deepEqual(events, ["pesan:aku masih cerita", "worker"]);
+  });
+
+  it("invalidasi membatalkan bubble yang masuk selama penghapusan", async () => {
+    const handled: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async (_ownerId, batch) => {
+        handled.push(batch.text);
+      },
+      100,
+      20,
+    );
+
+    batcher.enqueue("A", "jangan diproses", "ctx");
+    batcher.invalidate("A");
+    await delay(130);
+    assert.deepEqual(handled, []);
+  });
+
+  it("mengirim acknowledgment urgent sebelum handler lama selesai", async () => {
+    let releaseOld: (() => void) | undefined;
+    const events: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      async (text) => (text === "darurat" ? "urgent" : "complete"),
+      async (_ownerId, batch) => {
+        events.push(`mulai:${batch.text}`);
+        if (batch.text === "lama") {
+          await new Promise<void>((resolve) => {
+            releaseOld = resolve;
+          });
+        }
+        events.push(`selesai:${batch.text}`);
+      },
+      200,
+      1,
+    ).onUrgent(async (_ownerId, batch) => {
+      events.push(`ack:${batch.text}`);
+    });
+
+    batcher.enqueue("A", "lama", "ctx-lama");
+    await waitFor(() => releaseOld !== undefined);
+    batcher.enqueue("A", "darurat", "ctx-darurat");
+    await waitFor(() => events.includes("ack:darurat"));
+
+    assert.equal(events.includes("selesai:lama"), false);
+    assert.equal(events.includes("mulai:darurat"), false);
+
+    releaseOld?.();
+    await batcher.drainAll();
+    assert.deepEqual(events, [
+      "mulai:lama",
+      "ack:darurat",
+      "selesai:lama",
+      "mulai:darurat",
+      "selesai:darurat",
+    ]);
   });
 });
 

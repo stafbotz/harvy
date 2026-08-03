@@ -1,6 +1,26 @@
-import { resolve } from "node:path";
+import { parse, resolve } from "node:path";
+import type {
+  AiClientOptions,
+  AiFallbackOptions,
+} from "./ai/client.js";
 import { ApiKeyPool } from "./ai/key-pool.js";
 import type { ModelTier } from "./ai/model-policy.js";
+import type { TierPrice } from "./core/telemetry-service.js";
+import { isValidTimeZone } from "./core/time-policy.js";
+import type {
+  LogLevel,
+  OperationalLogOptions,
+} from "./observability/operational-logger.js";
+import type {
+  ConfiguredModel,
+  ConfiguredModelSource,
+} from "./domain/control-plane.js";
+import {
+  parseEnabled,
+  parsePairingMode,
+  parseWhatsAppAccounts,
+  type WhatsAppConfig,
+} from "./whatsapp/config.js";
 
 /**
  * `testing` memakai satu model gratis lewat Google AI Studio, dengan beberapa
@@ -11,8 +31,11 @@ export type AiMode = "testing" | "production";
 
 export interface AiConfig {
   mode: AiMode;
+  providerId: string;
   keys: ApiKeyPool;
   baseUrl: string;
+  /** Provider cadangan yang hanya boleh hidup dalam mode testing. */
+  fallback: AiFallbackOptions | null;
   testingModel: string;
   /**
    * Model uji per tingkatan. Kosong berarti memakai `testingModel`.
@@ -23,6 +46,33 @@ export interface AiConfig {
    */
   testingModels: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
+  /** Model dari seluruh slot `.env`, tanpa key, base URL, atau credential. */
+  configuredModels: ConfiguredModel[];
+  rollingTokenLimit: number;
+  prices: Record<ModelTier, TierPrice>;
+}
+
+export interface ControlPlaneConfig {
+  file: string;
+  usageLedgerFile: string;
+  entitlementLedgerFile: string;
+  usageLedgerRetentionDays: number;
+  betaQuotaMultiplier: number;
+  console: {
+    enabled: boolean;
+    host: "127.0.0.1";
+    port: number;
+    operatorToken: string | null;
+  };
+}
+
+export interface WebToolsConfig {
+  /** Null berarti capability web.search tidak boleh muncul sebagai tersedia. */
+  searchApiKey: string | null;
+  searchTimeoutMs: number;
+  /** web.open harus diaktifkan eksplisit karena membuka egress HTTP umum. */
+  openEnabled: boolean;
+  openTimeoutMs: number;
 }
 
 export interface AppConfig {
@@ -36,40 +86,66 @@ export interface AppConfig {
   historyFile: string;
   /** Status kenalan dan persetujuan per pengguna. */
   profileFile: string;
+  /** Satu sesi aktif dan check-in satu kali per pengguna. */
+  sessionFile: string;
+  /** Token dan event bertipe tertutup; tidak berisi isi percakapan. */
+  telemetryFile: string;
+  telemetryRetentionDays: number;
   defaultTimezone: string;
-  defaultUtcOffset: string;
   reminderIntervalMs: number;
+  operationalLog: OperationalLogOptions;
+  controlPlane: ControlPlaneConfig;
   ai: AiConfig;
+  web: WebToolsConfig;
+  whatsapp: WhatsAppConfig;
 }
 
 const GOOGLE_BASE_URL =
   "https://generativelanguage.googleapis.com/v1beta/openai";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
+export function aiClientOptions(
+  config: AiConfig,
+  options: { fallback?: boolean } = {},
+): AiClientOptions {
+  return {
+    baseUrl: config.baseUrl,
+    keys: config.keys,
+    fallback: options.fallback === false ? null : config.fallback,
+    providerId: config.providerId,
+  };
+}
+
 export function loadConfig(): AppConfig {
-  try {
-    process.loadEnvFile();
-  } catch (error) {
-    if (!isMissingEnvFile(error)) throw error;
-  }
+  loadEnvironmentFile();
 
   const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!telegramBotToken) {
-    throw new Error("TELEGRAM_BOT_TOKEN belum diisi.");
+    throw configurationError(
+      "CONFIG_TELEGRAM_TOKEN_MISSING",
+      "TELEGRAM_BOT_TOKEN belum diisi.",
+    );
   }
 
-  const defaultUtcOffset = process.env.DEFAULT_UTC_OFFSET ?? "+07:00";
-  if (!/^[+-]\d{2}:\d{2}$/.test(defaultUtcOffset)) {
-    throw new Error("DEFAULT_UTC_OFFSET harus seperti +07:00.");
+  const defaultTimezone = process.env.DEFAULT_TIMEZONE ?? "Asia/Jakarta";
+  if (!isValidTimeZone(defaultTimezone)) {
+    throw configurationError(
+      "CONFIG_DEFAULT_TIMEZONE_INVALID",
+      "DEFAULT_TIMEZONE harus berupa zona waktu IANA yang sah.",
+    );
   }
 
   const reminderIntervalMs = Number(
     process.env.REMINDER_INTERVAL_MS ?? "30000",
   );
   if (!Number.isFinite(reminderIntervalMs) || reminderIntervalMs < 5_000) {
-    throw new Error("REMINDER_INTERVAL_MS minimal 5000.");
+    throw configurationError(
+      "CONFIG_REMINDER_INTERVAL_INVALID",
+      "REMINDER_INTERVAL_MS minimal 5000.",
+    );
   }
 
+  const operationalLog = loadOperationalLogConfig();
   return {
     telegramBotToken,
     dataFile: resolve(process.env.DATA_FILE ?? "./data/tasks.json"),
@@ -77,10 +153,193 @@ export function loadConfig(): AppConfig {
     memoryFolder: resolve(process.env.MEMORY_FOLDER ?? "./data/memori"),
     historyFile: resolve(process.env.HISTORY_FILE ?? "./data/history.json"),
     profileFile: resolve(process.env.PROFILE_FILE ?? "./data/profiles.json"),
-    defaultTimezone: process.env.DEFAULT_TIMEZONE ?? "Asia/Jakarta",
-    defaultUtcOffset,
+    sessionFile: resolve(process.env.SESSION_FILE ?? "./data/sessions.json"),
+    telemetryFile: resolve(
+      process.env.TELEMETRY_FILE ?? "./data/telemetry.json",
+    ),
+    telemetryRetentionDays: readPositiveNumber(
+      "TELEMETRY_RETENTION_DAYS",
+      30,
+    ),
+    defaultTimezone,
     reminderIntervalMs,
+    operationalLog,
+    controlPlane: loadControlPlaneConfig(operationalLog.environment),
     ai: loadAiConfig(),
+    web: loadWebToolsConfig(),
+    whatsapp: loadWhatsAppConfig(),
+  };
+}
+
+export function loadWebToolsConfig(): WebToolsConfig {
+  const searchEnabled = readBoolean("WEB_SEARCH_ENABLED", false);
+  const key = process.env.WEB_SEARCH_API_KEY?.trim() ?? "";
+  if (searchEnabled && !key) {
+    throw configurationError(
+      "CONFIG_WEB_SEARCH_API_KEY_MISSING",
+      "WEB_SEARCH_API_KEY wajib diisi ketika WEB_SEARCH_ENABLED=true.",
+    );
+  }
+  if (key && (key.length > 512 || /[\u0000-\u001f\u007f]/u.test(key))) {
+    throw configurationError(
+      "CONFIG_WEB_SEARCH_API_KEY_INVALID",
+      "WEB_SEARCH_API_KEY mempunyai bentuk yang tidak sah.",
+    );
+  }
+
+  return {
+    searchApiKey: searchEnabled ? key : null,
+    searchTimeoutMs: readBoundedPositiveInteger(
+      "WEB_SEARCH_TIMEOUT_MS",
+      10_000,
+      60_000,
+    ),
+    openEnabled: readBoolean("WEB_OPEN_ENABLED", false),
+    openTimeoutMs: readBoundedPositiveInteger(
+      "WEB_OPEN_TIMEOUT_MS",
+      10_000,
+      60_000,
+    ),
+  };
+}
+
+function loadControlPlaneConfig(environment: string): ControlPlaneConfig {
+  const enabled = readBoolean("HARVY_CONSOLE_ENABLED", false);
+  const host = process.env.HARVY_CONSOLE_HOST?.trim() || "127.0.0.1";
+  if (host !== "127.0.0.1") {
+    throw configurationError(
+      "CONFIG_HARVY_CONSOLE_HOST_INVALID",
+      "HARVY_CONSOLE_HOST local-first harus 127.0.0.1.",
+    );
+  }
+  const operatorToken = process.env.HARVY_CONSOLE_TOKEN?.trim() || null;
+  if (operatorToken !== null && operatorToken.length < 32) {
+    throw configurationError(
+      "CONFIG_HARVY_CONSOLE_TOKEN_INVALID",
+      "HARVY_CONSOLE_TOKEN minimal 32 karakter.",
+    );
+  }
+  if (enabled && environment === "production" && operatorToken === null) {
+    throw configurationError(
+      "CONFIG_HARVY_CONSOLE_TOKEN_MISSING",
+      "HARVY_CONSOLE_TOKEN wajib diisi ketika Console aktif di production.",
+    );
+  }
+  return {
+    file: resolve(
+      process.env.CONTROL_PLANE_FILE ?? "./data/control-plane.json",
+    ),
+    usageLedgerFile: resolve(
+      process.env.USAGE_LEDGER_FILE ?? "./data/usage-ledger.json",
+    ),
+    entitlementLedgerFile: resolve(
+      process.env.ENTITLEMENT_LEDGER_FILE ?? "./data/entitlement-ledger.json",
+    ),
+    usageLedgerRetentionDays: readPositiveInteger(
+      "USAGE_LEDGER_RETENTION_DAYS",
+      90,
+    ),
+    betaQuotaMultiplier: readPositiveInteger(
+      "BETA_QUOTA_MULTIPLIER",
+      4,
+    ),
+    console: {
+      enabled,
+      host,
+      port: readNonNegativeInteger("HARVY_CONSOLE_PORT", 3210, 65_535),
+      operatorToken,
+    },
+  };
+}
+
+/**
+ * Konfigurasi ini dapat dibaca sebelum konfigurasi aplikasi lain agar galat
+ * bootstrap (misalnya token/model yang tidak diisi) tetap masuk log.
+ */
+export function loadOperationalLogConfig(): OperationalLogOptions {
+  loadEnvironmentFile();
+  const environment = readLabel("APP_ENV", "development");
+  const directory = resolve(process.env.LOG_FOLDER ?? "./data/logs");
+  if (parse(directory).root === directory) {
+    throw configurationError(
+      "CONFIG_LOG_FOLDER_ROOT",
+      "LOG_FOLDER tidak boleh menunjuk ke akar filesystem.",
+    );
+  }
+
+  const level = readLogLevel(process.env.LOG_LEVEL);
+  const consoleFormat = readConsoleFormat(
+    process.env.LOG_CONSOLE_FORMAT,
+    environment === "production" ? "json" : "pretty",
+  );
+  return {
+    directory,
+    level,
+    environment,
+    release: readLabel(
+      "RELEASE_SHA",
+      process.env.npm_package_version ?? "0.1.0",
+    ),
+    retentionDays: readPositiveInteger("LOG_RETENTION_DAYS", 14),
+    maxSegmentBytes: readPositiveInteger(
+      "LOG_MAX_FILE_BYTES",
+      25 * 1024 * 1024,
+    ),
+    maxTotalBytes: readPositiveInteger(
+      "LOG_MAX_TOTAL_BYTES",
+      250 * 1024 * 1024,
+    ),
+    maxQueueRecords: readPositiveInteger(
+      "LOG_QUEUE_MAX_RECORDS",
+      10_000,
+    ),
+    maxQueueBytes: readPositiveInteger(
+      "LOG_QUEUE_MAX_BYTES",
+      8 * 1024 * 1024,
+    ),
+    consoleEnabled: readBoolean("LOG_CONSOLE", true),
+    consoleFormat,
+    fileRequired: readBoolean("LOG_FILE_REQUIRED", false),
+  };
+}
+
+function loadWhatsAppConfig(): WhatsAppConfig {
+  const enabled = parseEnabled(process.env.WHATSAPP_ENABLED);
+  const accounts = parseWhatsAppAccounts(process.env.WHATSAPP_ACCOUNTS);
+  if (enabled && accounts.length === 0) {
+    throw configurationError(
+      "CONFIG_WHATSAPP_ACCOUNTS_MISSING",
+      "WHATSAPP_ACCOUNTS wajib berisi minimal satu akun ketika WhatsApp aktif.",
+    );
+  }
+
+  const reconnectBaseMs = readPositiveNumber(
+    "WHATSAPP_RECONNECT_BASE_MS",
+    2_000,
+  );
+  const reconnectMaxMs = readPositiveNumber(
+    "WHATSAPP_RECONNECT_MAX_MS",
+    60_000,
+  );
+  if (reconnectMaxMs < reconnectBaseMs) {
+    throw configurationError(
+      "CONFIG_WHATSAPP_RECONNECT_RANGE",
+      "WHATSAPP_RECONNECT_MAX_MS tidak boleh lebih kecil daripada batas dasar.",
+    );
+  }
+
+  return {
+    enabled,
+    accounts,
+    pairingMode: parsePairingMode(process.env.WHATSAPP_PAIRING_MODE),
+    authFolder: resolve(
+      process.env.WHATSAPP_AUTH_FOLDER ?? "./data/whatsapp-auth",
+    ),
+    groupFile: resolve(
+      process.env.WHATSAPP_GROUP_FILE ?? "./data/whatsapp-groups.json",
+    ),
+    reconnectBaseMs,
+    reconnectMaxMs,
   };
 }
 
@@ -90,10 +349,13 @@ export function loadConfig(): AppConfig {
  * Nama, ketersediaan, dan harga model berubah cepat. Menaruhnya di konfigurasi
  * membuat koreksi cukup satu baris `.env`, tanpa menyentuh kode.
  */
-function loadAiConfig(): AiConfig {
+export function loadAiConfig(): AiConfig {
   const mode = (process.env.AI_MODE ?? "testing") as AiMode;
   if (mode !== "testing" && mode !== "production") {
-    throw new Error("AI_MODE harus testing atau production.");
+    throw configurationError(
+      "CONFIG_AI_MODE_INVALID",
+      "AI_MODE harus testing atau production.",
+    );
   }
 
   const models = {
@@ -114,32 +376,58 @@ function loadAiConfig(): AiConfig {
       ? { ambitious: process.env.AI_MODEL_TESTING_AMBITIOUS.trim() }
       : {}),
   };
+  const rollingTokenLimit = readNonNegativeNumber(
+    "AI_ROLLING_24H_TOKEN_LIMIT",
+    200_000,
+  );
+  const prices = {
+    cheap: readTierPrice("CHEAP"),
+    efficient: readTierPrice("EFFICIENT"),
+    ambitious: readTierPrice("AMBITIOUS"),
+  } satisfies Record<ModelTier, TierPrice>;
 
   if (mode === "testing") {
     const keys = ApiKeyPool.parse(process.env.GOOGLE_AI_STUDIO_API_KEYS);
     if (keys.length === 0) {
-      throw new Error(
+      throw configurationError(
+        "CONFIG_GOOGLE_KEYS_MISSING",
         "GOOGLE_AI_STUDIO_API_KEYS wajib diisi ketika AI_MODE=testing. " +
           "Beberapa kunci boleh dipisah koma.",
       );
     }
     if (!testingModel) {
-      throw new Error("AI_MODEL_TESTING wajib diisi ketika AI_MODE=testing.");
+      throw configurationError(
+        "CONFIG_TESTING_MODEL_MISSING",
+        "AI_MODEL_TESTING wajib diisi ketika AI_MODE=testing.",
+      );
     }
 
+    const fallback = loadTestingFallback();
     return {
       mode,
+      providerId: "google-ai-studio",
       keys: new ApiKeyPool(keys),
       baseUrl: process.env.AI_BASE_URL?.trim() || GOOGLE_BASE_URL,
+      fallback,
       testingModel,
       testingModels,
       models,
+      configuredModels: configuredModelCatalog({
+        mode,
+        testingModel,
+        testingModels,
+        models,
+        activeFallback: fallback,
+      }),
+      rollingTokenLimit,
+      prices,
     };
   }
 
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) {
-    throw new Error(
+    throw configurationError(
+      "CONFIG_OPENROUTER_KEY_MISSING",
       "OPENROUTER_API_KEY wajib diisi ketika AI_MODE=production.",
     );
   }
@@ -148,19 +436,362 @@ function loadAiConfig(): AiConfig {
     (tier) => !models[tier],
   );
   if (missing.length > 0) {
-    throw new Error(
+    throw configurationError(
+      "CONFIG_PRODUCTION_MODELS_MISSING",
       `Model belum lengkap untuk AI_MODE=production: ${missing.join(", ")}.`,
     );
   }
 
   return {
     mode,
+    providerId: "openrouter",
     keys: new ApiKeyPool([apiKey]),
     baseUrl: process.env.AI_BASE_URL?.trim() || OPENROUTER_BASE_URL,
+    fallback: null,
     testingModel,
     testingModels,
     models,
+    configuredModels: configuredModelCatalog({
+      mode,
+      testingModel,
+      testingModels,
+      models,
+      activeFallback: null,
+    }),
+    rollingTokenLimit,
+    prices,
   };
+}
+
+function configuredModelCatalog(input: {
+  mode: AiMode;
+  testingModel: string;
+  testingModels: Partial<Record<ModelTier, string>>;
+  models: Record<ModelTier, string>;
+  activeFallback: AiFallbackOptions | null;
+}): ConfiguredModel[] {
+  const tiers = ["cheap", "efficient", "ambitious"] as const;
+  const entries: {
+    providerId: string;
+    modelId: string;
+    source: ConfiguredModelSource;
+  }[] = [];
+  const add = (
+    providerId: string,
+    modelId: string,
+    source: ConfiguredModelSource,
+  ): void => {
+    const cleanModel = configuredModelId(
+      source.environmentVariable,
+      modelId,
+    );
+    if (!cleanConfiguredProviderId(providerId)) {
+      throw configurationError(
+        "CONFIG_AI_MODEL_PROVIDER_INVALID",
+        `Provider untuk ${source.environmentVariable} tidak sah.`,
+      );
+    }
+    entries.push({ providerId, modelId: cleanModel, source });
+  };
+
+  if (input.testingModel) {
+    const servedTiers = tiers.filter((tier) => !input.testingModels[tier]);
+    add("google-ai-studio", input.testingModel, {
+      environmentVariable: "AI_MODEL_TESTING",
+      mode: "testing",
+      origin: "primary",
+      tiers: [...servedTiers],
+      active: input.mode === "testing" && servedTiers.length > 0,
+    });
+  }
+  for (const tier of tiers) {
+    const modelId = input.testingModels[tier];
+    if (modelId) {
+      add("google-ai-studio", modelId, {
+        environmentVariable: `AI_MODEL_TESTING_${tier.toUpperCase()}`,
+        mode: "testing",
+        origin: "primary",
+        tiers: [tier],
+        active: input.mode === "testing",
+      });
+    }
+  }
+  for (const tier of tiers) {
+    const modelId = input.models[tier];
+    if (modelId) {
+      add("openrouter", modelId, {
+        environmentVariable: `AI_MODEL_${tier.toUpperCase()}`,
+        mode: "production",
+        origin: "primary",
+        tiers: [tier],
+        active: input.mode === "production",
+      });
+    }
+  }
+
+  const fallbackModel = process.env.AI_TESTING_FALLBACK_MODEL?.trim() ?? "";
+  if (fallbackModel) {
+    const fallbackProvider = input.activeFallback?.providerId ?? readLabel(
+      "AI_TESTING_FALLBACK_PROVIDER_ID",
+      "testing-fallback",
+    );
+    add(fallbackProvider, fallbackModel, {
+      environmentVariable: "AI_TESTING_FALLBACK_MODEL",
+      mode: "testing",
+      origin: "fallback",
+      tiers: [...tiers],
+      active: input.mode === "testing" && input.activeFallback !== null,
+    });
+  }
+
+  const grouped = new Map<string, ConfiguredModel>();
+  for (const entry of entries) {
+    const key = `${entry.providerId}\u0000${entry.modelId}`;
+    const current = grouped.get(key) ?? {
+      providerId: entry.providerId,
+      modelId: entry.modelId,
+      active: false,
+      sources: [],
+    };
+    current.active ||= entry.source.active;
+    if (!current.sources.some((source) =>
+      source.environmentVariable === entry.source.environmentVariable &&
+      source.mode === entry.source.mode &&
+      source.origin === entry.source.origin
+    )) {
+      current.sources.push(entry.source);
+    }
+    grouped.set(key, current);
+  }
+  return [...grouped.values()]
+    .map((model) => ({
+      ...model,
+      sources: model.sources.sort((left, right) =>
+        left.environmentVariable.localeCompare(right.environmentVariable, "en")
+      ),
+    }))
+    .sort((left, right) =>
+      `${left.providerId}\u0000${left.modelId}`.localeCompare(
+        `${right.providerId}\u0000${right.modelId}`,
+        "en",
+      )
+    );
+}
+
+function configuredModelId(name: string, value: string): string {
+  const clean = value.trim();
+  if (
+    clean.length < 1 ||
+    clean.length > 160 ||
+    /[\u0000-\u001f<>]/u.test(clean)
+  ) {
+    throw configurationError(
+      `CONFIG_${name}_INVALID`,
+      `${name} harus berisi ID model yang sah (maksimal 160 karakter).`,
+    );
+  }
+  return clean;
+}
+
+function cleanConfiguredProviderId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$/u.test(value);
+}
+
+function loadTestingFallback(): AiFallbackOptions | null {
+  const baseUrl =
+    process.env.AI_TESTING_FALLBACK_BASE_URL?.trim() ?? "";
+  const apiKey =
+    process.env.AI_TESTING_FALLBACK_API_KEY?.trim() ?? "";
+  const model =
+    process.env.AI_TESTING_FALLBACK_MODEL?.trim() ?? "";
+  const configured = Boolean(baseUrl || apiKey || model);
+  if (!configured) return null;
+  if (!baseUrl || !apiKey || !model) {
+    throw configurationError(
+      "CONFIG_TESTING_FALLBACK_INCOMPLETE",
+      "AI_TESTING_FALLBACK_BASE_URL, AI_TESTING_FALLBACK_API_KEY, dan " +
+        "AI_TESTING_FALLBACK_MODEL harus diisi bersama.",
+    );
+  }
+
+  return {
+    baseUrl: validatedFallbackBaseUrl(baseUrl),
+    keys: new ApiKeyPool([apiKey]),
+    model,
+    providerId: readLabel(
+      "AI_TESTING_FALLBACK_PROVIDER_ID",
+      "testing-fallback",
+    ),
+    modelInQuery: true,
+    cooldownMs: readPositiveNumber(
+      "AI_TESTING_FALLBACK_COOLDOWN_MS",
+      30_000,
+    ),
+  };
+}
+
+function validatedFallbackBaseUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw configurationError(
+      "CONFIG_TESTING_FALLBACK_URL_INVALID",
+      "AI_TESTING_FALLBACK_BASE_URL harus berupa URL HTTPS yang sah.",
+    );
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    /\/chat\/completions\/?$/u.test(url.pathname)
+  ) {
+    throw configurationError(
+      "CONFIG_TESTING_FALLBACK_URL_INVALID",
+      "AI_TESTING_FALLBACK_BASE_URL harus berupa base URL HTTPS tanpa " +
+        "kredensial, query, fragment, atau akhiran /chat/completions.",
+    );
+  }
+  return url.toString().replace(/\/+$/u, "");
+}
+
+function readTierPrice(label: string): TierPrice {
+  return {
+    inputPerMillionUsd: readNonNegativeNumber(
+      `AI_PRICE_${label}_INPUT_PER_MILLION_USD`,
+      0,
+    ),
+    outputPerMillionUsd: readNonNegativeNumber(
+      `AI_PRICE_${label}_OUTPUT_PER_MILLION_USD`,
+      0,
+    ),
+  };
+}
+
+function readNonNegativeNumber(name: string, fallback: number): number {
+  const value = Number(process.env[name] ?? String(fallback));
+  if (!Number.isFinite(value) || value < 0) {
+    throw configurationError(
+      `CONFIG_${name}_INVALID`,
+      `${name} harus berupa angka nol atau positif.`,
+    );
+  }
+  return value;
+}
+
+function readPositiveNumber(name: string, fallback: number): number {
+  const value = readNonNegativeNumber(name, fallback);
+  if (value <= 0) {
+    throw configurationError(
+      `CONFIG_${name}_INVALID`,
+      `${name} harus lebih besar dari nol.`,
+    );
+  }
+  return value;
+}
+
+function readPositiveInteger(name: string, fallback: number): number {
+  const value = readPositiveNumber(name, fallback);
+  if (!Number.isSafeInteger(value)) {
+    throw configurationError(
+      `CONFIG_${name}_INVALID`,
+      `${name} harus berupa bilangan bulat positif.`,
+    );
+  }
+  return value;
+}
+
+function readBoundedPositiveInteger(
+  name: string,
+  fallback: number,
+  maximum: number,
+): number {
+  const value = readPositiveInteger(name, fallback);
+  if (value > maximum) {
+    throw configurationError(
+      `CONFIG_${name}_INVALID`,
+      `${name} maksimal ${maximum}.`,
+    );
+  }
+  return value;
+}
+
+function readNonNegativeInteger(
+  name: string,
+  fallback: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  const value = readNonNegativeNumber(name, fallback);
+  if (!Number.isSafeInteger(value) || value > maximum) {
+    throw configurationError(
+      `CONFIG_${name}_INVALID`,
+      `${name} harus berupa bilangan bulat dalam rentang yang sah.`,
+    );
+  }
+  return value;
+}
+
+function readBoolean(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim().toLocaleLowerCase("en-US");
+  if (!raw) return fallback;
+  if (["1", "true", "yes", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  throw configurationError(
+    `CONFIG_${name}_INVALID`,
+    `${name} harus true atau false.`,
+  );
+}
+
+function readLogLevel(value: string | undefined): LogLevel {
+  const normalized = value?.trim().toLocaleLowerCase("en-US") ?? "info";
+  if (
+    normalized === "trace" ||
+    normalized === "debug" ||
+    normalized === "info" ||
+    normalized === "warn" ||
+    normalized === "error" ||
+    normalized === "fatal"
+  ) {
+    return normalized;
+  }
+  throw configurationError(
+    "CONFIG_LOG_LEVEL_INVALID",
+    "LOG_LEVEL harus trace, debug, info, warn, error, atau fatal.",
+  );
+}
+
+function readConsoleFormat(
+  value: string | undefined,
+  fallback: "pretty" | "json",
+): "pretty" | "json" {
+  const normalized = value?.trim().toLocaleLowerCase("en-US");
+  if (!normalized) return fallback;
+  if (normalized === "pretty" || normalized === "json") return normalized;
+  throw configurationError(
+    "CONFIG_LOG_CONSOLE_FORMAT_INVALID",
+    "LOG_CONSOLE_FORMAT harus pretty atau json.",
+  );
+}
+
+function readLabel(name: string, fallback: string): string {
+  const value = process.env[name]?.trim() || fallback;
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$/.test(value)) {
+    throw configurationError(
+      `CONFIG_${name}_INVALID`,
+      `${name} hanya boleh berisi huruf, angka, titik, _ atau - (maksimal 96).`,
+    );
+  }
+  return value;
+}
+
+function loadEnvironmentFile(): void {
+  try {
+    process.loadEnvFile();
+  } catch (error) {
+    if (!isMissingEnvFile(error)) throw error;
+  }
 }
 
 function isMissingEnvFile(error: unknown): boolean {
@@ -169,4 +800,11 @@ function isMissingEnvFile(error: unknown): boolean {
     "code" in error &&
     (error as NodeJS.ErrnoException).code === "ENOENT"
   );
+}
+
+function configurationError(code: string, message: string): Error {
+  return Object.assign(new Error(message), {
+    name: "ConfigurationError",
+    code,
+  });
 }

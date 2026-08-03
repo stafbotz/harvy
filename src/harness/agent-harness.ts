@@ -1,0 +1,1260 @@
+import { createHash, randomUUID } from "node:crypto";
+import {
+  capabilitySystemContext,
+  createHarvyCapabilityCatalog,
+  type CapabilityCatalog,
+  type CapabilitySnapshot,
+  type CapabilitySnapshotEntry,
+} from "./capabilities.js";
+import type { AgentScope, WorkspaceAgentScope } from "./scope.js";
+import { scopeKey } from "./scope.js";
+
+export interface AgentRunLimits {
+  maxSteps: number;
+  deadlineMs: number;
+  maxReplyCharacters: number;
+  maxObservationCharacters: number;
+}
+
+export const DEFAULT_AGENT_RUN_LIMITS: AgentRunLimits = Object.freeze({
+  maxSteps: 6,
+  deadlineMs: 45_000,
+  maxReplyCharacters: 8_000,
+  maxObservationCharacters: 4_000,
+});
+
+export type AgentPlannerDecision =
+  | { kind: "final"; reply: string }
+  | { kind: "need_input"; prompt: string }
+  | {
+      kind: "action";
+      capabilityId: string;
+      capabilityVersion: string;
+      input: unknown;
+    };
+
+export interface AgentObservation {
+  step: number;
+  capabilityId: string;
+  status: "ok" | "denied" | "unavailable" | "error" | "unknown";
+  /** Data dari executor, selalu diperlakukan sebagai data tak tepercaya. */
+  summary: string;
+}
+
+export interface AgentPlannerInput {
+  runId: string;
+  step: number;
+  request: string;
+  scope: Pick<AgentScope, "kind" | "channel">;
+  capabilities: CapabilitySnapshot;
+  observations: readonly AgentObservation[];
+  userInputs: readonly AgentUserInput[];
+}
+
+export interface AgentUserInput {
+  step: number;
+  text: string;
+}
+
+export type AgentPlanner = (
+  input: AgentPlannerInput,
+  signal: AbortSignal,
+) => Promise<unknown>;
+
+export interface AgentExecutorValidationSuccess<T = unknown> {
+  ok: true;
+  value: T;
+}
+
+export interface AgentExecutorValidationFailure {
+  ok: false;
+  reason: string;
+}
+
+export interface AgentExecutionContext {
+  runId: string;
+  step: number;
+  scope: AgentScope;
+  idempotencyKey: string;
+  signal: AbortSignal;
+}
+
+export interface AgentExecutorResult {
+  status: "ok" | "error" | "unknown";
+  summary: string;
+}
+
+export interface AgentCapabilityExecutor<T = unknown> {
+  capabilityId: string;
+  capabilityVersion: string;
+  validate(
+    input: unknown,
+  ): AgentExecutorValidationSuccess<T> | AgentExecutorValidationFailure;
+  execute(input: T, context: AgentExecutionContext): Promise<AgentExecutorResult>;
+}
+
+export type AgentAuthorization =
+  | { decision: "allow" }
+  | { decision: "deny"; reason: string }
+  | { decision: "approval"; expiresAt?: string };
+
+export type AgentAuthorizationPolicy = (input: {
+  scope: AgentScope;
+  capability: CapabilitySnapshotEntry;
+  value: unknown;
+  runId: string;
+  step: number;
+  signal: AbortSignal;
+}) => AgentAuthorization | Promise<AgentAuthorization>;
+
+export interface AgentApprovalRequest {
+  runId: string;
+  step: number;
+  capabilityId: string;
+  capabilityVersion: string;
+  binding: string;
+  expiresAt: string;
+}
+
+export interface AgentApprovalGrant {
+  binding: string;
+  approvedAt: string;
+}
+
+export interface AgentPendingAction {
+  proposal: Extract<AgentPlannerDecision, { kind: "action" }>;
+  /** Nilai JSON hasil validator; inilah yang dilihat policy dan dieksekusi. */
+  validatedValue: unknown;
+  digest: string;
+  approval: AgentApprovalRequest;
+}
+
+export interface AgentPendingInput {
+  step: number;
+  prompt: string;
+}
+
+/** Bentuk ini sengaja serializable agar pause/resume tidak memulai run baru. */
+export interface AgentRunCheckpoint {
+  version: 1;
+  runId: string;
+  scopeKey: string;
+  capabilityHash: string;
+  request: string;
+  step: number;
+  observations: AgentObservation[];
+  userInputs: AgentUserInput[];
+  seenActionDigests: string[];
+  pending: AgentPendingAction | null;
+  pendingInput: AgentPendingInput | null;
+}
+
+export interface AgentTraceEvent {
+  step: number;
+  phase: "plan" | "policy" | "approval" | "execute" | "terminate";
+  outcome: string;
+  capabilityId: string | null;
+}
+
+export type AgentRunResult =
+  | {
+      status: "completed";
+      reply: string;
+      checkpoint: AgentRunCheckpoint;
+      trace: readonly AgentTraceEvent[];
+    }
+  | {
+      status: "needs_input";
+      prompt: string;
+      checkpoint: AgentRunCheckpoint;
+      trace: readonly AgentTraceEvent[];
+    }
+  | {
+      status: "needs_approval";
+      approval: AgentApprovalRequest;
+      checkpoint: AgentRunCheckpoint;
+      trace: readonly AgentTraceEvent[];
+    }
+  | {
+      status: "stopped";
+      reason:
+        | "cancelled"
+        | "deadline"
+        | "max_steps"
+        | "cycle"
+        | "invalid_planner_output"
+        | "capability_changed"
+        | "stale"
+        | "invalid_checkpoint";
+      checkpoint: AgentRunCheckpoint;
+      trace: readonly AgentTraceEvent[];
+    };
+
+export interface AgentRunInput {
+  scope: AgentScope;
+  request: string;
+  planner: AgentPlanner;
+  executors?: readonly AgentCapabilityExecutor[];
+  policy?: AgentAuthorizationPolicy;
+  limits?: Partial<AgentRunLimits>;
+  signal?: AbortSignal;
+  checkpoint?: AgentRunCheckpoint;
+  approval?: AgentApprovalGrant;
+  /** Jawaban untuk `needs_input`; request awal tetap tidak berubah. */
+  answer?: string;
+  /** Generation guard milik adapter/core; hasil terlambat tidak boleh commit. */
+  isCurrent?: () => boolean | Promise<boolean>;
+  now?: () => Date;
+  makeRunId?: () => string;
+}
+
+/** Authority tepercaya dari composition root untuk scope Workspace. */
+export interface WorkspaceScopeAuthority {
+  isCurrent(
+    scope: WorkspaceAgentScope,
+    signal: AbortSignal,
+  ): boolean | Promise<boolean>;
+}
+
+type FreshnessState = "current" | "stale" | "cancelled" | "deadline";
+
+/**
+ * Kernel agent channel-neutral. Current Harvy workflows belum memberinya tool;
+ * ia sudah menegakkan kontrak yang akan dipakai executor nanti.
+ */
+export class AgentHarness {
+  constructor(
+    private readonly catalog: CapabilityCatalog,
+    private readonly workspaceAuthority?: WorkspaceScopeAuthority,
+  ) {}
+
+  capabilities(scope: AgentScope): CapabilitySnapshot {
+    return this.catalog.snapshot(scope);
+  }
+
+  capabilityContext(scope: AgentScope): string {
+    return capabilitySystemContext(this.capabilities(scope));
+  }
+
+  async run(input: AgentRunInput): Promise<AgentRunResult> {
+    const now = input.now ?? (() => new Date());
+    const limits = resolvedLimits(input.limits);
+    const snapshot = this.capabilities(input.scope);
+    const executors = executorMap(input.executors ?? []);
+    const policy = input.policy ?? conservativePolicy;
+    const trace: AgentTraceEvent[] = [];
+    const checkpointResult = initialCheckpoint(input, snapshot, now);
+    if (!checkpointResult.ok) {
+      const fallback = emptyCheckpoint(input, snapshot, now);
+      return stopped("invalid_checkpoint", fallback, trace);
+    }
+    const checkpoint = checkpointResult.value;
+    // Workspace scope membawa snapshot ACL. Tanpa resolver `isCurrent`, kernel
+    // tidak mempunyai authority untuk memastikan membership/epoch masih sah.
+    if (input.scope.kind === "workspace" && !input.isCurrent) {
+      return stopped("stale", checkpoint, trace);
+    }
+    if (checkpoint.capabilityHash !== snapshot.hash) {
+      return stopped("capability_changed", checkpoint, trace);
+    }
+
+    const deadlineAt = now().getTime() + limits.deadlineMs;
+    const freshness = async (): Promise<FreshnessState> => {
+      const stop = stopReason(input.signal, deadlineAt, now);
+      if (stop) return stop;
+      try {
+        const current = await boundedCall(
+          async (signal) => {
+            if (input.isCurrent && !(await input.isCurrent())) return false;
+            if (input.scope.kind !== "workspace") return true;
+            if (!this.workspaceAuthority) return false;
+            return await this.workspaceAuthority.isCurrent(input.scope, signal);
+          },
+          input.signal,
+          deadlineAt,
+          now,
+        );
+        return current ? "current" : "stale";
+      } catch (error) {
+        const reason = abortReason(error, input.signal, deadlineAt, now);
+        return reason === "cancelled" || reason === "deadline"
+          ? reason
+          : "stale";
+      }
+    };
+
+    const resumeStop = stopReason(input.signal, deadlineAt, now);
+    if (resumeStop) return stopped(resumeStop, checkpoint, trace);
+    const initialFreshness = await freshness();
+    if (initialFreshness !== "current") {
+      return stopped(initialFreshness, checkpoint, trace);
+    }
+
+    if (checkpoint.pendingInput) {
+      const answer = input.answer
+        ? boundedText(input.answer, limits.maxObservationCharacters)
+        : "";
+      if (!answer) {
+        return {
+          status: "needs_input",
+          prompt: checkpoint.pendingInput.prompt,
+          checkpoint,
+          trace,
+        };
+      }
+      checkpoint.userInputs.push({
+        step: checkpoint.pendingInput.step,
+        text: answer,
+      });
+      checkpoint.pendingInput = null;
+      checkpoint.step += 1;
+      trace.push(event(checkpoint.step - 1, "plan", "input_received"));
+    }
+
+    if (checkpoint.pending) {
+      const pendingResult = await resumePending({
+        input,
+        checkpoint,
+        snapshot,
+        executors,
+        limits,
+        deadlineAt,
+        freshness,
+        trace,
+        now,
+      });
+      if (pendingResult) return pendingResult;
+    }
+
+    while (checkpoint.step < limits.maxSteps) {
+      const stop = stopReason(input.signal, deadlineAt, now);
+      if (stop) return stopped(stop, checkpoint, trace);
+      const planningFreshness = await freshness();
+      if (planningFreshness !== "current") {
+        return stopped(planningFreshness, checkpoint, trace);
+      }
+
+      trace.push(event(checkpoint.step, "plan", "started"));
+      let rawDecision: unknown;
+      try {
+        rawDecision = await boundedCall(
+          (signal) =>
+            input.planner(
+              {
+                runId: checkpoint.runId,
+                step: checkpoint.step,
+                request: checkpoint.request,
+                scope: {
+                  kind: input.scope.kind,
+                  channel: input.scope.channel,
+                },
+                capabilities: snapshot,
+                observations: immutableObservations(checkpoint.observations),
+                userInputs: immutableUserInputs(checkpoint.userInputs),
+              },
+              signal,
+            ),
+          input.signal,
+          deadlineAt,
+          now,
+        );
+      } catch (error) {
+        return stopped(
+          abortReason(error, input.signal, deadlineAt, now),
+          checkpoint,
+          trace,
+        );
+      }
+      const decisionFreshness = await freshness();
+      if (decisionFreshness !== "current") {
+        return stopped(decisionFreshness, checkpoint, trace);
+      }
+
+      const decision = parsePlannerDecision(rawDecision);
+      if (!decision) {
+        trace.push(event(checkpoint.step, "plan", "invalid"));
+        return stopped("invalid_planner_output", checkpoint, trace);
+      }
+      trace.push(event(checkpoint.step, "plan", decision.kind));
+
+      if (decision.kind === "final") {
+        const reply = boundedText(decision.reply, limits.maxReplyCharacters);
+        if (!reply) {
+          return stopped("invalid_planner_output", checkpoint, trace);
+        }
+        trace.push(event(checkpoint.step, "terminate", "completed"));
+        return { status: "completed", reply, checkpoint, trace };
+      }
+      if (decision.kind === "need_input") {
+        const prompt = boundedText(decision.prompt, limits.maxReplyCharacters);
+        if (!prompt) {
+          return stopped("invalid_planner_output", checkpoint, trace);
+        }
+        checkpoint.pendingInput = { step: checkpoint.step, prompt };
+        trace.push(event(checkpoint.step, "terminate", "needs_input"));
+        return { status: "needs_input", prompt, checkpoint, trace };
+      }
+
+      const actionResult = await handleAction({
+        input,
+        decision,
+        checkpoint,
+        snapshot,
+        executors,
+        policy,
+        limits,
+        deadlineAt,
+        freshness,
+        trace,
+        now,
+      });
+      if (actionResult) return actionResult;
+    }
+
+    return stopped("max_steps", checkpoint, trace);
+  }
+}
+
+export const DEFAULT_HARVY_AGENT_HARNESS = new AgentHarness(
+  createHarvyCapabilityCatalog(),
+);
+
+interface ActionDependencies {
+  input: AgentRunInput;
+  decision: Extract<AgentPlannerDecision, { kind: "action" }>;
+  checkpoint: AgentRunCheckpoint;
+  snapshot: CapabilitySnapshot;
+  executors: ReadonlyMap<string, AgentCapabilityExecutor>;
+  policy: AgentAuthorizationPolicy;
+  limits: AgentRunLimits;
+  deadlineAt: number;
+  freshness: () => Promise<FreshnessState>;
+  trace: AgentTraceEvent[];
+  now: () => Date;
+}
+
+async function handleAction(
+  dependencies: ActionDependencies,
+): Promise<AgentRunResult | null> {
+  const {
+    input,
+    decision,
+    checkpoint,
+    snapshot,
+    executors,
+    policy,
+    limits,
+    deadlineAt,
+    freshness,
+    trace,
+    now,
+  } = dependencies;
+  const capability = snapshot.entries.find(
+    (entry) => entry.id === decision.capabilityId,
+  );
+  const fingerprint = actionFingerprint(input.scope, decision);
+  if (checkpoint.seenActionDigests.includes(fingerprint)) {
+    trace.push(event(checkpoint.step, "terminate", "cycle", decision.capabilityId));
+    return stopped("cycle", checkpoint, trace);
+  }
+  checkpoint.seenActionDigests.push(fingerprint);
+
+  if (
+    !capability ||
+    !capability.available ||
+    capability.version !== decision.capabilityVersion
+  ) {
+    appendObservation(checkpoint, limits, {
+      step: checkpoint.step,
+      capabilityId: decision.capabilityId,
+      status: "unavailable",
+      summary: capability?.unavailableReason ?? "Capability tidak dikenal.",
+    });
+    checkpoint.step += 1;
+    trace.push(event(checkpoint.step - 1, "policy", "unavailable", decision.capabilityId));
+    return null;
+  }
+
+  const executor = executors.get(capability.id);
+  if (!executor || executor.capabilityVersion !== capability.version) {
+    appendObservation(checkpoint, limits, {
+      step: checkpoint.step,
+      capabilityId: capability.id,
+      status: "unavailable",
+      summary: "Executor capability belum terpasang.",
+    });
+    checkpoint.step += 1;
+    trace.push(event(checkpoint.step - 1, "policy", "executor_missing", capability.id));
+    return null;
+  }
+
+  let validated: ReturnType<AgentCapabilityExecutor["validate"]>;
+  try {
+    validated = executor.validate(decision.input);
+  } catch {
+    validated = { ok: false, reason: "Validator executor gagal." };
+  }
+  if (!validated.ok) {
+    appendObservation(checkpoint, limits, {
+      step: checkpoint.step,
+      capabilityId: capability.id,
+      status: "denied",
+      summary: boundedText(validated.reason, 500) || "Input tidak sah.",
+    });
+    checkpoint.step += 1;
+    trace.push(event(checkpoint.step - 1, "policy", "invalid_input", capability.id));
+    return null;
+  }
+
+  if (!isJsonValue(validated.value)) {
+    appendObservation(checkpoint, limits, {
+      step: checkpoint.step,
+      capabilityId: capability.id,
+      status: "denied",
+      summary: "Validator menghasilkan nilai yang tidak dapat di-checkpoint.",
+    });
+    checkpoint.step += 1;
+    trace.push(event(checkpoint.step - 1, "policy", "invalid_value", capability.id));
+    return null;
+  }
+  const validatedValue = freezeJsonValue(structuredClone(validated.value));
+  const digest = actionDigest(
+    checkpoint,
+    input.scope,
+    decision,
+    validatedValue,
+  );
+
+  let authorization: AgentAuthorization;
+  try {
+    const rawAuthorization = await boundedCall(
+      (signal) =>
+        Promise.resolve(
+          policy({
+            scope: input.scope,
+            capability,
+            value: structuredClone(validatedValue),
+            runId: checkpoint.runId,
+            step: checkpoint.step,
+            signal,
+          }),
+        ),
+      input.signal,
+      deadlineAt,
+      now,
+    );
+    if (!validAuthorization(rawAuthorization)) {
+      appendObservation(checkpoint, limits, {
+        step: checkpoint.step,
+        capabilityId: capability.id,
+        status: "denied",
+        summary: "Kebijakan otorisasi memberi hasil yang tidak sah.",
+      });
+      checkpoint.step += 1;
+      trace.push(event(checkpoint.step - 1, "policy", "invalid", capability.id));
+      return null;
+    }
+    authorization = rawAuthorization;
+  } catch (error) {
+    const reason = abortReason(error, input.signal, deadlineAt, now);
+    if (reason === "cancelled" || reason === "deadline") {
+      return stopped(reason, checkpoint, trace);
+    }
+    appendObservation(checkpoint, limits, {
+      step: checkpoint.step,
+      capabilityId: capability.id,
+      status: "denied",
+      summary: "Kebijakan otorisasi gagal tertutup.",
+    });
+    checkpoint.step += 1;
+    trace.push(event(checkpoint.step - 1, "policy", "error", capability.id));
+    return null;
+  }
+  if (authorization.decision === "deny") {
+    appendObservation(checkpoint, limits, {
+      step: checkpoint.step,
+      capabilityId: capability.id,
+      status: "denied",
+      summary: boundedText(authorization.reason, 500) || "Ditolak kebijakan.",
+    });
+    checkpoint.step += 1;
+    trace.push(event(checkpoint.step - 1, "policy", "denied", capability.id));
+    return null;
+  }
+  if (authorization.decision === "approval") {
+    const expiresAt = approvalExpiry(authorization.expiresAt, now);
+    const approval: AgentApprovalRequest = {
+      runId: checkpoint.runId,
+      step: checkpoint.step,
+      capabilityId: capability.id,
+      capabilityVersion: capability.version,
+      binding: approvalBinding(digest, expiresAt),
+      expiresAt,
+    };
+    checkpoint.pending = {
+      proposal: decision,
+      validatedValue,
+      digest,
+      approval,
+    };
+    trace.push(event(checkpoint.step, "approval", "required", capability.id));
+    return { status: "needs_approval", approval, checkpoint, trace };
+  }
+
+  return executeAction({
+    input,
+    checkpoint,
+    decision,
+    capability,
+    executor,
+    validatedValue,
+    digest,
+    limits,
+    deadlineAt,
+    freshness,
+    trace,
+    now,
+  });
+}
+
+interface ExecuteDependencies {
+  input: AgentRunInput;
+  checkpoint: AgentRunCheckpoint;
+  decision: Extract<AgentPlannerDecision, { kind: "action" }>;
+  capability: CapabilitySnapshotEntry;
+  executor: AgentCapabilityExecutor;
+  validatedValue: unknown;
+  digest: string;
+  limits: AgentRunLimits;
+  deadlineAt: number;
+  freshness: () => Promise<FreshnessState>;
+  trace: AgentTraceEvent[];
+  now: () => Date;
+}
+
+async function executeAction(
+  dependencies: ExecuteDependencies,
+): Promise<AgentRunResult | null> {
+  const {
+    input,
+    checkpoint,
+    capability,
+    executor,
+    validatedValue,
+    digest,
+    limits,
+    deadlineAt,
+    freshness,
+    trace,
+    now,
+  } = dependencies;
+  const stop = stopReason(input.signal, deadlineAt, now);
+  if (stop) return stopped(stop, checkpoint, trace);
+  const preExecuteFreshness = await freshness();
+  if (preExecuteFreshness !== "current") {
+    return stopped(preExecuteFreshness, checkpoint, trace);
+  }
+  const stopAfterFreshness = stopReason(input.signal, deadlineAt, now);
+  if (stopAfterFreshness) {
+    return stopped(stopAfterFreshness, checkpoint, trace);
+  }
+  trace.push(event(checkpoint.step, "execute", "started", capability.id));
+  let result: AgentExecutorResult;
+  try {
+    result = await boundedCall(
+      (signal) =>
+        executor.execute(validatedValue, {
+          runId: checkpoint.runId,
+          step: checkpoint.step,
+          scope: input.scope,
+          idempotencyKey: digest,
+          signal,
+        }),
+      input.signal,
+      deadlineAt,
+      now,
+    );
+  } catch (error) {
+    const reason = abortReason(error, input.signal, deadlineAt, now);
+    if (reason === "cancelled" || reason === "deadline") {
+      return stopped(reason, checkpoint, trace);
+    }
+    result = { status: "error", summary: "Executor gagal tanpa hasil terverifikasi." };
+  }
+  const beforeExecuteFreshness = await freshness();
+  if (beforeExecuteFreshness !== "current") {
+    appendObservation(checkpoint, limits, {
+      step: checkpoint.step,
+      capabilityId: capability.id,
+      status: "unknown",
+      summary: "Executor mungkin sudah berjalan, tetapi authority berubah sebelum hasil dapat dipercaya.",
+    });
+    checkpoint.pending = null;
+    checkpoint.step += 1;
+    trace.push(event(checkpoint.step - 1, "execute", "unknown", capability.id));
+    return stopped(beforeExecuteFreshness, checkpoint, trace);
+  }
+  if (!validExecutorResult(result)) {
+    result = { status: "unknown", summary: "Bentuk hasil executor tidak sah." };
+  }
+  appendObservation(checkpoint, limits, {
+    step: checkpoint.step,
+    capabilityId: capability.id,
+    status: result.status,
+    summary:
+      boundedText(result.summary, limits.maxObservationCharacters) ||
+      "Executor tidak memberi ringkasan.",
+  });
+  checkpoint.pending = null;
+  checkpoint.step += 1;
+  trace.push(event(checkpoint.step - 1, "execute", result.status, capability.id));
+  return null;
+}
+
+async function resumePending(dependencies: {
+  input: AgentRunInput;
+  checkpoint: AgentRunCheckpoint;
+  snapshot: CapabilitySnapshot;
+  executors: ReadonlyMap<string, AgentCapabilityExecutor>;
+  limits: AgentRunLimits;
+  deadlineAt: number;
+  freshness: () => Promise<FreshnessState>;
+  trace: AgentTraceEvent[];
+  now: () => Date;
+}): Promise<AgentRunResult | null> {
+  const {
+    input,
+    checkpoint,
+    snapshot,
+    executors,
+    limits,
+    deadlineAt,
+    freshness,
+    trace,
+    now,
+  } = dependencies;
+  const pending = checkpoint.pending;
+  if (!pending) return null;
+  if (
+    !input.approval ||
+    !validApprovalGrant(input.approval, pending.approval, now())
+  ) {
+    trace.push(event(checkpoint.step, "approval", "missing_or_invalid", pending.proposal.capabilityId));
+    return {
+      status: "needs_approval",
+      approval: pending.approval,
+      checkpoint,
+      trace,
+    };
+  }
+  const capability = snapshot.entries.find(
+    (entry) =>
+      entry.id === pending.proposal.capabilityId &&
+      entry.version === pending.proposal.capabilityVersion &&
+      entry.available,
+  );
+  const executor = capability
+    ? executors.get(capability.id)
+    : undefined;
+  if (
+    !capability ||
+    !executor ||
+    executor.capabilityVersion !== capability.version
+  ) {
+    checkpoint.pending = null;
+    appendObservation(checkpoint, limits, {
+      step: checkpoint.step,
+      capabilityId: pending.proposal.capabilityId,
+      status: "unavailable",
+      summary: "Capability berubah atau executor tidak lagi tersedia.",
+    });
+    checkpoint.step += 1;
+    return null;
+  }
+  const stop = stopReason(input.signal, deadlineAt, now);
+  if (stop) return stopped(stop, checkpoint, trace);
+  const pendingFreshness = await freshness();
+  if (pendingFreshness !== "current") {
+    return stopped(pendingFreshness, checkpoint, trace);
+  }
+  trace.push(event(checkpoint.step, "approval", "accepted", capability.id));
+  return executeAction({
+    input,
+    checkpoint,
+    decision: pending.proposal,
+    capability,
+    executor,
+    validatedValue: pending.validatedValue,
+    digest: pending.digest,
+    limits,
+    deadlineAt,
+    freshness,
+    trace,
+    now,
+  });
+}
+
+function parsePlannerDecision(value: unknown): AgentPlannerDecision | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.kind === "final" && typeof record.reply === "string") {
+    return { kind: "final", reply: record.reply };
+  }
+  if (record.kind === "need_input" && typeof record.prompt === "string") {
+    return { kind: "need_input", prompt: record.prompt };
+  }
+  if (
+    record.kind === "action" &&
+    typeof record.capabilityId === "string" &&
+    typeof record.capabilityVersion === "string" &&
+    "input" in record &&
+    isJsonValue(record.input)
+  ) {
+    return {
+      kind: "action",
+      capabilityId: record.capabilityId,
+      capabilityVersion: record.capabilityVersion,
+      input: record.input,
+    };
+  }
+  return null;
+}
+
+function initialCheckpoint(
+  input: AgentRunInput,
+  snapshot: CapabilitySnapshot,
+  now: () => Date,
+): { ok: true; value: AgentRunCheckpoint } | { ok: false } {
+  if (!input.checkpoint) {
+    return { ok: true, value: emptyCheckpoint(input, snapshot, now) };
+  }
+  const checkpoint = structuredClone(input.checkpoint);
+  if (
+    checkpoint.version !== 1 ||
+    checkpoint.scopeKey !== scopeKey(input.scope) ||
+    checkpoint.request !== input.request ||
+    !checkpoint.runId ||
+    !Number.isInteger(checkpoint.step) ||
+    checkpoint.step < 0 ||
+    !Array.isArray(checkpoint.observations) ||
+    !checkpoint.observations.every(validCheckpointObservation) ||
+    !Array.isArray(checkpoint.userInputs) ||
+    !checkpoint.userInputs.every(validUserInput) ||
+    !Array.isArray(checkpoint.seenActionDigests) ||
+    !checkpoint.seenActionDigests.every(
+      (digest) => typeof digest === "string" && /^[a-f0-9]{64}$/u.test(digest),
+    ) ||
+    !validPendingCheckpoint(checkpoint, input.scope) ||
+    !validPendingInput(checkpoint) ||
+    (checkpoint.pending !== null && checkpoint.pendingInput !== null)
+  ) {
+    return { ok: false };
+  }
+  return { ok: true, value: checkpoint };
+}
+
+function validUserInput(value: unknown): value is AgentUserInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Number.isInteger(record.step) &&
+    (record.step as number) >= 0 &&
+    typeof record.text === "string" &&
+    record.text.length > 0
+  );
+}
+
+function validPendingInput(checkpoint: AgentRunCheckpoint): boolean {
+  if (checkpoint.pendingInput === null) return true;
+  const pending = checkpoint.pendingInput as unknown;
+  if (!pending || typeof pending !== "object" || Array.isArray(pending)) {
+    return false;
+  }
+  const record = pending as Record<string, unknown>;
+  return (
+    record.step === checkpoint.step &&
+    typeof record.prompt === "string" &&
+    record.prompt.trim().length > 0
+  );
+}
+
+function validCheckpointObservation(value: unknown): value is AgentObservation {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Number.isInteger(record.step) &&
+    (record.step as number) >= 0 &&
+    typeof record.capabilityId === "string" &&
+    (record.status === "ok" ||
+      record.status === "denied" ||
+      record.status === "unavailable" ||
+      record.status === "error" ||
+      record.status === "unknown") &&
+    typeof record.summary === "string"
+  );
+}
+
+function validPendingCheckpoint(
+  checkpoint: AgentRunCheckpoint,
+  scope: AgentScope,
+): boolean {
+  if (checkpoint.pending === null) return true;
+  const pending = checkpoint.pending as unknown;
+  if (!pending || typeof pending !== "object" || Array.isArray(pending)) {
+    return false;
+  }
+  const record = pending as Record<string, unknown>;
+  const proposal = parsePlannerDecision(record.proposal);
+  if (proposal?.kind !== "action") return false;
+  if (
+    typeof record.digest !== "string" ||
+    !isJsonValue(record.validatedValue)
+  ) {
+    return false;
+  }
+  const approval = record.approval;
+  if (!approval || typeof approval !== "object" || Array.isArray(approval)) {
+    return false;
+  }
+  const request = approval as Record<string, unknown>;
+  if (
+    request.runId !== checkpoint.runId ||
+    request.step !== checkpoint.step ||
+    request.capabilityId !== proposal.capabilityId ||
+    request.capabilityVersion !== proposal.capabilityVersion ||
+    typeof request.binding !== "string" ||
+    typeof request.expiresAt !== "string" ||
+    !Number.isFinite(Date.parse(request.expiresAt))
+  ) {
+    return false;
+  }
+  const digest = actionDigest(
+    checkpoint,
+    scope,
+    proposal,
+    record.validatedValue,
+  );
+  return (
+    record.digest === digest &&
+    request.binding === approvalBinding(digest, request.expiresAt)
+  );
+}
+
+function emptyCheckpoint(
+  input: AgentRunInput,
+  snapshot: CapabilitySnapshot,
+  _now: () => Date,
+): AgentRunCheckpoint {
+  return {
+    version: 1,
+    runId: input.makeRunId?.() ?? randomUUID(),
+    scopeKey: scopeKey(input.scope),
+    capabilityHash: snapshot.hash,
+    request: input.request,
+    step: 0,
+    observations: [],
+    userInputs: [],
+    seenActionDigests: [],
+    pending: null,
+    pendingInput: null,
+  };
+}
+
+function executorMap(
+  executors: readonly AgentCapabilityExecutor[],
+): ReadonlyMap<string, AgentCapabilityExecutor> {
+  const result = new Map<string, AgentCapabilityExecutor>();
+  for (const executor of executors) {
+    if (result.has(executor.capabilityId)) {
+      throw new Error(`Executor capability duplikat: ${executor.capabilityId}.`);
+    }
+    result.set(executor.capabilityId, executor);
+  }
+  return result;
+}
+
+function conservativePolicy(input: {
+  capability: CapabilitySnapshotEntry;
+}): AgentAuthorization {
+  if (
+    input.capability.confirmation === "none" &&
+    (input.capability.effect === "none" || input.capability.effect === "read")
+  ) {
+    return { decision: "allow" };
+  }
+  return { decision: "approval" };
+}
+
+function resolvedLimits(overrides?: Partial<AgentRunLimits>): AgentRunLimits {
+  const limits = { ...DEFAULT_AGENT_RUN_LIMITS, ...overrides };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(`Batas agent ${name} tidak sah.`);
+    }
+  }
+  return limits;
+}
+
+function appendObservation(
+  checkpoint: AgentRunCheckpoint,
+  limits: AgentRunLimits,
+  observation: AgentObservation,
+): void {
+  checkpoint.observations.push({
+    ...observation,
+    summary: boundedText(
+      observation.summary,
+      limits.maxObservationCharacters,
+    ),
+  });
+}
+
+function validExecutorResult(value: unknown): value is AgentExecutorResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    (record.status === "ok" ||
+      record.status === "error" ||
+      record.status === "unknown") &&
+    typeof record.summary === "string"
+  );
+}
+
+function validAuthorization(value: unknown): value is AgentAuthorization {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.decision === "allow") return true;
+  if (record.decision === "deny") return typeof record.reason === "string";
+  return (
+    record.decision === "approval" &&
+    (record.expiresAt === undefined || typeof record.expiresAt === "string")
+  );
+}
+
+function actionDigest(
+  checkpoint: AgentRunCheckpoint,
+  scope: AgentScope,
+  decision: Extract<AgentPlannerDecision, { kind: "action" }>,
+  validatedValue: unknown,
+): string {
+  return createHash("sha256")
+    .update(
+      canonicalJson({
+        runId: checkpoint.runId,
+        step: checkpoint.step,
+        scopeKey: scopeKey(scope),
+        capabilityId: decision.capabilityId,
+        capabilityVersion: decision.capabilityVersion,
+        proposalInput: decision.input,
+        validatedValue,
+      }),
+    )
+    .digest("hex");
+}
+
+function actionFingerprint(
+  scope: AgentScope,
+  decision: Extract<AgentPlannerDecision, { kind: "action" }>,
+): string {
+  return createHash("sha256")
+    .update(
+      canonicalJson({
+        scopeKey: scopeKey(scope),
+        capabilityId: decision.capabilityId,
+        capabilityVersion: decision.capabilityVersion,
+        input: decision.input,
+      }),
+    )
+    .digest("hex");
+}
+
+function approvalBinding(digest: string, expiresAt: string): string {
+  return createHash("sha256")
+    .update(`${digest}\u0000${expiresAt}`)
+    .digest("hex");
+}
+
+function approvalExpiry(value: string | undefined, now: () => Date): string {
+  const maximum = now().getTime() + 10 * 60 * 1_000;
+  if (value) {
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime()) && parsed.getTime() > now().getTime()) {
+      return new Date(Math.min(parsed.getTime(), maximum)).toISOString();
+    }
+  }
+  return new Date(maximum).toISOString();
+}
+
+function validApprovalGrant(
+  grant: AgentApprovalGrant,
+  request: AgentApprovalRequest,
+  current: Date,
+): boolean {
+  const approvedAt = Date.parse(grant.approvedAt);
+  const expiresAt = Date.parse(request.expiresAt);
+  const currentAt = current.getTime();
+  return (
+    grant.binding === request.binding &&
+    Number.isFinite(approvedAt) &&
+    Number.isFinite(expiresAt) &&
+    approvedAt <= expiresAt &&
+    approvedAt <= currentAt &&
+    currentAt <= expiresAt
+  );
+}
+
+function isJsonValue(value: unknown): boolean {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return true;
+  }
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (!value || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  return Object.values(value as Record<string, unknown>).every(isJsonValue);
+}
+
+function freezeJsonValue(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    for (const item of value) freezeJsonValue(item);
+    return Object.freeze(value);
+  }
+  for (const item of Object.values(value as Record<string, unknown>)) {
+    freezeJsonValue(item);
+  }
+  return Object.freeze(value);
+}
+
+function immutableObservations(
+  observations: readonly AgentObservation[],
+): readonly AgentObservation[] {
+  return Object.freeze(
+    observations.map((observation) => Object.freeze({ ...observation })),
+  );
+}
+
+function immutableUserInputs(
+  inputs: readonly AgentUserInput[],
+): readonly AgentUserInput[] {
+  return Object.freeze(inputs.map((input) => Object.freeze({ ...input })));
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null) return "null";
+  if (typeof value === "number" && !Number.isFinite(value)) return "null";
+  if (
+    typeof value === "function" ||
+    typeof value === "symbol" ||
+    typeof value === "bigint"
+  ) {
+    return "null";
+  }
+  if (typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function boundedText(value: string, maxCharacters: number): string {
+  const clean = value.trim();
+  if (clean.length <= maxCharacters) return clean;
+  return `${clean.slice(0, Math.max(0, maxCharacters - 1)).trimEnd()}…`;
+}
+
+function event(
+  step: number,
+  phase: AgentTraceEvent["phase"],
+  outcome: string,
+  capabilityId: string | null = null,
+): AgentTraceEvent {
+  return { step, phase, outcome, capabilityId };
+}
+
+function stopped(
+  reason: Extract<AgentRunResult, { status: "stopped" }>["reason"],
+  checkpoint: AgentRunCheckpoint,
+  trace: AgentTraceEvent[],
+): AgentRunResult {
+  trace.push(event(checkpoint.step, "terminate", reason));
+  return { status: "stopped", reason, checkpoint, trace };
+}
+
+function stopReason(
+  signal: AbortSignal | undefined,
+  deadlineAt: number,
+  now: () => Date,
+): "cancelled" | "deadline" | null {
+  if (signal?.aborted) return "cancelled";
+  return now().getTime() >= deadlineAt ? "deadline" : null;
+}
+
+function abortReason(
+  error: unknown,
+  signal: AbortSignal | undefined,
+  deadlineAt: number,
+  now: () => Date,
+): "cancelled" | "deadline" | "invalid_planner_output" {
+  if (signal?.aborted) return "cancelled";
+  if (now().getTime() >= deadlineAt) return "deadline";
+  return error instanceof Error && error.name === "AbortError"
+    ? "deadline"
+    : "invalid_planner_output";
+}
+
+async function boundedCall<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  outerSignal: AbortSignal | undefined,
+  deadlineAt: number,
+  now: () => Date,
+): Promise<T> {
+  if (outerSignal?.aborted || now().getTime() >= deadlineAt) {
+    return Promise.reject(abortError());
+  }
+  const remaining = deadlineAt - now().getTime();
+  const deadlineSignal = AbortSignal.timeout(remaining);
+  const signal = outerSignal
+    ? AbortSignal.any([outerSignal, deadlineSignal])
+    : deadlineSignal;
+  if (signal.aborted || now().getTime() >= deadlineAt) {
+    return Promise.reject(abortError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const abort = (): void => reject(abortError());
+    signal.addEventListener("abort", abort, { once: true });
+    let running: Promise<T>;
+    try {
+      running = operation(signal);
+    } catch (error) {
+      signal.removeEventListener("abort", abort);
+      reject(error);
+      return;
+    }
+    running.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        if (signal.aborted) reject(abortError());
+        else resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function abortError(): Error {
+  const error = new Error("Agent run dibatalkan.");
+  error.name = "AbortError";
+  return error;
+}

@@ -19,9 +19,11 @@ export type ConversationIntent =
   | "feeling"
   | "question"
   | "request"
+  | "research"
   | "smalltalk"
   | "history"
-  | "memory";
+  | "memory"
+  | "control";
 
 export interface RoutingInput {
   intent: ConversationIntent;
@@ -57,6 +59,11 @@ export function selectTier(input: RoutingInput): ModelTier {
         ? "ambitious"
         : "efficient";
 
+    case "research":
+      // Planner awal boleh murah, tetapi jawaban biasa yang sampai ke jalur
+      // percakapan tetap perlu memahami permintaan sumber dengan baik.
+      return "efficient";
+
     case "feeling":
       // Menanggapi keadaan diri butuh kepekaan bahasa, bukan penalaran berat.
       return "efficient";
@@ -64,6 +71,7 @@ export function selectTier(input: RoutingInput): ModelTier {
     case "task":
     case "smalltalk":
     case "history":
+    case "control":
       // Balasan pendek dan rutin; pekerjaan beratnya sudah selesai di ekstraksi.
       return "cheap";
 

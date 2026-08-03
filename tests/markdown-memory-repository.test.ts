@@ -122,9 +122,11 @@ describe("memori sebagai berkas Markdown", () => {
   });
 
   it("tidak membiarkan ownerId keluar dari direktori datanya", () => {
-    assert.equal(safeFolderName("../../etc"), "etc");
+    assert.match(safeFolderName("../../etc"), /^scope-[a-f0-9]{40}$/u);
+    assert.notEqual(safeFolderName("../../etc"), safeFolderName("etc"));
+    assert.notEqual(safeFolderName("a:b"), safeFolderName("ab"));
     assert.equal(safeFolderName("12345"), "12345");
-    assert.equal(safeFolderName("///"), "tidak-dikenal");
+    assert.equal(safeFolderName("   "), "tidak-dikenal");
   });
 });
 
@@ -140,13 +142,16 @@ describe("catatan pemahaman dan keselamatan", () => {
     await insights.record("student", "biasa", "males", "diabaikan");
     assert.deepEqual((await insights.load("student")).catatan, []);
 
+    await insights.record("student", "dukungan", "false positive", "ditemani");
+    assert.deepEqual((await insights.load("student")).catatan, []);
+
     for (let index = 0; index < 25; index += 1) {
-      await insights.record("student", "dukungan", `berat ke-${index}`, "ditemani");
+      await insights.record("student", "bahaya", `bahaya ke-${index}`, "ditemani");
     }
 
     const stored = await insights.load("student");
     assert.equal(stored.catatan.length, 20);
-    assert.equal(stored.catatan.at(-1)?.ringkasan, "berat ke-24");
+    assert.equal(stored.catatan.at(-1)?.ringkasan, "bahaya ke-24");
   });
 
   it("menyatakan di berkasnya sendiri bahwa isinya tidak ditampilkan", async () => {
@@ -168,6 +173,27 @@ describe("catatan pemahaman dan keselamatan", () => {
     assert.match(raw, /tidak ditampilkan kepada penggunanya/i);
     assert.match(raw, /Pasal 4 nomor 6/);
     assert.match(raw, /ingin menyakiti diri/);
+  });
+
+  it("menghapus catatan keselamatan yang melewati retensi 30 hari", async () => {
+    const root = await workspace();
+    let now = NOW;
+    const repository = new MarkdownInsightRepository(root);
+    const insights = new InsightService(
+      repository,
+      async () => null,
+      () => now,
+    );
+
+    await insights.record("student", "bahaya", "kejadian lama", "ditemani");
+    now = new Date(NOW.getTime() + 31 * 24 * 60 * 60 * 1000);
+
+    assert.deepEqual((await insights.load("student")).catatan, []);
+    const raw = await readFile(
+      join(root, "student", "pemahaman-dan-keselamatan.md"),
+      "utf8",
+    );
+    assert.doesNotMatch(raw, /kejadian lama/);
   });
 
   it("ikut terhapus ketika pengguna menghapus seluruh datanya", async () => {

@@ -7,7 +7,8 @@
  * bagian yang paling sering disetel, jadi ia perlu jalur pemeriksaan yang murah.
  *
  * Ditampilkan apa adanya: hasil pembacaan, teks balasan mentah, lalu
- * pemecahannya menjadi bubble persis seperti yang akan dikirim ke Telegram.
+ * normalisasi dan pemecahan bubble pada lapisan model. Tombol, pending, dan
+ * state adapter diuji terpisah lewat create-bot-flow.test.
  *
  * Perlu `.env` berisi kunci sungguhan. Pakai `AI_MODE=testing` agar gratis.
  *
@@ -17,14 +18,22 @@
  *   npx tsx scripts/coba-balasan.ts --listen "besok ada ulangan biologi"
  */
 import { readFileSync } from "node:fs";
-import { AiClient } from "../src/ai/client.js";
 import { Conversation } from "../src/ai/conversation.js";
-import { splitReplyBubbles } from "../src/bot/messages.js";
+import {
+  uncertainTriage,
+  withEmergencyAvailability,
+} from "../src/ai/safety.js";
+import {
+  normalizeTelegramText,
+  splitReplyBubbles,
+} from "../src/bot/messages.js";
 import { loadConfig } from "../src/config.js";
+import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 import type { ConversationTurn } from "../src/domain/history.js";
 import type { StylePreference } from "../src/domain/profile.js";
 
 const flags = new Set(process.argv.slice(2).filter((arg) => arg.startsWith("--")));
+const allowFallback = flags.has("--allow-fallback");
 const message = process.argv
   .slice(2)
   .filter((arg) => !arg.startsWith("--"))
@@ -34,7 +43,7 @@ const message = process.argv
 
 if (!message) {
   console.error(
-    'Pakai: npx tsx scripts/coba-balasan.ts [--riwayat|--riwayat=file.json] [--listen|--advice] "kalimat kamu"',
+    'Pakai: npx tsx scripts/coba-balasan.ts [--riwayat|--riwayat=file.json] [--listen|--advice] [--allow-fallback] "kalimat kamu"',
   );
   process.exit(1);
 }
@@ -86,7 +95,7 @@ const SAMPLE_TURNS: ConversationTurn[] = [
 
 const config = loadConfig();
 const conversation = new Conversation(
-  new AiClient({ baseUrl: config.ai.baseUrl, keys: config.ai.keys }),
+  await createInstrumentedAiClient(config, "probe", allowFallback),
   config.ai,
   config.defaultTimezone,
 );
@@ -98,12 +107,22 @@ const context = {
 };
 
 console.log(`Mode    : ${config.ai.mode}`);
+console.log(
+  `Fallback: ${
+    allowFallback && config.ai.fallback
+      ? `aktif (${config.ai.fallback.model})`
+      : "nonaktif"
+  }`,
+);
 console.log(`Gaya    : ${style ?? "belum ditentukan"}`);
 console.log(`Riwayat : ${context.turns.length} giliran contoh`);
 console.log(`Pesan   : ${message}`);
 console.log("");
 
-const understanding = await conversation.understand(message, context);
+const [understanding, assessedRisk] = await Promise.all([
+  conversation.understand(message, context, { ownerId: "probe-private" }),
+  conversation.triageRisk(message, "probe-private", context),
+]);
 
 if (!understanding) {
   console.error(
@@ -117,31 +136,41 @@ if (!understanding) {
   // Triase dijalankan persis seperti pada jalur sungguhan. Tanpa ini skrip
   // memeriksa Harvy yang tidak pernah ada: seluruh arahan keselamatan hidup
   // dari hasil triase, dan probe tanpa triase akan selalu terlihat baik.
-  const triage = await conversation.triageRisk(message);
+  const triage = assessedRisk ?? uncertainTriage(understanding.safetySensitive);
   console.log("");
   console.log("--- triase risiko ---");
   console.log(JSON.stringify(triage, null, 2));
 
-  const reply = await conversation.reply(
+  let reply = await conversation.reply(
     message,
     understanding,
     context,
     style,
-    triage ?? undefined,
+    triage,
+    null,
+    false,
+    { ownerId: "probe-private" },
   );
+  reply = withEmergencyAvailability(normalizeTelegramText(reply), triage);
 
   console.log("");
   console.log("--- balasan mentah model ---");
   console.log(reply);
   console.log("");
-  console.log("--- yang dikirim ke Telegram ---");
+  console.log("--- bentuk model setelah normalisasi Telegram ---");
 
   for (const [index, bubble] of splitReplyBubbles(reply).entries()) {
     console.log(`[bubble ${index + 1}] ${bubble}`);
   }
 
-  if (triage && triage.level !== "biasa") {
-    const verdict = await conversation.reviewReply(message, reply);
+  if (triage.level !== "biasa") {
+    const verdict = await conversation.reviewReply(
+      message,
+      reply,
+      triage,
+      "probe-private",
+      context,
+    );
     console.log("");
     console.log(
       `--- pemeriksaan balasan: ${

@@ -93,6 +93,30 @@ describe("kebijakan memori", () => {
 
     assert.equal(selectRelevantMemories(many, "halo", NOW, 3).length, 3);
   });
+
+  it("tidak membawa memori personal atau preferensi yang tidak relevan", () => {
+    const selected = selectRelevantMemories(
+      [
+        memory({ kind: "profile", content: "Nama panggilannya Raka" }),
+        memory({ kind: "personal", content: "Sedang berkonflik dengan keluarga" }),
+        memory({ kind: "preference", content: "Lebih suka belajar memakai diagram" }),
+      ],
+      "halo, apa kabar?",
+      NOW,
+    );
+
+    assert.deepEqual(selected.map((item) => item.kind), ["profile"]);
+  });
+
+  it("tetap membawa memori personal ketika topiknya benar-benar cocok", () => {
+    const selected = selectRelevantMemories(
+      [memory({ kind: "personal", content: "Sedang berkonflik dengan keluarga" })],
+      "konflik keluarga yang kemarin masih bikin kepikiran",
+      NOW,
+    );
+
+    assert.equal(selected[0]?.kind, "personal");
+  });
 });
 
 function memory(overrides: Partial<MemoryItem> & { content: string }): MemoryItem {

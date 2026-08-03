@@ -177,6 +177,16 @@ class MemoryRepository implements TaskRepository {
     );
   }
 
+  async list(ownerId: string): Promise<StudentTask[]> {
+    return this.tasks.filter((task) => task.ownerId === ownerId);
+  }
+
+  async removeAll(ownerId: string): Promise<number> {
+    const before = this.tasks.length;
+    this.tasks = this.tasks.filter((task) => task.ownerId !== ownerId);
+    return before - this.tasks.length;
+  }
+
   async listDueReminders(now: Date): Promise<StudentTask[]> {
     return this.tasks.filter(
       (task) =>

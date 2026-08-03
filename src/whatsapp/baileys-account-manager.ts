@@ -1,0 +1,1251 @@
+import { resolve } from "node:path";
+import makeWASocket, {
+  DisconnectReason,
+  isJidGroup,
+  jidNormalizedUser,
+  makeCacheableSignalKeyStore,
+  proto,
+  useMultiFileAuthState,
+  type BaileysEventMap,
+  type GroupMetadata,
+  type GroupParticipant,
+  type UserFacingSocketConfig,
+  type WAMessage,
+  type WASocket,
+} from "baileys";
+import { groupScopeKey, type GroupMessage } from "../domain/group.js";
+import type {
+  GroupAuthorityRequest,
+  GroupAuthoritySnapshot,
+} from "../core/group-authority-policy.js";
+import type {
+  GroupNoticeTarget,
+  GroupTransport,
+} from "../core/group-turn-service.js";
+import type {
+  WhatsAppAccountConfig,
+  WhatsAppConfig,
+} from "./config.js";
+import { normalizeBaileysGroupMessage } from "./baileys-message-normalizer.js";
+import {
+  NOOP_OPERATIONAL_LOGGER,
+  type OperationalLogger,
+} from "../observability/operational-logger.js";
+import { createBaileysLogger } from "../observability/baileys-logger.js";
+
+const MESSAGE_CACHE_MS = 2 * 60 * 60 * 1_000;
+const MAX_INCOMING_MESSAGES = 1_000;
+const MAX_OUTBOUND_MESSAGES = 2_000;
+const DEFAULT_METADATA_TIMEOUT_MS = 2_000;
+const GROUP_AUTHORITY_METADATA_MAX_AGE_MS = 30_000;
+
+export type WhatsAppAccountStatus =
+  | "connecting"
+  | "open"
+  | "retrying"
+  | "pairing"
+  | "stopped"
+  | "needs-operator";
+
+export interface BaileysAccountEvents {
+  onMessage(message: GroupMessage): Promise<void>;
+  onGroupActive(
+    message: Pick<GroupMessage, "scope" | "accountId" | "groupName" | "at">,
+  ): Promise<void>;
+  onGroupDisabled(scopeKey: string, accountId: string): Promise<void>;
+  /** Dipanggil sinkron ketika epoch metadata authority naik. */
+  onGroupAuthorityChanged?(
+    scopeKey: string,
+    accountId: string,
+    authorityEpoch: number,
+  ): void;
+  onPairingCode(accountId: string, code: string): void | Promise<void>;
+  onQr?(accountId: string, qr: string): void | Promise<void>;
+  onStatus?(
+    accountId: string,
+    status: WhatsAppAccountStatus,
+    reason?: number,
+  ): void;
+  onError?(accountId: string, error: unknown): void;
+}
+
+export interface BaileysAccountManagerDependencies {
+  createSocket?: (config: UserFacingSocketConfig) => WASocket;
+  loadAuthState?: typeof useMultiFileAuthState;
+  random?: () => number;
+  now?: () => Date;
+  logger?: OperationalLogger;
+  metadataTimeoutMs?: number;
+}
+
+interface CachedMessage {
+  message: WAMessage;
+  expiresAt: number;
+}
+
+interface MetadataRefreshToken {
+  generation: number;
+  groupEpoch: number;
+}
+
+interface AccountRuntime {
+  config: WhatsAppAccountConfig;
+  socket: WASocket | null;
+  generation: number;
+  stopping: boolean;
+  reconnectAttempt: number;
+  reconnectTimer: NodeJS.Timeout | null;
+  pairingRequested: boolean;
+  status: WhatsAppAccountStatus;
+  authWrite: Promise<void>;
+  eventTasks: Set<Promise<void>>;
+  groupQueues: Map<string, Promise<void>>;
+  groups: Map<string, GroupMetadata>;
+  groupMetadataAt: Map<string, number>;
+  groupEpochs: Map<string, number>;
+  /** Grup yang sudah diberi sinyal self-missing agar callback disable tidak
+   * dipanggil berulang-ulang pada setiap read authority. */
+  selfMissingNotified: Set<string>;
+  metadataRefreshes: Map<string, MetadataRefreshToken>;
+  incoming: Map<string, CachedMessage>;
+  outbound: Map<string, CachedMessage>;
+}
+
+/**
+ * Mengelola banyak nomor dalam satu proses: satu runtime, auth namespace, socket,
+ * reconnect supervisor, dan cache per akun. Tidak ada failover grup ke akun
+ * lain; binding domain yang memutuskan akun mana yang sah.
+ */
+export class BaileysAccountManager implements GroupTransport {
+  private readonly accounts = new Map<string, AccountRuntime>();
+  private readonly createSocket: (config: UserFacingSocketConfig) => WASocket;
+  private readonly loadAuthState: typeof useMultiFileAuthState;
+  private readonly random: () => number;
+  private readonly now: () => Date;
+  private readonly logger: OperationalLogger;
+  private readonly metadataTimeoutMs: number;
+  private acceptingEvents = true;
+  private stopping = false;
+
+  constructor(
+    private readonly config: WhatsAppConfig,
+    private readonly events: BaileysAccountEvents,
+    dependencies: BaileysAccountManagerDependencies = {},
+  ) {
+    this.createSocket = dependencies.createSocket ?? makeWASocket;
+    this.loadAuthState =
+      dependencies.loadAuthState ?? useMultiFileAuthState;
+    this.random = dependencies.random ?? Math.random;
+    this.now = dependencies.now ?? (() => new Date());
+    this.logger =
+      dependencies.logger ??
+      NOOP_OPERATIONAL_LOGGER.child("whatsapp.account-manager");
+    this.metadataTimeoutMs =
+      dependencies.metadataTimeoutMs ?? DEFAULT_METADATA_TIMEOUT_MS;
+
+    for (const account of config.accounts) {
+      this.accounts.set(account.id, {
+        config: account,
+        socket: null,
+        generation: 0,
+        stopping: false,
+        reconnectAttempt: 0,
+        reconnectTimer: null,
+        pairingRequested: false,
+        status: "stopped",
+        authWrite: Promise.resolve(),
+        eventTasks: new Set(),
+        groupQueues: new Map(),
+        groups: new Map(),
+        groupMetadataAt: new Map(),
+        groupEpochs: new Map(),
+        selfMissingNotified: new Set(),
+        metadataRefreshes: new Map(),
+        incoming: new Map(),
+        outbound: new Map(),
+      });
+    }
+  }
+
+  async start(): Promise<void> {
+    if (!this.config.enabled || this.accounts.size === 0) return;
+    this.acceptingEvents = true;
+    this.stopping = false;
+    this.logger.info(
+      "whatsapp_manager_starting",
+      "Manajer akun WhatsApp mulai dijalankan.",
+      { accountCount: this.accounts.size },
+    );
+    await Promise.all(
+      [...this.accounts.values()].map((runtime) => this.connect(runtime)),
+    );
+  }
+
+  async resolveGroupAuthority(
+    request: GroupAuthorityRequest,
+  ): Promise<GroupAuthoritySnapshot | null> {
+    if (request.scope.channel !== "whatsapp") return null;
+    const runtime = this.accounts.get(request.accountId);
+    if (!runtime || runtime.status !== "open") return null;
+    let metadata = runtime.groups.get(request.scope.groupId);
+    if (!metadata) return null;
+    const metadataAt = runtime.groupMetadataAt.get(request.scope.groupId) ?? 0;
+    if (this.now().getTime() - metadataAt > GROUP_AUTHORITY_METADATA_MAX_AGE_MS) {
+      const socket = runtime.socket;
+      const beforeEpoch = this.groupEpoch(runtime, request.scope.groupId);
+      const beforeGeneration = runtime.generation;
+      const beforeFingerprint = metadataAuthorityFingerprint(metadata);
+      if (!socket) return null;
+      try {
+        const refreshed = await withTimeout(
+          socket.groupMetadata(request.scope.groupId),
+          this.metadataTimeoutMs,
+        );
+        if (
+          runtime.status !== "open" ||
+          runtime.socket !== socket ||
+          runtime.generation !== beforeGeneration ||
+          this.groupEpoch(runtime, request.scope.groupId) !== beforeEpoch
+        ) {
+          return null;
+        }
+        if (beforeFingerprint !== metadataAuthorityFingerprint(refreshed)) {
+          this.bumpGroupEpoch(runtime, request.scope.groupId);
+        }
+        runtime.groups.set(request.scope.groupId, refreshed);
+        runtime.groupMetadataAt.set(
+          request.scope.groupId,
+          this.now().getTime(),
+        );
+        metadata = refreshed;
+      } catch (error) {
+        this.logger.warn(
+          "whatsapp_group_authority_refresh_failed",
+          "Refresh metadata untuk otorisasi grup gagal; aksi admin ditolak.",
+          { accountId: request.accountId, error },
+        );
+        return null;
+      }
+    }
+    if (!this.metadataContainsSelf(runtime, metadata)) {
+      this.notifySelfMissing(runtime, request.scope.groupId);
+      return null;
+    }
+    runtime.selfMissingNotified.delete(request.scope.groupId);
+    const participant = metadata.participants.find((candidate) =>
+      participantIs(candidate, request.participantIds),
+    );
+    if (!participant) return null;
+    const isAdmin =
+      participant.isAdmin === true ||
+      participant.isSuperAdmin === true ||
+      participant.admin === "admin" ||
+      participant.admin === "superadmin";
+    return {
+      role: isAdmin ? "admin" : "member",
+      authorityEpoch: this.groupEpoch(runtime, request.scope.groupId),
+    };
+  }
+
+  async stop(): Promise<void> {
+    this.stopIngress();
+    await this.drainEvents();
+    await this.close();
+  }
+
+  stopIngress(): void {
+    this.acceptingEvents = false;
+  }
+
+  async drainEvents(): Promise<void> {
+    while (true) {
+      const pending = [...this.accounts.values()].flatMap((runtime) => [
+        ...runtime.eventTasks,
+        ...runtime.groupQueues.values(),
+      ]);
+      if (pending.length === 0) return;
+      await Promise.allSettled(pending);
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.stopping) return;
+    this.stopping = true;
+
+    await Promise.all(
+      [...this.accounts.values()].map(async (runtime) => {
+        runtime.stopping = true;
+        runtime.generation += 1;
+        if (runtime.reconnectTimer) {
+          clearTimeout(runtime.reconnectTimer);
+          runtime.reconnectTimer = null;
+        }
+
+        const socket = runtime.socket;
+        runtime.socket = null;
+        if (socket) {
+          try {
+            await socket.end(undefined);
+          } catch (error) {
+            this.reportError(runtime.config.id, error);
+          }
+        }
+        await runtime.authWrite;
+        this.setStatus(runtime, "stopped");
+      }),
+    );
+    this.logger.info(
+      "whatsapp_manager_stopped",
+      "Seluruh socket WhatsApp sudah ditutup.",
+      { accountCount: this.accounts.size },
+    );
+  }
+
+  async sendNotice(target: GroupNoticeTarget, text: string): Promise<void> {
+    await this.sendText(target, text);
+  }
+
+  async sendReply(message: GroupMessage, text: string): Promise<void> {
+    await this.sendText(message, text, message.messageId);
+  }
+
+  async sendTyping(target: GroupNoticeTarget): Promise<void> {
+    const runtime = this.accounts.get(target.accountId);
+    if (
+      !runtime ||
+      runtime.stopping ||
+      runtime.status !== "open" ||
+      !runtime.socket
+    ) {
+      return;
+    }
+    await runtime.socket.sendPresenceUpdate(
+      "composing",
+      target.scope.groupId,
+    );
+  }
+
+  accountStatus(accountId: string): WhatsAppAccountStatus | null {
+    return this.accounts.get(accountId)?.status ?? null;
+  }
+
+  private async connect(runtime: AccountRuntime): Promise<void> {
+    if (this.stopping || runtime.stopping) return;
+    const generation = runtime.generation + 1;
+    runtime.generation = generation;
+    // Metadata hak admin hanya sah untuk satu generasi socket. Reconnect
+    // dimulai fail-closed sampai socket baru memberikan upsert/refresh sendiri.
+    runtime.groups.clear();
+    runtime.groupMetadataAt.clear();
+    runtime.selfMissingNotified.clear();
+    // Epoch authority tetap monoton di dalam proses. Menghapusnya saat
+    // reconnect dapat membuat proposal dari socket lama terlihat segar lagi
+    // ketika socket baru mulai menghitung dari nol.
+    runtime.metadataRefreshes.clear();
+    runtime.pairingRequested = false;
+    this.setStatus(runtime, "connecting");
+
+    try {
+      try {
+        await runtime.authWrite;
+      } catch (error) {
+        // Jangan membaca state di tengah save berantai. Kegagalan disampaikan
+        // ke operator, lalu rantainya dipulihkan agar reconnect berikutnya
+        // tidak terjebak pada rejected promise yang sama selamanya.
+        this.reportError(runtime.config.id, error);
+        runtime.authWrite = Promise.resolve();
+      }
+      if (!this.isCurrent(runtime, generation)) return;
+      const authDirectory = resolve(
+        this.config.authFolder,
+        runtime.config.id,
+      );
+      const { state, saveCreds } = await this.loadAuthState(authDirectory);
+      if (!this.isCurrent(runtime, generation)) return;
+      if (
+        this.config.pairingMode === "qr" &&
+        !state.creds.registered &&
+        state.creds.pairingCode
+      ) {
+        // Pairing-code yang ditolak meninggalkan state parsial. QR memerlukan
+        // identitas companion segar. Jangan memakai `me` sebagai penanda:
+        // pair-success QR memang mengisinya sebelum server menutup stream
+        // dengan 515, dan identitas itu wajib bertahan untuk login berikutnya.
+        state.creds.pairingCode = undefined;
+        delete state.creds.me;
+        runtime.authWrite = runtime.authWrite.then(saveCreds, saveCreds);
+        await runtime.authWrite;
+      }
+      if (
+        state.creds.registered &&
+        !credentialsMatchConfiguredNumber(
+          runtime.config.phoneNumber,
+          state.creds.me,
+        )
+      ) {
+        this.setStatus(runtime, "needs-operator");
+        this.reportError(
+          runtime.config.id,
+          new Error(
+            `Auth WhatsApp ${runtime.config.id} terdaftar untuk nomor lain; periksa namespace auth.`,
+          ),
+        );
+        return;
+      }
+
+      const socket = this.createSocket({
+        logger: createBaileysLogger(this.logger, runtime.config.id),
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(
+            state.keys,
+            createBaileysLogger(this.logger, runtime.config.id),
+          ),
+        },
+        syncFullHistory: false,
+        shouldSyncHistoryMessage: shouldSyncProtocolHistory,
+        markOnlineOnConnect: false,
+        cachedGroupMetadata: async (jid) => runtime.groups.get(jid),
+        getMessage: async (key) => {
+          this.pruneMessageCaches(runtime);
+          return key.id
+            ? (runtime.outbound.get(key.id)?.message.message ?? undefined)
+            : undefined;
+        },
+      });
+      if (!this.isCurrent(runtime, generation)) {
+        await socket.end(undefined);
+        return;
+      }
+
+      runtime.socket = socket;
+      this.attachListeners(
+        runtime,
+        socket,
+        generation,
+        state.creds.registered,
+        saveCreds,
+      );
+    } catch (error) {
+      this.reportError(runtime.config.id, error);
+      this.scheduleReconnect(runtime, generation, "retry");
+    }
+  }
+
+  private attachListeners(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    registered: boolean,
+    saveCreds: () => Promise<void>,
+  ): void {
+    socket.ev.on("creds.update", () => {
+      if (!this.isCurrent(runtime, generation)) return;
+      runtime.authWrite = runtime.authWrite.then(saveCreds, saveCreds);
+      void runtime.authWrite.catch((error: unknown) => {
+        this.reportError(runtime.config.id, error);
+      });
+    });
+
+    socket.ev.on("connection.update", (update) => {
+      if (!this.acceptingEvents) return;
+      this.trackEvent(
+        runtime,
+        this.handleConnectionUpdate(
+          runtime,
+          socket,
+          generation,
+          registered,
+          update,
+        ),
+      );
+    });
+
+    socket.ev.on("groups.upsert", (groups) => {
+      if (
+        !this.acceptingEvents ||
+        !this.isCurrent(runtime, generation)
+      ) {
+        return;
+      }
+      this.trackEvent(
+        runtime,
+        (async () => {
+          const accepted: Array<{
+            group: GroupMetadata;
+            authorityEpoch: number;
+          }> = [];
+          for (const group of groups) {
+            if (!this.isCurrent(runtime, generation)) return;
+            // An upsert is not authority by itself. Do not activate a scope
+            // until the metadata proves that this socket's own identity is a
+            // participant; stale/non-member upserts must fail closed.
+            if (!this.metadataContainsSelf(runtime, group)) {
+              this.notifySelfMissing(runtime, group.id);
+              continue;
+            }
+            const authorityEpoch = this.bumpGroupEpoch(runtime, group.id);
+            // Publish metadata dan epoch dalam satu synchronous turn. Jika
+            // cache lama dibiarkan sampai callback queue, resolver dapat
+            // memasangkan role lama dengan epoch baru.
+            runtime.metadataRefreshes.delete(group.id);
+            runtime.groups.set(group.id, group);
+            runtime.groupMetadataAt.set(group.id, this.now().getTime());
+            runtime.selfMissingNotified.delete(group.id);
+            accepted.push({ group, authorityEpoch });
+          }
+          await Promise.all(
+            accepted.map(({ group, authorityEpoch }) =>
+              this.enqueueGroupOperation(runtime, group.id, async () => {
+              if (
+                !this.isCurrent(runtime, generation) ||
+                this.groupEpoch(runtime, group.id) !== authorityEpoch
+              ) {
+                return;
+              }
+              await this.events.onGroupActive({
+                scope: { channel: "whatsapp", groupId: group.id },
+                accountId: runtime.config.id,
+                groupName: group.subject || null,
+                at: this.now().toISOString(),
+              });
+              }),
+            ),
+          );
+        })(),
+      );
+    });
+
+    socket.ev.on("groups.update", (updates) => {
+      if (
+        !this.acceptingEvents ||
+        !this.isCurrent(runtime, generation)
+      ) {
+        return;
+      }
+      for (const update of updates) {
+        if (!update.id) continue;
+        const existing = runtime.groups.get(update.id);
+        if (existing) {
+          const merged = { ...existing, ...update };
+          if (
+            metadataAuthorityFingerprint(existing) !==
+            metadataAuthorityFingerprint(merged)
+          ) {
+            this.bumpGroupEpoch(runtime, update.id);
+          }
+          if (this.metadataContainsSelf(runtime, merged)) {
+            runtime.selfMissingNotified.delete(update.id);
+          } else {
+            this.notifySelfMissing(runtime, update.id);
+            continue;
+          }
+          runtime.groups.set(update.id, merged);
+          runtime.groupMetadataAt.set(update.id, this.now().getTime());
+        }
+      }
+    });
+
+    socket.ev.on("group-participants.update", (update) => {
+      if (
+        !this.acceptingEvents ||
+        !this.isCurrent(runtime, generation)
+      ) {
+        return;
+      }
+      // Invalidate authority synchronously on event arrival, before the
+      // per-group queue can be delayed by metadata/model work. A demotion or
+      // removal therefore cannot race an admin control using the old epoch.
+      const authorityEpoch = this.bumpGroupEpoch(runtime, update.id);
+      runtime.groups.delete(update.id);
+      runtime.groupMetadataAt.delete(update.id);
+      runtime.metadataRefreshes.delete(update.id);
+      this.trackEvent(
+        runtime,
+        this.enqueueGroupOperation(
+          runtime,
+          update.id,
+          () =>
+            this.handleGroupParticipantsUpdate(
+              runtime,
+              socket,
+              generation,
+              update,
+              authorityEpoch,
+            ),
+        ),
+      );
+    });
+
+    socket.ev.on("messages.upsert", (upsert) => {
+      if (
+        !this.acceptingEvents ||
+        !this.isCurrent(runtime, generation) ||
+        upsert.type !== "notify"
+      ) {
+        return;
+      }
+      this.trackEvent(
+        runtime,
+        this.handleMessages(runtime, socket, generation, upsert),
+      );
+    });
+  }
+
+  private async handleConnectionUpdate(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    registeredAtConnect: boolean,
+    update: BaileysEventMap["connection.update"],
+  ): Promise<void> {
+    if (!this.isCurrent(runtime, generation)) return;
+
+    if (
+      update.qr &&
+      this.config.pairingMode === "qr" &&
+      this.events.onQr
+    ) {
+      this.setStatus(runtime, "pairing");
+      await this.events.onQr(runtime.config.id, update.qr);
+    }
+
+    if (
+      update.connection === "connecting" &&
+      !registeredAtConnect &&
+      this.config.pairingMode === "code" &&
+      !runtime.pairingRequested
+    ) {
+      runtime.pairingRequested = true;
+      this.setStatus(runtime, "pairing");
+      const code = await socket.requestPairingCode(
+        runtime.config.phoneNumber,
+      );
+      if (this.isCurrent(runtime, generation)) {
+        await this.events.onPairingCode(runtime.config.id, code);
+      }
+    }
+
+    if (update.connection === "open") {
+      runtime.reconnectAttempt = 0;
+      this.setStatus(runtime, "open");
+      return;
+    }
+    if (update.connection !== "close") return;
+
+    runtime.socket = null;
+    const reason = disconnectReason(update.lastDisconnect?.error);
+    const decision = reconnectDecision(reason);
+    if (decision === "stop") {
+      runtime.generation += 1;
+      this.setStatus(runtime, "needs-operator", reason ?? undefined);
+      return;
+    }
+    this.scheduleReconnect(runtime, generation, decision, reason);
+  }
+
+  private async handleGroupParticipantsUpdate(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    update: BaileysEventMap["group-participants.update"],
+    authorityEpoch: number,
+  ): Promise<void> {
+    if (
+      !this.isCurrent(runtime, generation) ||
+      this.groupEpoch(runtime, update.id) !== authorityEpoch
+    ) {
+      return;
+    }
+    const selfChanged = update.participants.some((participant) =>
+      isSelfParticipant(participant, selfJids(socket)),
+    );
+    runtime.groups.delete(update.id);
+    runtime.groupMetadataAt.delete(update.id);
+    runtime.metadataRefreshes.delete(update.id);
+    if (!selfChanged) return;
+
+    if (update.action === "remove") {
+      runtime.selfMissingNotified.add(update.id);
+      try {
+        await this.events.onGroupDisabled(
+          groupScopeKey({ channel: "whatsapp", groupId: update.id }),
+          runtime.config.id,
+        );
+      } catch (error) {
+        runtime.selfMissingNotified.delete(update.id);
+        throw error;
+      }
+      return;
+    }
+    if (update.action !== "add") return;
+    runtime.selfMissingNotified.delete(update.id);
+
+    let metadata: GroupMetadata | undefined;
+    try {
+      metadata = await withTimeout(
+        socket.groupMetadata(update.id),
+        this.metadataTimeoutMs,
+      );
+      if (!this.metadataContainsSelf(runtime, metadata)) {
+        this.notifySelfMissing(runtime, update.id);
+        return;
+      }
+      if (
+        this.isCurrent(runtime, generation) &&
+        this.groupEpoch(runtime, update.id) === authorityEpoch &&
+        this.metadataContainsSelf(runtime, metadata)
+      ) {
+        runtime.groups.set(update.id, metadata);
+        runtime.groupMetadataAt.set(update.id, this.now().getTime());
+      }
+    } catch (error) {
+      // Aktivasi tetap sah dari event add diri sendiri. Metadata nama/admin
+      // dapat dilengkapi ketika pesan live pertama tiba.
+      this.logger.warn(
+        "whatsapp_group_metadata_failed",
+        "Metadata grup WhatsApp gagal dimuat; hak admin tetap fail-closed.",
+        {
+          accountId: runtime.config.id,
+          error,
+        },
+      );
+    }
+    if (
+      !this.isCurrent(runtime, generation) ||
+      this.groupEpoch(runtime, update.id) !== authorityEpoch
+    ) {
+      return;
+    }
+    await this.events.onGroupActive({
+      scope: { channel: "whatsapp", groupId: update.id },
+      accountId: runtime.config.id,
+      groupName: metadata?.subject ?? null,
+      at: this.now().toISOString(),
+    });
+  }
+
+  private async handleMessages(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    upsert: BaileysEventMap["messages.upsert"],
+  ): Promise<void> {
+    const processing: Promise<void>[] = [];
+    for (const raw of upsert.messages) {
+      if (!this.isCurrent(runtime, generation)) return;
+      const groupId = raw.key.remoteJid ?? undefined;
+      if (!groupId || !isJidGroup(groupId)) continue;
+      processing.push(
+        this.enqueueGroupOperation(runtime, groupId, async () => {
+          try {
+            if (!this.isCurrent(runtime, generation)) return;
+            let metadata = runtime.groups.get(groupId);
+            const metadataAt = runtime.groupMetadataAt.get(groupId) ?? 0;
+            if (
+              !metadata ||
+              this.now().getTime() - metadataAt >
+                GROUP_AUTHORITY_METADATA_MAX_AGE_MS
+            ) {
+              // Membership adalah gerbang ingress, bukan enrichment. Tunggu
+              // refresh yang tetap dibatasi timeout supaya event saat ini
+              // tidak hilang hanya karena cache baru kedaluwarsa.
+              metadata = await this.refreshGroupMetadata(
+                runtime,
+                socket,
+                generation,
+                groupId,
+              );
+              if (!metadata) return;
+            }
+            if (!this.metadataContainsSelf(runtime, metadata)) {
+              this.notifySelfMissing(runtime, groupId);
+              return;
+            }
+            const senderIds = [
+              raw.key.participant,
+              raw.key.participantAlt,
+            ].filter((value): value is string => Boolean(value));
+            if (
+              senderIds.length === 0 ||
+              !metadata.participants.some((participant) =>
+                participantIs(participant, senderIds),
+              )
+            ) {
+              // Event dari identitas yang belum ada pada membership snapshot
+              // tidak boleh membuat profil/memori. Event participant/update
+              // atau refresh berikutnya akan membuka ingress bila memang sah.
+              return;
+            }
+
+            const normalized = normalizeBaileysGroupMessage(raw, {
+              accountId: runtime.config.id,
+              selfJids: selfJids(socket),
+              groupName: metadata?.subject ?? null,
+              ownMessageIds: new Set(runtime.outbound.keys()),
+              isAdmin: (participantJids) =>
+                Boolean(
+                  metadata?.participants.some(
+                    (participant) =>
+                      participantIs(participant, participantJids) &&
+                      (participant.isAdmin === true ||
+                        participant.isSuperAdmin === true ||
+                        participant.admin === "admin" ||
+                        participant.admin === "superadmin"),
+                  ),
+                ),
+              authorityEpoch: this.groupEpoch(runtime, groupId),
+            });
+            if (!normalized) return;
+
+            this.cacheMessage(
+              runtime.incoming,
+              normalized.messageId,
+              raw,
+              MAX_INCOMING_MESSAGES,
+            );
+            const trace = this.logger.newTraceContext(
+              "whatsapp",
+              "group_turn",
+              runtime.config.id,
+            );
+            const task = Promise.resolve()
+              .then(() =>
+                this.logger.runWithContext(trace, async () => {
+                  await this.events.onMessage(normalized);
+                }),
+              )
+              .finally(() => {
+                runtime.incoming.delete(normalized.messageId);
+              });
+            // Normalisasi/urutan event tetap memakai queue Baileys, tetapi
+            // penyelesaian model tidak boleh menahan pesan grup berikutnya.
+            // Task tetap dilacak untuk quote cache, error boundary, dan drain.
+            this.trackEvent(runtime, task);
+          } catch (error) {
+            // Satu pesan rusak/gagal tidak boleh menjatuhkan sisa array upsert.
+            this.reportError(runtime.config.id, error);
+          }
+        }),
+      );
+    }
+    await Promise.all(processing);
+  }
+
+  private async sendText(
+    target: GroupNoticeTarget,
+    text: string,
+    quoteMessageId?: string,
+  ): Promise<void> {
+    const runtime = this.accounts.get(target.accountId);
+    if (
+      !runtime ||
+      runtime.stopping ||
+      runtime.status !== "open" ||
+      !runtime.socket
+    ) {
+      throw new Error(`Akun WhatsApp ${target.accountId} tidak tersambung.`);
+    }
+
+    this.pruneMessageCaches(runtime);
+    const quoted = quoteMessageId
+      ? runtime.incoming.get(quoteMessageId)?.message
+      : undefined;
+    const sent = await runtime.socket.sendMessage(
+      target.scope.groupId,
+      { text: text.trim() },
+      quoted ? { quoted } : undefined,
+    );
+    if (sent?.key.id) {
+      this.cacheMessage(
+        runtime.outbound,
+        sent.key.id,
+        sent,
+        MAX_OUTBOUND_MESSAGES,
+      );
+    }
+  }
+
+  private scheduleReconnect(
+    runtime: AccountRuntime,
+    generation: number,
+    decision: "restart" | "retry",
+    reason?: number | null,
+  ): void {
+    if (!this.isCurrent(runtime, generation)) return;
+    if (runtime.reconnectTimer) clearTimeout(runtime.reconnectTimer);
+
+    const delay =
+      decision === "restart"
+        ? 0
+        : reconnectDelay(
+            runtime.reconnectAttempt++,
+            this.config.reconnectBaseMs,
+            this.config.reconnectMaxMs,
+            this.random(),
+          );
+    this.setStatus(runtime, "retrying", reason ?? undefined);
+    runtime.reconnectTimer = setTimeout(() => {
+      runtime.reconnectTimer = null;
+      void this.connect(runtime);
+    }, delay);
+    runtime.reconnectTimer.unref();
+  }
+
+  private async refreshGroupMetadata(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    groupId: string,
+  ): Promise<GroupMetadata | undefined> {
+    const groupEpoch = this.groupEpoch(runtime, groupId);
+    const before = runtime.groups.get(groupId);
+    const beforeFingerprint = before
+      ? metadataAuthorityFingerprint(before)
+      : null;
+    const existing = runtime.metadataRefreshes.get(groupId);
+    if (
+      existing?.generation === generation &&
+      existing.groupEpoch === groupEpoch
+    ) {
+      return undefined;
+    }
+    const token: MetadataRefreshToken = { generation, groupEpoch };
+    runtime.metadataRefreshes.set(groupId, token);
+    try {
+      const metadata = await withTimeout(
+        socket.groupMetadata(groupId),
+        this.metadataTimeoutMs,
+      );
+      if (
+        !this.isCurrent(runtime, generation) ||
+        this.groupEpoch(runtime, groupId) !== groupEpoch ||
+        runtime.metadataRefreshes.get(groupId) !== token
+      ) {
+        return undefined;
+      }
+      if (
+        beforeFingerprint !== null &&
+        beforeFingerprint !== metadataAuthorityFingerprint(metadata)
+      ) {
+        this.bumpGroupEpoch(runtime, groupId);
+      }
+      if (!this.metadataContainsSelf(runtime, metadata)) {
+        runtime.groups.delete(groupId);
+        runtime.groupMetadataAt.delete(groupId);
+        this.notifySelfMissing(runtime, groupId);
+        return undefined;
+      }
+      runtime.groups.set(groupId, metadata);
+      runtime.groupMetadataAt.set(groupId, this.now().getTime());
+      runtime.selfMissingNotified.delete(groupId);
+      return metadata;
+    } catch (error) {
+      this.logger.warn(
+        "whatsapp_group_metadata_failed",
+        "Metadata grup WhatsApp gagal dimuat; ingress grup ditolak sampai membership dapat diverifikasi.",
+        {
+          accountId: runtime.config.id,
+          error,
+        },
+      );
+      return undefined;
+    } finally {
+      if (runtime.metadataRefreshes.get(groupId) === token) {
+        runtime.metadataRefreshes.delete(groupId);
+      }
+    }
+  }
+
+  private metadataContainsSelf(
+    runtime: AccountRuntime,
+    metadata: GroupMetadata,
+  ): boolean {
+    const socket = runtime.socket;
+    if (!socket) return false;
+    const identities = selfJids(socket);
+    return (
+      identities.length > 0 &&
+      metadata.participants.some((participant) =>
+        participantIs(participant, identities),
+      )
+    );
+  }
+
+  /**
+   * Sinyal removal dari metadata dibuat one-shot. Jika identitas socket belum
+   * tersedia, keadaan hanya dianggap unknown/fail-closed dan tidak disamakan
+   * dengan bukti bahwa Harvy sudah dikeluarkan.
+   */
+  private notifySelfMissing(runtime: AccountRuntime, groupId: string): void {
+    const socket = runtime.socket;
+    if (!socket || selfJids(socket).length === 0) return;
+    runtime.groups.delete(groupId);
+    runtime.groupMetadataAt.delete(groupId);
+    runtime.metadataRefreshes.delete(groupId);
+    if (runtime.selfMissingNotified.has(groupId)) return;
+    runtime.selfMissingNotified.add(groupId);
+    const disable = this.events
+      .onGroupDisabled(
+        groupScopeKey({ channel: "whatsapp", groupId }),
+        runtime.config.id,
+      )
+      .catch((error: unknown) => {
+        runtime.selfMissingNotified.delete(groupId);
+        throw error;
+      });
+    this.trackEvent(
+      runtime,
+      disable,
+    );
+  }
+
+  private groupEpoch(runtime: AccountRuntime, groupId: string): number {
+    return runtime.groupEpochs.get(groupId) ?? 0;
+  }
+
+  private bumpGroupEpoch(runtime: AccountRuntime, groupId: string): number {
+    const next = this.groupEpoch(runtime, groupId) + 1;
+    runtime.groupEpochs.set(groupId, next);
+    this.events.onGroupAuthorityChanged?.(
+      groupScopeKey({ channel: "whatsapp", groupId }),
+      runtime.config.id,
+      next,
+    );
+    return next;
+  }
+
+  private isCurrent(runtime: AccountRuntime, generation: number): boolean {
+    return (
+      !this.stopping &&
+      !runtime.stopping &&
+      runtime.generation === generation
+    );
+  }
+
+  private pruneMessageCaches(runtime: AccountRuntime): void {
+    const now = this.now().getTime();
+    for (const [id, item] of runtime.incoming) {
+      if (item.expiresAt <= now) runtime.incoming.delete(id);
+    }
+    for (const [id, item] of runtime.outbound) {
+      if (item.expiresAt <= now) runtime.outbound.delete(id);
+    }
+  }
+
+  private cacheMessage(
+    cache: Map<string, CachedMessage>,
+    id: string,
+    message: WAMessage,
+    limit: number,
+  ): void {
+    while (cache.size >= limit) {
+      const oldest = cache.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+    cache.set(id, {
+      message,
+      expiresAt: this.now().getTime() + MESSAGE_CACHE_MS,
+    });
+  }
+
+  private trackEvent(runtime: AccountRuntime, task: Promise<void>): void {
+    const handled = task.catch((error: unknown) => {
+      this.reportError(runtime.config.id, error);
+    });
+    runtime.eventTasks.add(handled);
+    void handled.then(() => {
+      runtime.eventTasks.delete(handled);
+    });
+  }
+
+  private async enqueueGroupOperation<T>(
+    runtime: AccountRuntime,
+    groupId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = runtime.groupQueues.get(groupId) ?? Promise.resolve();
+    const next = previous.then(operation, operation);
+    const tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    runtime.groupQueues.set(groupId, tail);
+    try {
+      return await next;
+    } finally {
+      if (runtime.groupQueues.get(groupId) === tail) {
+        runtime.groupQueues.delete(groupId);
+      }
+    }
+  }
+
+  private setStatus(
+    runtime: AccountRuntime,
+    status: WhatsAppAccountStatus,
+    reason?: number,
+  ): void {
+    const previous = runtime.status;
+    runtime.status = status;
+    this.logger.info(
+      "whatsapp_account_status_changed",
+      "Status akun WhatsApp berubah.",
+      {
+        accountId: runtime.config.id,
+        previousStatus: previous,
+        status,
+        reason,
+      },
+    );
+    this.events.onStatus?.(runtime.config.id, status, reason);
+  }
+
+  private reportError(accountId: string, error: unknown): void {
+    this.logger.error(
+      "whatsapp_account_error",
+      "Operasi akun WhatsApp gagal.",
+      error,
+      { accountId },
+    );
+    this.events.onError?.(accountId, error);
+  }
+}
+
+export function reconnectDecision(
+  reason: number | null,
+): "restart" | "retry" | "stop" {
+  if (reason === DisconnectReason.restartRequired) return "restart";
+  if (
+    reason === DisconnectReason.loggedOut ||
+    reason === DisconnectReason.connectionReplaced ||
+    reason === DisconnectReason.badSession ||
+    reason === DisconnectReason.multideviceMismatch ||
+    reason === DisconnectReason.forbidden
+  ) {
+    return "stop";
+  }
+  return "retry";
+}
+
+/**
+ * Tidak mengunduh arsip pesan lama. Metadata bootstrap non-chat tetap
+ * diizinkan agar mapping PN/LID dan sesi multi-device Baileys stabil.
+ */
+export const shouldSyncProtocolHistory: NonNullable<
+  UserFacingSocketConfig["shouldSyncHistoryMessage"]
+> = ({ syncType }) =>
+  syncType === proto.Message.HistorySyncType.PUSH_NAME ||
+  syncType === proto.Message.HistorySyncType.NON_BLOCKING_DATA ||
+  syncType === proto.Message.HistorySyncType.INITIAL_STATUS_V3 ||
+  syncType === proto.Message.HistorySyncType.NO_HISTORY ||
+  syncType === proto.Message.HistorySyncType.MESSAGE_ACCESS_STATUS;
+
+export function reconnectDelay(
+  attempt: number,
+  baseMs: number,
+  maxMs: number,
+  random: number,
+): number {
+  const exponential = Math.min(maxMs, baseMs * 2 ** Math.max(0, attempt));
+  const jitter = 0.75 + Math.min(1, Math.max(0, random)) * 0.5;
+  return Math.min(maxMs, Math.round(exponential * jitter));
+}
+
+function disconnectReason(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const candidate = error as {
+    output?: { statusCode?: unknown };
+    statusCode?: unknown;
+  };
+  const status = candidate.output?.statusCode ?? candidate.statusCode;
+  return typeof status === "number" ? status : null;
+}
+
+function credentialsMatchConfiguredNumber(
+  configuredPhoneNumber: string,
+  me: { id: string; phoneNumber?: string } | undefined,
+): boolean {
+  if (!me) return true;
+  const candidates = [me.phoneNumber, me.id]
+    .filter((value): value is string => Boolean(value))
+    .map(phoneNumberFromJid)
+    .filter((value): value is string => value !== null);
+  return candidates.length === 0 || candidates.includes(configuredPhoneNumber);
+}
+
+function phoneNumberFromJid(jid: string): string | null {
+  const normalized = jidNormalizedUser(jid);
+  if (!normalized.endsWith("@s.whatsapp.net")) return null;
+  const digits = normalized.slice(0, normalized.indexOf("@"));
+  return /^\d+$/.test(digits) ? digits : null;
+}
+
+function selfJids(socket: WASocket): string[] {
+  const user = socket.user;
+  if (!user) return [];
+  return [user.id, user.lid, user.phoneNumber].filter(
+    (value): value is string => Boolean(value),
+  );
+}
+
+function isSelfParticipant(
+  participant: GroupParticipant,
+  identities: readonly string[],
+): boolean {
+  return participantIs(participant, identities);
+}
+
+function participantIs(
+  participant: GroupParticipant,
+  identities: readonly string[],
+): boolean {
+  const expected = new Set(identities.map(normalizedJid));
+  return [participant.id, participant.lid, participant.phoneNumber]
+    .filter((value): value is string => Boolean(value))
+    .some((value) => expected.has(normalizedJid(value)));
+}
+
+function normalizedJid(value: string): string {
+  return jidNormalizedUser(value);
+}
+
+function metadataAuthorityFingerprint(metadata: GroupMetadata): string {
+  return metadata.participants
+    .map((participant) => ({
+      id: participant.id,
+      lid: participant.lid,
+      phoneNumber: participant.phoneNumber,
+      admin: participant.admin,
+      isAdmin: participant.isAdmin,
+      isSuperAdmin: participant.isSuperAdmin,
+    }))
+    .sort((left, right) =>
+      `${left.id}\u0000${left.lid ?? ""}`.localeCompare(
+        `${right.id}\u0000${right.lid ?? ""}`,
+      ),
+    )
+    .map((participant) => JSON.stringify(participant))
+    .join("\u0001");
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Batas waktu metadata WhatsApp terlampaui.")),
+          Math.max(1, timeoutMs),
+        );
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

@@ -89,6 +89,30 @@ export class MemoryService {
     return (await this.repository.remove(ownerId, id)) ? item : null;
   }
 
+  async edit(
+    ownerId: string,
+    id: string,
+    content: string,
+  ): Promise<MemoryItem | null> {
+    const clean = content.trim().replaceAll(/\s+/g, " ");
+    if (!clean || clean.length > 200) return null;
+
+    const items = await this.repository.list(ownerId);
+    const item = items.find((candidate) => candidate.id === id);
+    if (!item) return null;
+
+    const duplicate = items.find(
+      (candidate) =>
+        candidate.id !== id &&
+        candidate.content.toLowerCase() === clean.toLowerCase(),
+    );
+    if (duplicate) return null;
+
+    const updated = { ...item, content: clean };
+    await this.repository.save(updated);
+    return updated;
+  }
+
   async forgetAll(ownerId: string): Promise<number> {
     return this.repository.removeAll(ownerId);
   }

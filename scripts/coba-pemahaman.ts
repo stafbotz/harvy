@@ -11,7 +11,6 @@
  *
  *   npx tsx scripts/coba-pemahaman.ts "ingetin aku jam 8 minum obat"
  */
-import { AiClient } from "../src/ai/client.js";
 import {
   parseTurnBoundaryDecision,
   TURN_BOUNDARY_MAX_TOKENS,
@@ -31,40 +30,49 @@ import {
   parseUnderstanding,
 } from "../src/ai/understand.js";
 import { loadConfig } from "../src/config.js";
+import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 
 type DiagnosticPath = "understanding" | "due" | "boundary";
 
-const flag = process.argv[2];
+const args = process.argv.slice(2);
+const allowFallback = args.includes("--allow-fallback");
 const path: DiagnosticPath =
-  flag === "--due"
+  args.includes("--due")
     ? "due"
-    : flag === "--boundary"
+    : args.includes("--boundary")
       ? "boundary"
       : "understanding";
-const rawMessage = process.argv
-  .slice(path === "understanding" ? 2 : 3)
+const rawMessage = args
+  .filter(
+    (argument) =>
+      !["--due", "--boundary", "--allow-fallback"].includes(argument),
+  )
   .join(" ")
   .trim();
 const message = rawMessage.replaceAll("\\n", "\n");
 
 if (!message) {
   console.error(
-    'Pakai: npx tsx scripts/coba-pemahaman.ts [--due|--boundary] "kalimat kamu"',
+    'Pakai: npx tsx scripts/coba-pemahaman.ts [--due|--boundary] [--allow-fallback] "kalimat kamu"',
   );
   process.exit(1);
 }
 
 const config = loadConfig();
-const client = new AiClient({
-  baseUrl: config.ai.baseUrl,
-  keys: config.ai.keys,
-});
+const client = await createInstrumentedAiClient(config, "probe", allowFallback);
 
 const model =
   config.ai.mode === "testing" ? config.ai.testingModel : config.ai.models.cheap;
 
 console.log(`Mode    : ${config.ai.mode}`);
 console.log(`Model   : ${model}`);
+console.log(
+  `Fallback: ${
+    allowFallback && config.ai.fallback
+      ? `aktif (${config.ai.fallback.model})`
+      : "nonaktif"
+  }`,
+);
 console.log(`Jalur   : ${pathLabel(path)}`);
 console.log(`Pesan   : ${message}`);
 console.log("");
@@ -85,6 +93,19 @@ try {
       ? { timeoutMs: TURN_BOUNDARY_TIMEOUT_MS, maxAttempts: 1 }
       : {}),
     json: true,
+    usage: {
+      ownerId: "probe-private",
+      tier: "cheap",
+      purpose:
+        path === "boundary"
+          ? "turn-boundary"
+          : path === "due"
+            ? "due-date"
+            : "understanding",
+      safetyCritical: path === "boundary",
+      subjectKind: "private",
+      channel: "telegram",
+    },
     messages: [
       {
         role: "system",

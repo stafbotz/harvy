@@ -22,6 +22,12 @@
  */
 export type StylePreference = "listen" | "advice";
 
+export interface QuietHours {
+  /** Menit sejak pukul 00.00 pada jam dinding pengguna. */
+  startMinute: number;
+  endMinute: number;
+}
+
 export interface UserProfile {
   ownerId: string;
   /**
@@ -37,9 +43,26 @@ export interface UserProfile {
   stylePreference: StylePreference | null;
   /** Pertanyaan gaya hanya diajukan sekali, diterima atau tidak. */
   styleAskedAt: string | null;
+  /** Zona waktu dipilih pengguna; `null` berarti belum pernah memilih. */
+  timeZone: string | null;
+  /**
+   * `null` dapat berarti tidak memakai jam tenang. `quietHoursSetAt`
+   * membedakannya dari keadaan belum pernah ditanya.
+   */
+  quietHours: QuietHours | null;
+  quietHoursSetAt: string | null;
+  /** Waktu terakhir pengguna menarik izin pemrosesan AI. */
+  consentWithdrawnAt: string | null;
+  /**
+   * Tombstone penghapusan lintas-berkas. Profil dihapus paling akhir setelah
+   * seluruh penyimpanan lain bersih.
+   */
+  deletionRequestedAt: string | null;
 }
 
 export interface ProfileRepository {
   find(ownerId: string): Promise<UserProfile | null>;
   save(profile: UserProfile): Promise<void>;
+  remove(ownerId: string): Promise<boolean>;
+  listDeletionRequested(): Promise<UserProfile[]>;
 }

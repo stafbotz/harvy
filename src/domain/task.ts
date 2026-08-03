@@ -28,8 +28,11 @@ export interface NewTask {
 export interface TaskRepository {
   save(task: StudentTask): Promise<void>;
   findById(ownerId: string, id: string): Promise<StudentTask | null>;
+  /** Seluruh tugas milik pengguna, termasuk yang sudah selesai. */
+  list(ownerId: string): Promise<StudentTask[]>;
   listActive(ownerId: string): Promise<StudentTask[]>;
   listDueReminders(now: Date): Promise<StudentTask[]>;
   /** Menghapus tugas milik pengguna. Mengembalikan `false` bila tidak ada. */
   remove(ownerId: string, id: string): Promise<boolean>;
+  removeAll(ownerId: string): Promise<number>;
 }

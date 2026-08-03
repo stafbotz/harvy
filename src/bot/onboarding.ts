@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { EMERGENCY_AVAILABILITY_NOTE } from "../ai/safety.js";
 import type { StylePreference } from "../domain/profile.js";
 
 /**
@@ -23,7 +24,7 @@ export function introBubbles(
   const opening = name ? `Hai ${name}, aku Harvy 🌿` : "Hai, aku Harvy 🌿";
 
   const consent = [
-    "Satu hal dulu biar jujur di depan: aku jalan pakai AI, dan biar bisa ngerti pesanmu, isinya dikirim ke layanan AI di luar Harvy. Aku juga bisa salah, jadi hal penting tetap perlu kamu cek sendiri.",
+    "Satu hal dulu biar jujur di depan: aku jalan pakai AI, dan biar bisa ngerti pesanmu, isinya dapat dikirim ke satu atau lebih layanan AI di luar Harvy. Kalau layanan utama gagal, permintaan yang sama dapat dicoba lagi lewat layanan cadangan. Kalau kamu memintaku research web dan fiturnya aktif, kata pencariannya juga dikirim ke layanan pencarian, lalu server Harvy dapat membuka URL publik yang dipilih. Kalau kamu memilih sesi atau check-in, keadaan singkatnya juga kusimpan supaya bisa dilanjutkan. Aku juga bisa salah, jadi hal penting tetap perlu kamu cek sendiri.",
   ];
 
   if (heldMessage) {
@@ -51,7 +52,9 @@ export function introBubbles(
 export function consentActions(): InlineKeyboard {
   return new InlineKeyboard()
     .text("Oke, mulai", "consent:yes")
-    .text("Aku mau tanya dulu", "consent:info");
+    .text("Aku mau tanya dulu", "consent:info")
+    .row()
+    .text("Aku sedang nggak aman", "safety:now");
 }
 
 /**
@@ -61,38 +64,73 @@ export function consentActions(): InlineKeyboard {
  * penjelasan yang sesuai usia. Karena itu isinya kalimat biasa, bukan kebijakan
  * privasi, dan ia tidak dipaksakan kepada yang tidak bertanya.
  */
-export const CONSENT_DETAIL = [
-  "Boleh. Ini apa adanya:",
-  "",
-  "• Isi pesanmu dikirim ke layanan AI di luar Harvy supaya bisa dipahami. Tanpa itu aku nggak bisa jalan sama sekali.",
-  "• Satu pengecualian, dan cuma satu: pesan pertamamu aku lihat sekilas sebelum kamu setuju, khusus buat ngecek kamu lagi dalam bahaya atau nggak. Kalau iya, aku nggak mau kamu nunggu tombol dulu.",
-  "• Aku nyimpen sebagian obrolan kita dan beberapa catatan tentang kamu, biar kamu nggak perlu ngulang cerita. Yang sifatnya pribadi selalu aku tanya dulu sebelum disimpan.",
-  "• Kapan aja kamu bisa nanya apa yang aku inget, dan nyuruh aku lupain — satu per satu atau semuanya sekalian.",
-  "• Aku bukan terapis, dokter, atau layanan darurat. Kalau keadaannya berat atau bahaya, manusia yang harus kamu hubungi, bukan aku.",
-  "",
-  "Kalau kamu oke, kita mulai.",
-].join("\n");
+export function consentDetail(
+  retentionDays = 30,
+  operationalLogRetentionDays = 14,
+): string {
+  return [
+    "Boleh. Ini apa adanya:",
+    "",
+    "• Isi pesanmu dapat dikirim ke satu atau lebih layanan AI di luar Harvy supaya bisa dipahami. Kalau layanan utama gagal, permintaan yang sama dapat dikirim ulang ke layanan cadangan. Tanpa layanan AI itu aku nggak bisa jalan sama sekali.",
+    "• Kalau kamu meminta research web dan operator mengaktifkan fiturnya, kata pencarian dikirim ke penyedia search terpisah. Server Harvy juga dapat membuka URL publik dari pesanmu atau hasil search untuk membaca teksnya. Memori dan riwayat lama tidak ikut diberikan ke planner research.",
+    "• Satu pengecualian, dan cuma satu: pesan pertamamu aku lihat sekilas sebelum kamu setuju, khusus buat ngecek kamu lagi dalam bahaya atau nggak. Kalau iya, aku nggak mau kamu nunggu tombol dulu.",
+    "• Aku nyimpen sebagian obrolan kita dan beberapa catatan tentang kamu, biar kamu nggak perlu ngulang cerita. Kalau sistemku menilai catatannya pribadi atau sensitif, aku tanya dulu. Penilaian AI bisa keliru; setiap catatan otomatis tetap aku tunjukkan dengan tombol untuk melupakannya.",
+    "• Kalau kamu memilih sesi atau check-in, aku menyimpan tujuan singkat, tahapnya, dan waktu yang kamu pilih. Check-in cuma dikirim sekali dan tidak memuat tujuanmu di notifikasi.",
+    `• Aku mencatat jumlah token, jenis proses, keberhasilan, dan perkiraan biaya selama ${retentionDays} hari agar batas pemakaian bisa dijaga. Catatan ini tidak berisi pesan atau balasannya.`,
+    `• Sistemku juga menyimpan file log gangguan teknis lokal selama paling lama ${operationalLogRetentionDays} hari: waktu, komponen, tahap, durasi, status, kode error, dan fingerprint. Log ini tidak menyimpan isi pesan, prompt atau balasan AI, identitas akun/chat, QR, token, atau kredensial. Kalau deployment meneruskan log aman ini ke collector perusahaan, retensi collector mengikuti kebijakan infrastrukturnya sendiri.`,
+    "• Kapan aja kamu bisa melihat atau mengubah memori, nyuruh aku lupain satu per satu, mengekspor data yang boleh kamu lihat, menarik izin AI, dan menghapus seluruh datamu.",
+    "• Aku bukan terapis, dokter, atau layanan darurat. Kalau keadaannya berat atau bahaya, manusia yang harus kamu hubungi, bukan aku.",
+    "",
+    "Kalau kamu oke, kita mulai.",
+  ].join("\n");
+}
+
+export const CONSENT_DETAIL = consentDetail();
 
 /**
  * Jawaban untuk pesan pertama yang menunjukkan bahaya segera.
  *
- * Ditulis sebagai teks tetap, bukan hasil model, karena persetujuan pengiriman
- * ke penyedia pihak ketiga belum ada. Pasal 3.8 meminta bahaya serius
- * diutamakan; Pasal 3.9 tidak memberi pengecualian untuk mengirim isi pesan ke
- * luar tanpa izin. Keduanya bisa dipenuhi sekaligus justru dengan tidak
- * memanggil model sama sekali di titik ini.
+ * Ditulis sebagai teks tetap setelah triase sempit atas pesan pertama.
+ * Konstitusi v0.3 Pasal 3.9 mengizinkan hanya pemeriksaan keselamatan itu
+ * sebelum persetujuan; isi bubble berikutnya tetap tidak dikirim ke penyedia.
  */
 export const PRE_CONSENT_SAFETY = [
   "Aku baca ada yang berat banget di pesanmu, dan itu aku tanggapi duluan.",
   "",
-  "Kalau kamu lagi dalam bahaya sekarang, tolong hubungi orang yang bisa langsung ada di dekatmu — orang tua, wali, guru, atau siapa pun yang kamu percaya. Buat keadaan darurat di Indonesia, nomornya 112.",
+  `Kalau kamu lagi dalam bahaya sekarang, ambil langkah paling kecil supaya beberapa menit ke depan lebih aman: menjauh dari benda atau tempat yang bisa melukaimu, pindah ke tempat yang lebih terbuka kalau memungkinkan, atau hubungi layanan darurat yang tersedia di daerahmu. ${EMERGENCY_AVAILABILITY_NOTE}`,
   "",
-  "Aku nggak bisa gantiin mereka dan nggak mau pura-pura bisa. Aku tetap di sini, tapi yang beneran bisa nolong sekarang itu manusia yang dekat sama kamu.",
+  "Kalau ada orang atau petugas yang terasa aman, kamu boleh minta mereka tetap bersamamu. Kalau nggak ada, kamu nggak perlu memaksa percaya pada siapa pun dulu—fokus ke satu langkah aman tadi.",
+  "",
+  "Aku nggak bisa gantiin mereka atau layanan darurat, tapi aku juga nggak akan meninggalkan percakapan ini begitu saja.",
 ].join("\n");
 
-/** Diingatkan sekali saja, bukan setiap kali pengguna mengetik lagi. */
-export const HOLD_REMINDER =
-  "Pesanmu masih aku pegang, belum aku baca — aku nunggu kamu tekan tombolnya dulu di atas.";
+/**
+ * Dipakai bila triase pesan pertama gagal.
+ *
+ * Harvy tidak mengaku melihat bahaya yang belum berhasil dinilai, tetapi juga
+ * tidak membiarkan gangguan penyedia menghilangkan seluruh jalur keselamatan.
+ */
+export const PRE_CONSENT_UNCERTAIN = [
+  "Aku belum berhasil memeriksa pesanmu dengan baik, jadi aku nggak akan menebak keadaanmu.",
+  "",
+  `Kalau kamu sedang nggak aman sekarang, jangan tunggu tombol ini: menjauh dulu dari benda atau tempat yang bisa melukaimu, pindah ke tempat yang lebih terbuka atau dekat petugas bila memungkinkan, lalu hubungi layanan darurat yang tersedia di daerahmu. ${EMERGENCY_AVAILABILITY_NOTE}`,
+].join("\n");
+
+/**
+ * Bubble setelah pesan pertama tidak dikirim ke penyedia sebelum persetujuan.
+ *
+ * Karena isinya sengaja tidak diperiksa, pengingat ini membawa jalur aman
+ * bersyarat. Dengan begitu privasi tidak diperluas diam-diam dan bubble kedua
+ * yang ternyata mendesak juga tidak dibiarkan tanpa arah sama sekali.
+ */
+export const HOLD_REMINDER = [
+  "Pesan tambahanmu masih aku pegang dan belum kukirim ke layanan AI.",
+  "",
+  "Kalau salah satunya soal bahaya yang sedang terjadi, jangan tunggu tombol ini: pindah ke tempat yang lebih aman atau dekat petugas bila memungkinkan, lalu hubungi layanan darurat yang tersedia di daerahmu.",
+].join("\n");
+
+export const HOLD_LIMIT_REACHED =
+  "Aku belum bisa menahan tambahan pesan lagi sebelum kamu memilih tombol di atas. Pesan yang sudah masuk tetap kupegang; setelah kamu setuju, kirim ulang bagian terakhir supaya tidak ada yang terlewat.";
 
 export const CONSENT_ACCEPTED = [
   "Oke, kita mulai 🌿",
@@ -159,16 +197,18 @@ export class HeldMessageStore {
   private readonly introduced = new Set<string>();
   private readonly reminded = new Set<string>();
   private readonly safetyShown = new Set<string>();
+  private readonly limitWarned = new Set<string>();
 
-  hold(ownerId: string, text: string): void {
+  hold(ownerId: string, text: string): boolean {
     const bubbles = this.held.get(ownerId) ?? [];
-    if (bubbles.length >= MAX_HELD_BUBBLES) return;
+    if (bubbles.length >= MAX_HELD_BUBBLES) return false;
 
     const total = bubbles.reduce((sum, bubble) => sum + bubble.length, 0);
-    if (total + text.length > MAX_HELD_CHARS) return;
+    if (total + text.length > MAX_HELD_CHARS) return false;
 
     bubbles.push(text);
     this.held.set(ownerId, bubbles);
+    return true;
   }
 
   has(ownerId: string): boolean {
@@ -208,10 +248,18 @@ export class HeldMessageStore {
     return true;
   }
 
+  /** `true` hanya sekali ketika batas penahanan sudah tercapai. */
+  markLimitWarned(ownerId: string): boolean {
+    if (this.limitWarned.has(ownerId)) return false;
+    this.limitWarned.add(ownerId);
+    return true;
+  }
+
   clear(ownerId: string): void {
     this.held.delete(ownerId);
     this.introduced.delete(ownerId);
     this.reminded.delete(ownerId);
     this.safetyShown.delete(ownerId);
+    this.limitWarned.delete(ownerId);
   }
 }

@@ -54,33 +54,49 @@ Jenis memori menentukan perlakuannya:
 | `context` | ujian biologi minggu depan, sedang lomba | otomatis |
 | `personal` | kesehatan, keluarga, relasi, gender, orientasi seksual, tekanan emosional berat | **ditawarkan** |
 
-Yang otomatis tetap **diberitahukan** saat disimpan, lengkap dengan tombol Oke
-dan Lupakan. Pemberitahuan dibersihkan bila pengguna melanjutkan chat tanpa
-menekan tombol; memorinya tidak ikut hilang. Pasal 4 nomor 2 meminta pengguna
-tahu sebelum sesuatu yang baru disimpan; ia tidak meminta Harvy bertanya untuk
-setiap remah.
+Yang otomatis tetap **diberitahukan** saat disimpan sebagai satu baris `📎` di
+ujung balasan, lengkap dengan tombol Lupakan pada pesan yang sama. Bentuk bubble
+sementara dengan tombol Oke dihapus 26 Juli 2026 karena memotong percakapan
+seperti pop-up. Pasal 4 nomor 2 meminta pengguna tahu sebelum sesuatu yang baru
+disimpan; ia tidak meminta Harvy bertanya untuk setiap remah.
 
-Yang sensitif tidak pernah disimpan tanpa jawaban pengguna. Pasal 4 nomor 3
-melarang informasi sensitif disimpan otomatis, dan larangan itu tetap utuh.
+Secara kontrak, yang sensitif tidak boleh disimpan tanpa jawaban pengguna.
+Pasal 4 nomor 3 melarang informasi sensitif disimpan otomatis.
 
 Harvy **boleh** mengingat curhat. Yang dilarang Konstitusi bukan mengingatnya,
 melainkan menyimpannya diam-diam.
 
-Jenis hasil model bukan satu-satunya pagar. Isi yang jelas sensitif dipaksa ke
-jalur izin meskipun model salah menamainya `profile` atau jenis biasa lain.
-Pagar kedua ini ditambahkan setelah orientasi seksual benar-benar tersimpan
-otomatis pada uji Telegram; lihat `ADR-007`.
+Jenis hasil ekstraksi bukan satu-satunya pagar. Triase model yang terpisah juga
+menilai apakah isi sensitif dan memaksanya ke jalur izin meskipun ekstraksi
+salah menamainya `profile` atau jenis biasa lain. Daftar kata lokal yang sempat
+menjadi pagar kedua dihapus 27 Juli 2026 atas keputusan pemilik produk; lihat
+koreksi pada `ADR-007`.
 
-### 3. Riwayat disimpan ke disk, diringkas, lalu dibuang
+Konsekuensi implementasinya dicatat terbuka pada amandemen `ADR-008` dan
+`STATUS.md`: bila ekstraksi dan triase sama-sama salah menilai isi sensitif
+sebagai biasa, jalur otomatis masih dapat terlewati. Pemberitahuan dan undo
+tidak menggantikan izin sebelumnya; karena itu larangan normatif di atas belum
+boleh diklaim terjamin sepenuhnya oleh kode.
+
+### 3. Riwayat disimpan ke disk, dipadatkan per episode, lalu dibuang
 
 Giliran mentah disimpan agar konteks tidak hilang saat proses restart. Setelah
-melewati jumlah tertentu, giliran terlama diringkas menjadi satu paragraf
-bergulir dan teks mentahnya dibuang.
+melewati jumlah tertentu, awalan giliran lama diekstrak menjadi satu episode
+terstruktur dan teks mentah sumbernya dibuang. Setiap klaim episode menunjuk
+sequence sumber; rentang dan hash sumber dibuat kode. Episode lama tidak pernah
+dikirim lagi ke peringkas, sehingga tidak ada satu paragraf yang terus
+diringkas ulang dan bergeser maknanya.
 
 Sejak `ADR-007`, pemadatan diminta setelah balasan terkirim dan tidak ditunggu
-jalur respons. Hasil ringkasan digabung ke versi riwayat terbaru supaya bubble
-yang datang saat model bekerja tidak tertimpa. Kegagalan diberi cooldown satu
-menit sebelum dicoba lagi.
+jalur respons. `ADR-014` mengganti format rolling v1 dengan episodic v2:
+completion hanya di-commit bila generation, coverage episode, awalan giliran,
+dan source hash masih sama. Bubble yang datang saat model bekerja tetap ada.
+Kegagalan mempertahankan sumber mentah dan diberi cooldown satu menit; shutdown
+normal menunggu pekerjaan yang sudah dimulai.
+
+Riwayat tetap terbatas: hanya 12 episode disimpan dan hanya 3.000 karakter
+episode terbaru masuk prompt. Ringkasan v1 lama dimigrasikan sebagai episode
+warisan tanpa mengarang sequence atau provenance.
 
 Ini bukan sekadar penghematan token. Ringkasan adalah bentuk penyimpanan yang
 lebih sedikit, dan Pasal 3.9 meminta data dikumpulkan sesedikit mungkin serta
@@ -138,12 +154,15 @@ Positif:
 
 - Harvy berhenti menanyakan hal yang sudah diketahuinya.
 - Tutoring bertahap menjadi mungkin untuk pertama kalinya.
-- Pengguna dapat melihat dan menghapus apa yang diingat tentang dirinya.
+- Pengguna dapat melihat, menyunting, menghapus, dan mengekspor apa yang
+  diingat tentang dirinya. Ekspor sengaja mengecualikan satu jenis insight
+  tersembunyi yang disahkan Konstitusi; penghapusan penuh tetap menghapusnya.
 
 Trade-off:
 
 - Setiap giliran membawa prompt yang lebih panjang, sehingga biaya per pesan
-  naik. Pemantauan biaya per pengguna menjadi lebih mendesak.
+  naik. Telemetry tanpa isi dan batas token 24 jam kini mengukurnya, tetapi
+  angkanya belum dibandingkan dengan tagihan penyedia nyata.
 - `data/` kini berisi teks percakapan, bukan hanya judul tugas. Nilai berkas itu
   bagi penyerang naik, dan penyimpanan berkas satu proses menjadi lebih sempit
   umurnya.

@@ -1,6 +1,8 @@
 import type {
   ConversationTurn,
+  EpisodeSummaryDraft,
   HistoryRepository,
+  StoredConversationTurn,
   TurnRole,
 } from "../domain/history.js";
 import {
@@ -9,17 +11,28 @@ import {
   splitForCompaction,
   trimTurnText,
 } from "./history-policy.js";
+import {
+  createConversationEpisode,
+  episodeCoverageHash,
+  episodeSourceHash,
+  renderEpisodeContext,
+  retainConversationEpisode,
+} from "./episodic-compaction.js";
+import {
+  NOOP_OPERATIONAL_LOGGER,
+  type OperationalLogger,
+} from "../observability/operational-logger.js";
 
 /**
- * Meringkas giliran yang sudah terlalu tua menjadi satu paragraf.
+ * Mengekstrak satu episode terstruktur dari giliran yang sudah terlalu tua.
  *
  * Disuntikkan dari luar karena peringkasan memanggil model, sedangkan `core/`
  * harus tetap bebas jaringan dan dapat diuji tanpa kunci API.
  */
 export type Summarizer = (
-  previousSummary: string | null,
-  turns: ConversationTurn[],
-) => Promise<string>;
+  turns: StoredConversationTurn[],
+  ownerId?: string,
+) => Promise<EpisodeSummaryDraft>;
 
 export interface ConversationContext {
   summary: string | null;
@@ -35,22 +48,34 @@ export interface ConversationContext {
  */
 export class HistoryService {
   private readonly queues = new Map<string, Promise<void>>();
-  private readonly compacting = new Set<string>();
+  private readonly compactions = new Map<string, Promise<void>>();
   private readonly retryAfter = new Map<string, number>();
   private readonly forgetGeneration = new Map<string, number>();
+  private readonly forgettingOwners = new Set<string>();
+  private readonly blockedOwners = new Set<string>();
+  private activeCompactionSlots = 0;
+  private readonly compactionSlotWaiters: Array<() => void> = [];
 
   constructor(
     private readonly repository: HistoryRepository,
     private readonly summarize: Summarizer,
     private readonly now: () => Date = () => new Date(),
+    private readonly logger: OperationalLogger =
+      NOOP_OPERATIONAL_LOGGER.child("core.history"),
   ) {}
 
   async context(ownerId: string): Promise<ConversationContext> {
+    if (this.blockedOwners.has(ownerId)) {
+      return { summary: null, turns: [] };
+    }
     return this.exclusive(ownerId, async () => {
       const history = await this.repository.load(ownerId);
       if (!history) return { summary: null, turns: [] };
 
-      return { summary: history.summary, turns: promptWindow(history) };
+      return {
+        summary: renderEpisodeContext(history.episodes),
+        turns: promptWindow(history),
+      };
     });
   }
 
@@ -60,17 +85,24 @@ export class HistoryService {
     text: string,
   ): Promise<void> {
     const clean = trimTurnText(text);
-    if (!clean) return;
+    if (!clean || this.blockedOwners.has(ownerId)) return;
 
     await this.exclusive(ownerId, async () => {
       const history = (await this.repository.load(ownerId)) ?? {
         ownerId,
-        summary: null,
+        episodes: [],
         turns: [],
+        nextSequence: 1,
         updatedAt: this.now().toISOString(),
       };
 
-      history.turns.push({ role, text: clean, at: this.now().toISOString() });
+      history.turns.push({
+        sequence: history.nextSequence,
+        role,
+        text: clean,
+        at: this.now().toISOString(),
+      });
+      history.nextSequence += 1;
       history.updatedAt = this.now().toISOString();
 
       // Penyimpanan giliran tidak menunggu model peringkas. `compact()` dipanggil
@@ -79,12 +111,49 @@ export class HistoryService {
     });
   }
 
-  async forget(ownerId: string): Promise<boolean> {
-    return this.exclusive(ownerId, async () => {
-      this.forgetGeneration.set(ownerId, this.generationOf(ownerId) + 1);
-      this.retryAfter.delete(ownerId);
-      return this.repository.remove(ownerId);
-    });
+  async forget(ownerId: string, blockWrites = false): Promise<boolean> {
+    this.forgettingOwners.add(ownerId);
+    if (blockWrites) this.blockedOwners.add(ownerId);
+    this.forgetGeneration.set(ownerId, this.generationOf(ownerId) + 1);
+    this.retryAfter.delete(ownerId);
+
+    try {
+      const active = this.compactions.get(ownerId);
+      if (active) await active;
+      return await this.exclusive(ownerId, () =>
+        this.repository.remove(ownerId),
+      );
+    } finally {
+      this.forgettingOwners.delete(ownerId);
+    }
+  }
+
+  /**
+   * Menghentikan penggunaan riwayat tanpa menghapus record yang sudah ada.
+   * Dipakai segera ketika persetujuan ditarik: compaction yang masih menunggu
+   * slot melihat generation baru dan tidak boleh mulai memanggil model.
+   */
+  suspend(ownerId: string): void {
+    this.blockedOwners.add(ownerId);
+    this.forgetGeneration.set(ownerId, this.generationOf(ownerId) + 1);
+    this.retryAfter.delete(ownerId);
+  }
+
+  /** Membuka riwayat baru hanya setelah persetujuan baru diberikan. */
+  allow(ownerId: string): void {
+    this.blockedOwners.delete(ownerId);
+  }
+
+  /** Salinan lengkap untuk ekspor pengguna, bukan jendela prompt. */
+  async snapshot(ownerId: string) {
+    return this.exclusive(ownerId, () => this.repository.load(ownerId));
+  }
+
+  /** Menunggu seluruh compaction yang sudah dimulai sebelum shutdown selesai. */
+  async drain(): Promise<void> {
+    while (this.compactions.size > 0) {
+      await Promise.allSettled([...this.compactions.values()]);
+    }
   }
 
   /**
@@ -95,49 +164,131 @@ export class HistoryService {
    * selama model bekerja tidak tertimpa.
    */
   async compact(ownerId: string): Promise<void> {
-    if (this.compacting.has(ownerId)) return;
+    if (
+      this.forgettingOwners.has(ownerId) ||
+      this.blockedOwners.has(ownerId)
+    ) {
+      return;
+    }
+    const active = this.compactions.get(ownerId);
+    if (active) {
+      await active;
+      // Request yang datang di ujung run aktif dapat lolos dari pemeriksaan
+      // backlog terakhir. Masuk lagi setelah promise lama dilepas agar keadaan
+      // terbaru diperiksa, bukan mengandalkan pesan pengguna berikutnya.
+      return this.compact(ownerId);
+    }
     if ((this.retryAfter.get(ownerId) ?? 0) > this.now().getTime()) return;
 
-    this.compacting.add(ownerId);
     const generation = this.generationOf(ownerId);
+    const running = this.runCompactionLoop(ownerId, generation).catch(
+      (error: unknown) => {
+        this.delayRetry(ownerId);
+        this.logger.warn(
+          "history_compaction_failed",
+          "Peringkasan riwayat gagal dan akan dicoba lagi nanti.",
+          { error },
+        );
+      },
+    );
+    this.compactions.set(ownerId, running);
 
     try {
-      const snapshot = await this.exclusive(ownerId, () =>
-        this.repository.load(ownerId),
+      await running;
+    } finally {
+      if (this.compactions.get(ownerId) === running) {
+        this.compactions.delete(ownerId);
+      }
+    }
+  }
+
+  /**
+   * Menangkap backlog yang tumbuh ketika satu model compaction masih aktif.
+   * Setiap pass melepaskan slot global lebih dulu agar satu pemilik tidak
+   * memonopoli dua slot ketika banyak akun sama-sama perlu dipadatkan.
+   */
+  private async runCompactionLoop(
+    ownerId: string,
+    generation: number,
+  ): Promise<void> {
+    while (true) {
+      const committed = await this.withCompactionSlot(() =>
+        this.runCompaction(ownerId, generation),
       );
-      if (!snapshot || !needsCompaction(snapshot)) return;
-
-      const { evict } = splitForCompaction(snapshot);
-      if (evict.length === 0) return;
-
-      const summary = await this.summarize(snapshot.summary, evict);
-      const clean = summary.trim();
-      if (!clean) {
-        this.delayRetry(ownerId);
+      if (!committed) return;
+      if (
+        this.generationOf(ownerId) !== generation ||
+        this.forgettingOwners.has(ownerId) ||
+        this.blockedOwners.has(ownerId)
+      ) {
         return;
       }
-
-      await this.exclusive(ownerId, async () => {
-        if (this.generationOf(ownerId) !== generation) return;
-
+      const shouldContinue = await this.exclusive(ownerId, async () => {
         const latest = await this.repository.load(ownerId);
-        if (!latest || latest.summary !== snapshot.summary) return;
-        if (!startsWithTurns(latest.turns, evict)) return;
-
-        await this.repository.save({
-          ...latest,
-          summary: clean,
-          turns: latest.turns.slice(evict.length),
-          updatedAt: this.now().toISOString(),
-        });
-        this.retryAfter.delete(ownerId);
+        return latest ? needsCompaction(latest) : false;
       });
-    } catch (error) {
-      this.delayRetry(ownerId);
-      console.warn("Peringkasan riwayat gagal, dicoba lagi nanti:", error);
-    } finally {
-      this.compacting.delete(ownerId);
+      if (!shouldContinue) return;
     }
+  }
+
+  private async runCompaction(
+    ownerId: string,
+    generation: number,
+  ): Promise<boolean> {
+    const snapshot = await this.exclusive(ownerId, () =>
+      this.repository.load(ownerId),
+    );
+    if (
+      this.generationOf(ownerId) !== generation ||
+      this.forgettingOwners.has(ownerId) ||
+      this.blockedOwners.has(ownerId) ||
+      !snapshot ||
+      !needsCompaction(snapshot)
+    ) {
+      return false;
+    }
+
+    const { evict } = splitForCompaction(snapshot);
+    if (evict.length === 0) return false;
+
+    const sourceHash = episodeSourceHash(evict);
+    const coverageHash = episodeCoverageHash(snapshot.episodes);
+    const draft = await this.summarize(evict, ownerId);
+    const createdAt = this.now().toISOString();
+    const episode = createConversationEpisode(draft, evict, createdAt);
+    if (!episode || episode.source.sourceHash !== sourceHash) {
+      throw new Error("Rancangan episode tidak sah atau provenance berubah.");
+    }
+
+    return this.exclusive(ownerId, async () => {
+      if (
+        this.generationOf(ownerId) !== generation ||
+        this.blockedOwners.has(ownerId)
+      ) {
+        return false;
+      }
+
+      const latest = await this.repository.load(ownerId);
+      if (!latest || episodeCoverageHash(latest.episodes) !== coverageHash) {
+        return false;
+      }
+      if (!startsWithTurns(latest.turns, evict)) return false;
+      if (episodeSourceHash(latest.turns.slice(0, evict.length)) !== sourceHash) {
+        return false;
+      }
+
+      const episodes = retainConversationEpisode(latest.episodes, episode);
+      if (!episodes) return false;
+
+      await this.repository.save({
+        ...latest,
+        episodes,
+        turns: latest.turns.slice(evict.length),
+        updatedAt: createdAt,
+      });
+      this.retryAfter.delete(ownerId);
+      return true;
+    });
   }
 
   private delayRetry(ownerId: string): void {
@@ -146,6 +297,35 @@ export class HistoryService {
 
   private generationOf(ownerId: string): number {
     return this.forgetGeneration.get(ownerId) ?? 0;
+  }
+
+  private async withCompactionSlot<T>(
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    await this.acquireCompactionSlot();
+
+    try {
+      return await operation();
+    } finally {
+      const next = this.compactionSlotWaiters.shift();
+      if (next) {
+        // Slot langsung dipindahkan ke waiter; caller baru tetap melihatnya
+        // terpakai sampai waiter itu sendiri selesai.
+        next();
+      } else {
+        this.activeCompactionSlots -= 1;
+      }
+    }
+  }
+
+  private async acquireCompactionSlot(): Promise<void> {
+    if (this.activeCompactionSlots < MAX_CONCURRENT_COMPACTIONS) {
+      this.activeCompactionSlots += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.compactionSlotWaiters.push(resolve);
+    });
   }
 
   private async exclusive<T>(
@@ -171,10 +351,11 @@ export class HistoryService {
 }
 
 const COMPACTION_RETRY_MS = 60_000;
+const MAX_CONCURRENT_COMPACTIONS = 2;
 
 function startsWithTurns(
-  turns: ConversationTurn[],
-  prefix: ConversationTurn[],
+  turns: StoredConversationTurn[],
+  prefix: StoredConversationTurn[],
 ): boolean {
   if (turns.length < prefix.length) return false;
 
@@ -182,6 +363,7 @@ function startsWithTurns(
     const actual = turns[index];
     return (
       actual?.role === expected.role &&
+      actual.sequence === expected.sequence &&
       actual.text === expected.text &&
       actual.at === expected.at
     );

@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import type { ProfileRepository, UserProfile } from "../domain/profile.js";
 
 interface ProfileDatabase {
-  version: 1;
+  version: 1 | 2;
   profiles: UserProfile[];
 }
 
@@ -43,17 +43,43 @@ export class FileProfileRepository implements ProfileRepository {
     });
   }
 
+  async remove(ownerId: string): Promise<boolean> {
+    return this.exclusive(async () => {
+      const database = await this.readDatabase();
+      const index = database.profiles.findIndex(
+        (profile) => profile.ownerId === ownerId,
+      );
+      if (index < 0) return false;
+
+      database.profiles.splice(index, 1);
+      await this.writeDatabase(database);
+      return true;
+    });
+  }
+
+  async listDeletionRequested(): Promise<UserProfile[]> {
+    const database = await this.readDatabase();
+    return database.profiles.filter(
+      (profile) =>
+        typeof profile.deletionRequestedAt === "string" &&
+        profile.deletionRequestedAt.length > 0,
+    );
+  }
+
   private async readDatabase(): Promise<ProfileDatabase> {
     try {
       const raw = await readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as ProfileDatabase;
-      if (parsed.version !== 1 || !Array.isArray(parsed.profiles)) {
+      if (
+        (parsed.version !== 1 && parsed.version !== 2) ||
+        !Array.isArray(parsed.profiles)
+      ) {
         throw new Error("Format basis data profil tidak dikenali.");
       }
-      return parsed;
+      return { version: 2, profiles: parsed.profiles };
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") {
-        return { version: 1, profiles: [] };
+        return { version: 2, profiles: [] };
       }
       throw error;
     }

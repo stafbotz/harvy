@@ -7,6 +7,8 @@ import type {
 import { sortTasksByPriority } from "./prioritizer.js";
 
 export class TaskService {
+  private readonly ownerQueues = new Map<string, Promise<void>>();
+
   constructor(
     private readonly repository: TaskRepository,
     private readonly now: () => Date = () => new Date(),
@@ -52,6 +54,10 @@ export class TaskService {
     return sortTasksByPriority(tasks, this.now());
   }
 
+  async listAll(ownerId: string): Promise<StudentTask[]> {
+    return this.repository.list(ownerId);
+  }
+
   async complete(ownerId: string, id: string): Promise<StudentTask | null> {
     const task = await this.repository.findById(ownerId, id);
     if (!task || task.status === "completed") return null;
@@ -90,6 +96,12 @@ export class TaskService {
     return (await this.repository.remove(ownerId, id)) ? task : null;
   }
 
+  async removeAll(ownerId: string): Promise<number> {
+    return this.exclusiveOwner(ownerId, () =>
+      this.repository.removeAll(ownerId),
+    );
+  }
+
   async setReminder(
     ownerId: string,
     id: string,
@@ -112,9 +124,73 @@ export class TaskService {
   }
 
   async markReminderSent(task: StudentTask): Promise<void> {
+    const current = await this.repository.findById(task.ownerId, task.id);
+    if (
+      !current ||
+      current.status !== "active" ||
+      current.reminderAt !== task.reminderAt ||
+      current.reminderSentAt !== null
+    ) {
+      return;
+    }
+
     await this.repository.save({
-      ...task,
+      ...current,
       reminderSentAt: this.now().toISOString(),
     });
+  }
+
+  /**
+   * Mengunci pengiriman terhadap penghapusan seluruh tugas pemilik yang sama.
+   *
+   * Kalau penghapusan menang antrean, snapshot lama tidak dikirim. Kalau
+   * pengiriman menang, penghapusan menunggu lalu membuang hasil akhirnya.
+   */
+  async deliverReminder(
+    candidate: StudentTask,
+    deliver: (current: StudentTask) => Promise<void>,
+  ): Promise<boolean> {
+    return this.exclusiveOwner(candidate.ownerId, async () => {
+      const current = await this.repository.findById(
+        candidate.ownerId,
+        candidate.id,
+      );
+      if (
+        !current ||
+        current.status !== "active" ||
+        current.reminderAt !== candidate.reminderAt ||
+        current.reminderSentAt !== null
+      ) {
+        return false;
+      }
+
+      await deliver(current);
+      await this.repository.save({
+        ...current,
+        reminderSentAt: this.now().toISOString(),
+      });
+      return true;
+    });
+  }
+
+  private async exclusiveOwner<T>(
+    ownerId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.ownerQueues.get(ownerId) ?? Promise.resolve();
+    const result = previous.then(operation, operation);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.ownerQueues.set(ownerId, settled);
+
+    try {
+      return await result;
+    } finally {
+      if (this.ownerQueues.get(ownerId) === settled) {
+        this.ownerQueues.delete(ownerId);
+      }
+    }
   }
 }

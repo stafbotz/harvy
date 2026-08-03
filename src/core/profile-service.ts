@@ -1,8 +1,10 @@
 import type {
   ProfileRepository,
+  QuietHours,
   StylePreference,
   UserProfile,
 } from "../domain/profile.js";
+import { isValidQuietHours, isValidTimeZone } from "./time-policy.js";
 
 /**
  * Versi ketentuan yang berlaku sekarang.
@@ -12,7 +14,7 @@ import type {
  * kalimat perkenalan bukan alasan untuk meminta persetujuan ulang — Pasal 4
  * nomor 5 melarang penarikan dan pemberian izin dibuat merepotkan.
  */
-export const CONSENT_VERSION = 1;
+export const CONSENT_VERSION = 4;
 
 export function emptyProfile(ownerId: string): UserProfile {
   return {
@@ -21,6 +23,11 @@ export function emptyProfile(ownerId: string): UserProfile {
     onboardedAt: null,
     stylePreference: null,
     styleAskedAt: null,
+    timeZone: null,
+    quietHours: null,
+    quietHoursSetAt: null,
+    consentWithdrawnAt: null,
+    deletionRequestedAt: null,
   };
 }
 
@@ -32,7 +39,10 @@ export function emptyProfile(ownerId: string): UserProfile {
  * ditanya tetap harus ditanya.
  */
 export function needsOnboarding(profile: UserProfile): boolean {
-  return profile.consentVersion < CONSENT_VERSION;
+  return (
+    profile.deletionRequestedAt !== null ||
+    profile.consentVersion < CONSENT_VERSION
+  );
 }
 
 /**
@@ -64,7 +74,36 @@ export class ProfileService {
 
   /** Profil yang tersimpan, atau profil kosong yang belum pernah ditulis. */
   async load(ownerId: string): Promise<UserProfile> {
-    return (await this.repository.find(ownerId)) ?? emptyProfile(ownerId);
+    const stored = await this.repository.find(ownerId);
+    if (!stored) return emptyProfile(ownerId);
+
+    // Profil versi lama tidak memiliki pengaturan waktu. Normalisasi dilakukan
+    // di batas layanan supaya adapter lain tidak perlu mengenal migrasi ini.
+    return {
+      ...emptyProfile(ownerId),
+      ...stored,
+      timeZone:
+        typeof stored.timeZone === "string" &&
+        isValidTimeZone(stored.timeZone)
+          ? stored.timeZone
+          : null,
+      quietHours:
+        stored.quietHours && isValidQuietHours(stored.quietHours)
+          ? stored.quietHours
+          : null,
+      quietHoursSetAt:
+        typeof stored.quietHoursSetAt === "string"
+          ? stored.quietHoursSetAt
+          : null,
+      consentWithdrawnAt:
+        typeof stored.consentWithdrawnAt === "string"
+          ? stored.consentWithdrawnAt
+          : null,
+      deletionRequestedAt:
+        typeof stored.deletionRequestedAt === "string"
+          ? stored.deletionRequestedAt
+          : null,
+    };
   }
 
   async needsOnboarding(ownerId: string): Promise<boolean> {
@@ -73,10 +112,14 @@ export class ProfileService {
 
   async acceptConsent(ownerId: string): Promise<UserProfile> {
     const profile = await this.load(ownerId);
+    if (profile.deletionRequestedAt !== null) {
+      throw new Error("Penghapusan data masih berjalan.");
+    }
     const updated: UserProfile = {
       ...profile,
       consentVersion: CONSENT_VERSION,
       onboardedAt: profile.onboardedAt ?? this.now().toISOString(),
+      consentWithdrawnAt: null,
     };
 
     await this.repository.save(updated);
@@ -108,6 +151,71 @@ export class ProfileService {
     });
   }
 
+  async setTimeZone(ownerId: string, timeZone: string): Promise<UserProfile> {
+    if (!isValidTimeZone(timeZone)) {
+      throw new Error("Zona waktu tidak dikenali.");
+    }
+
+    const profile = await this.load(ownerId);
+    const updated = { ...profile, timeZone };
+    await this.repository.save(updated);
+    return updated;
+  }
+
+  /**
+   * `null` berarti pengguna memilih tidak memakai jam tenang.
+   *
+   * Waktu pemilihannya tetap dicatat agar keadaan itu tidak disalahartikan
+   * sebagai belum pernah ditanya.
+   */
+  async setQuietHours(
+    ownerId: string,
+    quietHours: QuietHours | null,
+  ): Promise<UserProfile> {
+    if (quietHours && !isValidQuietHours(quietHours)) {
+      throw new Error("Rentang jam tenang tidak sah.");
+    }
+
+    const profile = await this.load(ownerId);
+    const updated = {
+      ...profile,
+      quietHours,
+      quietHoursSetAt: this.now().toISOString(),
+    };
+    await this.repository.save(updated);
+    return updated;
+  }
+
+  async withdrawConsent(ownerId: string): Promise<UserProfile> {
+    const profile = await this.load(ownerId);
+    const updated = {
+      ...profile,
+      consentVersion: 0,
+      consentWithdrawnAt: this.now().toISOString(),
+    };
+    await this.repository.save(updated);
+    return updated;
+  }
+
+  async markDeletionRequested(ownerId: string): Promise<UserProfile> {
+    const profile = await this.load(ownerId);
+    const updated = {
+      ...profile,
+      deletionRequestedAt:
+        profile.deletionRequestedAt ?? this.now().toISOString(),
+    };
+    await this.repository.save(updated);
+    return updated;
+  }
+
+  async deletionRequests(): Promise<UserProfile[]> {
+    return this.repository.listDeletionRequested();
+  }
+
+  async remove(ownerId: string): Promise<boolean> {
+    return this.repository.remove(ownerId);
+  }
+
   /**
    * Melupakan yang bersifat tentang orangnya, menyisakan catatan persetujuan.
    *
@@ -117,8 +225,12 @@ export class ProfileService {
    */
   async forgetPersonal(ownerId: string): Promise<void> {
     const profile = await this.load(ownerId);
-    if (profile.stylePreference === null) return;
-
-    await this.repository.save({ ...profile, stylePreference: null });
+    await this.repository.save({
+      ...profile,
+      stylePreference: null,
+      timeZone: null,
+      quietHours: null,
+      quietHoursSetAt: null,
+    });
   }
 }

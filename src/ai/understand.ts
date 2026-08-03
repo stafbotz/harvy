@@ -1,5 +1,10 @@
 import type { MemoryKind } from "../domain/memory.js";
 import type { TaskImportance } from "../domain/task.js";
+import type { SessionSignal } from "../domain/session.js";
+import {
+  isAdaptiveActionId,
+  type AdaptiveActionId,
+} from "../core/action-policy.js";
 import type { ConversationIntent } from "./model-policy.js";
 
 /**
@@ -26,7 +31,15 @@ export interface ExtractedMemory {
 }
 
 export type TaskAction = "save" | "offer";
-export type MemoryAction = "list" | "forget" | "remember";
+export type MemoryAction = "list" | "forget" | "edit" | "remember";
+export type ControlAction =
+  | "data"
+  | "timezone"
+  | "quiet-hours"
+  | "active-session"
+  | "withdraw-consent"
+  | "export"
+  | "delete-all";
 
 export interface Understanding {
   intent: ConversationIntent;
@@ -38,6 +51,10 @@ export interface Understanding {
   needsStepByStep: boolean;
   task: ExtractedTask | null;
   memories: ExtractedMemory[];
+  suggestedActions?: AdaptiveActionId[];
+  actionGoal?: string | null;
+  controlAction?: ControlAction | null;
+  sessionSignal?: SessionSignal | null;
 }
 
 const INTENTS: readonly ConversationIntent[] = [
@@ -45,9 +62,11 @@ const INTENTS: readonly ConversationIntent[] = [
   "feeling",
   "question",
   "request",
+  "research",
   "smalltalk",
   "history",
   "memory",
+  "control",
 ];
 
 const MEMORY_KINDS: readonly MemoryKind[] = [
@@ -59,7 +78,27 @@ const MEMORY_KINDS: readonly MemoryKind[] = [
 ];
 
 const TASK_ACTIONS: readonly TaskAction[] = ["save", "offer"];
-const MEMORY_ACTIONS: readonly MemoryAction[] = ["list", "forget", "remember"];
+const MEMORY_ACTIONS: readonly MemoryAction[] = [
+  "list",
+  "forget",
+  "edit",
+  "remember",
+];
+const CONTROL_ACTIONS: readonly ControlAction[] = [
+  "data",
+  "timezone",
+  "quiet-hours",
+  "active-session",
+  "withdraw-consent",
+  "export",
+  "delete-all",
+];
+const SESSION_SIGNALS: readonly SessionSignal[] = [
+  "continue",
+  "stuck",
+  "done",
+  "cancel",
+];
 const INTENT_ALIASES: Readonly<Record<string, ConversationIntent>> = {
   reminder: "task",
 };
@@ -111,7 +150,9 @@ export function parseUnderstanding(raw: string): Understanding | null {
   // sebagai percakapan daripada dibuang oleh cabang kontrol yang berhenti dini.
   if (intent === "memory") {
     const isControl =
-      memoryAction === "list" || memoryAction === "forget";
+      memoryAction === "list" ||
+      memoryAction === "forget" ||
+      memoryAction === "edit";
     if (!isControl || memories.length > 0) {
       intent = "smalltalk";
       if (memoryAction !== "remember") memoryAction = null;
@@ -119,6 +160,11 @@ export function parseUnderstanding(raw: string): Understanding | null {
   } else if (memoryAction !== "remember") {
     memoryAction = null;
   }
+
+  const controlAction =
+    intent === "control" ? readControlAction(payload["controlAction"]) : null;
+  const suggestedActions = readAdaptiveActions(payload["suggestedActions"]);
+  const actionGoal = readShortText(payload["actionGoal"], 240);
 
   return {
     intent,
@@ -128,7 +174,41 @@ export function parseUnderstanding(raw: string): Understanding | null {
     needsStepByStep: payload["needsStepByStep"] === true,
     task,
     memories,
+    suggestedActions,
+    actionGoal,
+    controlAction,
+    sessionSignal: readSessionSignal(payload["sessionSignal"]),
   };
+}
+
+function readAdaptiveActions(value: unknown): AdaptiveActionId[] {
+  if (!Array.isArray(value)) return [];
+  const actions: AdaptiveActionId[] = [];
+
+  for (const entry of value) {
+    const action =
+      typeof entry === "string" ? entry.trim().toLowerCase() : "";
+    if (!isAdaptiveActionId(action) || actions.includes(action)) continue;
+    actions.push(action);
+    if (actions.length >= 3) break;
+  }
+  return actions;
+}
+
+function readControlAction(value: unknown): ControlAction | null {
+  const label = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return CONTROL_ACTIONS.find((candidate) => candidate === label) ?? null;
+}
+
+function readSessionSignal(value: unknown): SessionSignal | null {
+  const label = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return SESSION_SIGNALS.find((candidate) => candidate === label) ?? null;
+}
+
+function readShortText(value: unknown, limit: number): string | null {
+  if (typeof value !== "string") return null;
+  const clean = value.trim().replaceAll(/\s+/g, " ").slice(0, limit);
+  return clean || null;
 }
 
 /** Membaca jawaban model khusus perubahan tenggat tugas yang sudah ada. */
