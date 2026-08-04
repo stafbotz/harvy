@@ -31,6 +31,8 @@ import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 import type { ConversationTurn } from "../src/domain/history.js";
 import type { StylePreference } from "../src/domain/profile.js";
+import { AgentHarness } from "../src/harness/agent-harness.js";
+import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 
 const flags = new Set(process.argv.slice(2).filter((arg) => arg.startsWith("--")));
 const allowFallback = flags.has("--allow-fallback");
@@ -98,6 +100,15 @@ const conversation = new Conversation(
   await createInstrumentedAiClient(config, "probe", allowFallback),
   config.ai,
   config.defaultTimezone,
+  undefined,
+  undefined,
+  new AgentHarness(createHarvyCapabilityCatalog({
+    webSearchInstalled: config.web.searchApiKey !== null,
+    webOpenInstalled: config.web.openEnabled,
+    internalToolsInstalled: true,
+    virtualTerminalInstalled: true,
+    parallelDelegationInstalled: true,
+  })),
 );
 
 const context = {

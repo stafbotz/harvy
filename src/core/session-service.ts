@@ -100,6 +100,19 @@ export class SessionService {
     return this.exclusiveOwner(ownerId, () => this.loadActive(ownerId));
   }
 
+  /**
+   * Snapshot baca-saja untuk executor agent. Sesi kedaluwarsa dilaporkan tidak
+   * aktif tanpa maintenance delete, sehingga capability `session.status`
+   * jujur ber-effect read.
+   */
+  async inspectActive(ownerId: string): Promise<ActiveSession | null> {
+    return this.exclusiveOwner(ownerId, async () => {
+      const session = await this.repository.load(ownerId);
+      if (!session) return null;
+      return isFuture(new Date(session.expiresAt), this.now()) ? session : null;
+    });
+  }
+
   async setStage(
     ownerId: string,
     stage: SessionStage,

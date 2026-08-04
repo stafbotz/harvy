@@ -415,7 +415,7 @@ describe("UsageLedgerService", () => {
     await ledger.settleEntitlement(context, usage, { succeeded: true });
     await ledger.settleEntitlement(context, usage, { succeeded: true });
     assert.equal(entitlementRepository.entries.length, 0);
-    await ledger.markDelivered("student");
+    await ledger.markDelivered("student", "turn-1");
     assert.equal(
       await ledger.debitedTokens("student", new Date("2026-07-31T00:00:00.000Z")),
       15,
@@ -435,6 +435,60 @@ describe("UsageLedgerService", () => {
     assert.equal(entitlementRepository.entries[0]?.debitedTokens, 15);
     assert.equal(entitlementRepository.entries[1]?.type, "safety_exempt");
     assert.equal(entitlementRepository.entries[1]?.debitedTokens, 0);
+  });
+
+  it("delivery hanya menyelesaikan kandidat milik turn yang benar", async () => {
+    const { ledger, entitlementRepository } = runtime();
+    const usage = {
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      estimated: false,
+    };
+    const base = {
+      ownerId: "student",
+      tier: "cheap" as const,
+      purpose: "agent" as const,
+      model: "primary-model",
+      maxTokens: 100,
+      inputTokenEstimate: 10,
+      safetyCritical: false,
+    };
+    await ledger.settleEntitlement(
+      { ...base, requestId: "agent-1", turnId: "turn-1" },
+      usage,
+      { succeeded: true },
+    );
+    await ledger.settleEntitlement(
+      { ...base, requestId: "agent-2", turnId: "turn-2" },
+      usage,
+      { succeeded: true },
+    );
+
+    assert.equal(
+      await ledger.pendingDebitTokens("student", new Date("2026-07-31T00:00:00.000Z")),
+      30,
+    );
+
+    await ledger.markDelivered("student", "turn-1");
+    assert.equal(
+      await ledger.pendingDebitTokens("student", new Date("2026-07-31T00:00:00.000Z")),
+      15,
+    );
+    assert.deepEqual(
+      entitlementRepository.entries.map((entry) => entry.turnId),
+      ["turn-1"],
+    );
+    await ledger.discardUndelivered("student", "turn-2");
+    await ledger.markDelivered("student", "turn-2");
+    assert.equal(
+      await ledger.pendingDebitTokens("student", new Date("2026-07-31T00:00:00.000Z")),
+      0,
+    );
+    assert.deepEqual(
+      entitlementRepository.entries.map((entry) => entry.turnId),
+      ["turn-1"],
+    );
   });
 
   it("planner ambient adalah overhead dan tidak mendebit paket", async () => {
@@ -553,13 +607,61 @@ describe("UsageLedgerService", () => {
     );
     entitlementRepository.failNext = true;
     await assert.rejects(
-      ledger.markDelivered("student"),
+      ledger.markDelivered("student", "turn-1"),
       /write sementara gagal/u,
     );
     assert.equal(entitlementRepository.entries.length, 0);
-    await ledger.drain();
+    assert.equal(
+      await ledger.pendingDebitTokens("student", new Date("2026-07-31T00:00:00.000Z")),
+      7,
+    );
+    assert.equal(
+      await ledger.debitedTokens("student", new Date("2026-07-31T00:00:00.000Z")),
+      7,
+    );
     assert.equal(entitlementRepository.entries.length, 1);
     assert.equal(entitlementRepository.entries[0]?.idempotencyKey, "retry-entitlement");
+    assert.equal(
+      await ledger.pendingDebitTokens("student", new Date("2026-07-31T00:00:00.000Z")),
+      0,
+    );
+  });
+
+  it("mengingat settlement terminal ketika usage selesai terlambat", async () => {
+    const { ledger, entitlementRepository } = runtime();
+    const base = {
+      ownerId: "student",
+      tier: "cheap" as const,
+      purpose: "agent" as const,
+      model: "primary-model",
+      maxTokens: 10,
+      inputTokenEstimate: 5,
+      safetyCritical: false,
+    };
+    const usage = {
+      inputTokens: 5,
+      outputTokens: 2,
+      totalTokens: 7,
+      estimated: false,
+    };
+
+    await ledger.discardUndelivered("student", "turn-batal");
+    await ledger.settleEntitlement(
+      { ...base, requestId: "late-discard", turnId: "turn-batal" },
+      usage,
+      { succeeded: true },
+    );
+    await ledger.markDelivered("student", "turn-terkirim");
+    await ledger.settleEntitlement(
+      { ...base, requestId: "late-deliver", turnId: "turn-terkirim" },
+      usage,
+      { succeeded: true },
+    );
+
+    assert.deepEqual(
+      entitlementRepository.entries.map((entry) => entry.requestId),
+      ["late-deliver"],
+    );
   });
 
   it("balasan yang tidak terkirim tidak mendebit entitlement", async () => {
@@ -579,8 +681,8 @@ describe("UsageLedgerService", () => {
       { inputTokens: 5, outputTokens: 2, totalTokens: 7, estimated: false },
       { succeeded: true },
     );
-    await ledger.discardUndelivered("student");
-    await ledger.markDelivered("student");
+    await ledger.discardUndelivered("student", "turn-undelivered");
+    await ledger.markDelivered("student", "turn-undelivered");
     assert.equal(entitlementRepository.entries.length, 0);
   });
 

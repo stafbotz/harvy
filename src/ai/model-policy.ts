@@ -40,8 +40,20 @@ export interface RoutingInput {
   risk?: RiskLevel;
 }
 
+export type AgentRoutingMode = "tools" | "orchestrate";
+
 /** Di atas panjang ini, sebuah pertanyaan dianggap berpotensi berlapis. */
 const LONG_MESSAGE = 280;
+
+/**
+ * Route agent baru cheap-first. Ia hanya dipanggil sesudah triase menyatakan
+ * giliran biasa dan pasti; keselamatan serta sesi tetap memakai policy lama.
+ */
+export function selectAgentMode(input: RoutingInput): AgentRoutingMode {
+  return input.needsStepByStep || input.messageLength > LONG_MESSAGE
+    ? "orchestrate"
+    : "tools";
+}
 
 export function selectTier(input: RoutingInput): ModelTier {
   // Keselamatan memakai `efficient`, bukan `ambitious`. Keputusan pemilik

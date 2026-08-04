@@ -83,6 +83,22 @@ describe("SessionService", () => {
     assert.ok(rejected?.reason instanceof ActiveSessionError);
   });
 
+  it("inspectActive tidak mengubah storage ketika sesi sudah kedaluwarsa", async () => {
+    const { service, repository, setNow } = fixture();
+    const session = await service.start({
+      ownerId: "student",
+      chatId: "chat",
+      kind: "focus",
+      goal: "mengerjakan laporan",
+    });
+    setNow(session.expiresAt);
+
+    assert.equal(await service.inspectActive("student"), null);
+    assert.notEqual(await repository.load("student"), null);
+    assert.equal(await service.active("student"), null);
+    assert.equal(await repository.load("student"), null);
+  });
+
   it("tidak menyimpan sesi bila giliran pertamanya gagal dikirim", async () => {
     const { service } = fixture();
     const input = {

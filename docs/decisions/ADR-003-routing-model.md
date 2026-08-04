@@ -58,6 +58,17 @@ triase dan pemeriksaan respons memakai `cheap`, sedangkan balasan
 batas token percakapan biasa sudah habis. Tutoring memakai `ambitious` hanya
 pada giliran tenang; keselamatan tetap menang atas tier sesi.
 
+**Amandemen 4 Agustus 2026 — routing khusus Agent Runtime.** Setelah consent,
+triase, kontrol deterministik, research, dan sesi dipisahkan, intent tenang
+`question`/`request` memakai root agent `cheap` sebagai default. Kode
+menaikkannya menjadi root `ambitious` hanya bila `needsStepByStep` atau panjang
+pesan melebihi 280 karakter. Root ambitious boleh mendelegasikan maksimal tiga
+subpekerjaan independen kepada worker `cheap|efficient`; worker tidak boleh
+memilih tier sendiri, memakai `ambitious`, mengganti scope, memanggil tool, atau
+mendelegasikan lagi. Safety tetap direct `efficient`, tutoring aktif tetap
+mengikuti policy sesi, dan research tetap route khusus ADR-015. Detail boundary
+tool dan paralelisme berada di ADR-017.
+
 ### Dua mode dan cadangan testing yang terbatas
 
 | Mode | Primary | Cadangan | Model dan kunci |

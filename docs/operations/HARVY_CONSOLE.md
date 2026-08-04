@@ -23,6 +23,12 @@ dan menampilkannya satu kali di terminal interaktif; token tidak ditulis ke
 log. Pada `APP_ENV=production`, token minimal 32 karakter wajib disediakan.
 Setelah `npm run dev`, buka `http://127.0.0.1:3210`.
 
+Perintah itu memakai watcher Harvy di `scripts/dev-runner.ts`. Perubahan di
+`src/`, `.env`, `package.json`, atau `tsconfig.json` tetap memicu reload, tetapi
+runner meminta child shutdown lewat IPC dan menunggu runtime lock dilepas
+sebelum menjalankan child baru. Pada Windows, `tsx watch` tidak dipakai karena
+ia meneruskan `Ctrl+C` dengan penghentian child yang melewati cleanup aplikasi.
+
 Login menukar token operator menjadi sesi in-memory dengan cookie `HttpOnly`
 dan `SameSite=Strict`. Browser tidak menyimpan token di `localStorage` atau
 `sessionStorage`. Restart proses membatalkan seluruh sesi.
@@ -154,10 +160,12 @@ PID, token acak, peran proses, dan waktu mulai—tanpa identitas atau isi chat.
 Runtime, probe, dan evaluator memakai lock yang sama agar dua cache repository
 JSON tidak saling menimpa. Proses kedua berhenti dengan `LOCAL_DATA_LOCKED`.
 Pada format console `pretty`, kode aman itu ditampilkan langsung bersama
-fingerprint; isi pesan error bebas tetap tidak dicetak.
-Setelah crash paksa, lock sengaja tidak dibersihkan otomatis: pastikan PID di
-berkas sudah mati, baru hapus lock itu secara manual. Jangan menghapusnya hanya
-karena proses kedua ingin cepat berjalan.
+fingerprint; isi pesan error bebas tetap tidak dicetak. `Ctrl+C` dan reload dari
+`npm run dev` meminta shutdown normal dan menunggu lock dilepas setelah antrean
+selesai dikuras. Setelah crash atau penghentian paksa, lock sengaja tidak
+dibersihkan otomatis: pastikan PID di berkas sudah mati, baru hapus lock itu
+secara manual. Jangan menghapusnya hanya karena proses kedua ingin cepat
+berjalan.
 
 Ketiganya ditulis atomik tetapi hanya aman untuk satu proses. Provider dan
 entitlement ledger mengikuti `USAGE_LEDGER_RETENTION_DAYS` (bawaan 90 hari).

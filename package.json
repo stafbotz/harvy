@@ -5,7 +5,7 @@
   "description": "Harvy, pendamping pelajar Indonesia untuk percakapan pribadi dan grup.",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/app.ts",
+    "dev": "node --import tsx scripts/dev-runner.ts",
     "start": "node dist/src/app.js",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",

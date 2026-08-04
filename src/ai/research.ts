@@ -56,9 +56,11 @@ export function researchPlannerInput(
     jsonForPrompt({
       request: input.request,
       scope: input.scope,
-      availableCapabilities: input.capabilities.entries
-        .filter((entry) => entry.available)
-        .map((entry) => ({ id: entry.id, version: entry.version, effect: entry.effect })),
+      availableCapabilities: input.callableCapabilities.map((entry) => ({
+        id: entry.id,
+        version: entry.version,
+        effect: entry.effect,
+      })),
       observations: input.observations,
       userInputs: input.userInputs,
     }),

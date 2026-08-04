@@ -195,16 +195,16 @@ describe("MessageBatcher", () => {
     );
 
     batcher.enqueue("student", "aku boleh curhat kah", "ctx-1");
-    await waitFor(() => decisions.length === 1);
+    await waitFor(() => decisions.length === 1, 1_500);
     batcher.enqueue("student", "lanjutannya ini", "ctx-2");
 
     decisions[0]?.("complete");
     await delay(5);
     assert.deepEqual(handled, []);
 
-    await waitFor(() => decisions.length === 2);
+    await waitFor(() => decisions.length === 2, 1_500);
     decisions[1]?.("complete");
-    await waitFor(() => handled.length === 1);
+    await waitFor(() => handled.length === 1, 1_500);
     assert.deepEqual(handled, ["aku boleh curhat kah\nlanjutannya ini"]);
   });
 
@@ -258,6 +258,34 @@ describe("MessageBatcher", () => {
     assert.equal(barrierPassed, true);
   });
 
+  it("membatalkan signal run aktif sebelum command mengantre", async () => {
+    const events: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async (_ownerId, batch) => {
+        events.push("run mulai");
+        await new Promise<void>((resolve) => {
+          batch.signal.addEventListener("abort", () => {
+            events.push("run batal");
+            resolve();
+          }, { once: true });
+        });
+        assert.equal(batch.isCurrent(), false);
+      },
+      100,
+      1,
+    );
+
+    batcher.enqueue("student", "pesan lama", "ctx");
+    await waitFor(() => events.includes("run mulai"));
+    batcher.cancelAndEnqueue("student", async () => {
+      events.push("command");
+    });
+
+    await waitFor(() => events.includes("command"));
+    assert.deepEqual(events, ["run mulai", "run batal", "command"]);
+  });
+
   it("menguras bubble yang lebih dulu masuk sebelum tindakan tombol", async () => {
     const handled: string[] = [];
     const batcher = new MessageBatcher<string>(
@@ -291,7 +319,7 @@ describe("MessageBatcher", () => {
     );
 
     batcher.enqueue("student", "pesan lengkap", "ctx");
-    await waitFor(() => handled.length === 1);
+    await waitFor(() => handled.length === 1, 1_500);
     resolveDecision?.("complete");
     await delay(10);
 

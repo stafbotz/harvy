@@ -14,7 +14,7 @@ import { isValidQuietHours, isValidTimeZone } from "./time-policy.js";
  * kalimat perkenalan bukan alasan untuk meminta persetujuan ulang — Pasal 4
  * nomor 5 melarang penarikan dan pemberian izin dibuat merepotkan.
  */
-export const CONSENT_VERSION = 4;
+export const CONSENT_VERSION = 5;
 
 export function emptyProfile(ownerId: string): UserProfile {
   return {

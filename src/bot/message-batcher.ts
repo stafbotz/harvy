@@ -21,6 +21,10 @@ import {
 export interface MessageBatch<T> {
   text: string;
   carrier: T;
+  /** Dibatalkan ketika command atau giliran urgent menggantikan run aktif. */
+  signal: AbortSignal;
+  /** Guard generasi adapter; hasil lama tidak boleh dikirim atau commit. */
+  isCurrent: () => boolean;
 }
 
 interface BatchEntry<T> {
@@ -41,6 +45,10 @@ export class MessageBatcher<T> {
   private readonly chains = new Map<string, Promise<void>>();
   private readonly evaluations = new Map<string, Promise<void>>();
   private readonly generations = new Map<string, number>();
+  private readonly activeRuns = new Map<
+    string,
+    { generation: number; controller: AbortController }
+  >();
   private urgentHandler:
     | ((ownerId: string, batch: MessageBatch<T>) => Promise<void>)
     | undefined;
@@ -395,7 +403,7 @@ export class MessageBatcher<T> {
     clearTimers(entry);
     this.entries.delete(ownerId);
 
-    const batch: MessageBatch<T> = {
+    const batch = {
       text: entry.chunks.join("\n"),
       carrier: entry.carrier,
     };
@@ -408,9 +416,26 @@ export class MessageBatcher<T> {
     await this.enqueueAction(ownerId, async () => {
       // `/start` atau `/bantuan` dapat datang ketika batch ini sudah masuk
       // chain tetapi belum mulai. Generasi baru membatalkannya tanpa memutus
-      // handler yang memang sudah aktif.
+      // pekerjaan deterministik yang tidak mengamati signal.
       if (this.generation(ownerId) !== generation) return;
-      await this.handle(ownerId, batch);
+      const controller = new AbortController();
+      const active = { generation, controller };
+      this.activeRuns.set(ownerId, active);
+      const runtimeBatch: MessageBatch<T> = {
+        ...batch,
+        signal: controller.signal,
+        isCurrent: () =>
+          !controller.signal.aborted &&
+          this.generation(ownerId) === generation &&
+          this.activeRuns.get(ownerId) === active,
+      };
+      try {
+        await this.handle(ownerId, runtimeBatch);
+      } finally {
+        if (this.activeRuns.get(ownerId) === active) {
+          this.activeRuns.delete(ownerId);
+        }
+      }
       this.logger.info(
         "telegram_turn_completed",
         "Giliran Telegram selesai diproses.",
@@ -458,11 +483,17 @@ export class MessageBatcher<T> {
   }
 
   private acknowledgeUrgent(ownerId: string, entry: BatchEntry<T>): void {
+    // ACK boleh mendahului FIFO, dan run agent lama harus berhenti agar tidak
+    // menyelipkan balasan biasa sebelum giliran keselamatan diproses.
+    this.abortActive(ownerId);
     if (entry.urgentAcknowledged || !this.urgentHandler) return;
     entry.urgentAcknowledged = true;
+    const controller = new AbortController();
     const batch = {
       text: entry.chunks.join("\n"),
       carrier: entry.carrier,
+      signal: controller.signal,
+      isCurrent: () => true,
     };
     void this.urgentHandler(ownerId, batch).catch((error: unknown) => {
       this.logger.error(
@@ -527,6 +558,11 @@ export class MessageBatcher<T> {
   private cancelPending(ownerId: string): void {
     this.clear(ownerId);
     this.generations.set(ownerId, this.generation(ownerId) + 1);
+    this.abortActive(ownerId);
+  }
+
+  private abortActive(ownerId: string): void {
+    this.activeRuns.get(ownerId)?.controller.abort();
   }
 
   private generation(ownerId: string): number {
@@ -547,7 +583,8 @@ export class MessageBatcher<T> {
     if (
       !this.entries.has(ownerId) &&
       !this.chains.has(ownerId) &&
-      !this.evaluations.has(ownerId)
+      !this.evaluations.has(ownerId) &&
+      !this.activeRuns.has(ownerId)
     ) {
       this.generations.delete(ownerId);
     }

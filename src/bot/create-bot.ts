@@ -4,11 +4,20 @@ import {
   type Context,
   type InlineKeyboard,
 } from "grammy";
+import { randomUUID } from "node:crypto";
 import type { HarvyContext } from "../ai/context.js";
-import type { Conversation } from "../ai/conversation.js";
+import type { Conversation, ConversationRuntime } from "../ai/conversation.js";
+import {
+  currentUsageAttribution,
+  withUsageAttribution,
+} from "../ai/usage-attribution.js";
+import { selectAgentMode } from "../ai/model-policy.js";
+import { liveStateRequirement } from "../ai/agent.js";
+import { isDirectTimeQuestion } from "../agent/time-fast-path.js";
 import {
   CAPYBARA_MODEL_REPLY,
   canUseModelIdentityFastPath,
+  isModelIdentityQuestion,
 } from "../ai/identity.js";
 import type {
   ExtractedMemory,
@@ -55,7 +64,7 @@ import {
   type RiskTriage,
 } from "../ai/safety.js";
 import type { MemoryItem } from "../domain/memory.js";
-import type { QuietHours } from "../domain/profile.js";
+import type { QuietHours, StylePreference } from "../domain/profile.js";
 import type {
   ActiveSession,
   SessionKind,
@@ -199,6 +208,8 @@ export function createBot(
   logger: OperationalLogger =
     NOOP_OPERATIONAL_LOGGER.child("telegram.bot"),
 ): HarvyBot {
+  const currentTurnId = (): string | null =>
+    currentUsageAttribution()?.turnId ?? null;
   const dropKeyboard = (ctx: Context): Promise<void> =>
     dropKeyboardSafely(ctx, logger);
   const safeEdit = (
@@ -215,7 +226,19 @@ export function createBot(
       ownerId && pending.peek(ownerId)
         ? Promise.resolve("complete")
         : conversation.classifyTurnBoundary(text, ownerId),
-    (ownerId, batch) => handleFreeText(batch.carrier, ownerId, batch.text),
+    (ownerId, batch) =>
+      withUsageAttribution(
+        {
+          turnId: randomUUID(),
+          subjectKind: "private",
+          channel: "telegram",
+          actorAliases: [],
+        },
+        () => handleFreeText(batch.carrier, ownerId, batch.text, {
+          signal: batch.signal,
+          isCurrent: batch.isCurrent,
+        }),
+      ),
     undefined,
     undefined,
     undefined,
@@ -669,6 +692,7 @@ export function createBot(
     ctx: Context,
     ownerId: string,
     text: string,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
     // Indikator muncul ketika Harvy benar-benar mulai menangani satu giliran,
     // bukan pada setiap bubble saat ia masih menyimak.
@@ -687,12 +711,14 @@ export function createBot(
         ? activeSession
         : null;
     const timeZone = profile.timeZone ?? config.defaultTimezone;
+    if (!(await runtimeIsCurrent(runtime))) return;
 
     // Pertanyaan identitas model yang berdiri sendiri adalah fakta produk,
     // sehingga tetap dapat dijawab saat model dasar atau kuota biasa sedang
     // tidak tersedia. Pesan campuran tetap masuk triase penuh.
     if (canUseModelIdentityFastPath(text, context.turns)) {
       await history.append(ownerId, "user", text);
+      if (!(await runtimeIsCurrent(runtime))) return;
       await ctx.reply(CAPYBARA_MODEL_REPLY);
       await history.append(ownerId, "harvy", CAPYBARA_MODEL_REPLY);
       void history.compact(ownerId);
@@ -710,7 +736,7 @@ export function createBot(
     const waitingAtStart = pending.peek(ownerId);
     if (waitingAtStart) {
       pendingRisk = await conversation
-        .triageRisk(text, ownerId, context)
+        .triageRisk(text, ownerId, context, runtime.signal)
         .catch((error: unknown) => {
           logger.error(
             "pending_answer_triage_failed",
@@ -719,6 +745,10 @@ export function createBot(
           );
           return null;
         });
+      if (!(await runtimeIsCurrent(runtime))) {
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        return;
+      }
       if (
         pendingRisk?.certain &&
         pendingRisk.level === "biasa"
@@ -732,6 +762,9 @@ export function createBot(
             waitingAtStart,
             text,
             timeZone,
+            context,
+            runtime,
+            profile.stylePreference,
           )
         ) {
           void history.compact(ownerId);
@@ -745,6 +778,7 @@ export function createBot(
     const [readResult, risk] = await Promise.all([
       conversation
         .understand(text, context, {
+          ...runtime,
           ownerId,
           timeZone,
           session: engagedSession,
@@ -754,8 +788,8 @@ export function createBot(
           (error: unknown) => ({ error } as const),
         ),
       pendingRisk === undefined
-        ? conversation
-            .triageRisk(text, ownerId, context)
+          ? conversation
+            .triageRisk(text, ownerId, context, runtime.signal)
             .catch((error: unknown) => {
               logger.error(
                 "risk_triage_failed",
@@ -766,6 +800,10 @@ export function createBot(
             })
         : Promise.resolve(pendingRisk),
     ]);
+    if (!(await runtimeIsCurrent(runtime))) {
+      await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+      return;
+    }
 
     if ("error" in readResult) {
       logger.error(
@@ -783,6 +821,10 @@ export function createBot(
           readResult.error instanceof UsageLimitError
             ? AI_USAGE_LIMIT_MESSAGE
             : AI_FAILURE_MESSAGE;
+        if (!(await runtimeIsCurrent(runtime))) {
+          await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+          return;
+        }
         await ctx.reply(response);
         await history.append(ownerId, "harvy", response);
         return;
@@ -817,6 +859,10 @@ export function createBot(
     try {
       if (!understanding) {
         const response = notUnderstoodNote();
+        if (!(await runtimeIsCurrent(runtime))) {
+          await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+          return;
+        }
         await ctx.reply(response);
         await history.append(ownerId, "harvy", response);
         return;
@@ -835,14 +881,23 @@ export function createBot(
           waiting,
           text,
           timeZone,
+          context,
+          runtime,
+          profile.stylePreference,
         ))
       ) {
         return;
       }
 
       const mutationsAllowed = triage.certain && triage.level === "biasa";
+      // Pertanyaan state-live yang dikenali pagar lokal harus selalu mencapai
+      // runtime read-only. Label intent/action model tidak boleh membajaknya ke
+      // kontrol memori, kontrol data, atau research sebelum tool authority hidup.
+      const requiresLiveState = liveStateRequirement(text) !== null;
+      const requiresAgentPlanning = isExplicitPlanningRequest(text);
       const proposedRoute = immediateUnderstandingRoute(understanding, text);
-      const route = mutationsAllowed
+      const route =
+        mutationsAllowed && !requiresLiveState && !requiresAgentPlanning
         ? proposedRoute
         : ({ kind: "conversation" } as const);
 
@@ -858,12 +913,18 @@ export function createBot(
         return;
       }
 
-      if (mutationsAllowed && understanding.intent === "research") {
+      if (
+        mutationsAllowed &&
+        !requiresLiveState &&
+        !requiresAgentPlanning &&
+        understanding.intent === "research"
+      ) {
         pending.clear(ownerId);
         let researchReply: string;
         try {
           researchReply = normalizeTelegramText(
             await conversation.research(text, context, {
+              ...runtime,
               ownerId,
               channel: "telegram",
               timeZone,
@@ -878,12 +939,19 @@ export function createBot(
           researchReply = error instanceof UsageLimitError
             ? AI_USAGE_LIMIT_MESSAGE
             : AI_FAILURE_MESSAGE;
+          await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        }
+        if (!(await runtimeIsCurrent(runtime))) {
+          await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+          return;
         }
         try {
           await sendReply(ctx, researchReply);
-          await telemetry.markDelivered?.(ownerId);
+          if (researchReply !== AI_FAILURE_MESSAGE && researchReply !== AI_USAGE_LIMIT_MESSAGE) {
+            await telemetry.markDelivered?.(ownerId, currentTurnId());
+          }
         } catch (error) {
-          await telemetry.discardUndelivered?.(ownerId);
+          await telemetry.discardUndelivered?.(ownerId, currentTurnId());
           throw error;
         }
         await history.append(ownerId, "harvy", researchReply.trim());
@@ -923,31 +991,128 @@ export function createBot(
       // Kalimat yang membawa perasaan sekaligus pekerjaan pernah dijawab hanya
       // dengan struk pencatatan, dan bagian perasaannya hilang tanpa jejak.
       let reply: string | null = null;
+      let debitDeliveredReply = true;
+      let agentPending: Extract<Pending, { kind: "agent-input" }> | null = null;
+      const agentIntent =
+        understanding.intent === "request" || requiresAgentPlanning
+          ? "request"
+          : "question";
       try {
-        reply = await conversation.reply(
-          text,
-          understanding,
-          context,
-          profile.stylePreference,
-          triage,
-          null,
-          false,
-          {
-            ownerId,
-            timeZone,
-            session: mutationsAllowed ? engagedSession : null,
-            plannedActionLabels: plannedActions.map(adaptiveActionLabel),
-          },
-        );
+        if (mutationsAllowed && isDirectTimeQuestion(text)) {
+          reply = conversation.deterministicTimeReply(timeZone);
+        } else if (
+          mutationsAllowed &&
+          !activeSession &&
+          route.kind === "conversation" &&
+          (understanding.intent === "question" ||
+            understanding.intent === "request" ||
+            requiresLiveState ||
+            requiresAgentPlanning)
+        ) {
+          const mode = selectAgentMode({
+            intent: agentIntent,
+            messageLength: text.length,
+            needsStepByStep: understanding.needsStepByStep,
+          });
+          const planningMode = requiresAgentPlanning
+            ? "orchestrate"
+            : mode;
+          if (
+            !isModelIdentityQuestion(text) &&
+            shouldUseAgentRuntime(text, planningMode)
+          ) {
+            const agentResult = await conversation.agent(
+              text,
+              planningMode,
+              context,
+              {
+                ...runtime,
+                ownerId,
+                channel: "telegram",
+                timeZone,
+                style: profile.stylePreference,
+                intent: agentIntent,
+              },
+            );
+            // `needs_input` adalah prompt model yang benar-benar dikirim, jadi
+            // usage-nya diselesaikan setelah delivery seperti jawaban final.
+            // Status lain di bawah diganti copy deterministik adapter.
+            if (
+              agentResult.status === "stopped" ||
+              agentResult.status === "needs_approval"
+            ) {
+              debitDeliveredReply = false;
+              await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+            }
+            if (agentResult.status === "needs_input") {
+              agentPending = {
+                kind: "agent-input",
+                request: text,
+                mode: planningMode,
+                intent: agentIntent,
+                checkpoint: agentResult.checkpoint,
+              };
+            }
+            reply = agentResult.status === "completed"
+              ? agentResult.reply
+              : agentResult.status === "needs_input"
+                ? agentResult.prompt
+                : agentResult.status === "needs_approval"
+                  ? "Aku menghentikan run ini karena agent baca-saja meminta izin untuk perubahan yang tidak tersedia."
+                  : agentResult.reason === "deadline"
+                    ? "Aku belum menyelesaikan run ini sebelum batas waktunya. Aku tidak akan mengarang hasilnya."
+                    : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
+          } else {
+            reply = await conversation.reply(
+              text,
+              understanding,
+              context,
+              profile.stylePreference,
+              triage,
+              null,
+              false,
+              {
+                ...runtime,
+                ownerId,
+                timeZone,
+                session: null,
+                plannedActionLabels: plannedActions.map(adaptiveActionLabel),
+              },
+            );
+          }
+        } else {
+          reply = await conversation.reply(
+            text,
+            understanding,
+            context,
+            profile.stylePreference,
+            triage,
+            null,
+            false,
+            {
+              ...runtime,
+              ownerId,
+              timeZone,
+              session: mutationsAllowed ? engagedSession : null,
+              plannedActionLabels: plannedActions.map(adaptiveActionLabel),
+            },
+          );
+        }
         reply = normalizeTelegramText(reply);
         reply = withEmergencyAvailability(reply, triage);
-        reply = await guardReply(ownerId, text, reply, triage, context);
+        reply = await guardReply(ownerId, text, reply, triage, context, runtime);
       } catch (error) {
+        if (!(await runtimeIsCurrent(runtime))) {
+          await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+          return;
+        }
         logger.error(
           "model_reply_failed",
           "Penyusunan balasan model gagal.",
           error,
         );
+        debitDeliveredReply = false;
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
         if (route.kind !== "save-task") {
           await ctx.reply(AI_FAILURE_MESSAGE);
           await history.append(ownerId, "harvy", AI_FAILURE_MESSAGE);
@@ -957,11 +1122,21 @@ export function createBot(
         // pembuka jauh lebih ringan daripada kehilangan pekerjaan pengguna.
       }
 
+      if (!(await runtimeIsCurrent(runtime))) {
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        return;
+      }
+
       const remembered = await storeOrdinaryMemories(
         ownerId,
         mutationsAllowed ? understanding.memories : [],
         triage.sensitive,
       );
+      if (!(await runtimeIsCurrent(runtime))) {
+        await rollbackOrdinaryMemories(ownerId, remembered.saved);
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        return;
+      }
       let memoryNoticeDelivered = remembered.saved.length === 0;
 
       let adaptiveKeyboard: InlineKeyboard | undefined;
@@ -979,6 +1154,7 @@ export function createBot(
       }
 
       if (reply) {
+        let replyDelivered = false;
         try {
           let deliveredBySession = false;
           if (
@@ -997,16 +1173,22 @@ export function createBot(
               engagedSession.id,
               async (next) => {
                 deliveredBySession = true;
+                if (!(await runtimeIsCurrent(runtime))) {
+                  throw new Error("Giliran sudah digantikan sebelum delivery.");
+                }
                 await sendReply(
                   ctx,
                   reply ?? "",
                   remembered.saved,
                   remembered.saved.length === 0 && next
                     ? sessionActions(next)
-                    : undefined,
+                  : undefined,
                 );
-                await telemetry.markDelivered?.(ownerId);
+                replyDelivered = true;
                 memoryNoticeDelivered = true;
+                if (debitDeliveredReply) {
+                  await telemetry.markDelivered?.(ownerId, currentTurnId());
+                }
               },
             );
             if (sessionSignal) {
@@ -1014,17 +1196,28 @@ export function createBot(
             }
           }
           if (!deliveredBySession) {
+            if (!(await runtimeIsCurrent(runtime))) {
+              await rollbackOrdinaryMemories(ownerId, remembered.saved);
+              await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+              return;
+            }
             await sendReply(
               ctx,
               reply,
               remembered.saved,
               adaptiveKeyboard,
             );
-            await telemetry.markDelivered?.(ownerId);
+            replyDelivered = true;
             memoryNoticeDelivered = true;
+            if (agentPending) pending.set(ownerId, agentPending);
+            if (debitDeliveredReply) {
+              await telemetry.markDelivered?.(ownerId, currentTurnId());
+            }
           }
         } catch (error) {
-          await telemetry.discardUndelivered?.(ownerId);
+          if (!replyDelivered) {
+            await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+          }
           if (!memoryNoticeDelivered) {
             await rollbackOrdinaryMemories(ownerId, remembered.saved);
           }
@@ -1044,8 +1237,12 @@ export function createBot(
           );
         }
       } else {
-        await telemetry.discardUndelivered?.(ownerId);
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
       }
+
+      // Satu pending saja per pemilik. Klarifikasi agent yang sudah terlihat
+      // menang atas tawaran tugas/memori/gaya agar checkpoint tidak tertimpa.
+      if (agentPending) return;
 
       if (route.kind === "save-task") {
         pending.clear(ownerId);
@@ -1132,6 +1329,7 @@ export function createBot(
     reply: string,
     triage: RiskTriage,
     context: HarvyContext,
+    runtime: ConversationRuntime = {},
   ): Promise<string> {
     if (!needsReplyReview(triage.level)) return reply;
 
@@ -1143,6 +1341,7 @@ export function createBot(
         triage,
         ownerId,
         context,
+        runtime.signal,
       );
     } catch (error) {
       logger.error(
@@ -1185,8 +1384,23 @@ export function createBot(
     waiting: Pending,
     text: string,
     timeZone: string,
+    context: HarvyContext,
+    runtime: ConversationRuntime,
+    style: StylePreference | null,
   ): Promise<boolean> {
     switch (waiting.kind) {
+      case "agent-input":
+        await continueAgentInput(
+          ctx,
+          ownerId,
+          waiting,
+          text,
+          timeZone,
+          context,
+          runtime,
+          style,
+        );
+        return true;
       case "edit-due":
         await applyNewDue(ctx, ownerId, waiting.taskId, text, timeZone);
         return true;
@@ -1228,6 +1442,89 @@ export function createBot(
       case "confirm-full-deletion":
         return false;
     }
+  }
+
+  async function continueAgentInput(
+    ctx: Context,
+    ownerId: string,
+    waiting: Extract<Pending, { kind: "agent-input" }>,
+    answer: string,
+    timeZone: string,
+    context: HarvyContext,
+    runtime: ConversationRuntime,
+    style: StylePreference | null,
+  ): Promise<void> {
+    let result;
+    try {
+      result = await conversation.agent(
+        waiting.request,
+        waiting.mode,
+        context,
+        {
+          ...runtime,
+          ownerId,
+          channel: "telegram",
+          timeZone,
+          style,
+          intent: waiting.intent,
+        },
+        waiting.checkpoint,
+        answer,
+      );
+    } catch (error) {
+      await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+      pending.clear(ownerId);
+      if (!(await runtimeIsCurrent(runtime))) return;
+      logger.error("agent_resume_failed", "Run agent gagal dilanjutkan.", error);
+      await ctx.reply(AI_FAILURE_MESSAGE);
+      await history.append(ownerId, "harvy", AI_FAILURE_MESSAGE);
+      return;
+    }
+
+    if (!(await runtimeIsCurrent(runtime))) {
+      await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+      return;
+    }
+
+    let debitDeliveredReply = true;
+    let nextPending: Extract<Pending, { kind: "agent-input" }> | null = null;
+    let response: string;
+    if (result.status === "completed") {
+      response = result.reply;
+    } else if (result.status === "needs_input") {
+      response = result.prompt;
+      nextPending = { ...waiting, checkpoint: result.checkpoint };
+    } else if (result.status === "needs_approval") {
+      debitDeliveredReply = false;
+      response = "Aku menghentikan run ini karena agent baca-saja meminta izin untuk perubahan yang tidak tersedia.";
+    } else {
+      debitDeliveredReply = false;
+      response = result.reason === "deadline"
+        ? "Waktu run sebelumnya sudah habis, jadi aku tidak melanjutkannya seolah hasilnya masih segar. Coba minta lagi kalau kamu masih perlu."
+        : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
+    }
+    response = normalizeTelegramText(response);
+    if (!debitDeliveredReply) {
+      await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+    }
+
+    try {
+      if (!(await runtimeIsCurrent(runtime))) {
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        return;
+      }
+      await ctx.reply(response);
+      if (nextPending) pending.set(ownerId, nextPending);
+      else pending.clear(ownerId);
+      if (debitDeliveredReply) {
+        await telemetry.markDelivered?.(ownerId, currentTurnId());
+      }
+    } catch (error) {
+      await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+      throw error;
+    }
+    await history.append(ownerId, "harvy", response);
+    await memories.markUsed(context.memories);
   }
 
   async function applyMemoryEdit(
@@ -2392,13 +2689,17 @@ export function createBot(
         { ownerId, timeZone },
       ),
     );
+    let delivered = false;
     try {
       const sent = await sendReply(ctx, response, [], sessionActions(session));
-      await telemetry.markDelivered?.(ownerId);
+      delivered = true;
+      await telemetry.markDelivered?.(ownerId, currentTurnId());
       await history.append(ownerId, "harvy", response);
       return sent;
     } catch (error) {
-      await telemetry.discardUndelivered?.(ownerId);
+      if (!delivered) {
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+      }
       throw error;
     }
   }
@@ -2659,6 +2960,13 @@ export function createBot(
     };
   }
 
+  async function runtimeIsCurrent(
+    runtime: ConversationRuntime,
+  ): Promise<boolean> {
+    if (runtime.signal?.aborted) return false;
+    return runtime.isCurrent ? await runtime.isCurrent() : true;
+  }
+
   function stageForButton(
     session: ActiveSession,
     operation: string,
@@ -2871,13 +3179,46 @@ export function createBot(
     errorLabel: string,
     action: () => Promise<void>,
   ): void {
-    const guarded = () => runGuardedAction(ctx, errorLabel, action);
+    const guarded = () => withUsageAttribution(
+      {
+        turnId: randomUUID(),
+        subjectKind: "private",
+        channel: "telegram",
+        actorAliases: [],
+      },
+      () => runGuardedAction(ctx, errorLabel, action),
+    );
 
     if (mode === "cancel") {
       messageBatcher.cancelAndEnqueue(ownerId, guarded);
       return;
     }
     messageBatcher.drainAndEnqueue(ownerId, guarded);
+  }
+
+  function shouldUseAgentRuntime(
+    text: string,
+    _mode: "tools" | "orchestrate",
+  ): boolean {
+    // Pertanyaan kemampuan produk perlu snapshot lengkap, bukan hanya irisan
+    // executor agent. Jalur reply lama sudah membawa capabilityContext itu.
+    return !isProductCapabilityQuestion(text);
+  }
+
+  function isProductCapabilityQuestion(text: string): boolean {
+    return /\b(?:kamu|harvy).{0,24}(?:bisa apa|dapat apa|kemampuan|fitur|punya (?:tool|alat|fitur))\b/iu.test(text) ||
+      /\b(?:fitur|kemampuan|tool|alat)(?:mu| kamu| harvy).{0,18}\b(?:apa|apa saja|apa aja|punya|tersedia)\b/iu.test(text) ||
+      /\bapa(?: saja| aja)? (?:fitur|kemampuan|tool|alat)(?:mu| kamu| harvy)\b/iu.test(text) ||
+      /\bapa (?:saja|aja) yang bisa kamu lakukan\b/iu.test(text) ||
+      /\bapa yang (?:tidak|nggak|gak) bisa (?:kamu|harvy) lakukan\b/iu.test(text);
+  }
+
+  function isExplicitPlanningRequest(text: string): boolean {
+    if (/\bjangan\s+(?:buat(?:kan)?|bikin(?:kan)?|susun(?:kan)?|rancang(?:kan)?|rencanakan|pecah(?:kan)?)\b/iu.test(text)) {
+      return false;
+    }
+    return /\b(?:rencanakan|pecah(?:kan)? menjadi langkah)\b/iu.test(text) ||
+      /\b(?:tolong\s+)?(?:buat(?:kan)?|bikin(?:kan)?|susun(?:kan)?|rancang(?:kan)?|beri(?:kan)?(?: aku| saya)?)\b.{0,40}\b(?:rencana|planning|langkah demi langkah)\b/iu.test(text);
   }
 
   async function runGuardedAction(

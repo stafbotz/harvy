@@ -24,7 +24,7 @@ export function introBubbles(
   const opening = name ? `Hai ${name}, aku Harvy 🌿` : "Hai, aku Harvy 🌿";
 
   const consent = [
-    "Satu hal dulu biar jujur di depan: aku jalan pakai AI, dan biar bisa ngerti pesanmu, isinya dapat dikirim ke satu atau lebih layanan AI di luar Harvy. Kalau layanan utama gagal, permintaan yang sama dapat dicoba lagi lewat layanan cadangan. Kalau kamu memintaku research web dan fiturnya aktif, kata pencariannya juga dikirim ke layanan pencarian, lalu server Harvy dapat membuka URL publik yang dipilih. Kalau kamu memilih sesi atau check-in, keadaan singkatnya juga kusimpan supaya bisa dilanjutkan. Aku juga bisa salah, jadi hal penting tetap perlu kamu cek sendiri.",
+    "Satu hal dulu biar jujur di depan: aku jalan pakai AI, dan biar bisa ngerti pesanmu, isinya dapat dikirim ke satu atau lebih layanan AI di luar Harvy. Supaya obrolan nyambung, model utama juga dapat menerima potongan memori dan riwayat tersimpan yang relevan. Kalau layanan utama gagal, permintaan yang sama dapat dicoba lagi lewat layanan cadangan. Untuk permintaan rumit yang aman, bagian relevan dari permintaanmu juga dapat dibagi ke paling banyak tiga worker AI sekaligus; worker itu tidak menerima memori atau riwayat tersimpanmu. Kalau kamu memintaku research web dan fiturnya aktif, kata pencariannya juga dikirim ke layanan pencarian, lalu server Harvy dapat membuka URL publik yang dipilih. Kalau kamu memilih sesi atau check-in, keadaan singkatnya juga kusimpan supaya bisa dilanjutkan. Aku juga bisa salah, jadi hal penting tetap perlu kamu cek sendiri.",
   ];
 
   if (heldMessage) {
@@ -71,7 +71,8 @@ export function consentDetail(
   return [
     "Boleh. Ini apa adanya:",
     "",
-    "• Isi pesanmu dapat dikirim ke satu atau lebih layanan AI di luar Harvy supaya bisa dipahami. Kalau layanan utama gagal, permintaan yang sama dapat dikirim ulang ke layanan cadangan. Tanpa layanan AI itu aku nggak bisa jalan sama sekali.",
+    "• Isi pesanmu dapat dikirim ke satu atau lebih layanan AI di luar Harvy supaya bisa dipahami. Model utama juga dapat menerima potongan memori dan riwayat tersimpan yang dipilih karena relevan agar percakapan tetap nyambung. Kalau layanan utama gagal, permintaan yang sama dapat dikirim ulang ke layanan cadangan. Tanpa layanan AI itu aku nggak bisa jalan sama sekali.",
+    "• Untuk permintaan rumit yang sudah lolos pemeriksaan keselamatan, sistem dapat membagi bagian relevan permintaanmu menjadi dua atau tiga subpekerjaan model yang berjalan bersamaan. Worker itu tidak menerima memori, riwayat, credential, atau akses tool; satu model utama menyatukan hasilnya.",
     "• Kalau kamu meminta research web dan operator mengaktifkan fiturnya, kata pencarian dikirim ke penyedia search terpisah. Server Harvy juga dapat membuka URL publik dari pesanmu atau hasil search untuk membaca teksnya. Memori dan riwayat lama tidak ikut diberikan ke planner research.",
     "• Satu pengecualian, dan cuma satu: pesan pertamamu aku lihat sekilas sebelum kamu setuju, khusus buat ngecek kamu lagi dalam bahaya atau nggak. Kalau iya, aku nggak mau kamu nunggu tombol dulu.",
     "• Aku nyimpen sebagian obrolan kita dan beberapa catatan tentang kamu, biar kamu nggak perlu ngulang cerita. Kalau sistemku menilai catatannya pribadi atau sensitif, aku tanya dulu. Penilaian AI bisa keliru; setiap catatan otomatis tetap aku tunjukkan dengan tombol untuk melupakannya.",

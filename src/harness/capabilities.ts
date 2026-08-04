@@ -55,6 +55,12 @@ export interface HarvyCapabilityCatalogOptions {
   activeSurfaces?: readonly AgentSurface[];
   webSearchInstalled?: boolean;
   webOpenInstalled?: boolean;
+  /** Tool baca state Harvy yang benar-benar mempunyai executor agent. */
+  internalToolsInstalled?: boolean;
+  /** Terminal virtual sementara; tidak pernah berarti shell host. */
+  virtualTerminalInstalled?: boolean;
+  /** Fan-out read-only berbatas ke worker model cheap/efficient. */
+  parallelDelegationInstalled?: boolean;
 }
 
 const DEFAULT_ACTIVE_SURFACES: readonly AgentSurface[] = [
@@ -202,6 +208,24 @@ export function createHarvyCapabilityCatalog(
         installed: configured.webOpenInstalled === true,
       };
     }
+    if (INTERNAL_TOOL_IDS.has(definition.id)) {
+      return {
+        ...definition,
+        installed: configured.internalToolsInstalled === true,
+      };
+    }
+    if (definition.id === "terminal.run") {
+      return {
+        ...definition,
+        installed: configured.virtualTerminalInstalled === true,
+      };
+    }
+    if (definition.id === "agent.delegate.parallel") {
+      return {
+        ...definition,
+        installed: configured.parallelDelegationInstalled === true,
+      };
+    }
     return definition;
   });
   return new CapabilityCatalog(
@@ -209,6 +233,14 @@ export function createHarvyCapabilityCatalog(
     legacySurfaces ?? configured.activeSurfaces ?? DEFAULT_ACTIVE_SURFACES,
   );
 }
+
+const INTERNAL_TOOL_IDS = new Set([
+  "task.list_active",
+  "task.get",
+  "session.status",
+  "settings.time.get",
+  "calendar.agenda",
+]);
 
 const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
   {
@@ -316,6 +348,104 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     unavailableReason: "Pembacaan URL publik belum diaktifkan operator.",
   },
   {
+    id: "task.list_active",
+    version: "1",
+    title: "Daftar tugas aktif",
+    description:
+      "membaca paling banyak 20 tugas aktif milik pengguna pada ruang privat ini",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram"],
+    installed: false,
+    unavailableReason: "Executor baca tugas internal belum dipasang.",
+  },
+  {
+    id: "task.get",
+    version: "1",
+    title: "Detail tugas",
+    description:
+      "membaca satu tugas berdasarkan ID dari state Harvy milik pengguna ini",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram"],
+    installed: false,
+    unavailableReason: "Executor baca tugas internal belum dipasang.",
+  },
+  {
+    id: "session.status",
+    version: "1",
+    title: "Status sesi",
+    description:
+      "membaca status sesi fokus, tutor, atau rencana yang masih aktif",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram"],
+    installed: false,
+    unavailableReason: "Executor status sesi internal belum dipasang.",
+  },
+  {
+    id: "settings.time.get",
+    version: "1",
+    title: "Jam dan zona waktu",
+    description:
+      "membaca jam deterministik, zona waktu, dan jam tenang pengguna saat ini",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram"],
+    installed: false,
+    unavailableReason: "Executor waktu internal belum dipasang.",
+  },
+  {
+    id: "calendar.agenda",
+    version: "1",
+    title: "Agenda internal Harvy",
+    description:
+      "membaca tenggat, pengingat tugas, dan check-in Harvy untuk 1–31 hari atau satu tanggal lokal; bukan kalender Google atau Outlook",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram"],
+    installed: false,
+    unavailableReason: "Executor agenda internal belum dipasang.",
+  },
+  {
+    id: "terminal.run",
+    version: "1",
+    title: "Terminal virtual sementara",
+    description:
+      "menjalankan perintah terstruktur aman pada workspace virtual kosong tanpa shell host, network, environment, atau berkas Harvy",
+    effect: "none",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram"],
+    installed: false,
+    unavailableReason: "Terminal virtual terisolasi belum dipasang.",
+  },
+  {
+    id: "agent.delegate.parallel",
+    version: "1",
+    title: "Delegasi paralel berbatas",
+    description:
+      "mendelegasikan paling banyak tiga subpekerjaan independen read-only ke worker cheap atau efficient dalam scope yang sama",
+    effect: "none",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram"],
+    installed: false,
+    unavailableReason: "Koordinator sub-agent paralel belum dipasang.",
+  },
+  {
     id: "external.act",
     version: "1",
     title: "Aksi aplikasi luar",
@@ -347,7 +477,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
 ];
 
 function validateDefinition(definition: CapabilityDefinition): void {
-  if (!/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/u.test(definition.id)) {
+  if (!/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u.test(definition.id)) {
     throw new Error(`ID capability tidak sah: ${definition.id}.`);
   }
   if (!definition.version.trim()) {

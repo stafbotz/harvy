@@ -130,6 +130,12 @@ describe("agent research conversation", () => {
       step: 1,
       request: "cari",
       scope: { kind: "private", channel: "telegram" },
+      callableCapabilities: [{
+        id: "web.search",
+        version: "1",
+        effect: "read",
+        description: "mencari web",
+      }],
       capabilities: createHarvyCapabilityCatalog({
         webSearchInstalled: true,
       }).snapshot(privateAgentScope("telegram", "student")),

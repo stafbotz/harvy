@@ -10,6 +10,8 @@ import { CALM_TRIAGE } from "../src/ai/safety.js";
 import type { Understanding } from "../src/ai/understand.js";
 import type { MemoryItem } from "../src/domain/memory.js";
 import type { ActiveSession } from "../src/domain/session.js";
+import { AgentHarness } from "../src/harness/agent-harness.js";
+import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 
 const ROUTING = {
   mode: "testing" as const,
@@ -313,6 +315,47 @@ describe("balasan percakapan", () => {
     );
     assert.match(system, /Model hanya boleh mengusulkan tindakan/u);
     assert.doesNotMatch(system, /pemilik-rahasia/u);
+  });
+
+  it("menjelaskan agenda internal dan terminal virtual tanpa mengaku punya kalender atau shell host", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "Aku hanya punya agenda internal dan terminal virtual."),
+      ROUTING,
+      "Asia/Jakarta",
+      undefined,
+      undefined,
+      new AgentHarness(createHarvyCapabilityCatalog({
+        internalToolsInstalled: true,
+        virtualTerminalInstalled: true,
+        parallelDelegationInstalled: true,
+      })),
+    );
+
+    await conversation.reply(
+      "kalender dan terminal apa yang kamu punya?",
+      understanding("question"),
+      undefined,
+      null,
+      CALM_TRIAGE,
+      null,
+      false,
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    const system = requests[0]?.messages[0]?.content ?? "";
+    assert.match(
+      system,
+      /calendar\.agenda: membaca tenggat, pengingat tugas, dan check-in Harvy untuk 1–31 hari atau satu tanggal lokal; bukan kalender Google atau Outlook/u,
+    );
+    assert.match(
+      system,
+      /terminal\.run: menjalankan perintah terstruktur aman pada workspace virtual kosong tanpa shell host, network, environment, atau berkas Harvy/u,
+    );
+    assert.match(
+      system,
+      /external\.act: Belum ada konektor aplikasi eksternal yang dipasang/u,
+    );
   });
 
   it("menyertakan memori pada prompt balasan", async () => {

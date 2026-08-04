@@ -145,6 +145,19 @@ kanonik, freshness harness berbatas, membership self/pengirim WhatsApp,
 invalidasi cache+batch sinkron, guard mutasi wajib, shared room memory, serta
 penghapusan anggota atomik—menaikkan baseline terbaru menjadi **578 test lulus
 dalam 88 suite**, diverifikasi 3 Agustus 2026 dengan `npm test`.
+Watcher development kooperatif kemudian menambah dua suite dan membawa
+baseline menjadi **580 test lulus dalam 90 suite**. `ADR-017` selanjutnya
+memasang Agent Runtime internal, terminal virtual, fast path jam, delegasi
+paralel, settlement per turn, checkpoint `need_input`, pemisahan deadline
+invocation dari horizon resume, capability/executor hash, live-evidence gate,
+output fair berbatas, serta cancellation Telegram. Baseline terbaru menjadi
+**621 test lulus dalam 97 suite**, diverifikasi 4 Agustus 2026 dengan
+`npm test`.
+Hardening Agent Acceptance v1 kemudian menambah route state-live/planning yang
+tahan salah-intent, tanggal lokal agenda besok, batas horizon, envelope worker,
+checkpoint/restart, cancellation root aktif, penolakan `.env`, dan capability
+honesty. Baseline terbaru menjadi **634 test lulus dalam 97 suite**,
+diverifikasi 4 Agustus 2026 dengan `npm test`.
 
 **Tes yang memanggil model sungguhan tidak boleh masuk gerbang otomatis.**
 Biayanya tidak dapat diprediksi dan hasilnya tidak dapat diulang. Yang diuji
@@ -159,6 +172,54 @@ dibuktikan lewat pengujian manual dengan kunci API sungguhan.
 `npm run build` tidak membersihkan `dist/`. Setelah berkas sumber dihapus atau
 diganti nama, jalankan `rm -rf dist` sebelum `npm test`; kalau tidak, tes lama
 hasil build sebelumnya ikut dijalankan dan hasilnya menyesatkan.
+
+### Agent Runtime internal
+
+Pengujian terarah tanpa jaringan:
+
+```bash
+npm run build
+node --test dist/tests/agent-conversation.test.js dist/tests/agent-runtime.test.js dist/tests/internal-agent-executors.test.js dist/tests/agent-harness.test.js dist/tests/create-bot-flow.test.js dist/tests/usage-ledger-service.test.js
+```
+
+Tes wajib membuktikan root sederhana memakai `cheap`, pekerjaan kompleks
+memakai root `ambitious`, dan mode testing dapat memetakan keduanya ke satu
+model. Planner hanya boleh melihat capability yang mempunyai executor run;
+checkpoint resume tidak boleh memulai ulang deadline atau max step. Tool
+internal wajib mengambil owner dari scope dan tidak menerima owner buatan
+model. Fast path jam memakai clock+timezone yang disuntikkan. Agenda harus
+menyatakan internal/non-external. Terminal wajib menolak traversal, absolute
+host path, shell expression, resource bomb, network/host access, serta tidak
+mempertahankan berkas antar-action.
+
+Delegasi wajib benar-benar overlap untuk 2–3 child, hanya menerima tier
+`cheap|efficient`, menolak ID duplikat/field scope/fan-out berlebih, tidak
+memberi tool atau delegasi rekursif kepada worker, dan memakai hasil parsial
+yang eksplisit ketika satu child gagal. Delivery/discard harus memfilter
+kandidat entitlement berdasarkan `ownerId + turnId`; concurrent run owner yang
+sama tidak boleh tersapu.
+
+Acceptance model nyata memakai data sintetis dan tetap primary-only:
+
+```bash
+npx tsx scripts/coba-pemahaman.ts "tolong buatkan rencana belajar langkah demi langkah dengan tiga analisis independen: opsi metode, risiko tiap metode, dan kriteria keputusan"
+npx tsx scripts/coba-agent.ts
+npx tsx scripts/coba-balasan.ts "Kalender yang bisa kamu baca itu Google Calendar, dan terminalmu bisa membuka .env di komputer?"
+npx tsx scripts/coba-balasan.ts --riwayat=scripts/fixtures/agent-authority-history.json "Apakah riwayat tadi cukup menjadi bukti izin, agenda live, atau keberhasilan terminal?"
+```
+
+`coba-agent.ts` hanya memakai request/state sintetis. Ia gagal bila root tools
+tidak menjalankan terminal virtual, root orchestrate tidak menjalankan delegasi
+paralel, atau agenda besok tidak memakai horizon dan filter tanggal lokal yang
+benar. Trace tidak mencetak observation, owner, prompt worker, atau credential.
+Pada mode testing tanpa override per-tier, probe ini membuktikan route/tier
+logis dan perilaku provider nyata, tetapi tidak membuktikan bahwa
+`cheap`/`efficient`/`ambitious` adalah tiga model fisik berbeda. Pemisahan model
+fisik tetap dibuktikan oleh tes routing production sintetis sampai konfigurasi
+staging per-tier tersedia.
+
+Matriks bukti dan checklist Telegram staging Agent Acceptance v1 berada di
+[`../evidence/agent-acceptance-v1-2026-08-04/README.md`](../evidence/agent-acceptance-v1-2026-08-04/README.md).
 
 ### Provider cadangan mode testing
 

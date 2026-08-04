@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Update } from "grammy/types";
 import { CALM_TRIAGE } from "../src/ai/safety.js";
+import type { HarvyContext } from "../src/ai/context.js";
 import type { Conversation } from "../src/ai/conversation.js";
 import { createBot } from "../src/bot/create-bot.js";
 import type { AppConfig } from "../src/config.js";
@@ -24,6 +25,7 @@ import type {
 } from "../src/domain/profile.js";
 import type { ActiveSession } from "../src/domain/session.js";
 import type { NewTask, StudentTask } from "../src/domain/task.js";
+import type { AgentRunCheckpoint } from "../src/harness/agent-harness.js";
 
 describe("alur adapter Telegram", () => {
   it("tidak menyimpan tugas dari usulan model tanpa izin eksplisit", async () => {
@@ -148,11 +150,11 @@ describe("alur adapter Telegram", () => {
     );
   });
 
-  it("menahan pesan pengguna consent v3 sampai menyetujui versi 4", async () => {
+  it("menahan pesan pengguna consent v4 sampai menyetujui versi 5", async () => {
     const sent: string[] = [];
     let triageCalls = 0;
     let fullProcessingCalls = 0;
-    let stored = profile({ consentVersion: 3 });
+    let stored = profile({ consentVersion: 4 });
     const legacyProfiles = new ProfileService({
       find: async () => stored,
       save: async (value) => {
@@ -195,9 +197,10 @@ describe("alur adapter Telegram", () => {
 
     assert.equal(triageCalls, 1);
     assert.equal(fullProcessingCalls, 0);
-    assert.equal(stored.consentVersion, 3);
+    assert.equal(stored.consentVersion, 4);
     assert.ok(sent.some((text) => text.startsWith("Hai ")));
     assert.ok(sent.some((text) => /layanan cadangan/iu.test(text)));
+    assert.ok(sent.some((text) => /tiga worker AI/iu.test(text)));
   });
 
   it("gagal tertutup ketika triase rusak: meninjau balasan tetapi tidak memutasi", async () => {
@@ -820,6 +823,366 @@ describe("alur adapter Telegram", () => {
       ],
     );
   });
+
+  it("mengarahkan pertanyaan biasa ke root agent cheap-first dan mengikat settlement ke turn", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    let deliveredTurn: string | null | undefined;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async (_message: string, mode: string) => {
+          agentCalls += 1;
+          assert.equal(mode, "tools");
+          return { status: "completed", reply: "Fotosintesis mengubah cahaya menjadi energi kimia." };
+        },
+        reply: async () => {
+          replyCalls += 1;
+          return "jalur lama";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        telemetry: {
+          event: async () => undefined,
+          markDelivered: async (_ownerId: string, turnId?: string | null) => {
+            deliveredTurn = turnId;
+          },
+          discardUndelivered: async () => undefined,
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("jelaskan fotosintesis"));
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 1);
+    assert.equal(replyCalls, 0);
+    assert.ok(harness.sent.some((text) => text.includes("energi kimia")));
+    assert.equal(typeof deliveredTurn, "string");
+    assert.ok((deliveredTurn?.length ?? 0) > 10);
+  });
+
+  it("tetap membaca state live ketika model salah menyebut query agenda sebagai history", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({ intent: "history" }),
+      agent: async (
+        message: string,
+        mode: string,
+        _context: HarvyContext,
+        runtime: { intent?: string },
+      ) => {
+        agentCalls += 1;
+        assert.equal(message, "cek agendaku untuk 3 minggu ke depan");
+        assert.equal(mode, "tools");
+        assert.equal(runtime.intent, "question");
+        return { status: "completed", reply: "Ada dua agenda internal dalam tiga minggu." };
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "jalur history lama";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(
+      messageUpdate("cek agendaku untuk 3 minggu ke depan"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 1);
+    assert.equal(replyCalls, 0);
+    assert.ok(harness.sent.some((text) => text.includes("agenda internal")));
+  });
+
+  it("pagar state live menang atas route kontrol memori hasil model", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({
+        intent: "memory",
+        memoryAction: "list",
+      }),
+      agent: async (_message: string, mode: string) => {
+        agentCalls += 1;
+        assert.equal(mode, "tools");
+        return { status: "completed", reply: "Agenda internalmu kosong." };
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "jalur lama";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate("lihat agendaku besok"));
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 1);
+    assert.equal(replyCalls, 0);
+    assert.ok(harness.sent.some((text) => text.includes("Agenda internal")));
+    assert.equal(harness.sent.some((text) => text.includes("catatan tentangmu")), false);
+  });
+
+  it("permintaan planning eksplisit tetap memakai root ambitious saat intent model salah", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({ intent: "task" }),
+      agent: async (
+        _message: string,
+        mode: string,
+        _context: HarvyContext,
+        runtime: { intent?: string },
+      ) => {
+        agentCalls += 1;
+        assert.equal(mode, "orchestrate");
+        assert.equal(runtime.intent, "request");
+        return { status: "completed", reply: "Rencana gabungan selesai." };
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "jalur lama";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(
+      messageUpdate("tolong buatkan rencana belajar langkah demi langkah"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 1);
+    assert.equal(replyCalls, 0);
+    assert.ok(harness.sent.some((text) => text.includes("Rencana gabungan")));
+  });
+
+  it("menyimpan checkpoint needs_input, melanjutkannya, dan mendebit setelah delivery", async () => {
+    const deliveredTurns: Array<string | null | undefined> = [];
+    let discarded = 0;
+    let agentCalls = 0;
+    const checkpoint = { runId: "checkpoint-agent" } as AgentRunCheckpoint;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async (
+          _request: string,
+          _mode: string,
+          _context: HarvyContext,
+          _runtime: unknown,
+          resumed?: AgentRunCheckpoint,
+          answer?: string,
+        ) => {
+          agentCalls += 1;
+          if (agentCalls === 1) {
+            return {
+              status: "needs_input",
+              prompt: "Rentang tanggal mana yang kamu maksud?",
+              checkpoint,
+            };
+          }
+          assert.equal(resumed, checkpoint);
+          assert.equal(answer, "30 hari");
+          return { status: "completed", reply: "Siap, kupakai rentang 30 hari." };
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        telemetry: {
+          event: async () => undefined,
+          markDelivered: async (_ownerId: string, turnId?: string | null) => {
+            deliveredTurns.push(turnId);
+          },
+          discardUndelivered: async () => {
+            discarded += 1;
+          },
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal"));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(messageUpdate("30 hari"));
+    await harness.bot.drainPending();
+
+    assert.ok(harness.sent.some((text) => text.includes("Rentang tanggal")));
+    assert.ok(harness.sent.some((text) => text.includes("rentang 30 hari")));
+    assert.equal(agentCalls, 2);
+    assert.equal(deliveredTurns.length, 2);
+    assert.equal(deliveredTurns.every((turnId) => typeof turnId === "string"), true);
+    assert.equal(discarded, 0);
+  });
+
+  it("menjawab pertanyaan jam lewat clock deterministik tanpa planner", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    let receivedTimeZone = "";
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        deterministicTimeReply: (timeZone: string) => {
+          receivedTimeZone = timeZone;
+          return `Sekarang Rabu pukul 01.30 WIT. Zona waktunya ${timeZone}.`;
+        },
+        agent: async () => {
+          agentCalls += 1;
+          return { status: "completed", reply: "planner" };
+        },
+        reply: async () => {
+          replyCalls += 1;
+          return "jalur lama";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      { profiles: profiles({ timeZone: "Asia/Jayapura" }) },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("Sekarang jam berapa?"));
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 0);
+    assert.equal(receivedTimeZone, "Asia/Jayapura");
+    assert.ok(harness.sent.some((text) => text.includes("01.30 WIT")));
+  });
+
+  it("mempertahankan kontrak identitas model pada episode aktif", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({ intent: "question" }),
+      agent: async () => {
+        agentCalls += 1;
+        return { status: "completed", reply: "model dasar" };
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Aku memakai model Capybara.";
+      },
+    } as unknown as Conversation);
+    harness.turns.push({
+      role: "harvy",
+      text: "Kita tadi membahas biologi.",
+      at: new Date().toISOString(),
+    });
+
+    await harness.bot.handleUpdate(messageUpdate("kamu pakai model apa?"));
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
+    assert.ok(harness.sent.some((text) => text.includes("model Capybara")));
+  });
+
+  it("mengarahkan variasi pertanyaan fitur ke snapshot kemampuan produk", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({ intent: "question" }),
+      agent: async () => {
+        agentCalls += 1;
+        return { status: "completed", reply: "slice agent" };
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Ini snapshot kemampuan Harvy yang aktif.";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate("fitur Harvy apa saja?"));
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
+    assert.ok(harness.sent.some((text) => text.includes("snapshot kemampuan")));
+  });
+
+  it("command membatalkan pemahaman aktif tanpa mengirim fallback lama", async () => {
+    let understandStarted = false;
+    let abortObserved = false;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async (
+        _message: string,
+        _context: HarvyContext,
+        runtime: { signal?: AbortSignal },
+      ) => {
+        understandStarted = true;
+        return await new Promise((_, reject) => {
+          runtime.signal?.addEventListener("abort", () => {
+            abortObserved = true;
+            reject(new DOMException("dibatalkan", "AbortError"));
+          }, { once: true });
+        });
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate("jelaskan ini", 1));
+    await waitFor(() => understandStarted);
+    await harness.bot.handleUpdate(commandUpdate("/start", 2));
+    await harness.bot.drainPending();
+
+    assert.equal(abortObserved, true);
+    assert.equal(
+      harness.sent.some((text) => /lagi gangguan|coba beberapa saat lagi/iu.test(text)),
+      false,
+    );
+  });
+
+  it("command membatalkan root agent aktif dan mencegah balasan basi", async () => {
+    let agentStarted = false;
+    let abortObserved = false;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({ intent: "question" }),
+      agent: async (
+        _message: string,
+        _mode: string,
+        _context: HarvyContext,
+        runtime: { signal?: AbortSignal },
+      ) => {
+        agentStarted = true;
+        return await new Promise((_, reject) => {
+          runtime.signal?.addEventListener("abort", () => {
+            abortObserved = true;
+            reject(new DOMException("dibatalkan", "AbortError"));
+          }, { once: true });
+        });
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate("jelaskan rencana panjang ini", 1));
+    await waitFor(() => agentStarted);
+    await harness.bot.handleUpdate(commandUpdate("/start", 2));
+    await harness.bot.drainPending();
+
+    assert.equal(abortObserved, true);
+    assert.equal(
+      harness.sent.some((text) =>
+        /Run agent berhenti|lagi gangguan|coba beberapa saat lagi/iu.test(text)
+      ),
+      false,
+    );
+  });
 });
 
 function profiles(overrides: Partial<UserProfile> = {}): ProfileService {
@@ -921,6 +1284,29 @@ function messageUpdate(text: string, updateId = 1): Update {
       text,
     },
   };
+}
+
+function commandUpdate(text: string, updateId: number): Update {
+  const update = messageUpdate(text, updateId);
+  if (update.message) {
+    update.message.entities = [{
+      offset: 0,
+      length: text.length,
+      type: "bot_command",
+    }];
+  }
+  return update;
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Kondisi uji tidak tercapai.");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 function callbackUpdate(data: string, updateId = 100): Update {

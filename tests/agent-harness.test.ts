@@ -491,9 +491,11 @@ describe("agent harness", () => {
       }],
     });
 
-    assert.equal(resumed.status, "completed");
+    assert.equal(resumed.status, "stopped");
+    if (resumed.status === "stopped") {
+      assert.equal(resumed.reason, "capability_changed");
+    }
     assert.equal(executions, 0);
-    assert.equal(resumed.checkpoint.observations[0]?.status, "unavailable");
   });
 
   it("menolak input planner yang bukan nilai JSON", async () => {

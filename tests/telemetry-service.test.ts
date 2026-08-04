@@ -230,6 +230,43 @@ describe("TelemetryService", () => {
     );
   });
 
+  it("menghitung kandidat delivery sebelum mengizinkan langkah agent berikutnya", async () => {
+    const repository = new MemoryTelemetryRepository();
+    let pendingDebit = 0;
+    const ledger: RelatedUsageLedger = {
+      ...relatedLedger(() => 0),
+      settleEntitlement: async (_context, usage, outcome) => {
+        if (outcome.succeeded) pendingDebit += usage.totalTokens;
+      },
+      pendingDebitTokens: async () => pendingDebit,
+    };
+    const telemetry = new TelemetryService(
+      repository,
+      options(100),
+      undefined,
+      undefined,
+      ledger,
+    );
+    const first = usageContext("student", {
+      requestId: "agent-step-1",
+      turnId: "turn-agent",
+    });
+    await telemetry.beforeRequest(first);
+    await telemetry.afterRequest(
+      first,
+      { inputTokens: 40, outputTokens: 20, totalTokens: 60, estimated: false },
+      { succeeded: true, latencyMs: 10 },
+    );
+
+    await assert.rejects(
+      telemetry.beforeRequest(usageContext("student", {
+        requestId: "agent-step-2",
+        turnId: "turn-agent",
+      })),
+      UsageLimitError,
+    );
+  });
+
   it("menganggap pembacaan tenggat sebagai overhead, bukan kapasitas", async () => {
     const repository = new MemoryTelemetryRepository();
     const telemetry = new TelemetryService(repository, options());

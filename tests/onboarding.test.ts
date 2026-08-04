@@ -36,6 +36,8 @@ describe("naskah perkenalan", () => {
     // Pasal 3.9: pengguna berhak tahu ke mana isi pesannya pergi, sebelum ia
     // pergi ke sana.
     assert.match(consent, /layanan AI di luar Harvy/i);
+    assert.match(consent, /model utama.*memori dan riwayat tersimpan/i);
+    assert.match(CONSENT_DETAIL, /model utama.*memori dan riwayat tersimpan/i);
     assert.match(consent, /satu atau lebih/i);
     assert.match(consent, /layanan cadangan/i);
     assert.match(consent, /bisa salah/i);

@@ -61,6 +61,7 @@ Konstitusi berkedudukan lebih tinggi daripada dokumen lain di repositori ini.
 | [`decisions/ADR-014-structured-episodic-compaction-v2.md`](decisions/ADR-014-structured-episodic-compaction-v2.md) | Menyentuh sequence riwayat, episode terstruktur, provenance/hash, migrasi history v1, retensi episode, compaction race, atau drain riwayat |
 | [`decisions/ADR-015-executor-web-baca-saja.md`](decisions/ADR-015-executor-web-baca-saja.md) | Menyentuh intent research, `web.search`, `web.open`, Brave Search, egress/SSRF, observasi tak tepercaya, atau validasi sitasi |
 | [`decisions/ADR-016-scope-dan-otoritas-v1.md`](decisions/ADR-016-scope-dan-otoritas-v1.md) | Menyentuh WorkspaceScope, membership/role/ACL epoch, matriks authority grup, shared room memory, atau batas reset admin/member-local |
+| [`decisions/ADR-017-agent-runtime-internal-dan-delegasi.md`](decisions/ADR-017-agent-runtime-internal-dan-delegasi.md) | Menyentuh root agent cheap-first, orkestrator ambitious, sub-agent paralel, tool internal, jam deterministik, agenda Harvy, terminal virtual, atau batas memory authority |
 | [`evidence/group-conversation-2026-07-30/README.md`](evidence/group-conversation-2026-07-30/README.md) | Menilai angka dan batas bukti evaluasi model grup 30 Juli 2026 |
 | [`../README.md`](../README.md) | Menjalankan atau mencoba Harvy secara lokal |
 

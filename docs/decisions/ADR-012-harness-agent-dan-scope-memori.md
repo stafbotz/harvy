@@ -102,12 +102,25 @@ satu anggota mempunyai batas akses yang berbeda dan tidak boleh dilebur.
     memaksa seluruh Harvy ditulis ulang atau mengubah workflow berpengaruh
     menjadi aksi model generik.
 
+### Amandemen 4 Agustus 2026
+
+ADR-017 memasang vertical slice agent internal kedua. Katalog kini membedakan
+snapshot fitur produk dari `callableCapabilities`, yaitu irisan capability
+available dan executor run. Tool baru hanya membaca tugas, sesi, pengaturan
+waktu, serta agenda internal; terminal yang tersedia adalah filesystem virtual
+sementara tanpa shell/host/network. Root ambitious boleh menjalankan satu
+fan-out read-only maksimal tiga worker cheap/efficient tanpa delegasi rekursif.
+Kalender eksternal, shell host, dan seluruh tool write tetap belum tersedia.
+Checkpoint menyimpan horizon resume absolut, batas langkah, dan hash authority;
+setiap invocation juga mempunyai deadline aktif sendiri. State ini masih belum
+durable lintas crash.
+
 ## Konsekuensi
 
 - Harvy sekarang dapat menyebut kemampuan dan keterbatasan runtime secara
-  konsisten. Search dan open web baca-saja tersedia secara opsional pada privat
-  Telegram; MCP, kalender, email, pembacaan file, X/Threads, dan konektor
-  aplikasi belum ada.
+  konsisten. Search/open web opsional, tool baca state internal, agenda Harvy,
+  dan terminal virtual tersedia pada privat Telegram. MCP, kalender eksternal,
+  email, pembacaan file host, X/Threads, dan konektor aplikasi belum ada.
 - Core grup dapat dipakai oleh adapter Telegram dan WhatsApp, tetapi saat ADR
   ini diterima hanya grup WhatsApp yang disambungkan. Chat privat masih hanya
   Telegram. Kesetaraan arsitektur belum berarti kesetaraan surface produksi.

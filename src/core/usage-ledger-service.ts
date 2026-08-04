@@ -89,6 +89,10 @@ export class UsageLedgerService implements ProviderAttemptObserver {
     string,
     { ownerId: string; entry: EntitlementEntry }
   >();
+  private readonly terminalTurns = new Map<
+    string,
+    Map<string, { state: "delivered" | "discarded"; at: number }>
+  >();
   private entitlementQueue: Promise<void> = Promise.resolve();
   private readonly ownerQueues = new Map<string, Promise<void>>();
   private readonly blockedOwners = new Set<string>();
@@ -414,6 +418,23 @@ export class UsageLedgerService implements ProviderAttemptObserver {
       .reduce((sum, entry) => sum + nonNegativeInteger(entry.debitedTokens), 0);
   }
 
+  /** Debit yang sudah diukur tetapi masih menunggu konfirmasi delivery. */
+  async pendingDebitTokens(ownerId: string, since: Date): Promise<number> {
+    const queued = this.ownerQueues.get(ownerId);
+    if (queued) await queued;
+    const threshold = since.getTime();
+    return [...this.pendingDeliveryCandidates.values()]
+      .filter((candidate) =>
+        candidate.ownerId === ownerId &&
+        Date.parse(candidate.entry.at) >= threshold
+      )
+      .reduce(
+        (sum, candidate) =>
+          sum + nonNegativeInteger(candidate.entry.debitedTokens),
+        0,
+      );
+  }
+
   async settleEntitlement(
     context: AiUsageContext,
     usage: TokenUsage,
@@ -457,6 +478,18 @@ export class UsageLedgerService implements ProviderAttemptObserver {
           ownerId: context.ownerId,
           entry,
         });
+        const terminal = this.terminalTurn(context.ownerId, context.turnId);
+        if (terminal === "discarded") {
+          this.pendingDeliveryCandidates.delete(entry.idempotencyKey);
+          return;
+        }
+        if (terminal === "delivered") {
+          this.pendingEntitlements.set(entry.idempotencyKey, entry);
+          await this.flushEntitlements();
+          if (!this.pendingEntitlements.has(entry.idempotencyKey)) {
+            this.pendingDeliveryCandidates.delete(entry.idempotencyKey);
+          }
+        }
         return;
       }
       this.pendingEntitlements.set(entry.idempotencyKey, entry);
@@ -465,24 +498,40 @@ export class UsageLedgerService implements ProviderAttemptObserver {
   }
 
   /** Debit baru dibuat setelah adapter menyatakan balasan berhasil dikirim. */
-  async markDelivered(ownerId: string): Promise<void> {
+  async markDelivered(ownerId: string, turnId: string | null): Promise<void> {
     await this.exclusiveOwner(ownerId, async () => {
+      this.setTerminalTurn(ownerId, turnId, "delivered");
       const candidates = [...this.pendingDeliveryCandidates]
-        .filter(([, candidate]) => candidate.ownerId === ownerId);
+        .filter(([, candidate]) =>
+          candidate.ownerId === ownerId &&
+          candidate.entry.turnId === turnId
+        );
       for (const [key, candidate] of candidates) {
         this.pendingEntitlements.set(key, candidate.entry);
-        this.pendingDeliveryCandidates.delete(key);
       }
       await this.flushEntitlements();
+      for (const [key] of candidates) {
+        if (!this.pendingEntitlements.has(key)) {
+          this.pendingDeliveryCandidates.delete(key);
+        }
+      }
     });
   }
 
   /** Balasan yang gagal dikirim atau diganti tidak boleh mengurangi paket. */
-  async discardUndelivered(ownerId: string): Promise<void> {
+  async discardUndelivered(
+    ownerId: string,
+    turnId: string | null,
+  ): Promise<void> {
     await this.exclusiveOwner(ownerId, async () => {
+      this.setTerminalTurn(ownerId, turnId, "discarded");
       for (const [key, candidate] of this.pendingDeliveryCandidates) {
-        if (candidate.ownerId === ownerId) {
+        if (
+          candidate.ownerId === ownerId &&
+          candidate.entry.turnId === turnId
+        ) {
           this.pendingDeliveryCandidates.delete(key);
+          this.pendingEntitlements.delete(key);
         }
       }
     });
@@ -508,6 +557,7 @@ export class UsageLedgerService implements ProviderAttemptObserver {
           this.pendingDeliveryCandidates.delete(key);
         }
       }
+      this.terminalTurns.delete(ownerId);
       await this.entitlementQueue.catch(() => undefined);
       await this.repository.removeSubject(subjectRef);
       await this.options.entitlementRepository?.removeSubject(subjectRef);
@@ -571,9 +621,20 @@ export class UsageLedgerService implements ProviderAttemptObserver {
     while (this.ownerQueues.size > 0) {
       await Promise.allSettled([...this.ownerQueues.values()]);
     }
-    // Kandidat yang belum ditandai delivery memang tidak menjadi debit.
-    this.pendingDeliveryCandidates.clear();
+    // Kandidat tanpa promotion memang belum delivered. Kandidat yang sudah
+    // dipromosikan tetap dihitung dan dipertahankan sampai append berhasil.
+    for (const [key] of this.pendingDeliveryCandidates) {
+      if (!this.pendingEntitlements.has(key)) {
+        this.pendingDeliveryCandidates.delete(key);
+      }
+    }
     await Promise.all([this.flushAttempts(), this.flushEntitlements()]);
+    for (const [key] of this.pendingDeliveryCandidates) {
+      if (!this.pendingEntitlements.has(key)) {
+        this.pendingDeliveryCandidates.delete(key);
+      }
+    }
+    this.terminalTurns.clear();
   }
 
   private async flushAttempts(): Promise<void> {
@@ -602,6 +663,7 @@ export class UsageLedgerService implements ProviderAttemptObserver {
       for (const [key, entry] of this.pendingEntitlements) {
         await repository.append(entry);
         this.pendingEntitlements.delete(key);
+        this.pendingDeliveryCandidates.delete(key);
       }
     });
     this.entitlementQueue = run.catch(() => undefined);
@@ -643,6 +705,37 @@ export class UsageLedgerService implements ProviderAttemptObserver {
       }
     });
     return result;
+  }
+
+  private terminalTurn(
+    ownerId: string,
+    turnId: string | null,
+  ): "delivered" | "discarded" | null {
+    if (turnId === null) return null;
+    this.pruneTerminalTurns(ownerId);
+    return this.terminalTurns.get(ownerId)?.get(turnId)?.state ?? null;
+  }
+
+  private setTerminalTurn(
+    ownerId: string,
+    turnId: string | null,
+    state: "delivered" | "discarded",
+  ): void {
+    if (turnId === null) return;
+    this.pruneTerminalTurns(ownerId);
+    const turns = this.terminalTurns.get(ownerId) ?? new Map();
+    turns.set(turnId, { state, at: this.now().getTime() });
+    this.terminalTurns.set(ownerId, turns);
+  }
+
+  private pruneTerminalTurns(ownerId: string): void {
+    const turns = this.terminalTurns.get(ownerId);
+    if (!turns) return;
+    const before = this.now().getTime() - 24 * 60 * 60 * 1_000;
+    for (const [turnId, terminal] of turns) {
+      if (terminal.at < before) turns.delete(turnId);
+    }
+    if (turns.size === 0) this.terminalTurns.delete(ownerId);
   }
 }
 

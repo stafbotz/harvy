@@ -76,6 +76,13 @@ menyunting atau menghapus satu, atau menghapus semuanya sekaligus. Dari kontrol
 data, pengguna juga dapat mengekspor data, menarik persetujuan, atau menghapus
 seluruh data.
 
+Untuk Agent Runtime, memori dan episode hanya dipakai sebagai konteks
+kesinambungan yang tidak tepercaya—bukan bukti izin, identitas, credential,
+jam, jadwal live, atau keberhasilan tool. Sub-agent tidak menerima memori.
+Harvy tidak melatih ulang bobot model secara tersembunyi dari chat produksi;
+perbaikan global harus offline, berversi, dapat diuji, dan memakai data
+sintetis atau opt-in.
+
 ### Harvy di grup WhatsApp
 
 Mode grup adalah jalur terpisah dari chat pribadi. Harvy mengumumkan cara
@@ -139,11 +146,34 @@ pencarian mengirim query yang dipilih untuk request itu ke penyedia search dan
 server Harvy mengambil URL yang dipilih. Riwayat serta memori privat lama tidak
 diberikan ke planner research. Satu run hanya boleh mencari sekali dan membuka
 URL dari pesan pengguna atau hasil search run yang sama; jawaban tanpa hasil web
-sukses ditahan. X/Threads, function calling ke aplikasi luar, kalender/email,
-pembacaan file, dan memori lintas kanal belum tersedia. Kernel agent memvalidasi
-action, schema, policy, idempotency key, deadline, cycle guard, dan
-pause/resume, tetapi run research pertama ini masih sinkron/in-memory dan belum
-mempunyai durable store, outbox, receipt, atau reconciler.
+sukses ditahan. X/Threads, function calling ke aplikasi luar, kalender eksternal/email,
+pembacaan file host, dan memori lintas kanal belum tersedia.
+
+Pertanyaan dan permintaan tenang tanpa sesi aktif kini memakai root agent
+`cheap`; pekerjaan bertahap/panjang naik ke root `ambitious`, yang boleh
+mendelegasikan 2–3 subpekerjaan read-only secara paralel kepada worker
+`cheap|efficient`. Worker hanya menerima submasalahnya—tanpa memori, riwayat,
+tool, credential, atau hak delegasi—lalu root menyatukan hasilnya. Tool internal
+dapat membaca tugas, sesi, jam, dan agenda Harvy. Pertanyaan jam yang berdiri
+sendiri dijawab langsung dari clock runtime. Untuk frasa personal yang dikenali
+seperti “agenda besok” atau “tugas terdekat”, jawaban wajib mempunyai observation
+live dengan cakupan yang memadai; pagar ini sengaja berpresisi tinggi dan belum
+mencakup setiap kemungkinan parafrasa.
+`calendar.agenda` bukan Google/Outlook: isinya hanya tenggat, pengingat, dan
+check-in Harvy dalam jendela berjalan 1–31 hari. `terminal.run` juga bukan shell host; ia scratchpad virtual
+kosong per action untuk hitung serta file sementara, tanpa process, network,
+environment, atau data Harvy. Kernel memvalidasi action, schema, policy,
+idempotency key, cycle guard, dan pause/resume. Setiap pemanggilan aktif dibatasi
+45 detik; checkpoint Agent Runtime dapat dijawab ulang dalam horizon absolut 10
+menit tanpa menambah jatah langkah. Checkpoint itu hanya berada di memori proses,
+sehingga hilang saat restart; run belum mempunyai durable store, outbox, receipt,
+atau reconciler.
+
+Harvy “belajar” dalam arti memakai memori semantik yang dapat dilihat,
+dikoreksi, dan dihapus pengguna serta episode percakapan untuk kesinambungan.
+Ia tidak melatih ulang bobot model atau membuat hidden self-training dari chat
+produksi. Memori juga bukan bukti izin, waktu kini, jadwal live, atau keberhasilan
+tool—hal-hal itu harus datang dari state atau observation yang berwenang.
 
 Tipe scope juga sudah mempunyai fondasi Workspace dengan principal pseudonim,
 membership, role, permission tertutup, dan `aclEpoch` yang membatalkan scope
@@ -217,6 +247,14 @@ Setelah itu:
 ```bash
 npm run dev
 ```
+
+Perintah development tetap memuat ulang Harvy saat `src/`, `.env`,
+`package.json`, atau `tsconfig.json` berubah. Watcher Harvy meminta proses lama
+shutdown lewat IPC dan menunggu lock dilepas sebelum memulai proses baru.
+Tekan `Ctrl+C` untuk berhenti; runner menunggu proses lama menyelesaikan
+shutdown (ditandai log `shutdown_completed`) sebelum ikut keluar.
+`tsx watch` tidak dipakai karena pada Windows ia dapat mematikan child sebelum
+cleanup Harvy sempat berjalan.
 
 WhatsApp tidak aktif secara bawaan. Untuk beta lokal, isi
 `WHATSAPP_ENABLED=true`, `WHATSAPP_PAIRING_MODE=qr`, dan
@@ -321,10 +359,11 @@ npm test
   keselamatan.
 - **Isi pesanmu dapat dikirim ke satu atau lebih penyedia model pihak ketiga**,
   kini termasuk memori dan ringkasan percakapan. Permintaan yang gagal pada
-  provider utama dapat dikirim ulang ke provider cadangan. Kontak pertama
-  menjelaskan ini dan meminta
-  persetujuan; hanya pesan pertama boleh menjalani satu triase keselamatan
-  sebelum persetujuan. Persetujuan dapat ditarik dari dalam chat.
+  provider utama dapat dikirim ulang ke provider cadangan. Permintaan rumit
+  yang aman juga dapat dipecah menjadi dua atau tiga panggilan worker paralel;
+  worker tidak menerima memori, riwayat, atau tool. Kontak pertama menjelaskan
+  ini dan meminta persetujuan; hanya pesan pertama boleh menjalani satu triase
+  keselamatan sebelum persetujuan. Persetujuan dapat ditarik dari dalam chat.
 - Memori dan riwayat percakapan sudah dicoba pada percakapan sungguhan dan
   menemukan kegagalan. Perbaikannya sudah lolos tes otomatis serta probe model,
   tetapi belum diuji ulang end-to-end di Telegram. Sesi persisten, tutoring lima
@@ -361,9 +400,11 @@ npm test
   masih hanya WhatsApp. Registry sengaja menandai Telegram grup dan WhatsApp
   privat tidak tersedia sampai adapter-nya benar-benar disambungkan.
 - Tool baca-saja `web.search`/`web.open` tersedia opsional pada privat Telegram,
-  mati secara default, dan belum diuji dengan Brave+Telegram nyata. Pembacaan
-  dokumen/lampiran, X/Threads khusus, kalender, email, dan aksi aplikasi tetap
-  belum dibuat; pengetahuan bawaan model bukan hasil pencarian langsung.
+  mati secara default, dan belum diuji dengan Brave+Telegram nyata. Tool state
+  internal, agenda Harvy, terminal virtual, dan delegasi read-only baru teruji
+  otomatis/adapter palsu. Pembacaan dokumen/lampiran/host, X/Threads khusus,
+  kalender eksternal, email, shell/program, dan aksi aplikasi tetap belum
+  dibuat; pengetahuan bawaan model bukan hasil pencarian langsung.
 - Workspace Scope & Authority v1 baru merupakan fondasi core teruji. Tidak ada
   kanal Workspace, UI membership, artifact, account linking, atau durable run;
   adapter authority file hanya aman untuk satu proses.
@@ -385,8 +426,9 @@ npm test
   internet-ready belum ada. Ledger detail hanya mempunyai provenance provider
   sejak fitur ini dipasang; telemetry lama tidak diubah menjadi attempt palsu.
   File lokal dijaga lock satu proses, tetapi tetap bukan billing database
-  produksi. Lock stale sesudah crash hanya boleh dihapus setelah PID pemilik
-  dipastikan mati.
+  produksi. `Ctrl+C` pada `npm run dev` menjalankan shutdown normal dan melepas
+  lock; lock stale sesudah crash atau penghentian paksa hanya boleh dihapus
+  setelah PID pemilik dipastikan mati.
 - Bubble dan aksi tombol yang sedang diproses dikuras saat Harvy dimatikan
   normal, dengan grace period 60 detik, tetapi antreannya masih hanya di memori.
   Crash atau penghentian paksa pada saat itu dapat menghilangkan satu giliran

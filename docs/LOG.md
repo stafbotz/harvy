@@ -28,6 +28,367 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 4 Agustus 2026 — Verifikasi sebelum commit dan push Agent Acceptance v1
+
+**Kenapa.** Sesi ini diminta untuk commit dan push perubahan working tree
+milestone Agent Acceptance v1 yang sudah dicatat pada entri sebelumnya.
+
+**Yang berubah.** Tidak ada perilaku produk baru yang ditambahkan dalam sesi
+ini. Working tree yang sudah berisi Agent Runtime, hardening authority, probe,
+fixture, dokumentasi, dan tes diverifikasi sebagai satu perubahan terpadu.
+
+**Dibahas.** Commit dilakukan pada branch `main` yang melacak `origin/main`,
+dengan hook `.githooks` tetap aktif. Seluruh perubahan yang sudah ada di
+working tree diperlakukan sebagai satu commit sesuai permintaan pemilik.
+
+**Bukti.** `npm run check` PASS. `npm test` PASS — 634 test dalam 97 suite,
+tanpa fail/cancel/skip/todo. Telegram nyata, WhatsApp nyata, dan provider
+eksternal tidak disentuh dalam sesi verifikasi ini.
+
+**Sengaja ditinggalkan.** Kesiapan staging Telegram, model fisik per-tier,
+durable checkpoint, kalender eksternal, shell host, dan write tools tetap di
+luar scope seperti dicatat pada entri milestone sebelumnya.
+
+## 4 Agustus 2026 — Agent Acceptance v1, hardening authority, dan probe model
+
+**Kenapa.** Pemilik produk meminta milestone Agent Acceptance v1 diselesaikan
+dari working tree yang sudah berisi Agent Runtime, tanpa memperluasnya ke
+kalender eksternal, shell host, atau write tools. Dua belas skenario harus
+mempunyai bukti yang dibedakan antara otomatis, model nyata, staging nyata,
+dan belum diuji. Hanya agent utama menulis; tiga sub-agent melakukan audit dan
+tes read-only. Seluruh perubahan working tree sebelumnya dipertahankan dan
+tidak ada commit/push.
+
+**Yang berubah.** Probe pemahaman primary testing menemukan kalimat “cek
+agendaku untuk 3 minggu ke depan” diberi intent `history`. Adapter sekarang
+mengenali state-live secara lokal sebelum route memory/control/research dan
+tetap menjalankan Agent Runtime dengan intent operasional `question`;
+permintaan planning eksplisit juga tetap masuk root `orchestrate` walau model
+salah memberi intent `task`. Live-evidence gate kini menolak `need_input` yang
+tidak perlu sebelum tool authority dibaca, mengulang observation yang horizon,
+limit, atau tanggal lokalnya belum cukup, serta menempelkan pemberitahuan batas
+31 hari secara deterministik. “Beberapa minggu” memakai 21 hari dan angka
+besar seperti 100 hari tetap dibatasi 31 hari.
+
+Agenda hari ini/besok kini membawa `localDate` berdasarkan timezone profil.
+Executor menyaring event di luar tanggal itu sebelum observation mencapai
+model, sehingga hari ini/lusa tidak lagi hanya bergantung pada kepatuhan
+sintesis. Fast path waktu diuji pada instant yang sama untuk tanggal WIB dan
+WIT. Route/executor tugas dan agenda mendapat canary cross-owner. Terminal
+virtual menolak semua segmen `.env*` selain host path, process, environment,
+network, traversal, dan resource bomb yang sudah ditutup.
+
+Kontrak worker diperiksa end-to-end dari Conversation ke
+`ParallelDelegationExecutor` dan `createModelAgentWorker`: body pesan worker
+hanya membawa `runId/taskId/tier/instruction`, tier `cheap|efficient`, tanpa
+summary, history, memory, owner/scope selector, capability schema, tool,
+credential, atau hak delegasi. Tes kegagalan worker memastikan sibling lambat
+selesai sebelum executor resolve dan disclosure parsial ditempel kode. Tes
+lain menutup owner/10-menit/restart checkpoint, pembatalan root aktif tanpa
+balasan basi, body `AiClient` tanpa key sintetis, serta jawaban capability
+agenda internal/terminal virtual.
+
+`scripts/coba-agent.ts` ditambahkan sebagai probe sintetis primary-only untuk
+root tools, root orchestrate+delegasi, dan agenda besok; ia tidak membaca data
+pengguna dan hanya mencetak status/capability, bukan observation atau
+credential. Fixture riwayat authority sintetis ditambahkan untuk membuktikan
+model tidak menjadikan percakapan lama sebagai bukti izin, agenda live, atau
+keberhasilan terminal. `coba-balasan.ts` kini menerima snapshot capability yang
+sama dengan aplikasi. Matriks dua belas skenario dan checklist staging persis
+dicatat di
+[`docs/evidence/agent-acceptance-v1-2026-08-04/README.md`](evidence/agent-acceptance-v1-2026-08-04/README.md);
+`STATUS.md`, `TESTING.md`, dan `AGENTS.md` diselaraskan hanya dengan bukti ini.
+
+**Dibahas.** Mode testing lokal tidak mempunyai override model per-tier yang
+lengkap, sehingga probe provider nyata membuktikan route logical
+`cheap`/`ambitious` dan fan-out worker tetapi bukan tiga model fisik berbeda.
+Checkpoint tetap in-memory: store baru terbukti kosong setelah restart, namun
+tanpa tombstone Harvy belum dapat selalu mengatakan secara eksplisit bahwa
+prompt lama hilang. `/start` dan jalur cancel generation membatalkan pekerjaan
+lama; `/tugas` sengaja memakai FIFO drain, jadi kontraknya bukan “semua command
+membatalkan”. Pagar state-live tetap kumpulan parafrasa presisi, bukan
+classifier universal.
+
+**Bukti.** Baseline sebelum perubahan: `npm run check` PASS dan `npm test` PASS
+— 621 test dalam 97 suite. Tes terarah setelah hardening lulus 89/89 lalu 78/78
+pada kumpulan route, Conversation, executor, checkpoint, terminal, client, dan
+adapter. Probe primary testing tanpa fallback:
+
+- `coba-pemahaman.ts` memperlihatkan salah-intent agenda `history`, lalu prompt
+  kompleks terbaca `request` dengan `needsStepByStep:true`;
+- `coba-agent.ts` menjalankan `terminal.run` dan menghasilkan 126, menjalankan
+  `agent.delegate.parallel`, serta menjalankan agenda besok dengan horizon dua
+  hari dan hanya menyebut event tanggal lokal besok;
+- `coba-balasan.ts` menyatakan kalender hanya agenda internal Harvy, bukan
+  Google/Outlook, dan terminal virtual tidak dapat membuka `.env`/komputer;
+- probe dua giliran authority menolak riwayat sebagai bukti izin atau
+  keberhasilan sistem.
+
+Run penuh pertama setelah perubahan menghasilkan 633/634 karena satu assertion
+capability masih mengharapkan deskripsi sebelum `localDate`; tidak ada kegagalan
+produk. Assertion diperbarui, lalu `npm test` diulang dan PASS — **634 test
+dalam 97 suite**, 0 fail/cancel/skip/todo. `npm run check` dan `git diff
+--check` juga PASS; perintah terakhir hanya memberi peringatan konversi
+LF/CRLF. Token Telegram hanya diperiksa keberadaannya tanpa mencetak nilai;
+karena tidak ada penanda token/akun staging dan environment bukan staging,
+Telegram nyata tidak disentuh.
+
+**Sengaja ditinggalkan.** Seluruh checklist Telegram staging berstatus NOT RUN.
+Restart nyata belum membuktikan UX pengakuan kehilangan checkpoint; per-tier
+physical model belum dibuktikan; kegagalan worker tetap memakai fault
+injection otomatis; parafrasa authority di luar pola yang diuji masih
+model-dependent. Kalender Google/Outlook, shell/process/filesystem host,
+credential access, write tools, durable RunStore/checkpoint, dan akun produksi
+tetap di luar scope.
+
+## 4 Agustus 2026 — Batas “selesai” Agent Runtime dan urutan lanjutan
+
+**Kenapa.** Pemilik produk meminta penilaian apakah pembuatan agent sudah
+selesai, rancangan apa yang tertinggal, dan langkah apa yang sebaiknya diambil
+berikutnya. Penilaian perlu membedakan implementasi vertical slice dari
+kesiapan produksi agar kemampuan yang baru lulus adapter palsu tidak diklaim
+sudah terbukti pada pengguna nyata.
+
+**Dibahas.** Agent Runtime v1 dinilai **selesai pada ruang lingkup kode yang
+diputuskan ADR-017**: cheap-first, ambitious orchestration, fan-out 2–3 worker
+cheap/efficient, tool internal read-only, clock deterministik, agenda internal,
+terminal virtual, checkpoint klarifikasi, cancellation/generation guard, dan
+memory/context separation sudah terpasang serta lulus 621 tes. Harvy sebagai
+agent produksi belum selesai. Urutan yang disepakati untuk rekomendasi adalah:
+(1) acceptance end-to-end pada Telegram staging dan model nyata; (2) durable
+RunStore/checkpoint, outbox, receipt, status unknown, reconciler, dan PostgreSQL;
+(3) memory engineering v3—provenance, revision, valid-time, supersession, cap,
+trust/actor, serta deletion propagation; (4) baru konektor kalender eksternal
+read-only dengan OAuth per pengguna dan sandbox eksekusi terisolasi; (5) write
+tools hanya setelah CAS, preview approval persis, idempotensi, serta kompensasi
+terbukti. Pembatalan request biasa oleh pesan urgent, uji mandiri tujuh hari,
+deployment/backup, dan evaluasi kualitas orkestrator tetap menjadi gerbang
+produk, bukan kosmetik.
+
+**Bukti.** `PROJECT.md`, `CONSTITUTION.md`, `engineering/STATUS.md`, dan entri
+terbaru `LOG.md` dibaca ulang. Tidak ada gerbang tes baru dijalankan pada
+diskusi ini; angka 621 tes/97 suite berasal dari verifikasi penuh sesi
+implementasi tepat sebelumnya. Tidak ada kemampuan baru yang diklaim atau kode
+produk yang diubah.
+
+**Sengaja ditinggalkan.** Tidak ada implementasi lanjutan dimulai karena
+pertanyaan ini meminta status dan urutan keputusan. Kalender Google/Outlook,
+shell/program host, durable run, write executor, serta memory v3 tetap belum
+ada sampai milestone terkait dipilih dan diberi acceptance criteria.
+
+## 4 Agustus 2026 — Agent Runtime internal cheap-first dan delegasi paralel
+
+**Kenapa.** Pemilik produk meminta Harvy diselesaikan sebagai agent yang dapat
+memakai tool internal, mengetahui jam, membaca kalender sederhana, mempunyai
+terminal, menyusun rencana, menjalankan satu model murah secara default, lalu
+naik menjadi orkestrator ambitious yang mendelegasikan subpekerjaan paralel ke
+model cheap/efficient. Permintaan juga menuntut memory engineering yang baik.
+Audit kode lebih dulu menemukan tiga kegagalan yang harus ditutup sebelum
+fan-out: capability fitur produk dapat tampak callable walau executornya tidak
+ada, deadline checkpoint dimulai ulang pada resume, dan settlement entitlement
+per owner dapat menyapu run paralel lain.
+
+**Yang berubah.** `ADR-017` menetapkan Agent Runtime v1 read-only. Pertanyaan
+dan permintaan privat yang sudah lolos consent+triase serta tidak membawa sesi
+aktif kini masuk root `cheap`; pesan `needsStepByStep` atau di atas 280
+karakter memakai root `ambitious`. Mode testing tetap dapat menjalankan semua
+role lewat satu `testingModel`. Root ambitious dapat memanggil
+`agent.delegate.parallel` untuk 2–3 worker `cheap|efficient`; worker tidak
+menerima tool, history, memory, credential, scope selector, model ID, atau hak
+delegasi. Semaphore membatasi tiga worker provider, seluruh child berbagi
+deadline/cancellation, `Promise.allSettled` mempertahankan sibling, dan output
+parsial/terpotong ditandai tak tepercaya sebelum sintesis root. Pass delegasi
+langkah nol tidak menerima history/memory dan hanya boleh melakukan fan-out;
+jalur non-delegasi serta sintesis memakai context terpilih dengan recent turn
+sebagai pesan chat. Tiap worker dibatasi 800 karakter dan envelope observation
+gabungan 3.600 karakter tetap JSON valid serta membagi ruang antar-worker.
+
+Tool atomik `task.list_active`, `task.get`, `session.status`,
+`settings.time.get`, dan `calendar.agenda` sekarang dipasang pada privat
+Telegram. Owner selalu berasal dari `PrivateAgentScope`, bukan input model.
+Agenda hanya memproyeksikan tenggat, pengingat, serta check-in Harvy selama
+1–31 hari dan menyatakan `externalCalendar:false`. Pertanyaan jam/tanggal yang
+berdiri sendiri memakai clock runtime+timezone secara deterministik tanpa
+planner. `terminal.run` adalah scratchpad virtual in-memory baru pada setiap
+action: `pwd/date/echo/calculate/write/append/cat/list/remove` di bawah
+`/workspace`, tanpa child process, shell host, environment, network, host file,
+TTY, background job, atau persistensi. Path escape, absolute host path,
+expression asing, file, kompleksitas, command, dan output berlebihan ditolak.
+
+Planner kini menerima `callableCapabilities`, irisan snapshot available dengan
+executor versi tepat, dan prompt hanya memuat schema tool callable pada langkah
+itu. Checkpoint menyimpan `startedAt`, `deadlineAt`, `maxSteps`, dan hash
+authority callable. Setiap invocation aktif dibatasi 45 detik; `need_input`
+disimpan owner-scoped setelah delivery dan dapat dilanjutkan pada checkpoint
+yang sama selama horizon absolut 10 menit tanpa menambah langkah atau mengganti
+executor. Ingress
+privat diberi `turnId` melalui `AsyncLocalStorage`; root+worker mewarisinya dan
+delivery/discard hanya menyelesaikan kandidat `ownerId + turnId`. Route safety,
+consent, data control, mutasi task/memory/session, dan research tetap terpisah.
+`AiPurpose` serta migrasi telemetry/label Console ditambah untuk `agent`.
+Persetujuan privat naik ke versi 5 dan naskah perkenalan/detail kini menjelaskan
+bahwa permintaan kompleks yang aman dapat dibagi kepada paling banyak tiga
+worker sekaligus tanpa memberi mereka memori, riwayat, credential, atau tool.
+Abort command/generation Telegram sekarang diteruskan melalui extraction,
+triase, reply/review, research, root agent, dan executor; freshness diperiksa
+lagi sebelum delivery/state commit. Frasa personal berpresisi tinggi tentang
+tugas, sesi, waktu, atau agenda wajib mempunyai observation live dengan limit/
+horizon yang cukup sebelum final diterima. Ini pagar deterministik untuk pola
+yang diuji, bukan klaim bahwa setiap parafrasa sudah dapat dikenali.
+
+**Dibahas.** Audit memory menunjukkan semantic memory saat ini belum mempunyai
+provenance, revision, valid-time, supersession, atau cap; penghapusan satu
+record belum men-scrub sumber dari recent history/episode; episode belum
+membawa actor/trust per klaim; dan retensi fisik beberapa store masih lazy.
+Karena itu “belajar” didefinisikan secara berlapis: semantic memory yang dapat
+dilihat/dikoreksi untuk preferensi, episodic history hanya untuk continuity,
+checkpoint untuk progress run, state tugas/agenda/sesi sebagai authority live,
+dan receipt kelak sebagai bukti outcome. Memori/episode tidak pernah menjadi
+bukti izin, actor, credential, waktu, jadwal, atau keberhasilan tool; worker
+tidak mendapat memori. Harvy tidak melakukan hidden self-training dari chat
+produksi. Perbaikan global harus offline, berversi, dapat di-rollback, dan
+memakai data sintetis atau opt-in. Arah ini dicatat di prompt, ADR, STATUS,
+PROJECT, README, TESTING, INDEX, dan entry-point agent.
+
+**Bukti.** `npm run check` PASS. Tes terarah Agent Runtime—conversation,
+routing/harness, executor internal, terminal, adapter Telegram, dan
+settlement—PASS. `npm test` PASS — **621 test dalam 97 suite**, seluruhnya
+lulus tanpa gagal, dibatalkan, dilewati, atau todo. Tes membuktikan pemilihan
+cheap/ambitious, satu model testing, fan-out
+overlap, context-free delegation, tier/fan-out/schema tertutup, hasil parsial,
+owner isolation, active deadline+horizon resume, WIB/WITA, fast path jam,
+agenda internal, terminal escape/resource bounds, cancellation Telegram,
+routing, dan settlement per turn. Tidak ada model/provider, Telegram, WhatsApp,
+shell host, kalender eksternal, atau layanan jaringan yang dipanggil.
+
+**Sengaja ditinggalkan.** Shell/process/filesystem host dan eksekusi program
+tidak dibuka karena tidak ada sandbox VM/container terpisah yang dapat
+memisahkan `.env`, auth, data, network, serta resource process. Google/Outlook/
+device calendar dan seluruh write tool tetap unavailable sampai ada OAuth per
+pengguna, revision/CAS, preview approval exact-value, durable RunStore,
+idempotent outbox, receipt, status `unknown`, reconciler, export/deletion, serta
+crash recovery. Checkpoint masih in-memory dan hilang saat restart; delivery
+network tidak atomik serta belum ada cancellation lintas proses/background;
+native `tools/tool_choice`, provider nyata, quality eval orkestrator, dan uji
+end-to-end Telegram belum dikerjakan. Gap
+provenance/suppression/retensi memory di atas tetap backlog sebelum tool write
+boleh dibuka.
+
+## 3 Agustus 2026 — Agent diprioritaskan pada toolbox internal, bukan research
+
+**Kenapa.** Pemilik produk mengoreksi urutan setelah Scope & Authority v1:
+infrastruktur agent tetap penting, tetapi pembangunan tool research web/X/
+Threads tidak menjadi prioritas. Search membutuhkan layanan serta credential
+eksternal dan belum mewakili pekerjaan dasar yang seharusnya dapat diselesaikan
+Harvy dari domainnya sendiri.
+
+**Dibahas.** Milestone berikut dipindahkan ke **Harvy Internal Tools v1**.
+Tool tidak identik dengan API eksternal: executor dapat memanggil
+`TaskService`, `SessionService`, dan layanan waktu/pengingat yang sudah berada di
+Harvy tanpa credential baru. Capability besar seperti `task.manage` perlu
+diturunkan menjadi kontrak tindakan sempit; scope/pemilik disuntikkan kode dan
+tidak pernah menjadi argumen buatan model. Paket pertama adalah read tools
+`task.list_active`, `task.get`, `session.status`, dan `settings.time.get`.
+Sebelum write tool, Harvy memerlukan action receipt/idempotency persisten,
+revision/CAS untuk mencegah stale overwrite, serta bukti permintaan asli yang
+dipasok kode—bukan teks yang dikembalikan planner. Sesudah itu kandidatnya
+`task.create`, `session.start`, `session.stop`, dan `task.set_due`, semuanya
+melalui preview dan approval exact-value sampai contextual authorization
+terbukti aman. `task.complete` diperlakukan destructive-ish selama belum ada
+reopen/undo. `reminder.schedule` tidak dibuka tanpa pasangan
+`reminder.cancel`, validasi waktu terpusat, outbox, receipt, dan reconciler;
+cancel reminder itu sendiri belum tersedia di domain. `task.delete`,
+penghapusan data, serta kontrol memori sensitif tetap workflow deterministik
+sampai undo/kompensasi dan hak pengguna dapat dijaga; arbitrary shell/file
+tool juga bukan surface Harvy.
+
+Claude Code, Codex, dan NousResearch Hermes Agent menunjukkan pola yang sama:
+loop memperoleh observation dari tool lalu memverifikasi hasil; schema,
+registry/availability, permission, dan executor dipisahkan; read yang independen
+dapat paralel tetapi write diserialkan; toolset diberikan seminimal mungkin;
+session/checkpoint dapat dilanjutkan; serta hooks/policy dapat memblokir sebelum
+eksekusi. Harvy mengambil pola itu, bukan luas tool coding agent. Harvy tetap
+membutuhkan batas enam langkah, safety/consent deterministik, scope per orang/
+grup, dan approval manusia karena penggunanya termasuk pelajar serta kanalnya
+multi-pihak. Workflow seperti “pilih satu tugas untuk dimulai” atau “rapikan
+minggu” diperlakukan sebagai skill/resep di atas tool kecil, bukan satu tool
+besar.
+
+Vertical slice yang direkomendasikan adalah **Fokus Satu Tugas**: Harvy membaca
+tugas aktif, menjelaskan satu pilihan, meminta informasi yang benar-benar
+kurang, menampilkan proposal, lalu setelah izin memulai sesi fokus dan—hanya
+bila waktu dipilih pengguna—menjadwalkan check-in/pengingat. Slice ini memakai
+kemampuan internal, dapat membuktikan native/canonical tool calling,
+need-input, approval, pause/resume, idempotency, progress, dan verifikasi
+outcome tanpa API search. Pengaktifan sesi harus mempertahankan pola
+delivery-before-commit yang sudah ada, bukan memanggil mutasi domain dari
+planner secara langsung. `RunStore` tetap dibangun sebagai infrastruktur agent
+generik, bukan `ResearchRunStore`; adapter produksi PostgreSQL dapat menyusul
+setelah kontrak tool dan vertical slice internal stabil.
+
+**Bukti.** Keputusan dibuat setelah membaca ulang `PROJECT.md`, Konstitusi v0.5,
+`engineering/STATUS.md`, entri LOG terbaru, `ADR-012`, dokumen riset agent,
+`capabilities.ts`, `agent-harness.ts`, serta layanan tugas, sesi, dan memori.
+Dokumentasi resmi terkini Codex, Claude Code/Agent SDK, dan repository/dokumentasi
+resmi `NousResearch/hermes-agent` juga diperiksa untuk loop, tool registry,
+permission, session, compaction, delegation, dan security boundary. Tidak ada
+tes, model, provider, Telegram, WhatsApp, atau layanan eksternal yang
+dijalankan; sesi ini hanya mengubah keputusan prioritas dan tidak mengubah kode
+produk maupun status kemampuan.
+
+**Sengaja ditinggalkan.** Belum diputuskan schema final tiap tool, provider
+native-tool adapter pertama, bentuk UI preview/approval, atau apakah vertical
+slice awal memakai checkpoint file yang sudah serializable sebelum PostgreSQL.
+Tidak ada executor internal, `RunStore`, outbox, receipt, atau reconciler baru
+yang dibuat. Research web yang sudah ada tetap opsional dan mati default;
+pengembangan pagination, X/Threads, serta report research durable dibekukan.
+
+## 3 Agustus 2026 — Hot reload development tidak lagi meninggalkan runtime lock
+
+**Kenapa.** `npm run dev` memakai `tsx watch src/app.ts`; setelah dihentikan
+dengan `Ctrl+C`, start berikutnya dapat gagal `LOCAL_DATA_LOCKED` walaupun PID
+pemilik lock sudah mati. Mengganti development command menjadi proses langsung
+memang menghindari perantara itu, tetapi mematikan hot reload dan ditolak
+pemilik produk. Hot reload harus tetap ada sekaligus memberi aplikasi waktu
+menjalankan shutdown normal.
+
+**Yang berubah.** `npm run dev` sekarang menjalankan `scripts/dev-runner.ts`.
+Runner tetap mengawasi `src/`, `.env`, `package.json`, dan `tsconfig.json`, lalu
+meminta child shutdown melalui IPC dan menunggu child keluar sebelum reload.
+`src/app.ts` menerima kontrol development terbatas `dev-restart|dev-stop` lewat
+channel IPC yang hanya aktif bila runner memasang `HARVY_DEV_RUNNER=1`; jalur
+itu memakai supervisor shutdown yang sama dengan `SIGINT`/`SIGTERM`, termasuk
+drain, `shutdown_completed`, dan pelepasan runtime lock. Runner juga menangkap
+`SIGINT`/`SIGTERM`, menunggu grace aplikasi, dan berhenti tanpa restart bila
+batas shutdown terlewati. Kontrak command ditutup oleh test baru, sedangkan
+test integrasi memakai child dengan lock eksklusif untuk membuktikan proses
+baru tidak dimulai sebelum proses lama melepas lock. Petunjuk di `AGENTS.md`,
+`README.md`, status engineering, dan runbook Console ikut diperbarui. Lock lama
+milik PID 14460 dihapus hanya setelah proses pemiliknya dibuktikan sudah mati.
+
+**Dibahas.** Sumber lokal `tsx` 4.23.1 menunjukkan watcher meneruskan signal
+dengan `child.kill(signal)`. Probe proses lokal Windows membuktikan
+`child.kill("SIGINT")` mengakhiri child tanpa menjalankan handler `SIGINT`-nya;
+itulah yang melewati cleanup Harvy. Keputusan akhirnya bukan mematikan watcher
+dan bukan menghapus lock stale otomatis, melainkan mengganti orkestrasi watcher
+development dengan shutdown kooperatif. Lock akibat crash atau penghentian
+paksa tetap sengaja fail-closed dan hanya boleh dihapus setelah PID diperiksa.
+
+**Bukti.** `npm run check` PASS. Target terarah `npm run build` lalu
+`node --test dist/tests/development-command.test.js
+dist/tests/dev-runner.test.js dist/tests/local-runtime-lock.test.js` PASS — 4
+test. Smoke aplikasi nyata dengan WhatsApp dan Console dimatikan mencapai
+`application_ready`, menerima stop kooperatif dari runner, mencatat
+`shutdown_completed`, keluar kode 0, tidak melaporkan `LOCAL_DATA_LOCKED`, dan
+tidak menyisakan lock. `npm test` PASS — 580 test dalam 90 suite, tanpa gagal,
+dibatalkan, dilewati, atau todo. Tekanan tombol `Ctrl+C` fisik tidak disintesis
+oleh test otomatis Windows; handler signal runner memanggil jalur stop yang sama
+yang dibuktikan oleh integrasi dan smoke.
+
+**Sengaja ditinggalkan.** Tidak ada pemulihan lock crash otomatis dan tidak ada
+restart setelah shutdown melewati batas 65 detik. Keduanya dipertahankan agar
+runner tidak pernah menyalakan dua proses yang menulis data lokal bersamaan.
+
 ## 3 Agustus 2026 — Gerbang penuh diluluskan sebelum working tree didorong
 
 **Kenapa.** Working tree berisi rangkaian perubahan Scope & Authority v1 dan

@@ -93,9 +93,15 @@ npm ci                 # instal dari lockfile
 npm run check          # tsc --noEmit, gerbang tipe
 npm test               # build lalu node --test dist/tests/*.test.js
 npm run build          # tsc ke dist/
-npm run dev            # tsx watch src/app.ts, perlu .env berisi TELEGRAM_BOT_TOKEN
+npm run dev            # watcher Harvy; perlu .env, hot reload + Ctrl+C bersih
 npm start              # jalankan hasil build
 ```
+
+`npm run dev` memakai `scripts/dev-runner.ts`, bukan `tsx watch`. Perubahan di
+`src/`, `.env`, `package.json`, atau `tsconfig.json` tetap memicu reload, tetapi
+runner meminta shutdown lewat IPC dan menunggu child melepas runtime lock
+sebelum memulai proses baru. Pada Windows ini wajib: `tsx watch` mematikan child
+dengan sinyal proses yang melewati handler shutdown Harvy.
 
 Tidak ada linter atau formatter terpasang; `npm run check` adalah satu-satunya
 gerbang statis. Tes dijalankan dari hasil build, bukan dari `tests/*.ts`, jadi
@@ -129,17 +135,26 @@ npx tsx scripts/coba-balasan.ts --riwayat=percakapan.json "lanjut dong"
 npx tsx scripts/coba-balasan.ts --listen "besok ada ulangan biologi"
 ```
 
-Keduanya satu-satunya cara memeriksa jalur percakapan tanpa membuka Telegram,
-dan satu-satunya yang menampilkan balasan mentah model — termasuk jalur sempit
+Menguji Agent Runtime read-only dengan kasus sintetis, tanpa Telegram atau data
+pengguna:
+
+```bash
+npx tsx scripts/coba-agent.ts
+```
+
+Tiga probe ini adalah jalur pemeriksaan model tanpa membuka Telegram dan
+menampilkan balasan mentah model — termasuk jalur sempit
 Ubah tenggat dengan `--due` dan keputusan menyimak bubble dengan `--boundary`.
 `coba-balasan.ts` menjalankan lapisan model (pemahaman dan triase paralel,
 balasan, lalu review) dan menampilkan normalisasi/pemecahan bubble; ia tidak
-menjalankan tombol atau state adapter. `--riwayat`
-menyisipkan giliran contoh sehingga kesinambungan dan pengulangan pembuka ikut
+menjalankan tombol atau state adapter. `coba-agent.ts` menjalankan root tools,
+delegasi paralel, dan agenda besok terhadap executor sintetis/virtual; trace
+yang dicetak hanya capability/status, bukan observation atau credential.
+`--riwayat` menyisipkan giliran contoh sehingga kesinambungan dan pengulangan pembuka ikut
 terlihat. Tuliskan `\n` di argumen untuk menguji beberapa bubble sekaligus. Ini
 membedakan balasan terpotong dari balasan rusak. Perlu `.env` berisi kunci
-sungguhan; pakai `AI_MODE=testing` agar gratis. Skrip ini memanggil model, jadi
-ia tidak boleh masuk gerbang otomatis. Kedua probe primary-only secara default
+sungguhan; pakai `AI_MODE=testing` agar gratis. Probe ini memanggil model, jadi
+tidak boleh masuk gerbang otomatis. Semua probe primary-only secara default
 agar model tidak salah atribusi; `--allow-fallback` harus dipilih eksplisit dan
 menampilkan model cadangannya. Runtime, probe, dan evaluator mengambil lock
 atomik yang sama dari `<CONTROL_PLANE_FILE>.runtime.lock`; jangan menjalankan
@@ -286,9 +301,17 @@ tidak mengenal grammY maupun berkas.
   aktif; `context-budget.ts` membatasi perhatian prompt; dan
   `agent-harness.ts` menyediakan loop plan/action/observation berbatas,
   checkpoint pause/resume, approval binding, idempotency key, cancellation,
-  cycle guard, dan generation guard. Kernel ini kini dipakai executor baca-saja
-  pertama pada research privat; run-nya masih sinkron/in-memory dan workflow
-  tugas/memori/sesi tetap deterministik. Workspace surface belum dipasang.
+  cycle guard, generation guard, deadline aktif per invocation, horizon resume
+  absolut, serta irisan capability available dengan executor callable.
+  Checkpoint membekukan hash authority callable dan batas langkah. Kernel
+  dipakai research privat dan Agent Runtime read-only; run masih
+  sinkron/in-memory dan workflow mutasi tugas/memori/sesi tetap deterministik.
+  Workspace surface belum dipasang.
+- `src/agent/` — executor Agent Runtime privat: baca tugas/sesi/waktu/agenda
+  internal, fast path jam deterministik, terminal virtual in-memory tanpa
+  shell/host/network, serta delegasi satu tingkat maksimal tiga worker
+  `cheap|efficient`. Worker tidak menerima tool, memori, atau hak delegasi;
+  hanya root `ambitious` pada giliran kompleks yang dapat melakukan fan-out.
 - `src/research/` — executor `web.search`/`web.open`: adapter Brave Search
   endpoint tetap, schema input tertutup, observation berbatas, serta HTTP reader
   yang memvalidasi seluruh DNS publik, mem-pin IP, memeriksa ulang redirect,
@@ -564,8 +587,10 @@ Invarian yang harus dijaga:
   mengeksekusi satu `web.search`; `web.open` hanya menerima URL kanonik dari
   pesan pengguna atau hasil search sukses run yang sama. Final wajib mempunyai
   observation sukses, dan URL/domain lain harus ditahan. Normalisasi copy
-  Telegram tidak boleh mengubah karakter URL. Ini belum menggantikan durable
-  run, cancellation dari command/generation luar, atau groundedness per klaim.
+  Telegram tidak boleh mengubah karakter URL. Signal command/generation
+  Telegram wajib diteruskan sampai planner/client/executor, tetapi ini belum
+  menggantikan durable run, delivery atomik/cancellation lintas proses, crash
+  recovery, atau groundedness per klaim.
 - `ownerId` (Telegram `from.id`) adalah batas isolasi data privat lama. Setiap
   metode repository pribadi menerima `ownerId`; jangan menambah kueri tugas
   tanpa itu. Kode channel-neutral baru memakai `AgentScope`: privat adalah

@@ -15,6 +15,7 @@ export type AiPurpose =
   | "reply"
   | "reply-review"
   | "summary"
+  | "agent"
   | "research"
   | "insight"
   | "session"

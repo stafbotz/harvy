@@ -167,6 +167,7 @@ describe("AiClient", () => {
     assert.equal(body["contextManifest"], undefined);
     assert.equal(body["operation"], undefined);
     assert.doesNotMatch(JSON.stringify(body), /tidak boleh terkirim/u);
+    assert.doesNotMatch(JSON.stringify(body), /kunci-uji/u);
     const completed = infoLogs.find(
       (entry) => entry.event === "ai_request_completed",
     );
@@ -313,6 +314,10 @@ describe("AiClient", () => {
       "Bearer cadangan-rahasia",
     );
     assert.equal(fallbackBodies[0]?.model, "model-fallback");
+    assert.doesNotMatch(
+      JSON.stringify(fallbackBodies[0]),
+      /(?:utama-[12]|cadangan-rahasia)/u,
+    );
     assert.deepEqual(
       before.slice(0, 1).map((context) => context.model),
       ["model-utama"],

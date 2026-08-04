@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { AiClient } from "./ai/client.js";
 import { Conversation } from "./ai/conversation.js";
 import { GroupConversation } from "./ai/group-conversation.js";
-import { withUsageAttribution } from "./ai/usage-attribution.js";
+import { createModelAgentWorker } from "./ai/agent.js";
+import {
+  currentUsageAttribution,
+  withUsageAttribution,
+} from "./ai/usage-attribution.js";
 import { createBot } from "./bot/create-bot.js";
 import {
   aiClientOptions,
@@ -74,6 +78,9 @@ import {
   WebOpenExecutor,
   WebSearchExecutor,
 } from "./research/web-executors.js";
+import { createInternalAgentExecutors } from "./agent/internal-executors.js";
+import { VirtualTerminalExecutor } from "./agent/virtual-terminal.js";
+import { ParallelDelegationExecutor } from "./agent/parallel-delegation.js";
 
 async function main(): Promise<void> {
 const logSystem = await createOperationalLogSystem(
@@ -85,6 +92,7 @@ const removeProcessDiagnostics = installProcessDiagnostics(
   logger.child("process"),
 );
 let runtimeLock: LocalRuntimeLock | null = null;
+let removeDevShutdownControl: () => void = () => undefined;
 
 try {
 const config = loadConfig();
@@ -136,6 +144,13 @@ const aiClient = new AiClient({
   costCenter: "runtime",
   logger: logger.child("ai.client"),
 });
+// Authority internal perlu tersedia sebelum registry agent dibentuk. Scope
+// executor tetap mengambil owner dari AgentExecutionContext, bukan dari model.
+const profiles = new ProfileService(
+  new FileProfileRepository(config.profileFile),
+);
+const sessionRepository = new FileSessionRepository(config.sessionFile);
+const sessions = new SessionService(sessionRepository, sessionRepository);
 const webExecutors = [
   ...(config.web.searchApiKey
     ? [new WebSearchExecutor(new BraveWebSearchProvider(
@@ -149,11 +164,26 @@ const webExecutors = [
       }))]
     : []),
 ];
-// Satu registry tepercaya dipakai semua kanal. Capability web hanya tersedia
-// bila executor dan konfigurasi egress yang cocok benar-benar dipasang.
+const internalExecutors = createInternalAgentExecutors({
+  tasks,
+  profiles,
+  sessions,
+  defaultTimeZone: config.defaultTimezone,
+});
+const agentExecutors = [
+  ...webExecutors,
+  ...internalExecutors,
+  new VirtualTerminalExecutor(),
+  new ParallelDelegationExecutor(createModelAgentWorker(aiClient, config.ai)),
+];
+// Satu registry tepercaya dipakai semua kanal. Capability hanya tersedia bila
+// executor dan dependency yang cocok benar-benar dipasang.
 const agentHarness = new AgentHarness(createHarvyCapabilityCatalog({
   webSearchInstalled: config.web.searchApiKey !== null,
   webOpenInstalled: config.web.openEnabled,
+  internalToolsInstalled: true,
+  virtualTerminalInstalled: true,
+  parallelDelegationInstalled: true,
 }));
 const conversation = new Conversation(
   aiClient,
@@ -162,7 +192,7 @@ const conversation = new Conversation(
   () => new Date(),
   logger.child("ai.conversation"),
   agentHarness,
-  webExecutors,
+  agentExecutors,
 );
 
 // Memori berupa berkas Markdown, satu folder per pengguna. Berkas JSON lama
@@ -181,12 +211,6 @@ const history = new HistoryService(
   logger.child("core.history"),
 );
 
-// Status kenalan sengaja terpisah dari memori dan riwayat: menghapus ingatan
-// adalah hak pengguna, dan hak itu tidak boleh berubah menjadi perkenalan ulang.
-const profiles = new ProfileService(
-  new FileProfileRepository(config.profileFile),
-);
-
 // Catatan tersembunyi tinggal di folder yang sama dengan memori pengguna,
 // supaya "hapus semua data" berarti satu tempat. Konstitusi v0.3 Pasal 4
 // nomor 6 mengizinkannya justru dengan syarat batas-batasnya jelas.
@@ -196,8 +220,6 @@ const insights = new InsightService(
     conversation.readInsight(summary, turns, ownerId),
 );
 
-const sessionRepository = new FileSessionRepository(config.sessionFile);
-const sessions = new SessionService(sessionRepository, sessionRepository);
 const dataControls = new DataControlService(
   tasks,
   memories,
@@ -362,6 +384,19 @@ const whatsapp = config.whatsapp.enabled
 let groupPurgeTimer: NodeJS.Timeout | null = null;
 
 if (whatsapp && groupMemories) {
+  const groupUsageControl = {
+    allow: (ownerId: string) => telemetry.allow(ownerId),
+    forget: (ownerId: string) => telemetry.forget(ownerId),
+    forgetActor: (ownerId: string, actorAliases: readonly string[]) =>
+      telemetry.forgetActor(ownerId, actorAliases),
+    markDelivered: (ownerId: string) =>
+      telemetry.markDelivered(ownerId, currentUsageAttribution()?.turnId ?? null),
+    discardUndelivered: (ownerId: string) =>
+      telemetry.discardUndelivered(
+        ownerId,
+        currentUsageAttribution()?.turnId ?? null,
+      ),
+  };
   groupTurns = new GroupTurnService(
     groupMemories,
     new GroupConversation(
@@ -374,7 +409,7 @@ if (whatsapp && groupMemories) {
     whatsapp,
     GROUP_NOTICE_VERSION,
     () => new Date(),
-    telemetry,
+    groupUsageControl,
     logger.child("core.group-turn"),
     config.operationalLog.retentionDays,
     config.defaultTimezone,
@@ -438,6 +473,8 @@ const shutdown = (
   reason:
     | "SIGINT"
     | "SIGTERM"
+    | "dev-restart"
+    | "dev-stop"
     | "polling-ended"
     | "runtime-failed",
 ): void => {
@@ -528,6 +565,11 @@ const shutdown = (
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+removeDevShutdownControl = installDevShutdownControl((reason) => {
+  // Ctrl+C sampai ke parent runner dan aplikasi pada terminal Windows. Abaikan
+  // pesan IPC pendamping bila shutdown dari signal sudah lebih dulu dimulai.
+  if (!shutdownPromise) shutdown(reason);
+});
 
 try {
   if (consoleServer) {
@@ -641,6 +683,7 @@ if (shutdownPromise) {
     // Sink sudah melaporkan kegagalannya sendiri ke stderr yang telah disaring.
   }
 } finally {
+  removeDevShutdownControl();
   try {
     await runtimeLock?.release();
   } catch {
@@ -685,6 +728,52 @@ function runtimeEnvironment(
 ): "development" | "staging" | "production" {
   if (value === "production" || value === "staging") return value;
   return "development";
+}
+
+type DevShutdownReason = "dev-restart" | "dev-stop";
+
+function installDevShutdownControl(
+  onShutdown: (reason: DevShutdownReason) => void,
+): () => void {
+  if (
+    process.env.HARVY_DEV_RUNNER !== "1" ||
+    typeof process.send !== "function"
+  ) {
+    return () => undefined;
+  }
+
+  const onMessage = (message: unknown): void => {
+    if (
+      typeof message !== "object" ||
+      message === null ||
+      !("type" in message) ||
+      message.type !== "harvy-dev-shutdown" ||
+      !("reason" in message) ||
+      (message.reason !== "dev-restart" && message.reason !== "dev-stop")
+    ) {
+      return;
+    }
+    onShutdown(message.reason);
+  };
+
+  process.on("message", onMessage);
+  process.channel?.unref();
+  try {
+    process.send({ type: "harvy-dev-control-ready" });
+  } catch {
+    // Parent sudah berhenti; signal OS dan exit cleanup tetap menjadi pagar.
+  }
+
+  return () => {
+    process.off("message", onMessage);
+    if (process.connected) {
+      try {
+        process.disconnect();
+      } catch {
+        // Channel parent sudah tutup; proses tetap boleh menyelesaikan cleanup.
+      }
+    }
+  };
 }
 
 async function runManagedGroupTurn(

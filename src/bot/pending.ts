@@ -11,6 +11,8 @@
  */
 import { randomUUID } from "node:crypto";
 import type { ExtractedMemory, ExtractedTask } from "../ai/understand.js";
+import type { AgentMode } from "../ai/agent.js";
+import type { AgentRunCheckpoint } from "../harness/agent-harness.js";
 
 export type Pending =
   | { kind: "confirm-task"; task: ExtractedTask }
@@ -27,7 +29,14 @@ export type Pending =
       sessionId: string;
       step: "timezone" | "quiet-hours";
     }
-  | { kind: "custom-quiet-hours"; sessionId: string | null };
+  | { kind: "custom-quiet-hours"; sessionId: string | null }
+  | {
+      kind: "agent-input";
+      request: string;
+      mode: AgentMode;
+      intent: "question" | "request";
+      checkpoint: AgentRunCheckpoint;
+    };
 
 interface Entry {
   value: Pending;

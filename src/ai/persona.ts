@@ -476,6 +476,8 @@ export interface ReplyPromptOptions {
   activeSession?: ActiveSession | null;
   /** Label tombol yang benar-benar telah diizinkan kode untuk giliran ini. */
   plannedActionLabels?: readonly string[];
+  /** Fase fanout tahu ada riwayat, tetapi sengaja tidak menerima isinya. */
+  suppressFirstMessageClaim?: boolean;
 }
 
 /** Di atas ini, sebuah pesan tidak mungkin lagi disebut celetukan. */
@@ -494,7 +496,7 @@ export function replyPrompt(
 
   const parts = [HARVY_IDENTITY, "", clockNote(now, timeZone)];
 
-  if (isEmptyContext(context)) {
+  if (isEmptyContext(context) && !options.suppressFirstMessageClaim) {
     // "Ada yang mau dibahas lagi?" pada pesan pertama seseorang adalah
     // mengarang percakapan yang tidak pernah ada — Pasal 5 nomor 6.
     parts.push(

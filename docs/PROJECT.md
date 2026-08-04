@@ -249,8 +249,10 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   bersama perkenalan kontak pertama. Pesan pertama boleh menjalani satu triase
   keselamatan sebelum persetujuan, lalu ditahan; pemahaman, personalisasi,
   analitik, dan pesan berikutnya menunggu tombol persetujuan. Persetujuan kini
-  dapat ditarik dari dalam chat tanpa menghapus data. Perubahan terakhir ini
-  sudah teruji otomatis, tetapi belum diuji lewat Telegram.
+  dapat ditarik dari dalam chat tanpa menghapus data. Versi 5 juga menjelaskan
+  fan-out 2–3 worker untuk permintaan kompleks yang aman; worker tidak mendapat
+  memori, riwayat, credential, atau tool. Perubahan terakhir ini sudah teruji
+  otomatis, tetapi belum diuji lewat Telegram.
 - [x] Pengalaman pengguna pertama: Harvy berkenalan sebelum menjelaskan cara
   pakai, dipicu kontak pertama dan bukan oleh `/start`. Pesan yang telanjur
   dikirim ditahan lalu diproses sendiri setelah persetujuan.
@@ -277,8 +279,16 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   observation tak tepercaya, serta URL sumber yang harus berasal dari hasil
   teramati. Context privat lama tidak masuk planner; satu run hanya mengirim
   satu query dan open dibatasi ke URL pesan/hasil search run yang sama. Run
-  masih sinkron/in-memory; cancellation command luar, X/Threads, dan workspace
-  report durable belum ada.
+  masih sinkron/in-memory; abort command/generation Telegram sudah diteruskan,
+  tetapi delivery jaringan tidak atomik dan durable/background report,
+  cross-process crash recovery, X/Threads, serta workspace report belum ada.
+- [x] Agent Runtime privat cheap-first untuk pertanyaan dan permintaan tenang:
+  tool baca tugas/sesi/waktu/agenda Harvy, fast path jam deterministik, terminal
+  virtual sementara, serta root ambitious yang dapat mendelegasikan 2–3
+  subpekerjaan read-only kepada worker cheap/efficient secara paralel. Worker
+  tidak menerima tool/memori/delegasi. Shell host, kalender eksternal, dan
+  seluruh tool write tetap ditutup. Checkpoint klarifikasi dapat dilanjutkan
+  selama horizon absolut 10 menit tetapi hanya in-memory; lihat `ADR-017`.
 - [x] Scope & Authority v1 sebagai fondasi core: `WorkspaceScope`, principal
   pseudonim, membership/role/permission, `aclEpoch`, invalidasi scope lama,
   capability filter, dan adapter file atomik. Belum ada ingress, UI, artifact,
@@ -326,13 +336,14 @@ yang selalu menaikkannya ke tingkatan tertinggi.
 
 | Tingkatan | Rencana model | Dipakai untuk |
 |---|---|---|
-| `cheap` | DeepSeek V4 Flash | Mengurai tugas, klasifikasi, balasan rutin |
-| `efficient` | GPT 5.6 Luna | Percakapan sehari-hari, langkah kecil, penjelasan ringan |
-| `ambitious` | GPT 5.6 Terra | Tutoring bertahap dan perencanaan panjang |
+| `cheap` | DeepSeek V4 Flash | Mengurai tugas, klasifikasi, balasan rutin, root agent/tool sederhana, worker murah |
+| `efficient` | GPT 5.6 Luna | Percakapan sehari-hari, keselamatan, langkah kecil, worker yang perlu bahasa lebih kuat |
+| `ambitious` | GPT 5.6 Terra | Tutoring bertahap, root orkestrator, sintesis dan perencanaan panjang |
 
 Produksi memakai OpenRouter sebagai gerbang tunggal agar tagihan tidak tersebar.
-Selama pengembangan, `AI_MODE=testing` mengarahkan seluruh tingkatan ke satu
-model cepat (Gemini 3.5 Flash-Lite dari Google AI Studio). Mode testing boleh
+Selama pengembangan, `AI_MODE=testing` mengarahkan seluruh tingkatan—termasuk
+root ambitious dan worker—ke satu model cepat (Gemini 3.5 Flash-Lite dari
+Google AI Studio) kecuali override tier diisi. Mode testing boleh
 memasang satu provider OpenAI-compatible sebagai cadangan agar gangguan
 sementara primary tidak menghentikan seluruh percakapan. Cadangan tidak pernah
 aktif di production, tidak menggantikan batas keselamatan, dan dapat menerima
@@ -456,8 +467,8 @@ bersedia dan proses persetujuan peserta/wali sudah siap.
 - Mengembangkan executor web awal menjadi research workspace durable di atas
   fondasi scope+ACL v1 yang sudah ada: ingress membership, artifact
   bersitasi, groundedness per klaim, retrieval/RAG, pagination dan keragaman
-  sumber, cancellation dari lifecycle luar, lalu konektor khusus X/Threads
-  setelah durable run terbukti.
+  sumber, cancellation lintas proses dan crash recovery, lalu konektor khusus
+  X/Threads setelah durable run terbukti.
 - Memperluas fondasi grup WhatsApp dan menyambungkan core yang sama ke
   Telegram. Shared room memory eksplisit untuk keputusan/agenda/norma/kegiatan
   sudah ada di core; room social adaptation yang berizin, inside joke yang

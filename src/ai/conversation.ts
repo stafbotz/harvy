@@ -25,6 +25,13 @@ import {
   type ModelTier,
 } from "./model-policy.js";
 import {
+  agentPlannerInput,
+  agentPlannerPrompt,
+  parseAgentPlannerDecision,
+  liveStateRequirement,
+  type AgentMode,
+} from "./agent.js";
+import {
   depthDirective,
   dueDateInput,
   dueDatePrompt,
@@ -67,7 +74,11 @@ import {
   DEFAULT_HARVY_AGENT_HARNESS,
   type AgentCapabilityExecutor,
   type AgentHarness,
+  type AgentObservation,
+  type AgentPlannerDecision,
   type AgentPlannerInput,
+  type AgentRunCheckpoint,
+  type AgentRunResult,
 } from "../harness/agent-harness.js";
 import {
   compileHarvyContext,
@@ -86,6 +97,7 @@ import {
   RESEARCH_PLANNER_PROMPT,
   researchPlannerInput,
 } from "./research.js";
+import { deterministicTimeReply } from "../agent/time-fast-path.js";
 
 export interface RoutingConfig {
   mode: "testing" | "production";
@@ -101,6 +113,12 @@ export interface ConversationRuntime {
   timeZone?: string;
   session?: ActiveSession | null;
   plannedActionLabels?: readonly string[];
+  /** Kontrak suara/intent untuk jawaban final Agent Runtime. */
+  style?: StylePreference | null;
+  intent?: ConversationIntent;
+  /** Cancellation dan generation guard dari adapter untuk run agent panjang. */
+  signal?: AbortSignal;
+  isCurrent?: () => boolean | Promise<boolean>;
 }
 
 /**
@@ -195,6 +213,7 @@ export class Conversation {
       maxTokens: UNDERSTANDING_MAX_TOKENS,
       json: true,
       validateResponse: (content) => parseUnderstanding(content) !== null,
+      ...(runtime.signal ? { signal: runtime.signal } : {}),
       contextManifest,
       usage: this.usage(runtime.ownerId, "cheap", "understanding"),
       messages: [
@@ -313,6 +332,7 @@ export class Conversation {
     message: string,
     ownerId?: string,
     context: HarvyContext = EMPTY_CONTEXT,
+    signal?: AbortSignal,
   ): Promise<RiskTriage | null> {
     const { context: boundedContext, manifest: contextManifest } =
       compileHarvyContext(
@@ -327,6 +347,7 @@ export class Conversation {
       timeoutMs: TRIAGE_TIMEOUT_MS,
       json: true,
       validateResponse: (content) => parseRiskTriage(content) !== null,
+      ...(signal ? { signal } : {}),
       contextManifest,
       usage: this.usage(ownerId, "cheap", "risk-triage", true),
       messages: [
@@ -365,6 +386,7 @@ export class Conversation {
     },
     ownerId?: string,
     context: HarvyContext = EMPTY_CONTEXT,
+    signal?: AbortSignal,
   ): Promise<boolean | null> {
     const { context: boundedContext, manifest: contextManifest } =
       compileHarvyContext(
@@ -379,6 +401,7 @@ export class Conversation {
       timeoutMs: REVIEW_TIMEOUT_MS,
       json: true,
       validateResponse: (content) => parseReplyVerdict(content) !== null,
+      ...(signal ? { signal } : {}),
       contextManifest,
       usage: this.usage(ownerId, "cheap", "reply-review", true),
       messages: [
@@ -496,6 +519,7 @@ export class Conversation {
         "reply",
         triage.level !== "biasa",
       ),
+      ...(runtime.signal ? { signal: runtime.signal } : {}),
       messages: [
         { role: "system", content: system },
         ...recentTurnMessages(boundedContext.turns),
@@ -546,10 +570,15 @@ export class Conversation {
     runtime: ConversationRuntime = {},
   ): Promise<string> {
     const compiled = compileHarvyContext(context);
+    const webExecutors = this.agentExecutors.filter(
+      (executor) =>
+        executor.capabilityId === "web.search" ||
+        executor.capabilityId === "web.open",
+    );
     const result = await this.harness.run({
       scope: this.runtimeScope(runtime),
       request: message,
-      executors: createScopedResearchExecutors(this.agentExecutors, message),
+      executors: createScopedResearchExecutors(webExecutors, message),
       limits: {
         maxSteps: 6,
         deadlineMs: 45_000,
@@ -564,6 +593,8 @@ export class Conversation {
           runtime.ownerId,
           signal,
         ),
+      ...(runtime.signal ? { signal: runtime.signal } : {}),
+      ...(runtime.isCurrent ? { isCurrent: runtime.isCurrent } : {}),
     });
 
     if (result.status === "completed") {
@@ -593,6 +624,217 @@ export class Conversation {
     return result.reason === "deadline"
       ? "Research web belum selesai sebelum batas waktu. Aku belum akan mengarang hasilnya."
       : "Research web berhenti sebelum menghasilkan jawaban yang dapat diverifikasi.";
+  }
+
+  /**
+   * Agent Runtime v1 untuk giliran biasa yang read-only.
+   *
+   * Root cheap menangani pekerjaan sederhana dan tool atomik. Root ambitious
+   * hanya dipilih kode untuk pekerjaan kompleks dan menjadi satu-satunya yang
+   * dapat melihat capability delegasi paralel.
+   */
+  async agent(
+    message: string,
+    mode: AgentMode,
+    context: HarvyContext = EMPTY_CONTEXT,
+    runtime: ConversationRuntime = {},
+    checkpoint?: AgentRunCheckpoint,
+    answer?: string,
+  ): Promise<AgentRunResult> {
+    const compiled = compileHarvyContext(context);
+    const allowed = new Set([
+      "task.list_active",
+      "task.get",
+      "session.status",
+      "settings.time.get",
+      "calendar.agenda",
+      "terminal.run",
+      ...(mode === "orchestrate" ? ["agent.delegate.parallel"] : []),
+    ]);
+    const executors = this.agentExecutors.filter((executor) =>
+      allowed.has(executor.capabilityId)
+    );
+    const result = await this.harness.run({
+      scope: this.runtimeScope(runtime),
+      request: message,
+      executors,
+      limits: {
+        maxSteps: 6,
+        deadlineMs: 45_000,
+        resumeWindowMs: 10 * 60 * 1_000,
+        maxReplyCharacters: 8_000,
+        maxObservationCharacters: 4_000,
+      },
+      planner: (input, signal) =>
+        this.planAgent(
+          input,
+          compiled.context,
+          compiled.manifest,
+          mode,
+          runtime,
+          signal,
+        ),
+      ...(runtime.signal ? { signal: runtime.signal } : {}),
+      ...(runtime.isCurrent ? { isCurrent: runtime.isCurrent } : {}),
+      ...(checkpoint ? { checkpoint } : {}),
+      ...(answer ? { answer } : {}),
+    });
+    return withDelegationDisclosure(result);
+  }
+
+  deterministicTimeReply(timeZone = this.defaultTimeZone): string {
+    return deterministicTimeReply(this.now(), timeZone);
+  }
+
+  private async planAgent(
+    input: AgentPlannerInput,
+    context: HarvyContext,
+    contextManifest: ReturnType<typeof compileHarvyContext>["manifest"],
+    mode: AgentMode,
+    runtime: ConversationRuntime,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    // Langkah nol adalah satu-satunya tempat delegasi dapat dieksekusi. Dengan
+    // mengosongkan konteks di fase ini, root tidak dapat menyalin memori atau
+    // riwayat tersimpan ke instruksi worker. Konteks kembali untuk sintesis.
+    const plannerContext =
+      mode === "orchestrate" && input.step === 0 ? EMPTY_CONTEXT : context;
+    let plannerInput: AgentPlannerInput = input.step === 0
+      ? input
+      : {
+          ...input,
+          callableCapabilities: input.callableCapabilities.filter(
+            (capability) => capability.id !== "agent.delegate.parallel",
+          ),
+        };
+    const isContextFreeFanout = mode === "orchestrate" && input.step === 0;
+    let decision = await this.requestAgentDecision(
+      plannerInput,
+      plannerContext,
+      isContextFreeFanout
+        ? compileHarvyContext(EMPTY_CONTEXT).manifest
+        : contextManifest,
+      mode,
+      runtime,
+      signal,
+      isContextFreeFanout,
+      isContextFreeFanout,
+    );
+    // Jawaban/pertanyaan langsung dari fase fanout belum melihat konteks. Ulangi
+    // sekali sebagai sintesis kontekstual dengan delegasi dihapus dari authority.
+    if (
+      isContextFreeFanout &&
+      (decision.kind !== "action" ||
+        decision.capabilityId !== "agent.delegate.parallel")
+    ) {
+      plannerInput = {
+        ...input,
+        callableCapabilities: input.callableCapabilities.filter(
+          (capability) => capability.id !== "agent.delegate.parallel",
+        ),
+      };
+      decision = await this.requestAgentDecision(
+        plannerInput,
+        context,
+        contextManifest,
+        mode,
+        runtime,
+        signal,
+        false,
+        false,
+      );
+    }
+    const callableIds = new Set(
+      plannerInput.callableCapabilities.map((capability) => capability.id),
+    );
+    const required = liveStateRequirement(input.request, {
+      now: this.now(),
+      timeZone: runtime.timeZone ?? this.defaultTimeZone,
+    });
+    if (required) {
+      const observed = input.observations.some((observation) =>
+        satisfiesLiveStateRequirement(observation, required)
+      );
+      // Query state-live berpresisi tinggi sudah memuat input yang cukup.
+      // Planner tidak boleh mengubahnya menjadi klarifikasi sebelum authority
+      // live dibaca, sama seperti ia tidak boleh memberi final dari memori.
+      if (!observed && decision.kind !== "action") {
+        if (!callableIds.has(required.capabilityId)) {
+          throw new Error("Capability state-live yang diperlukan tidak callable.");
+        }
+        return {
+          kind: "action",
+          capabilityId: required.capabilityId,
+          capabilityVersion: "1",
+          input: required.input,
+        };
+      }
+      if (
+        observed &&
+        decision.kind === "final" &&
+        required.coverageNote &&
+        !decision.reply.includes(required.coverageNote)
+      ) {
+        return {
+          ...decision,
+          reply: `${decision.reply}\n\n${required.coverageNote}`,
+        };
+      }
+    }
+    return decision;
+  }
+
+  private async requestAgentDecision(
+    plannerInput: AgentPlannerInput,
+    plannerContext: HarvyContext,
+    contextManifest: ReturnType<typeof compileHarvyContext>["manifest"],
+    mode: AgentMode,
+    runtime: ConversationRuntime,
+    signal: AbortSignal,
+    contextFree: boolean,
+    suppressFirstMessageClaim: boolean,
+  ): Promise<AgentPlannerDecision> {
+    const tier: ModelTier = mode === "orchestrate" ? "ambitious" : "cheap";
+    const callableIds = new Set(
+      plannerInput.callableCapabilities.map((capability) => capability.id),
+    );
+    // Prompt sistem membawa suara/waktu/gaya. Konteks tersimpan berada sekali:
+    // ringkasan/memori sebagai data terbungkus di system prompt, dan
+    // recent turns sebagai pesan chat sungguhan sesuai kontrak reply Harvy.
+    const persona = replyPrompt(runtime.intent ?? null, {
+      context: plannerContext,
+      style: contextFree ? null : runtime.style ?? null,
+      now: this.now(),
+      timeZone: contextFree
+        ? this.defaultTimeZone
+        : runtime.timeZone ?? this.defaultTimeZone,
+      suppressFirstMessageClaim,
+    });
+    const raw = await this.client.complete({
+      model: resolveModel(tier, this.routing),
+      temperature: 0.1,
+      maxTokens: RESEARCH_PLANNER_MAX_TOKENS,
+      json: true,
+      signal,
+      contextManifest,
+      validateResponse: (content) =>
+        parseAgentPlannerDecision(content, callableIds) !== null,
+      usage: this.usage(runtime.ownerId, tier, "agent"),
+      messages: [
+        {
+          role: "system",
+          content: `${persona}\n\n${agentPlannerPrompt(plannerInput.callableCapabilities)}`,
+        },
+        ...recentTurnMessages(plannerContext.turns),
+        {
+          role: "user",
+          content: agentPlannerInput(plannerInput, EMPTY_CONTEXT, mode),
+        },
+      ],
+    });
+    const decision = parseAgentPlannerDecision(raw, callableIds);
+    if (!decision) throw new Error("Planner agent mengembalikan keputusan tidak sah.");
+    return decision;
   }
 
   private async planResearch(
@@ -697,6 +939,77 @@ export class Conversation {
       runtime.ownerId ?? "runtime-anonim",
     );
   }
+}
+
+function satisfiesLiveStateRequirement(
+  observation: AgentObservation,
+  required: NonNullable<ReturnType<typeof liveStateRequirement>>,
+): boolean {
+  if (
+    observation.capabilityId !== required.capabilityId ||
+    observation.status !== "ok"
+  ) {
+    return false;
+  }
+  if (
+    required.capabilityId !== "calendar.agenda" &&
+    required.capabilityId !== "task.list_active"
+  ) return true;
+  try {
+    const payload: unknown = JSON.parse(observation.summary);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return false;
+    }
+    const record = payload as Record<string, unknown>;
+    if (required.capabilityId === "calendar.agenda") {
+      const observedDays = record.days;
+      const requiredDays = required.input.days;
+      const requiredLocalDate = required.input.localDate;
+      const observedLocalDate = record.localDate;
+      return typeof observedDays === "number" &&
+        typeof requiredDays === "number" &&
+        observedDays >= requiredDays &&
+        (requiredLocalDate === undefined ||
+          (typeof requiredLocalDate === "string" &&
+            observedLocalDate === requiredLocalDate));
+    }
+    const observedLimit = record.limit;
+    const requiredLimit = required.input.limit;
+    return typeof observedLimit === "number" &&
+      typeof requiredLimit === "number" &&
+      observedLimit >= requiredLimit;
+  } catch {
+    return false;
+  }
+}
+
+function withDelegationDisclosure(result: AgentRunResult): AgentRunResult {
+  if (result.status !== "completed") return result;
+  for (const observation of result.checkpoint.observations) {
+    if (observation.capabilityId !== "agent.delegate.parallel") continue;
+    try {
+      const parsed = JSON.parse(observation.summary) as Record<string, unknown>;
+      if (
+        parsed.kind !== "agent.delegate.parallel.result" ||
+        parsed.partial !== true ||
+        typeof parsed.requested !== "number" ||
+        typeof parsed.succeeded !== "number"
+      ) {
+        continue;
+      }
+      const note = parsed.succeeded === 0
+        ? "Catatan: semua sub-agent gagal, jadi hasil di atas tidak memakai keluaran mereka."
+        : `Catatan: hanya ${parsed.succeeded} dari ${parsed.requested} sub-agent yang berhasil; hasilnya bersifat parsial.`;
+      return {
+        ...result,
+        reply: `${result.reply.slice(0, 7_600)}\n\n${note}`,
+      };
+    } catch {
+      // Observation adalah data tak tepercaya. JSON rusak tidak boleh mengubah
+      // jawaban menjadi klaim keberhasilan parsial yang dibuat-buat.
+    }
+  }
+  return result;
 }
 
 function sessionIntent(session: ActiveSession): ConversationIntent {

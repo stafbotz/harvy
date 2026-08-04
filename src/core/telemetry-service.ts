@@ -9,10 +9,13 @@ import type {
   UsageObserver,
   UsageTier,
 } from "../domain/telemetry.js";
+
 import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
 } from "../observability/operational-logger.js";
+
+const DAY_MS = 24 * 60 * 60 * 1_000;
 
 export interface TierPrice {
   inputPerMillionUsd: number;
@@ -53,9 +56,10 @@ export interface RelatedUsageLedger {
     usage: TokenUsage,
     outcome: { succeeded: boolean },
   ): Promise<void>;
-  markDelivered?(ownerId: string): Promise<void>;
-  discardUndelivered?(ownerId: string): Promise<void>;
+  markDelivered?(ownerId: string, turnId: string | null): Promise<void>;
+  discardUndelivered?(ownerId: string, turnId: string | null): Promise<void>;
   debitedTokens?(ownerId: string, since: Date): Promise<number | null>;
+  pendingDebitTokens?(ownerId: string, since: Date): Promise<number>;
   forgetOwner(ownerId: string): Promise<void>;
   allowOwner?(ownerId: string): Promise<void>;
   forgetActor?(
@@ -121,10 +125,14 @@ export class TelemetryService implements UsageObserver {
       const limit = await this.limitForOwner(context.ownerId);
       if (!context.safetyCritical && limit > 0) {
         const summary = await this.summary(context.ownerId);
+        const since = new Date(this.now().getTime() - DAY_MS);
+        const pendingDebit = this.relatedUsageLedger?.pendingDebitTokens
+          ? await this.relatedUsageLedger.pendingDebitTokens(context.ownerId, since)
+          : 0;
         const reserved = this.reservations.get(context.ownerId) ?? 0;
         const requested = context.inputTokenEstimate + context.maxTokens;
         if (
-          summary.capacityUsedTokens + reserved + requested >
+          summary.capacityUsedTokens + pendingDebit + reserved + requested >
           limit
         ) {
           throw new UsageLimitError();
@@ -147,15 +155,9 @@ export class TelemetryService implements UsageObserver {
     outcome: { succeeded: boolean; latencyMs: number },
   ): Promise<void> {
     let shouldSettle = false;
+    let holdReservationUntilSettlement = false;
+    const requested = context.inputTokenEstimate + context.maxTokens;
     await this.exclusive(context.ownerId, async () => {
-      if (!context.safetyCritical) {
-        const reserved = this.reservations.get(context.ownerId) ?? 0;
-        const requested = context.inputTokenEstimate + context.maxTokens;
-        const remaining = Math.max(0, reserved - requested);
-        if (remaining > 0) this.reservations.set(context.ownerId, remaining);
-        else this.reservations.delete(context.ownerId);
-      }
-
       const requestGeneration = this.requestGenerations.get(context.requestId);
       this.requestGenerations.delete(context.requestId);
       const currentGeneration = this.generations.get(context.ownerId) ?? 0;
@@ -165,6 +167,7 @@ export class TelemetryService implements UsageObserver {
         requestGeneration.generation !== currentGeneration ||
         this.forgottenOwners.has(context.ownerId)
       ) {
+        this.releaseReservation(context.ownerId, requested, context.safetyCritical);
         return;
       }
 
@@ -201,6 +204,10 @@ export class TelemetryService implements UsageObserver {
       pending.push(record);
       this.pendingUsage.set(context.ownerId, pending);
       shouldSettle = true;
+      holdReservationUntilSettlement = record.billable;
+      if (!holdReservationUntilSettlement) {
+        this.releaseReservation(context.ownerId, requested, context.safetyCritical);
+      }
     });
     if (shouldSettle && this.relatedUsageLedger) {
       const settlement = this.relatedUsageLedger.settleEntitlement(
@@ -208,12 +215,37 @@ export class TelemetryService implements UsageObserver {
         usage,
         { succeeded: outcome.succeeded },
       );
+      if (holdReservationUntilSettlement) {
+        try {
+          // Kandidat delivery harus tercatat sebelum estimasi request ini
+          // dilepas; kalau tidak, langkah agent berikutnya dapat menyalip cap.
+          await settlement;
+          await this.exclusive(context.ownerId, async () => {
+            this.releaseReservation(context.ownerId, requested, false);
+          });
+        } catch (error) {
+          // Fail-closed: reservation dipertahankan bila kandidat debit gagal
+          // dibentuk. Balasan tetap boleh dikirim, tetapi kuota tidak dapat
+          // dilewati oleh request lanjutan pada proses ini.
+          this.logger.warn(
+            "entitlement_settlement_failed",
+            "Settlement entitlement gagal; reservation kuota dipertahankan.",
+            { error, purpose: context.purpose, tier: context.tier },
+          );
+        }
+      } else {
       void settlement.catch((error: unknown) => {
         this.logger.warn(
           "entitlement_settlement_failed",
           "Settlement entitlement gagal tanpa mengubah balasan model.",
           { error, purpose: context.purpose, tier: context.tier },
         );
+      });
+      }
+    } else if (shouldSettle && holdReservationUntilSettlement) {
+      // Tanpa ledger delivery, telemetry teknis menjadi sumber kapasitas.
+      await this.exclusive(context.ownerId, async () => {
+        this.releaseReservation(context.ownerId, requested, false);
       });
     }
     this.scheduleFlush(context.ownerId);
@@ -329,9 +361,9 @@ export class TelemetryService implements UsageObserver {
     return this.relatedUsageLedger?.forgetActor?.(ownerId, actorAliases) ?? false;
   }
 
-  async markDelivered(ownerId: string): Promise<void> {
+  async markDelivered(ownerId: string, turnId: string | null): Promise<void> {
     try {
-      await this.relatedUsageLedger?.markDelivered?.(ownerId);
+      await this.relatedUsageLedger?.markDelivered?.(ownerId, turnId);
     } catch (error) {
       this.logger.warn(
         "entitlement_delivery_settlement_failed",
@@ -341,9 +373,12 @@ export class TelemetryService implements UsageObserver {
     }
   }
 
-  async discardUndelivered(ownerId: string): Promise<void> {
+  async discardUndelivered(
+    ownerId: string,
+    turnId: string | null,
+  ): Promise<void> {
     try {
-      await this.relatedUsageLedger?.discardUndelivered?.(ownerId);
+      await this.relatedUsageLedger?.discardUndelivered?.(ownerId, turnId);
     } catch (error) {
       this.logger.warn(
         "entitlement_delivery_discard_failed",
@@ -545,6 +580,18 @@ export class TelemetryService implements UsageObserver {
     return Number.isSafeInteger(resolved) && resolved >= 0
       ? resolved
       : this.options.rollingTokenLimit;
+  }
+
+  private releaseReservation(
+    ownerId: string,
+    requested: number,
+    safetyCritical: boolean,
+  ): void {
+    if (safetyCritical) return;
+    const reserved = this.reservations.get(ownerId) ?? 0;
+    const remaining = Math.max(0, reserved - requested);
+    if (remaining > 0) this.reservations.set(ownerId, remaining);
+    else this.reservations.delete(ownerId);
   }
 
   private async exclusive<T>(

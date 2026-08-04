@@ -11,7 +11,10 @@ import { scopeKey } from "./scope.js";
 
 export interface AgentRunLimits {
   maxSteps: number;
+  /** Budget aktif untuk satu invocation, tidak termasuk jeda jawaban manusia. */
   deadlineMs: number;
+  /** Horizon absolut checkpoint; resume tidak pernah memperpanjangnya. */
+  resumeWindowMs: number;
   maxReplyCharacters: number;
   maxObservationCharacters: number;
 }
@@ -19,9 +22,13 @@ export interface AgentRunLimits {
 export const DEFAULT_AGENT_RUN_LIMITS: AgentRunLimits = Object.freeze({
   maxSteps: 6,
   deadlineMs: 45_000,
+  resumeWindowMs: 45_000,
   maxReplyCharacters: 8_000,
   maxObservationCharacters: 4_000,
 });
+
+/** Ruang aman untuk envelope JSON executor di bawah budget observation runtime. */
+export const MAX_AGENT_EXECUTOR_SUMMARY_CHARACTERS = 3_600;
 
 export type AgentPlannerDecision =
   | { kind: "final"; reply: string }
@@ -46,6 +53,11 @@ export interface AgentPlannerInput {
   step: number;
   request: string;
   scope: Pick<AgentScope, "kind" | "channel">;
+  /** Irisan snapshot runtime dengan executor yang benar-benar terpasang. */
+  callableCapabilities: readonly Pick<
+    CapabilitySnapshotEntry,
+    "id" | "version" | "effect" | "description"
+  >[];
   capabilities: CapabilitySnapshot;
   observations: readonly AgentObservation[];
   userInputs: readonly AgentUserInput[];
@@ -140,7 +152,13 @@ export interface AgentRunCheckpoint {
   runId: string;
   scopeKey: string;
   capabilityHash: string;
+  /** Hash irisan capability available dengan executor+versi run ini. */
+  callableHash: string;
   request: string;
+  /** Budget waktu dan langkah dibekukan saat run pertama, bukan saat resume. */
+  startedAt: string;
+  deadlineAt: string;
+  maxSteps: number;
   step: number;
   observations: AgentObservation[];
   userInputs: AgentUserInput[];
@@ -241,11 +259,18 @@ export class AgentHarness {
     const limits = resolvedLimits(input.limits);
     const snapshot = this.capabilities(input.scope);
     const executors = executorMap(input.executors ?? []);
+    const callableHash = callableCapabilityHash(snapshot, executors);
     const policy = input.policy ?? conservativePolicy;
     const trace: AgentTraceEvent[] = [];
-    const checkpointResult = initialCheckpoint(input, snapshot, now);
+    const checkpointResult = initialCheckpoint(
+      input,
+      snapshot,
+      callableHash,
+      now,
+      limits,
+    );
     if (!checkpointResult.ok) {
-      const fallback = emptyCheckpoint(input, snapshot, now);
+      const fallback = emptyCheckpoint(input, snapshot, callableHash, now, limits);
       return stopped("invalid_checkpoint", fallback, trace);
     }
     const checkpoint = checkpointResult.value;
@@ -254,11 +279,20 @@ export class AgentHarness {
     if (input.scope.kind === "workspace" && !input.isCurrent) {
       return stopped("stale", checkpoint, trace);
     }
-    if (checkpoint.capabilityHash !== snapshot.hash) {
+    if (
+      checkpoint.capabilityHash !== snapshot.hash ||
+      checkpoint.callableHash !== callableHash
+    ) {
       return stopped("capability_changed", checkpoint, trace);
     }
 
-    const deadlineAt = now().getTime() + limits.deadlineMs;
+    // Stored deadline menjaga resume tidak memperoleh waktu baru; batas call
+    // sekarang tetap menjadi ceiling bila checkpoint rusak/berasal dari store
+    // lama dengan horizon lebih longgar.
+    const deadlineAt = Math.min(
+      Date.parse(checkpoint.deadlineAt),
+      now().getTime() + limits.deadlineMs,
+    );
     const freshness = async (): Promise<FreshnessState> => {
       const stop = stopReason(input.signal, deadlineAt, now);
       if (stop) return stop;
@@ -326,7 +360,7 @@ export class AgentHarness {
       if (pendingResult) return pendingResult;
     }
 
-    while (checkpoint.step < limits.maxSteps) {
+    while (checkpoint.step < Math.min(limits.maxSteps, checkpoint.maxSteps)) {
       const stop = stopReason(input.signal, deadlineAt, now);
       if (stop) return stopped(stop, checkpoint, trace);
       const planningFreshness = await freshness();
@@ -348,6 +382,7 @@ export class AgentHarness {
                   kind: input.scope.kind,
                   channel: input.scope.channel,
                 },
+                callableCapabilities: callableCapabilities(snapshot, executors),
                 capabilities: snapshot,
                 observations: immutableObservations(checkpoint.observations),
                 userInputs: immutableUserInputs(checkpoint.userInputs),
@@ -389,6 +424,9 @@ export class AgentHarness {
         const prompt = boundedText(decision.prompt, limits.maxReplyCharacters);
         if (!prompt) {
           return stopped("invalid_planner_output", checkpoint, trace);
+        }
+        if (checkpoint.step + 1 >= Math.min(limits.maxSteps, checkpoint.maxSteps)) {
+          return stopped("max_steps", checkpoint, trace);
         }
         checkpoint.pendingInput = { step: checkpoint.step, prompt };
         trace.push(event(checkpoint.step, "terminate", "needs_input"));
@@ -702,7 +740,7 @@ async function executeAction(
     capabilityId: capability.id,
     status: result.status,
     summary:
-      boundedText(result.summary, limits.maxObservationCharacters) ||
+      boundedObservationSummary(result.summary, limits.maxObservationCharacters) ||
       "Executor tidak memberi ringkasan.",
   });
   checkpoint.pending = null;
@@ -823,10 +861,15 @@ function parsePlannerDecision(value: unknown): AgentPlannerDecision | null {
 function initialCheckpoint(
   input: AgentRunInput,
   snapshot: CapabilitySnapshot,
+  callableHash: string,
   now: () => Date,
+  limits: AgentRunLimits,
 ): { ok: true; value: AgentRunCheckpoint } | { ok: false } {
   if (!input.checkpoint) {
-    return { ok: true, value: emptyCheckpoint(input, snapshot, now) };
+    return {
+      ok: true,
+      value: emptyCheckpoint(input, snapshot, callableHash, now, limits),
+    };
   }
   const checkpoint = structuredClone(input.checkpoint);
   if (
@@ -834,6 +877,15 @@ function initialCheckpoint(
     checkpoint.scopeKey !== scopeKey(input.scope) ||
     checkpoint.request !== input.request ||
     !checkpoint.runId ||
+    typeof checkpoint.callableHash !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(checkpoint.callableHash) ||
+    typeof checkpoint.startedAt !== "string" ||
+    typeof checkpoint.deadlineAt !== "string" ||
+    !Number.isFinite(Date.parse(checkpoint.startedAt)) ||
+    !Number.isFinite(Date.parse(checkpoint.deadlineAt)) ||
+    Date.parse(checkpoint.deadlineAt) <= Date.parse(checkpoint.startedAt) ||
+    !Number.isInteger(checkpoint.maxSteps) ||
+    checkpoint.maxSteps <= 0 ||
     !Number.isInteger(checkpoint.step) ||
     checkpoint.step < 0 ||
     !Array.isArray(checkpoint.observations) ||
@@ -943,14 +995,21 @@ function validPendingCheckpoint(
 function emptyCheckpoint(
   input: AgentRunInput,
   snapshot: CapabilitySnapshot,
-  _now: () => Date,
+  callableHash: string,
+  now: () => Date,
+  limits: AgentRunLimits,
 ): AgentRunCheckpoint {
+  const started = now();
   return {
     version: 1,
     runId: input.makeRunId?.() ?? randomUUID(),
     scopeKey: scopeKey(input.scope),
     capabilityHash: snapshot.hash,
+    callableHash,
     request: input.request,
+    startedAt: started.toISOString(),
+    deadlineAt: new Date(started.getTime() + limits.resumeWindowMs).toISOString(),
+    maxSteps: limits.maxSteps,
     step: 0,
     observations: [],
     userInputs: [],
@@ -958,6 +1017,36 @@ function emptyCheckpoint(
     pending: null,
     pendingInput: null,
   };
+}
+
+function callableCapabilities(
+  snapshot: CapabilitySnapshot,
+  executors: ReadonlyMap<string, AgentCapabilityExecutor>,
+): AgentPlannerInput["callableCapabilities"] {
+  return Object.freeze(
+    snapshot.entries
+      .filter((entry) => {
+        const executor = executors.get(entry.id);
+        return entry.available && executor?.capabilityVersion === entry.version;
+      })
+      .map((entry) => Object.freeze({
+        id: entry.id,
+        version: entry.version,
+        effect: entry.effect,
+        description: entry.description,
+      })),
+  );
+}
+
+function callableCapabilityHash(
+  snapshot: CapabilitySnapshot,
+  executors: ReadonlyMap<string, AgentCapabilityExecutor>,
+): string {
+  const authority = callableCapabilities(snapshot, executors).map((entry) => ({
+    id: entry.id,
+    version: entry.version,
+  }));
+  return createHash("sha256").update(JSON.stringify(authority)).digest("hex");
 }
 
 function executorMap(
@@ -987,6 +1076,11 @@ function conservativePolicy(input: {
 
 function resolvedLimits(overrides?: Partial<AgentRunLimits>): AgentRunLimits {
   const limits = { ...DEFAULT_AGENT_RUN_LIMITS, ...overrides };
+  // Pemanggil lama yang hanya mengubah deadline tetap mendapat semantik lama;
+  // jendela resume lebih panjang harus dipilih secara eksplisit.
+  if (overrides?.deadlineMs !== undefined && overrides.resumeWindowMs === undefined) {
+    limits.resumeWindowMs = overrides.deadlineMs;
+  }
   for (const [name, value] of Object.entries(limits)) {
     if (!Number.isInteger(value) || value <= 0) {
       throw new Error(`Batas agent ${name} tidak sah.`);
@@ -1002,11 +1096,38 @@ function appendObservation(
 ): void {
   checkpoint.observations.push({
     ...observation,
-    summary: boundedText(
+    summary: boundedObservationSummary(
       observation.summary,
       limits.maxObservationCharacters,
     ),
   });
+}
+
+/**
+ * Pertahanan terakhir bagi executor pihak lain. JSON yang terlalu besar tidak
+ * pernah dipotong menjadi dokumen rusak; detailnya diganti envelope valid.
+ */
+function boundedObservationSummary(value: string, maxCharacters: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxCharacters) return trimmed;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    const kind = parsed && typeof parsed === "object" && !Array.isArray(parsed) &&
+        typeof (parsed as Record<string, unknown>).kind === "string"
+      ? (parsed as Record<string, unknown>).kind as string
+      : "agent.observation.result";
+    const envelope = JSON.stringify({
+      kind,
+      truncated: true,
+      reason: "executor_summary_exceeded_budget",
+      originalCharacters: trimmed.length,
+    });
+    return envelope.length <= maxCharacters
+      ? envelope
+      : boundedText(trimmed, maxCharacters);
+  } catch {
+    return boundedText(trimmed, maxCharacters);
+  }
 }
 
 function validExecutorResult(value: unknown): value is AgentExecutorResult {
