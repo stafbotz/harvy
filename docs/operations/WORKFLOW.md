@@ -119,6 +119,21 @@ Reviewer tidak mengejar kuota temuan.
 Ketiganya membuka clone dari repositori yang sama. Jangan memakai tiga salinan
 dengan riwayat berbeda.
 
+## Batas teknis dan verifikasi
+
+- Gunakan Node.js 22 atau lebih baru.
+- Pemeriksaan minimum perubahan kode: `npm run check` dan `npm test`.
+- Jangan menambah dependency, mengubah kontrak data, pengalaman pengguna,
+  keamanan, layanan eksternal, atau biaya tanpa diminta.
+- Keputusan teknis kecil boleh diambil dan dicatat di `LOG.md`.
+- **Gerbang otomatis tidak menyentuh model sungguhan maupun grammY.** Yang
+  teruji hanya bagian murni. `npm test` yang hijau tidak membuktikan Harvy dapat
+  berbicara, tombolnya hidup, atau pengingatnya terkirim; itu hanya dapat
+  dibuktikan lewat uji manual dengan kunci API sungguhan.
+- Baca `docs/engineering/STATUS.md` sebelum mengklaim sebuah kemampuan sudah
+  ada. Dokumen lain menjelaskan tujuan dan keputusan, bukan keadaan kode.
+- Baca `docs/engineering/TESTING.md` untuk bukti tes dan pengujian manual.
+
 ## Repositori dan secret
 
 Remote `stafbotz/harvy` bersifat privat dan harus tetap begitu. Jangan pernah

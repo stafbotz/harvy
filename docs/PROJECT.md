@@ -274,21 +274,21 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 - [x] Check-in satu kali yang hanya dibuat setelah pengguna memilihnya sendiri.
   Waktu, zona waktu, dan jam tenang berada dalam kendali pengguna; mengabaikan
   check-in tidak memicu pengingat kedua.
-- [x] Vertical slice research web baca-saja pada chat privat Telegram:
-  `web.search` dan `web.open` opsional, loop agent berbatas, egress URL publik,
-  observation tak tepercaya, serta URL sumber yang harus berasal dari hasil
-  teramati. Context privat lama tidak masuk planner; satu run hanya mengirim
-  satu query dan open dibatasi ke URL pesan/hasil search run yang sama. Run
-  masih sinkron/in-memory; abort command/generation Telegram sudah diteruskan,
-  tetapi delivery jaringan tidak atomik dan durable/background report,
-  cross-process crash recovery, X/Threads, serta workspace report belum ada.
+- [ ] Research web baca-saja ditunda; implementasi vertical slice sebelumnya
+  sudah dicabut dari runtime. Pengaktifan kembali memerlukan keputusan baru
+  untuk scope, provider, egress, penyimpanan, dan acceptance end-to-end.
 - [x] Agent Runtime privat cheap-first untuk pertanyaan dan permintaan tenang:
   tool baca tugas/sesi/waktu/agenda Harvy, fast path jam deterministik, terminal
   virtual sementara, serta root ambitious yang dapat mendelegasikan 2–3
   subpekerjaan read-only kepada worker cheap/efficient secara paralel. Worker
-  tidak menerima tool/memori/delegasi. Shell host, kalender eksternal, dan
-  seluruh tool write tetap ditutup. Checkpoint klarifikasi dapat dilanjutkan
-  selama horizon absolut 10 menit tetapi hanya in-memory; lihat `ADR-017`.
+  tidak menerima tool/memori/delegasi. Planner memakai native function calling;
+  definisi action berasal dari executor callable dan hasilnya tetap proposal
+  bagi kernel, bukan izin eksekusi. Shell host, kalender eksternal, dan seluruh
+  tool write tetap ditutup. Checkpoint klarifikasi dapat dilanjutkan
+  selama horizon absolut 10 menit dan `waiting_input` privat Telegram bertahan
+  pada restart normal lewat adapter file satu-proses. Ini belum RunStore
+  produksi, background run, outbox, receipt, atau reconciler; lihat `ADR-017`
+  dan `ADR-018`.
 - [x] Scope & Authority v1 sebagai fondasi core: `WorkspaceScope`, principal
   pseudonim, membership/role/permission, `aclEpoch`, invalidasi scope lama,
   capability filter, dan adapter file atomik. Belum ada ingress, UI, artifact,
@@ -464,11 +464,11 @@ bersedia dan proses persetujuan peserta/wali sudah siap.
 
 ## Later
 
-- Mengembangkan executor web awal menjadi research workspace durable di atas
-  fondasi scope+ACL v1 yang sudah ada: ingress membership, artifact
-  bersitasi, groundedness per klaim, retrieval/RAG, pagination dan keragaman
-  sumber, cancellation lintas proses dan crash recovery, lalu konektor khusus
-  X/Threads setelah durable run terbukti.
+- Merancang ulang research workspace durable, bila diputuskan untuk diaktifkan
+  kembali, di atas fondasi scope+ACL v1 yang sudah ada: ingress membership,
+  artifact bersitasi, groundedness per klaim, retrieval/RAG, pagination dan
+  keragaman sumber, cancellation lintas proses dan crash recovery, lalu
+  konektor khusus X/Threads setelah durable run terbukti.
 - Memperluas fondasi grup WhatsApp dan menyambungkan core yang sama ke
   Telegram. Shared room memory eksplisit untuk keputusan/agenda/norma/kegiatan
   sudah ada di core; room social adaptation yang berizin, inside joke yang

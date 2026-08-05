@@ -62,7 +62,6 @@ const INTENTS: readonly ConversationIntent[] = [
   "feeling",
   "question",
   "request",
-  "research",
   "smalltalk",
   "history",
   "memory",

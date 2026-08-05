@@ -4,10 +4,10 @@
  * Dipakai untuk jawaban pendek yang sudah dipilih lewat tombol: konfirmasi,
  * waktu baru, edit memori, dan pengaturan satu check-in.
  *
- * Sengaja hanya di memori. Isinya adalah niat sesaat, bukan data pengguna yang
- * perlu disimpan; Konstitusi Pasal 3.9 meminta Harvy mengumpulkan sedikit
- * mungkin. Konsekuensinya, langkah yang menggantung hilang saat proses
- * restart, dan itu ditangani sebagai keadaan normal, bukan galat.
+ * Store ini tetap hanya di memori. Sebagian besar niat sesaat memang sengaja
+ * hilang saat restart. Pengecualiannya adalah `agent-input`: adapter memuat
+ * ulang mirror ini dari AgentRunService yang mempunyai TTL absolut, ekspor,
+ * dan penghapusan sendiri.
  */
 import { randomUUID } from "node:crypto";
 import type { ExtractedMemory, ExtractedTask } from "../ai/understand.js";
@@ -36,6 +36,10 @@ export type Pending =
       mode: AgentMode;
       intent: "question" | "request";
       checkpoint: AgentRunCheckpoint;
+      /** `null` sebelum record durable pertama dibuat. */
+      revision: number | null;
+      /** Hanya update Telegram yang masuk sesudah prompt boleh menjawabnya. */
+      acceptAnswersAfterUpdateId: number;
     };
 
 interface Entry {
@@ -55,11 +59,20 @@ export class PendingStore {
   ) {}
 
   set(ownerId: string, value: Pending): string {
+    return this.restore(ownerId, value, this.now() + this.ttlMs)!;
+  }
+
+  /** Memulihkan entry dengan expiry absolut tanpa memperpanjang horizon run. */
+  restore(ownerId: string, value: Pending, expiresAt: number): string | null {
+    if (!Number.isFinite(expiresAt) || expiresAt <= this.now()) {
+      this.entries.delete(ownerId);
+      return null;
+    }
     const token = randomUUID().replaceAll("-", "").slice(0, 8);
     this.entries.set(ownerId, {
       value,
       token,
-      expiresAt: this.now() + this.ttlMs,
+      expiresAt,
     });
     return token;
   }

@@ -1,5 +1,9 @@
 import type { HarvyContext } from "./context.js";
-import type { AiClient } from "./client.js";
+import type {
+  AiClient,
+  ChatFunctionTool,
+  ChatToolCall,
+} from "./client.js";
 import { jsonForPrompt } from "./prompt-data.js";
 import { currentUsageAttribution } from "./usage-attribution.js";
 import { resolveModel } from "./model-policy.js";
@@ -29,7 +33,7 @@ export interface LiveStateClock {
 
 export const AGENT_PLANNER_PROMPT = [
   "Kamu adalah planner agent privat Harvy.",
-  "Pilih tepat satu langkah JSON: action, need_input, atau final.",
+  "Pilih tepat satu langkah melalui satu native function call.",
   "Kode Harvy menentukan scope, model, policy, dan capability yang dapat dipanggil.",
   "Jangan mengaku tool berhasil sebelum ada observation status ok.",
   "Jangan menulis atau mengubah state pengguna; runtime ini read-only.",
@@ -40,46 +44,115 @@ export const AGENT_PLANNER_PROMPT = [
   "Gunakan hanya callableCapabilities yang diberikan pada input.",
   "Jika capability yang diperlukan tidak callable, jelaskan batasnya dengan jujur.",
   "Jawaban final memakai bahasa pengguna, ringkas, dan menyebut hasil parsial/kegagalan yang relevan.",
-  "Keluarkan objek JSON saja tanpa Markdown fence.",
-  "",
-  "Bentuk keputusan:",
-  '{"kind":"action","capabilityId":"...","capabilityVersion":"1","input":{...}}',
-  '{"kind":"need_input","prompt":"satu pertanyaan yang benar-benar diperlukan"}',
-  '{"kind":"final","reply":"jawaban akhir"}',
+  "Panggil harvy_final_v1 untuk jawaban akhir atau harvy_need_input_v1 untuk satu pertanyaan yang benar-benar diperlukan.",
+  "Untuk action, panggil function capability yang tersedia; jangan menulis nama tool sebagai teks biasa.",
+  "Jangan keluarkan teks biasa dan jangan memanggil lebih dari satu function pada satu langkah.",
 ].join("\n");
 
-const CAPABILITY_SCHEMA_GUIDANCE: Readonly<Record<string, readonly string[]>> = {
-  "task.list_active": ['- task.list_active: {"limit"?:1..20}'],
-  "task.get": ['- task.get: {"taskId":string}'],
-  "session.status": ['- session.status: {}'],
-  "settings.time.get": ['- settings.time.get: {}'],
-  "calendar.agenda": [
-    '- calendar.agenda: {"days"?:1..31,"localDate"?:"YYYY-MM-DD"}; tanggal memakai timezone profil; ini hanya agenda internal Harvy, bukan Google/Outlook',
-  ],
-  "terminal.run": [
-    '- terminal.run: {"commands":[1..12 command]}; terminal virtual baru dan kosong pada setiap action',
-    '  command: {"op":"pwd"|"date"}, {"op":"echo","text":string},',
-    '  {"op":"calculate","expression":string}, {"op":"write"|"append","path":string,"content":string},',
-    '  {"op":"cat"|"remove","path":string}, atau {"op":"list","path"?:string}',
-  ],
-  "agent.delegate.parallel": [
-    '- agent.delegate.parallel: {"tasks":[2..3 {"id":string,"instruction":string,"tier":"cheap"|"efficient"}]}',
-    "  Gunakan hanya untuk subpekerjaan independen. Worker tidak punya tool/memori/delegasi dan hasilnya belum tentu benar.",
-  ],
+const FINAL_TOOL_NAME = "harvy_final_v1";
+const NEED_INPUT_TOOL_NAME = "harvy_need_input_v1";
+
+const FINAL_TOOL: ChatFunctionTool = {
+  type: "function",
+  function: {
+    name: FINAL_TOOL_NAME,
+    description: "Selesaikan langkah agent dengan jawaban final kepada pengguna.",
+    parameters: objectSchema({
+      reply: {
+        type: "string",
+        minLength: 1,
+        description: "Jawaban akhir Harvy dalam bahasa pengguna.",
+      },
+    }, ["reply"]),
+  },
 };
+
+const NEED_INPUT_TOOL: ChatFunctionTool = {
+  type: "function",
+  function: {
+    name: NEED_INPUT_TOOL_NAME,
+    description: "Jeda run dan minta satu informasi yang benar-benar diperlukan dari pengguna.",
+    parameters: objectSchema({
+      prompt: {
+        type: "string",
+        minLength: 1,
+        description: "Satu pertanyaan singkat untuk pengguna.",
+      },
+    }, ["prompt"]),
+  },
+};
+
+/** Native tool set selalu berasal dari irisan capability+executor harness. */
+export function agentNativeTools(
+  callable: AgentPlannerInput["callableCapabilities"],
+): readonly ChatFunctionTool[] {
+  const tools: ChatFunctionTool[] = [FINAL_TOOL, NEED_INPUT_TOOL];
+  for (const capability of callable) {
+    const spec = capability.nativeTool;
+    if (!spec) {
+      throw new Error(`Schema native capability tidak tersedia: ${capability.id}@${capability.version}`);
+    }
+    tools.push({
+      type: "function",
+      function: {
+        name: spec.name,
+        description: spec.description,
+        parameters: spec.inputSchema,
+      },
+    });
+  }
+  return tools;
+}
+
+/** Menerjemahkan satu native call menjadi proposal; bukan menjadi authority. */
+export function parseAgentNativeDecision(
+  calls: readonly ChatToolCall[],
+  callable: AgentPlannerInput["callableCapabilities"],
+): AgentPlannerDecision | null {
+  if (calls.length !== 1) return null;
+  const call = calls[0];
+  if (!call || call.type !== "function") return null;
+  const input = parseNativeArguments(call.function.arguments);
+  if (!input) return null;
+  if (
+    call.function.name === FINAL_TOOL_NAME &&
+    typeof input.reply === "string" &&
+    exactKeys(input, ["reply"])
+  ) {
+    return { kind: "final", reply: input.reply };
+  }
+  if (
+    call.function.name === NEED_INPUT_TOOL_NAME &&
+    typeof input.prompt === "string" &&
+    exactKeys(input, ["prompt"])
+  ) {
+    return { kind: "need_input", prompt: input.prompt };
+  }
+  const capability = callable.find(
+    (entry) => entry.nativeTool?.name === call.function.name,
+  );
+  if (!capability) return null;
+  return {
+    kind: "action",
+    capabilityId: capability.id,
+    capabilityVersion: capability.version,
+    input,
+  };
+}
 
 /** Menjelaskan hanya skema capability yang benar-benar callable pada langkah ini. */
 export function agentPlannerPrompt(
   callable: AgentPlannerInput["callableCapabilities"],
 ): string {
-  const schemas = callable.flatMap(
-    (capability) => CAPABILITY_SCHEMA_GUIDANCE[capability.id] ?? [],
+  const mappings = callable.map(
+    (capability) =>
+      `- ${capability.id}@${capability.version} → ${capability.nativeTool?.name ?? "schema-native-tidak-tersedia"}`,
   );
   return [
     AGENT_PLANNER_PROMPT,
     "",
-    "Skema capability callable v1:",
-    ...(schemas.length > 0 ? schemas : ["- tidak ada capability callable"]),
+    "Pemetaan capability callable ke native function:",
+    ...(mappings.length > 0 ? mappings : ["- tidak ada capability action callable"]),
   ].join("\n");
 }
 
@@ -160,46 +233,8 @@ export function agentPlannerInput(
     mode === "orchestrate"
       ? "Kamu adalah root ambitious. Delegasikan hanya bila 2–3 subpekerjaan benar-benar independen; setelah observation, sintesis sendiri."
       : "Kamu adalah root cheap. Selesaikan langsung atau pakai tool atomik; capability delegasi tidak tersedia.",
-    "Keluarkan satu keputusan JSON saja.",
+    "Panggil tepat satu native function untuk keputusan langkah ini.",
   ].join("\n");
-}
-
-export function parseAgentPlannerDecision(
-  raw: string,
-  callableIds?: ReadonlySet<string>,
-): AgentPlannerDecision | null {
-  const record = extractJsonObject(raw);
-  if (!record) return null;
-  if (
-    record.kind === "final" &&
-    typeof record.reply === "string" &&
-    exactKeys(record, ["kind", "reply"])
-  ) {
-    return { kind: "final", reply: record.reply };
-  }
-  if (
-    record.kind === "need_input" &&
-    typeof record.prompt === "string" &&
-    exactKeys(record, ["kind", "prompt"])
-  ) {
-    return { kind: "need_input", prompt: record.prompt };
-  }
-  if (
-    record.kind === "action" &&
-    typeof record.capabilityId === "string" &&
-    record.capabilityVersion === "1" &&
-    exactKeys(record, ["kind", "capabilityId", "capabilityVersion", "input"]) &&
-    isJsonValue(record.input) &&
-    (!callableIds || callableIds.has(record.capabilityId))
-  ) {
-    return {
-      kind: "action",
-      capabilityId: record.capabilityId,
-      capabilityVersion: "1",
-      input: record.input,
-    };
-  }
-  return null;
 }
 
 /**
@@ -313,19 +348,30 @@ function requestedAgendaHorizon(
   return { days: 7 };
 }
 
-function extractJsonObject(raw: string): Record<string, unknown> | null {
-  const trimmed = raw.trim();
-  const candidate = trimmed.startsWith("```")
-    ? trimmed.replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "")
-    : trimmed;
+function parseNativeArguments(raw: string): Record<string, unknown> | null {
   try {
-    const parsed: unknown = JSON.parse(candidate);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    const parsed: unknown = JSON.parse(raw);
+    return parsed &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        isJsonValue(parsed)
       ? parsed as Record<string, unknown>
       : null;
   } catch {
     return null;
   }
+}
+
+function objectSchema(
+  properties: Readonly<Record<string, unknown>>,
+  required: readonly string[] = [],
+): Readonly<Record<string, unknown>> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+  };
 }
 
 function exactKeys(

@@ -1,9 +1,14 @@
 # ADR-015 — Executor Web Baca-Saja Pertama
 
-- **Status:** Diterima
+- **Status:** Dicabut — 5 Agustus 2026
 - **Tanggal:** 2 Agustus 2026
 - **Pemilik keputusan:** pemilik produk Harvy
 - **Terkait:** Konstitusi v0.4, ADR-003, ADR-008, ADR-012, ADR-014
+
+> Keputusan ini disimpan sebagai catatan sejarah. Implementasi `web.search`,
+> `web.open`, route intent `research`, konfigurasi provider, dan executor web
+> telah dihapus dari runtime pada 5 Agustus 2026 atas keputusan pemilik
+> produk. Dokumen ini tidak lagi menjadi dasar klaim kemampuan saat ini.
 
 ## Konteks
 

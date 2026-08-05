@@ -9,8 +9,9 @@ import {
   isDirectTimeQuestion,
 } from "../src/agent/time-fast-path.js";
 import {
+  agentNativeTools,
   liveStateRequirement,
-  parseAgentPlannerDecision,
+  parseAgentNativeDecision,
 } from "../src/ai/agent.js";
 import { selectAgentMode } from "../src/ai/model-policy.js";
 import {
@@ -100,13 +101,40 @@ describe("agent routing dan planner contract", () => {
     assert.equal(liveStateRequirement("jelaskan status sesi HTTP"), null);
   });
 
-  it("parser hanya menerima action dari registry callable dan schema keputusan tertutup", () => {
-    const allowed = new Set(["settings.time.get"]);
+  it("native tools hanya berasal dari registry callable dan parser gagal tertutup", () => {
+    const callable = [{
+      id: "settings.time.get",
+      version: "1",
+      effect: "read" as const,
+      description: "Baca pengaturan waktu.",
+      nativeTool: {
+        name: "harvy_settings_time_get_v1",
+        description: "Baca pengaturan waktu.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+    }];
+    const tools = agentNativeTools(callable);
     assert.deepEqual(
-      parseAgentPlannerDecision(
-        '{"kind":"action","capabilityId":"settings.time.get","capabilityVersion":"1","input":{}}',
-        allowed,
-      ),
+      tools.map((tool) => tool.function.name),
+      [
+        "harvy_final_v1",
+        "harvy_need_input_v1",
+        "harvy_settings_time_get_v1",
+      ],
+    );
+    assert.equal(
+      tools.some((tool) => tool.function.name.includes("task_manage")),
+      false,
+    );
+    assert.deepEqual(
+      parseAgentNativeDecision([nativeCall(
+        "harvy_settings_time_get_v1",
+        {},
+      )], callable),
       {
         kind: "action",
         capabilityId: "settings.time.get",
@@ -115,14 +143,24 @@ describe("agent routing dan planner contract", () => {
       },
     );
     assert.equal(
-      parseAgentPlannerDecision(
-        '{"kind":"action","capabilityId":"task.manage","capabilityVersion":"1","input":{}}',
-        allowed,
-      ),
+      parseAgentNativeDecision([nativeCall("harvy_task_manage_v1", {})], callable),
       null,
     );
     assert.equal(
-      parseAgentPlannerDecision('{"kind":"final","reply":"ok","tool":"fake"}'),
+      parseAgentNativeDecision([
+        nativeCall("harvy_final_v1", { reply: "ok" }),
+        nativeCall("harvy_settings_time_get_v1", {}),
+      ], callable),
+      null,
+    );
+    assert.equal(
+      parseAgentNativeDecision([{
+        ...nativeCall("harvy_final_v1", { reply: "ok" }),
+        function: {
+          name: "harvy_final_v1",
+          arguments: '{"reply":"ok","tool":"fake"}',
+        },
+      }], callable),
       null,
     );
   });
@@ -324,6 +362,52 @@ describe("agent harness runtime contract", () => {
       assert.equal(resumed.reason, "capability_changed");
     }
   });
+
+  it("mengikat nama dan schema native executor ke checkpoint callable", async () => {
+    const harness = new AgentHarness(createHarvyCapabilityCatalog({
+      internalToolsInstalled: true,
+    }));
+    const firstExecutor = fakeNativeExecutor("settings.time.get", {
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    });
+    let exposedName = "";
+    const paused = await harness.run({
+      scope: privateAgentScope("telegram", "student"),
+      request: "cek waktu",
+      executors: [firstExecutor],
+      planner: async (input) => {
+        exposedName = input.callableCapabilities[0]?.nativeTool?.name ?? "";
+        return { kind: "need_input", prompt: "Lanjut?" };
+      },
+    });
+    assert.equal(paused.status, "needs_input");
+    assert.equal(exposedName, "harvy_settings_time_get_v1");
+    if (paused.status !== "needs_input") return;
+
+    let planned = false;
+    const resumed = await harness.run({
+      scope: privateAgentScope("telegram", "student"),
+      request: "cek waktu",
+      executors: [fakeNativeExecutor("settings.time.get", {
+        type: "object",
+        additionalProperties: false,
+        properties: { unexpected: { type: "string" } },
+      })],
+      checkpoint: paused.checkpoint,
+      answer: "ya",
+      planner: async () => {
+        planned = true;
+        return { kind: "final", reply: "tidak boleh" };
+      },
+    });
+    assert.equal(resumed.status, "stopped");
+    if (resumed.status === "stopped") {
+      assert.equal(resumed.reason, "capability_changed");
+    }
+    assert.equal(planned, false);
+  });
 });
 
 describe("parallel delegation executor", () => {
@@ -466,6 +550,20 @@ function fakeExecutor(capabilityId: string): AgentCapabilityExecutor<Record<stri
   };
 }
 
+function fakeNativeExecutor(
+  capabilityId: string,
+  inputSchema: Readonly<Record<string, unknown>>,
+): AgentCapabilityExecutor<Record<string, never>> {
+  return {
+    ...fakeExecutor(capabilityId),
+    nativeTool: {
+      name: `harvy_${capabilityId.replaceAll(".", "_")}_v1`,
+      description: `Baca ${capabilityId}.`,
+      inputSchema,
+    },
+  };
+}
+
 function executionContext(step = 0): AgentExecutionContext {
   return {
     runId: "run",
@@ -473,5 +571,19 @@ function executionContext(step = 0): AgentExecutionContext {
     scope: privateAgentScope("telegram", "student"),
     idempotencyKey: "idempotent",
     signal: new AbortController().signal,
+  };
+}
+
+function nativeCall(
+  name: string,
+  input: Record<string, unknown>,
+) {
+  return {
+    id: `call-${name}`,
+    type: "function" as const,
+    function: {
+      name,
+      arguments: JSON.stringify(input),
+    },
   };
 }

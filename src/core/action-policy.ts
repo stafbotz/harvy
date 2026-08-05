@@ -44,7 +44,6 @@ const ALLOWED_BY_INTENT: Record<
   ],
   question: ["tutor", "human_bridge"],
   request: ["tutor", "human_bridge"],
-  research: [],
   smalltalk: [],
   history: ["view_session"],
   memory: ["data_controls"],

@@ -14,9 +14,11 @@ import type { ConversationHistory } from "../domain/history.js";
 import type { MemoryItem } from "../domain/memory.js";
 import type { UserProfile } from "../domain/profile.js";
 import type { StudentTask } from "../domain/task.js";
+import type { DurableAgentRun } from "../domain/agent-run.js";
+import type { AgentRunService } from "./agent-run-service.js";
 
 export interface UserDataExport {
-  version: 1;
+  version: 2;
   exportedAt: string;
   ownerId: string;
   profile: UserProfile;
@@ -24,6 +26,8 @@ export interface UserDataExport {
   memories: MemoryItem[];
   history: ConversationHistory | null;
   activeSession: ActiveSession | null;
+  /** Progress run yang sedang menunggu jawaban; null bila tidak ada/expired. */
+  activeAgentRun: DurableAgentRun | null;
   aiUsageLast24Hours: UsageSummary;
   aiTelemetryRetained: TelemetryExport;
   hiddenSafetyData: {
@@ -50,6 +54,7 @@ export class DataControlService {
     private readonly sessions: SessionService,
     private readonly telemetry: TelemetryService,
     private readonly now: () => Date = () => new Date(),
+    private readonly agentRuns: AgentRunService | null = null,
   ) {}
 
   async export(ownerId: string): Promise<UserDataExport> {
@@ -59,6 +64,7 @@ export class DataControlService {
       memories,
       history,
       activeSession,
+      activeAgentRun,
       aiUsageLast24Hours,
       aiTelemetryRetained,
     ] = await Promise.all([
@@ -67,12 +73,13 @@ export class DataControlService {
       this.memories.list(ownerId),
       this.history.snapshot(ownerId),
       this.sessions.active(ownerId),
+      this.agentRuns?.export("telegram", ownerId) ?? Promise.resolve(null),
       this.telemetry.summary(ownerId),
       this.telemetry.export(ownerId),
     ]);
 
     return {
-      version: 1,
+      version: 2,
       exportedAt: this.now().toISOString(),
       ownerId,
       profile,
@@ -80,6 +87,7 @@ export class DataControlService {
       memories,
       history,
       activeSession,
+      activeAgentRun,
       aiUsageLast24Hours,
       aiTelemetryRetained,
       hiddenSafetyData: {
@@ -98,6 +106,7 @@ export class DataControlService {
     // sebelum panggilan model. Dengan begitu pekerjaan latar yang terlambat
     // tidak dapat mengirim data lagi sesudah penghapusan dimulai.
     await this.telemetry.forget(ownerId);
+    await this.agentRuns?.forget("telegram", ownerId);
     await this.sessions.forget(ownerId);
     await this.tasks.removeAll(ownerId);
     await this.history.forget(ownerId, true);

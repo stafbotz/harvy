@@ -25,10 +25,11 @@ import {
   type ModelTier,
 } from "./model-policy.js";
 import {
+  agentNativeTools,
   agentPlannerInput,
   agentPlannerPrompt,
-  parseAgentPlannerDecision,
   liveStateRequirement,
+  parseAgentNativeDecision,
   type AgentMode,
 } from "./agent.js";
 import {
@@ -89,14 +90,6 @@ import {
   type AgentChannel,
   type AgentScope,
 } from "../harness/scope.js";
-import {
-  createScopedResearchExecutors,
-  finalizeResearchReply,
-  hasSuccessfulEmptySearch,
-  parseResearchPlannerDecision,
-  RESEARCH_PLANNER_PROMPT,
-  researchPlannerInput,
-} from "./research.js";
 import { deterministicTimeReply } from "../agent/time-fast-path.js";
 
 export interface RoutingConfig {
@@ -171,7 +164,7 @@ const INSIGHT_MAX_TOKENS = 512;
  * menghapus alasan pemadatan itu sendiri.
  */
 const EPISODE_SUMMARY_MAX_TOKENS = 768;
-const RESEARCH_PLANNER_MAX_TOKENS = 4096;
+const AGENT_PLANNER_MAX_TOKENS = 4096;
 
 /**
  * Menyatukan pemahaman dan balasan menjadi satu alur percakapan.
@@ -560,73 +553,6 @@ export class Conversation {
   }
 
   /**
-   * Menjalankan vertical slice research web baca-saja melalui kernel agent.
-   * Run ini masih sinkron/in-memory; durable run dan progress background belum
-   * menjadi bagian dari tahap executor pertama.
-   */
-  async research(
-    message: string,
-    context: HarvyContext = EMPTY_CONTEXT,
-    runtime: ConversationRuntime = {},
-  ): Promise<string> {
-    const compiled = compileHarvyContext(context);
-    const webExecutors = this.agentExecutors.filter(
-      (executor) =>
-        executor.capabilityId === "web.search" ||
-        executor.capabilityId === "web.open",
-    );
-    const result = await this.harness.run({
-      scope: this.runtimeScope(runtime),
-      request: message,
-      executors: createScopedResearchExecutors(webExecutors, message),
-      limits: {
-        maxSteps: 6,
-        deadlineMs: 45_000,
-        maxReplyCharacters: 8_000,
-        maxObservationCharacters: 4_000,
-      },
-      planner: (input, signal) =>
-        this.planResearch(
-          input,
-          compiled.context,
-          compiled.manifest,
-          runtime.ownerId,
-          signal,
-        ),
-      ...(runtime.signal ? { signal: runtime.signal } : {}),
-      ...(runtime.isCurrent ? { isCurrent: runtime.isCurrent } : {}),
-    });
-
-    if (result.status === "completed") {
-      const finalized = finalizeResearchReply(
-        result.reply,
-        result.checkpoint.observations,
-      );
-      if (finalized) return finalized;
-      if (hasSuccessfulEmptySearch(result.checkpoint.observations)) {
-        return "Aku sudah menjalankan pencarian web, tetapi belum menemukan hasil yang bisa kujadikan sumber. Coba persempit topik atau beri istilah lain.";
-      }
-      if (result.checkpoint.observations.every(
-        (observation) => observation.status !== "ok",
-      )) {
-        return "Aku belum mendapat hasil web yang berhasil dibaca, jadi aku tidak akan menjawab seolah pencarian sudah selesai.";
-      }
-      return [
-        "Aku menahan hasil research ini karena ada URL yang tidak berasal dari",
-        "hasil pencarian atau halaman yang benar-benar kubuka. Coba minta aku",
-        "mencari ulang dengan topik yang lebih sempit.",
-      ].join(" ");
-    }
-    if (result.status === "needs_input") return result.prompt;
-    if (result.status === "needs_approval") {
-      return "Research baca-saja berhenti karena alurnya meminta izin yang seharusnya tidak diperlukan.";
-    }
-    return result.reason === "deadline"
-      ? "Research web belum selesai sebelum batas waktu. Aku belum akan mengarang hasilnya."
-      : "Research web berhenti sebelum menghasilkan jawaban yang dapat diverifikasi.";
-  }
-
-  /**
    * Agent Runtime v1 untuk giliran biasa yang read-only.
    *
    * Root cheap menangani pekerjaan sederhana dan tool atomik. Root ambitious
@@ -795,9 +721,6 @@ export class Conversation {
     suppressFirstMessageClaim: boolean,
   ): Promise<AgentPlannerDecision> {
     const tier: ModelTier = mode === "orchestrate" ? "ambitious" : "cheap";
-    const callableIds = new Set(
-      plannerInput.callableCapabilities.map((capability) => capability.id),
-    );
     // Prompt sistem membawa suara/waktu/gaya. Konteks tersimpan berada sekali:
     // ringkasan/memori sebagai data terbungkus di system prompt, dan
     // recent turns sebagai pesan chat sungguhan sesuai kontrak reply Harvy.
@@ -810,15 +733,21 @@ export class Conversation {
         : runtime.timeZone ?? this.defaultTimeZone,
       suppressFirstMessageClaim,
     });
-    const raw = await this.client.complete({
+    const nativeTools = agentNativeTools(plannerInput.callableCapabilities);
+    const toolCalls = await this.client.completeToolCalls({
       model: resolveModel(tier, this.routing),
       temperature: 0.1,
-      maxTokens: RESEARCH_PLANNER_MAX_TOKENS,
-      json: true,
+      maxTokens: AGENT_PLANNER_MAX_TOKENS,
       signal,
       contextManifest,
-      validateResponse: (content) =>
-        parseAgentPlannerDecision(content, callableIds) !== null,
+      tools: nativeTools,
+      toolChoice: "required",
+      parallelToolCalls: false,
+      validateToolCalls: (calls) =>
+        parseAgentNativeDecision(
+          calls,
+          plannerInput.callableCapabilities,
+        ) !== null,
       usage: this.usage(runtime.ownerId, tier, "agent"),
       messages: [
         {
@@ -832,40 +761,11 @@ export class Conversation {
         },
       ],
     });
-    const decision = parseAgentPlannerDecision(raw, callableIds);
+    const decision = parseAgentNativeDecision(
+      toolCalls,
+      plannerInput.callableCapabilities,
+    );
     if (!decision) throw new Error("Planner agent mengembalikan keputusan tidak sah.");
-    return decision;
-  }
-
-  private async planResearch(
-    input: AgentPlannerInput,
-    context: HarvyContext,
-    contextManifest: ReturnType<typeof compileHarvyContext>["manifest"],
-    ownerId: string | undefined,
-    signal: AbortSignal,
-  ): Promise<unknown> {
-    const tier: ModelTier = input.observations.length > 0
-      ? "efficient"
-      : "cheap";
-    const raw = await this.client.complete({
-      model: resolveModel(tier, this.routing),
-      temperature: 0,
-      maxTokens: RESEARCH_PLANNER_MAX_TOKENS,
-      json: true,
-      signal,
-      contextManifest,
-      validateResponse: (content) =>
-        parseResearchPlannerDecision(content) !== null,
-      usage: this.usage(ownerId, tier, "research"),
-      messages: [
-        { role: "system", content: RESEARCH_PLANNER_PROMPT },
-        { role: "user", content: researchPlannerInput(input, context) },
-      ],
-    });
-    const decision = parseResearchPlannerDecision(raw);
-    if (!decision) {
-      throw new Error("Model mengembalikan keputusan research yang tidak sah.");
-    }
     return decision;
   }
 

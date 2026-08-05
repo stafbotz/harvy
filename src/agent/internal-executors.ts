@@ -8,12 +8,69 @@ import type {
   AgentCapabilityExecutor,
   AgentExecutionContext,
   AgentExecutorResult,
+  AgentNativeToolDefinition,
 } from "../harness/agent-harness.js";
 import { MAX_AGENT_EXECUTOR_SUMMARY_CHARACTERS } from "../harness/agent-harness.js";
 import type { PrivateAgentScope } from "../harness/scope.js";
 
 const MAX_TASKS = 20;
 const MAX_AGENDA_EVENTS = 40;
+
+const TASK_LIST_ACTIVE_NATIVE_TOOL = {
+  name: "harvy_task_list_active_v1",
+  description: "Baca daftar tugas aktif pemilik scope Harvy.",
+  inputSchema: objectSchema({
+    limit: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_TASKS,
+      description: "Jumlah maksimum tugas yang dikembalikan.",
+    },
+  }),
+} satisfies AgentNativeToolDefinition;
+
+const TASK_GET_NATIVE_TOOL = {
+  name: "harvy_task_get_v1",
+  description: "Baca satu tugas Harvy berdasarkan ID hasil observation tepercaya.",
+  inputSchema: objectSchema({
+    taskId: {
+      type: "string",
+      minLength: 1,
+      maxLength: 64,
+      description: "ID tugas dari state Harvy, bukan ID pemilik atau scope.",
+    },
+  }, ["taskId"]),
+} satisfies AgentNativeToolDefinition;
+
+const SESSION_STATUS_NATIVE_TOOL = {
+  name: "harvy_session_status_v1",
+  description: "Baca status sesi aktif pemilik scope Harvy.",
+  inputSchema: objectSchema({}),
+} satisfies AgentNativeToolDefinition;
+
+const TIME_SETTINGS_NATIVE_TOOL = {
+  name: "harvy_settings_time_get_v1",
+  description: "Baca clock runtime, timezone, dan jam tenang pemilik scope.",
+  inputSchema: objectSchema({}),
+} satisfies AgentNativeToolDefinition;
+
+const CALENDAR_AGENDA_NATIVE_TOOL = {
+  name: "harvy_calendar_agenda_v1",
+  description: "Baca agenda internal Harvy selama 1–31 hari; bukan kalender eksternal.",
+  inputSchema: objectSchema({
+    days: {
+      type: "integer",
+      minimum: 1,
+      maximum: 31,
+      description: "Horizon agenda dari sekarang dalam hari.",
+    },
+    localDate: {
+      type: "string",
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+      description: "Filter tanggal lokal YYYY-MM-DD bila pengguna meminta hari tertentu.",
+    },
+  }),
+} satisfies AgentNativeToolDefinition;
 
 export interface InternalAgentDependencies {
   tasks: TaskService;
@@ -50,6 +107,7 @@ export class TaskListActiveExecutor
 implements AgentCapabilityExecutor<{ limit: number }> {
   readonly capabilityId = "task.list_active";
   readonly capabilityVersion = "1";
+  readonly nativeTool = TASK_LIST_ACTIVE_NATIVE_TOOL;
 
   constructor(private readonly tasks: TaskService) {}
 
@@ -84,6 +142,7 @@ export class TaskGetExecutor
 implements AgentCapabilityExecutor<{ taskId: string }> {
   readonly capabilityId = "task.get";
   readonly capabilityVersion = "1";
+  readonly nativeTool = TASK_GET_NATIVE_TOOL;
 
   constructor(private readonly tasks: TaskService) {}
 
@@ -118,6 +177,7 @@ export class SessionStatusExecutor
 implements AgentCapabilityExecutor<Record<string, never>> {
   readonly capabilityId = "session.status";
   readonly capabilityVersion = "1";
+  readonly nativeTool = SESSION_STATUS_NATIVE_TOOL;
 
   constructor(private readonly sessions: SessionService) {}
 
@@ -147,6 +207,7 @@ export class TimeSettingsExecutor
 implements AgentCapabilityExecutor<Record<string, never>> {
   readonly capabilityId = "settings.time.get";
   readonly capabilityVersion = "1";
+  readonly nativeTool = TIME_SETTINGS_NATIVE_TOOL;
 
   constructor(
     private readonly profiles: ProfileService,
@@ -184,6 +245,7 @@ export class CalendarAgendaExecutor
 implements AgentCapabilityExecutor<CalendarAgendaInput> {
   readonly capabilityId = "calendar.agenda";
   readonly capabilityVersion = "1";
+  readonly nativeTool = CALENDAR_AGENDA_NATIVE_TOOL;
 
   constructor(
     private readonly tasks: TaskService,
@@ -467,6 +529,18 @@ function collectionSummary(
     truncated: sourceTruncated || included.length < items.length,
     [field]: included,
   });
+}
+
+function objectSchema(
+  properties: Readonly<Record<string, unknown>>,
+  required: readonly string[] = [],
+): Readonly<Record<string, unknown>> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+  };
 }
 
 function isExactRecord(

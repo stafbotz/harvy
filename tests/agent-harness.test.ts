@@ -17,7 +17,7 @@ describe("agent harness", () => {
       observations.length === 0
         ? {
             kind: "action",
-            capabilityId: "web.search",
+            capabilityId: "external.act",
             capabilityVersion: "1",
             input: { query: "berita" },
           }
@@ -29,7 +29,7 @@ describe("agent harness", () => {
       planner,
       executors: [
         {
-          capabilityId: "web.search",
+          capabilityId: "external.act",
           capabilityVersion: "1",
           validate: () => ({ ok: true, value: {} }),
           execute: async () => {
@@ -604,7 +604,7 @@ describe("agent harness", () => {
   it("menghentikan proposal identik agar loop tidak berputar", async () => {
     const planner: AgentPlanner = async () => ({
       kind: "action",
-      capabilityId: "web.search",
+      capabilityId: "external.act",
       capabilityVersion: "1",
       input: { query: "sama" },
     });

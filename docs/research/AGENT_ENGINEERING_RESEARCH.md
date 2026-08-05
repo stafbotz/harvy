@@ -13,6 +13,10 @@ Dokumen ini sengaja berada di folder `research/`. Ia mencatat hipotesis,
 rekomendasi, dan pertanyaan terbuka. Kalimat di sini tidak boleh dipakai untuk
 mengklaim Harvy sudah mempunyai capability baru.
 
+Catatan status 5 Agustus 2026: vertical slice research web yang pernah dibangun
+kemudian dicabut dari runtime. Bagian yang menyebut executor web adalah riwayat
+rancangan, bukan kemampuan Harvy saat ini.
+
 ## Pertanyaan yang diteliti
 
 1. Bagaimana Harvy membawa percakapan panjang tanpa kehilangan hal penting?
@@ -100,14 +104,13 @@ Fondasi saat ini lebih maju daripada produk agent yang terlihat pengguna.
   capability snapshot, loop `final|need_input|action`, input validation,
   approval binding, idempotency key, checkpoint serializable, step/deadline/
   cycle limit, cancellation, dan generation freshness.
-- Runtime privat Telegram kini memanggil `AgentHarness.run()` untuk vertical
-  slice `web.search`/`web.open` baca-saja yang opsional. `AiClient` belum
-  mengirim native tools dan run research masih sinkron/in-memory; durable run
-  store, workspace artifact, outbox, receipt, serta reconciler belum ada.
-  Route pertama ini tidak menerima context lama privat, hanya mengirim satu
-  query per run, dan membatasi open/final ke observation sukses. Cancellation
-  dari command/generation luar belum disambungkan.
-  Status sahnya tetap
+- Runtime privat Telegram kini memanggil `AgentHarness.run()` untuk tool state
+  internal baca-saja, terminal virtual, dan delegasi berbatas. `AiClient`
+  mengirim native function tools; setiap executor memiliki nama+schema yang
+  ikut hash callable checkpoint, lalu respons provider dinormalisasi kembali ke
+  kontrak kernel. Checkpoint `waiting_input` privat durable pada adapter file
+  satu-proses, tetapi run aktif, workspace artifact, outbox, receipt, dan
+  reconciler belum ada. Executor web sudah dicabut. Status sahnya tetap
   [`engineering/STATUS.md`](../engineering/STATUS.md).
 
 Implikasinya: Harvy tidak memerlukan framework agent baru sebagai langkah
@@ -700,8 +703,9 @@ agent dalam teks.
 3. **Vertical slice selesai 2 Agustus 2026:** loop research sinkron dan executor
    opsional `web.search`/`web.open` dengan capability dinamis, pagar egress,
    isolation context privat, observation tak tepercaya, satu search per run,
-   serta validasi asal URL/final. Native tool calling, lifecycle cancellation,
-   groundedness semantik, dan provider/Telegram nyata belum terbukti.
+   serta validasi asal URL/final. Slice ini dicabut 5 Agustus; native tool
+   calling kemudian selesai untuk Agent Runtime internal, sedangkan
+   groundedness semantik dan provider/Telegram nyata belum terbukti.
 4. **Selesai terbatas, diperkuat 3 Agustus 2026:** matriks otoritas grup,
    shared room memory eksplisit, reset state bersama, membership self/pengirim,
    invalidasi cache+batch sinkron, guard mutasi, dan revalidasi admin/epoch
@@ -713,8 +717,10 @@ agent dalam teks.
    sebagai fondasi; belum ada surface atau artifact.
 6. Bangun PostgreSQL `RunStore`, state machine durable, progress, dan artifact
    report bersitasi untuk tool baca yang sudah ada.
-7. Sambungkan native/canonical tool calling, pagination, groundedness per klaim,
-   dan source-diversity eval; lalu tambahkan konektor X/Threads.
+7. **Selesai 5 Agustus 2026 untuk runtime internal:** native/canonical tool
+   calling dengan schema executor, normalisasi fail-closed, dan binding
+   checkpoint. Pagination, groundedness per klaim, source-diversity eval, serta
+   konektor X/Threads tetap belum dibangun.
 8. Tambahkan outbox, receipt, reconciler, dan capability gate per connector
    sebelum external write.
 9. Uji social adaptation hanya di grup yang setiap pesertanya telah memberi

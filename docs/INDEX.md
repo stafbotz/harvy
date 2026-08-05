@@ -22,28 +22,26 @@ satu proses. Satu nomor sudah berhasil pairing, login, dan membalas grup nyata;
 perilaku grup lengkap belum diuji end-to-end. Grup Telegram, WhatsApp pribadi,
 dan website masih rencana.
 
-## Baca empat ini dulu
-
-Siapa pun yang mulai bekerja — manusia maupun AI — harus dapat menjawab empat
-pertanyaan berikut dari repositori, tanpa bertanya kepada siapa pun.
+## Selalu baca
 
 | Pertanyaan | Dokumen |
 |---|---|
-| Proyek ini apa, untuk siapa, dan kenapa layak ada? | [`PROJECT.md`](PROJECT.md) |
-| Apa batas moral, hak pengguna, dan larangannya? | [`CONSTITUTION.md`](CONSTITUTION.md) |
+| Apa yang dikerjakan terakhir kali, dan kenapa? | [`LOG.md`](LOG.md) (hanya ~15 entri terbaru; arsip di [`log/`](log/)) |
 | Apa yang sudah benar-benar berjalan hari ini? | [`engineering/STATUS.md`](engineering/STATUS.md) |
-| Apa yang dikerjakan terakhir kali, dan kenapa? | [`LOG.md`](LOG.md) |
 
-Konstitusi berkedudukan lebih tinggi daripada dokumen lain di repositori ini.
-
-## Selebihnya, baca sesuai keperluan
+## Baca sesuai tugasnya
 
 | Dokumen | Baca ketika |
 |---|---|
+| [`PROJECT.md`](PROJECT.md) | Menyentuh perilaku produk, visi, roadmap, atau target pengguna |
+| [`CONSTITUTION.md`](CONSTITUTION.md) | Menyentuh perilaku, privasi, keselamatan, atau hak pengguna. Konstitusi berkedudukan lebih tinggi daripada dokumen lain di repositori ini. |
+| [`engineering/ARCHITECTURE.md`](engineering/ARCHITECTURE.md) | Refactor besar, menambah modul baru, memahami aliran data antar-komponen |
+| [`engineering/INVARIANTS.md`](engineering/INVARIANTS.md) | Menyentuh mutasi data, safety, adapter, UI, grup, atau WhatsApp |
+| [`engineering/DEVELOPMENT.md`](engineering/DEVELOPMENT.md) | Setup, debug, probe diagnostik, konfigurasi environment, model routing |
+| [`engineering/TESTING.md`](engineering/TESTING.md) | Menyusun bukti verifikasi atau menguji secara manual |
 | [`operations/WORKFLOW.md`](operations/WORKFLOW.md) | Menulis kode, berpindah alat, membuat branch, atau menyerahkan hasil |
 | [`operations/HARVY_CONSOLE.md`](operations/HARVY_CONSOLE.md) | Menyalakan Console localhost, membaca ledger, backup/restore, atau merencanakan transisi VPS/domain |
 | [`product/PILOT_BETA_DAN_PAKET.md`](product/PILOT_BETA_DAN_PAKET.md) | Menentukan cohort beta, paket pribadi/grup pilot, harga hipotesis, atau batas sebelum menerima pembayaran |
-| [`engineering/TESTING.md`](engineering/TESTING.md) | Menyusun bukti verifikasi atau menguji secara manual |
 | [`research/AGENT_ENGINEERING_RESEARCH.md`](research/AGENT_ENGINEERING_RESEARCH.md) | Membahas draf sementara context/harness/loop/graph engineering, pemadatan token, isolasi ruang, agent sosial, Codex, Claude Code, atau prinsip Karpathy; bukan sumber status kemampuan |
 | [`decisions/ADR-001-agent-orchestration.md`](decisions/ADR-001-agent-orchestration.md) | Mengubah cara beberapa agent bekerja pada satu repositori |
 | [`decisions/ADR-002-percakapan-bahasa-alami.md`](decisions/ADR-002-percakapan-bahasa-alami.md) | Menyentuh cara pengguna berbicara dengan Harvy, tombol, atau pengenalan maksud |
@@ -59,9 +57,11 @@ Konstitusi berkedudukan lebih tinggi daripada dokumen lain di repositori ini.
 | [`decisions/ADR-012-harness-agent-dan-scope-memori.md`](decisions/ADR-012-harness-agent-dan-scope-memori.md) | Menyentuh capability registry, loop agent, executor/tool, approval/idempotensi, context budget, scope lintas kanal, atau memori semantik anggota grup |
 | [`decisions/ADR-013-harvy-console-entitlement-dan-ledger-biaya.md`](decisions/ADR-013-harvy-console-entitlement-dan-ledger-biaya.md) | Menyentuh Console operator, cohort beta, paket, kuota, harga model, ledger provider/entitlement, atau atribusi biaya grup |
 | [`decisions/ADR-014-structured-episodic-compaction-v2.md`](decisions/ADR-014-structured-episodic-compaction-v2.md) | Menyentuh sequence riwayat, episode terstruktur, provenance/hash, migrasi history v1, retensi episode, compaction race, atau drain riwayat |
-| [`decisions/ADR-015-executor-web-baca-saja.md`](decisions/ADR-015-executor-web-baca-saja.md) | Menyentuh intent research, `web.search`, `web.open`, Brave Search, egress/SSRF, observasi tak tepercaya, atau validasi sitasi |
+| [`decisions/ADR-015-executor-web-baca-saja.md`](decisions/ADR-015-executor-web-baca-saja.md) | Keputusan historis yang telah dicabut tentang intent research, `web.search`, `web.open`, Brave Search, egress/SSRF, observasi tak tepercaya, atau validasi sitasi |
 | [`decisions/ADR-016-scope-dan-otoritas-v1.md`](decisions/ADR-016-scope-dan-otoritas-v1.md) | Menyentuh WorkspaceScope, membership/role/ACL epoch, matriks authority grup, shared room memory, atau batas reset admin/member-local |
 | [`decisions/ADR-017-agent-runtime-internal-dan-delegasi.md`](decisions/ADR-017-agent-runtime-internal-dan-delegasi.md) | Menyentuh root agent cheap-first, orkestrator ambitious, sub-agent paralel, tool internal, jam deterministik, agenda Harvy, terminal virtual, atau batas memory authority |
+| [`decisions/ADR-018-checkpoint-klarifikasi-agent-durable-lokal.md`](decisions/ADR-018-checkpoint-klarifikasi-agent-durable-lokal.md) | Menyentuh persistence `waiting_input`, CAS/restart checkpoint agent, watermark jawaban, retensi, consent/ekspor/penghapusan run, atau batas adapter file sebelum RunStore produksi |
+| [`evidence/agent-acceptance-v1-2026-08-04/README.md`](evidence/agent-acceptance-v1-2026-08-04/README.md) | Menilai bukti 12 skenario penerimaan Agent Runtime v1 |
 | [`evidence/group-conversation-2026-07-30/README.md`](evidence/group-conversation-2026-07-30/README.md) | Menilai angka dan batas bukti evaluasi model grup 30 Juli 2026 |
 | [`../README.md`](../README.md) | Menjalankan atau mencoba Harvy secara lokal |
 
@@ -81,10 +81,12 @@ persis karena kedua jenis dokumen ini tertukar.
 ## Urutan pencarian konteks
 
 1. `AGENTS.md` di root.
-2. Empat dokumen inti di atas.
+2. `docs/LOG.md` dan `docs/engineering/STATUS.md`.
 3. Baris yang relevan pada peta ini.
-4. Kode, tes, dan konfigurasi yang benar-benar terkait.
-5. Dokumentasi resmi dependency atau layanan, hanya bila informasi lokal belum
+4. Dokumen detail sesuai tugas (`ARCHITECTURE.md`, `INVARIANTS.md`,
+   `DEVELOPMENT.md`, `CONSTITUTION.md`, `PROJECT.md`, ADR, dsb.).
+5. Kode, tes, dan konfigurasi yang benar-benar terkait.
+6. Dokumentasi resmi dependency atau layanan, hanya bila informasi lokal belum
    cukup.
 
 Jika dokumen dan kode bertentangan, jangan diam-diam memilih salah satunya.

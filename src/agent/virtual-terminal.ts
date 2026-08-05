@@ -3,6 +3,7 @@ import type {
   AgentCapabilityExecutor,
   AgentExecutionContext,
   AgentExecutorResult,
+  AgentNativeToolDefinition,
 } from "../harness/agent-harness.js";
 import { MAX_AGENT_EXECUTOR_SUMMARY_CHARACTERS } from "../harness/agent-harness.js";
 
@@ -12,6 +13,52 @@ const MAX_TOTAL_FILE_CHARACTERS = 32_000;
 const MAX_OUTPUT_CHARACTERS = 8_000;
 const MAX_EXPRESSION_CHARACTERS = 240;
 const MAX_CALCULATION_OPERATIONS = 100;
+
+const VIRTUAL_TERMINAL_NATIVE_TOOL = {
+  name: "harvy_terminal_run_v1",
+  description:
+    "Jalankan command pada terminal virtual kosong tanpa host, process, environment, atau network.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      commands: {
+        type: "array",
+        minItems: 1,
+        maxItems: MAX_COMMANDS,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            op: {
+              type: "string",
+              enum: [
+                "pwd",
+                "date",
+                "echo",
+                "calculate",
+                "write",
+                "append",
+                "cat",
+                "list",
+                "remove",
+              ],
+            },
+            text: { type: "string", maxLength: MAX_TEXT_CHARACTERS },
+            expression: {
+              type: "string",
+              maxLength: MAX_EXPRESSION_CHARACTERS,
+            },
+            path: { type: "string" },
+            content: { type: "string", maxLength: MAX_TEXT_CHARACTERS },
+          },
+          required: ["op"],
+        },
+      },
+    },
+    required: ["commands"],
+  },
+} satisfies AgentNativeToolDefinition;
 
 type VirtualTerminalCommand =
   | { op: "pwd" }
@@ -40,6 +87,7 @@ export class VirtualTerminalExecutor
 implements AgentCapabilityExecutor<VirtualTerminalInput> {
   readonly capabilityId = "terminal.run";
   readonly capabilityVersion = "1";
+  readonly nativeTool = VIRTUAL_TERMINAL_NATIVE_TOOL;
 
   constructor(private readonly now: () => Date = () => new Date()) {}
 

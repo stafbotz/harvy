@@ -29,7 +29,7 @@ describe("langkah tertunda bertoken", () => {
     assert.equal(store.take("a", expiring), null);
   });
 
-  it("mengikat checkpoint agent ke owner, maksimal sepuluh menit, dan tidak memulihkannya setelah restart", () => {
+  it("mengikat mirror checkpoint agent ke owner, maksimal sepuluh menit, dan tidak memulihkannya sendiri setelah restart", () => {
     let now = 0;
     const store = new PendingStore(10 * 60 * 1_000, () => now);
     const checkpoint = {
@@ -55,6 +55,8 @@ describe("langkah tertunda bertoken", () => {
       mode: "orchestrate",
       intent: "request",
       checkpoint,
+      revision: null,
+      acceptAnswersAfterUpdateId: 1,
     });
 
     assert.equal(store.peek("bob"), null);

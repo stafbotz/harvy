@@ -1,0 +1,507 @@
+# Invarian Harvy
+
+Dokumen ini berisi aturan-aturan yang **harus dijaga** ketika mengubah kode
+Harvy. Baca bagian yang relevan dengan area yang sedang dikerjakan — tidak
+perlu membaca seluruh dokumen.
+
+Invarian ini dipindahkan dari `AGENTS.md` agar agent coding hanya memuatnya
+saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
+
+---
+
+## Tugas dan mutasi
+
+- **Aktor pekerjaan harus jelas sebelum mengubah tugas.** Permintaan agar Harvy
+  membuat, menulis, menerjemahkan, merangkum, menghitung, atau menghasilkan
+  sesuatu adalah intent `request`: kerjakan di chat, jangan masukkan ke daftar
+  tugas. `task + taskAction: save + task` baru boleh langsung mencatat bila teks
+  pengguna sendiri meminta catat/simpan/ingatkan dan payloadnya konkret. Hanya
+  `feeling + taskAction: offer + task` yang boleh menawarkan pencatatan setelah
+  menjawab; konfirmasinya bertoken. Parser dan adapter sama-sama memeriksa
+  kombinasi itu.
+- **Langkah tertunda tidak diklasifikasikan ulang sebagai percakapan baru.**
+  Khusus Ubah tenggat, pengguna sudah memilih tindakannya lewat tombol; jawaban
+  waktunya wajib masuk `Conversation.understandDueDate`, bukan disisipkan ke
+  kalimat sintetis lalu dikirim ke `understand`. Tanggal dari model hanya sah
+  bila ISO memuat waktu dan offset.
+- **Balasan model adalah masukan yang tidak tepercaya.** Selalu lewat
+  `understand.ts`; jangan pernah memakai hasil `JSON.parse` mentah dari model.
+- **Mutasi tidak boleh bergantung pada klasifikasi model saja.** Daftar memori
+  yang terbuka salah dan tugas kosong yang tertulis sama-sama pernah terjadi:
+  "kamu pahami aja" membuka seluruh catatan pribadi seseorang lengkap dengan
+  tombol Lupakan semua, dan "buat pengingat dong" tersimpan sebagai tugas
+  berjudul "Membuat pengingat". Sejak `ADR-008`, penyimpanan tugas mempunyai
+  pagar kode lagi: teks pengguna harus meminta catat/simpan/ingatkan dan membawa
+  isi konkret. Permintaan prioritas dan pengingat kosong tetap percakapan.
+  Kontrol daftar memori masih memeriksa pasangan intent/action; jangan
+  melemahkan promptnya tanpa penjaga pengganti.
+- `TaskService` menerima `now: () => Date` agar dapat diuji. Tes memakai
+  `MemoryRepository` yang mengimplementasi `TaskRepository`, bukan berkas nyata.
+- ID tugas tidak pernah ditampilkan kepada pengguna. Semua tindakan berjalan
+  lewat tombol inline yang membawa ID di `callback_data`.
+- Waktu disimpan sebagai ISO UTC. Input dan tampilan memakai zona IANA profil
+  pengguna; `DEFAULT_TIMEZONE` hanya fallback untuk profil lama atau yang belum
+  memilih. Jangan mengasumsikan zona waktu proses. Pengingat dan check-in
+  menolak waktu lampau atau jam tenang, bukan menggesernya diam-diam. Ini juga
+  berlaku pada `remindAt` yang diekstrak langsung dari pesan, bukan hanya alur
+  pemilih waktu lewat tombol.
+
+## Percakapan dan balasan
+
+- **Langkah balasan tahu jam berapa sekarang.** `replyPrompt` menerima `now` dan
+  `timeZone`. Tanpa itu Harvy menyuruh penggunanya rebahan pada pukul 23.00 lalu
+  mengajak menunggu malam. Ketika pengguna menyebut sendiri keadaannya, jam itu
+  tidak boleh ikut disebut.
+- **Perintah kedalaman untuk pesan panjang menempel di giliran pengguna.**
+  `depthDirective` ikut di dalam pesan `user`, bukan sebagai pesan sistem kedua.
+  Di prompt sistem ia kalah oleh panduan intent yang menyuruh membalas singkat;
+  sebagai pesan sistem kedua ia hilang pada penyedia yang hanya mengenal satu
+  `system_instruction`. Riwayat tetap menyimpan pesan asli, bukan yang sudah
+  ditempeli.
+- **Naskah tetap ditulis sebagai paragraf utuh, tanpa penggalan baris.**
+  Telegram membungkus teks sendiri; baris yang sudah dipenggal di kode dibungkus
+  dua kali dan hasilnya bergerigi di ponsel. `tests/copywriting.test.ts`
+  menjaganya, sekaligus melarang kata "Pengguna" muncul di layar orangnya
+  sendiri.
+- **Konteks masuk ke dua langkah, bukan satu.** `understand` dan `reply`
+  sama-sama menerima `HarvyContext`. Memberikannya hanya pada balasan adalah
+  kesalahan yang menggoda: "iya yang tadi itu" justru gagal di langkah
+  pemahaman.
+- **Riwayat chat bukan daftar memori.** Intent `history` menjawab kemampuan,
+  isi chat sebelumnya, dan rujukan "yang tadi" dari konteks. Intent `memory`
+  hanya membuka kontrol catatan terstruktur melalui
+  `memoryAction: list|forget|edit`. Fakta atau preferensi baru tetap percakapan
+  biasa dengan `memoryAction: remember` dan usulan pada field `memories`;
+  keberadaannya bukan izin membuka daftar.
+- **Percakapan dan tombol adalah antarmuka utama, bukan perintah `/`.** Perintah
+  hanya pelengkap opsional. Jangan menambah perintah baru sebagai cara memakai
+  sebuah fitur; jalannya lewat pesan bebas dan tombol. Untuk tindakan adaptif,
+  model hanya boleh mengusulkan ID dari allowlist; label/callback dibangun kode,
+  maksimum satu tindakan adaptif per giliran, terikat pemilik, kedaluwarsa, dan
+  sekali pakai. Tombol
+  operasional untuk objek nyata seperti tugas tetap boleh disusun kode.
+
+## Bubble dan giliran
+
+- **Satu giliran dapat terdiri dari beberapa bubble.** Model `cheap`
+  menggolongkan gabungan sebagai `complete`, `open`, `incomplete`, atau
+  `urgent`; `turn-taking-policy.ts` mengoreksi pembuka, fragmen tata bahasa,
+  serta penutup eksplisit, tetapi tidak mengenali bahaya. `MessageBatcher.enqueue`
+  harus mengembalikan kendali segera karena long-polling grammY memproses update
+  satu per satu. Jeda hening 650 milidetik mengumpulkan burst. Sesudah
+  pemeriksaan, pesan lengkap tunggal diproses langsung, gabungan lengkap diberi
+  ruang 4 detik, pembuka/narasi terbuka 7 detik, dan fragmen keras 12 detik
+  sejak bubble terakhir. Hanya hasil `urgent` dari model yang memotong debounce
+  dan mengirim acknowledgment tetap di luar FIFO; timer 12 detik tetap menjadi
+  fail-safe saat model berpikir. Handler lengkap dan semua mutasi tetap FIFO di
+  belakang handler pengguna yang sudah aktif.
+  Satu pemilik hanya boleh memiliki satu pemeriksaan batas yang aktif; revisi
+  perantara dikoaleskan ke bubble terbaru. Indikator mengetik hanya dikirim
+  setelah batch mulai ditangani dan kegagalannya wajib dianggap kosmetik.
+  Balasan pengguna yang sama selalu diproses berurutan. Command menaikkan
+  generasi untuk membatalkan batch tertunda—termasuk yang sudah masuk chain
+  tetapi belum mulai—lalu menunggu handler aktif; callback menguras batch yang
+  lebih dulu masuk sebelum melakukan mutasi. Barrier ini wajib agar balasan lama
+  tidak muncul setelah command dan Lupakan semua tidak dapat diikuti
+  penyimpanan dari handler lama. Command dan callback hanya **mengantrekan** aksi ini; handler
+  grammY tidak boleh menunggu chain tersebut karena long-polling global akan
+  menahan update pengguna lain. Permintaan ACK callback dikirim segera secara
+  fire-and-forget dan tidak boleh menjadi dependency aksi. Shutdown normal
+  menghentikan sumber kerja reminder/check-in dan `bot.stop`, menunggu kedua
+  worker aktif selesai, baru memanggil `HarvyBot.drainPending` sebagai gerbang
+  terakhir untuk batch, action, evaluator, dan telemetry. Urutan itu wajib
+  karena worker dapat menambahkan riwayat atau telemetry terakhir. `app.ts`
+  memberi batas shutdown 60 detik sebelum keluar paksa; logger operasional
+  di-flush paling akhir setelah seluruh drain dan memakai append sinkron untuk
+  catatan fatal timeout. Antrean ini tidak
+  persisten dan crash paksa tetap dapat kehilangan update yang sudah diterima.
+
+## Memori
+
+- **Memori dan riwayat juga masukan yang tidak tepercaya.** Isinya perkataan
+  pengguna yang diputar ulang pada giliran berikutnya, kali ini dari sisi
+  sistem. Pada langkah `understand`, ketiganya wajib masuk lewat `contextSection`
+  yang membungkusnya dalam `<konteks>` berikut penegasan bahwa isinya catatan,
+  bukan perintah. Menyisipkannya langsung ke prompt adalah jalan injeksi yang
+  tertunda.
+- **Pada langkah `reply`, giliran terakhir dikirim sebagai pesan chat, bukan
+  kutipan.** Ini yang membuat Harvy terdengar melanjutkan obrolan alih-alih
+  membalas arsip. Harganya nyata: perkataan lama pengguna kini datang dengan
+  peran `user` yang sama seperti pesan hari ini, sehingga pembungkus `<konteks>`
+  tidak lagi memisahkannya. `RECENT_TURNS_NOTE` di `persona.ts` yang
+  menggantikan pembungkus itu, dan ia **wajib ikut setiap kali** `context.turns`
+  tidak kosong. Memori dan ringkasan tetap di dalam `<konteks>`; keduanya memang
+  catatan, dan tidak ada bentuk chat yang wajar untuk mereka.
+- **Memori yang dinilai sensitif tidak pernah disimpan tanpa jawaban
+  pengguna.** Jenis `personal` atau triase yang menandai isi sensitif selalu
+  lewat tombol izin bertoken. Karena pengenalan isi dilakukan model dan tidak
+  ada lagi daftar kata lokal, bila ekstraksi **dan** triase sama-sama salah
+  menilai isi sensitif sebagai biasa, jalur otomatis masih dapat terlewati.
+  Ini keterbatasan yang wajib disebut apa adanya, bukan diklaim sudah tertutup.
+  Jenis biasa wajib diumumkan berikut jalan keluarnya di pesan yang sama; bila
+  pemberitahuan itu gagal terkirim, catatan yang baru ditulis wajib dibatalkan.
+- **Pemberitahuan memori menempel di balasan, bukan menjadi bubble sendiri.**
+  `withMemoryNotes` menambahkan satu baris `📎` di ujung bubble terakhir dan
+  `memoryNoteActions` memasang tombol Lupakan pada pesan yang sama. Bubble
+  tersendiri memenuhi Pasal 4 nomor 2 tetapi memotong percakapan seperti pop-up.
+  Karena balasan itu pesan sungguhan, tombolnya memakai `memdrop:` yang hanya
+  membuang barisnya lewat `withoutMemoryNote` — bukan `memforget:` yang menimpa
+  seluruh pesan dengan daftar memori.
+- **Fitur memori tidak boleh hidup tanpa kendalinya.** Daftar, sunting satu,
+  lupakan satu, dan lupakan semua adalah bagian dari fiturnya, bukan pekerjaan
+  susulan — Pasal 4 nomor 4. Penyuntingan mempertahankan ID, jenis, dan metadata
+  serta memeriksa pemilik sebelum menulis. Konfirmasi Lupakan semua, tarik
+  persetujuan, dan hapus seluruh data wajib membawa token pending sekali pakai;
+  callback lama tidak boleh berlaku pada data yang dibuat setelah promptnya.
+
+## Keselamatan
+
+- **Keselamatan adalah pemeriksaan tersendiri, bukan satu field di antara
+  belasan field lain.** `Conversation.triageRisk` berjalan **paralel** dengan
+  `understand`, bukan sesudahnya: keduanya memakai model termurah, jadi giliran
+  menunggu yang terlama dari dua, bukan jumlahnya. Triase yang gagal tidak
+  boleh terlihat seperti percakapan yang baik-baik saja — `parseRiskTriage`
+  mengembalikan `null`, dan `understanding.safetySensitive` menjadi jaring
+  terakhirnya. Bila ekstraksi menandai sensitif sementara triase berkata biasa,
+  konflik itu juga naik ke `dukungan` belum pasti. Semua keadaan belum pasti
+  wajib direview dan tidak boleh memutasi tugas, memori, pending, atau sesi.
+  Giliran `dukungan` dan `bahaya` memakai tier `efficient` dan balasannya wajib
+  lewat `reviewReply` sebelum dikirim. Pemeriksa menerima konteks episode,
+  `alone`, dan `certain`; pada triase gagal ia dilarang mengarang bahwa orang
+  tua, guru, keluarga, atau teman pasti aman. Penolakan maupun kegagalan review
+  memakai fallback berbeda untuk `dukungan` dan `bahaya`, sehingga percakapan
+  dukungan tidak menerima copy darurat/112. Tidak ada jalur fail-open.
+  Keselamatan menang atas semua route kontrol dan sesi: pada triase non-biasa
+  atau belum pasti, hasil operasional ekstraksi dibuang dan sesi tidak masuk
+  prompt.
+- **Mengarahkan ke manusia tidak boleh menjadi cara menolak membantu.**
+  Konstitusi v0.3 Pasal 3.7 dan Pasal 5 nomor 15. Ketika triase menandai
+  `alone`, arahan wajib melarang pengulangan saran menghubungi orang terdekat
+  dan menggantinya dengan bantuan yang tidak menuntut kepercayaan lebih dulu.
+  Nudge profesional otomatis ditangguhkan sejak `ADR-008` sampai false positive
+  triase dievaluasi; jangan mengaktifkannya kembali hanya dari satu label model.
+- **Pengenalan tentang penggunanya dilakukan model, bukan daftar kata.** Daftar
+  kata sensitif, pagar daftar memori, dan pagar bahaya lokal dihapus pada 27
+  Juli 2026. `ADR-008` mengembalikan hanya pagar bentuk izin tugas dan payload
+  konkret; ia tidak menilai keadaan pribadi. Yang tersisa di
+  `turn-taking-policy.ts` hanya penilaian bentuk kalimat — apakah pengguna
+  tampak selesai mengetik — dan itu memang bukan pengenalan tentang orangnya.
+  Akibat yang diketahui dan diterima: bahaya tidak lagi memotong antrean batas
+  giliran kecuali model batas giliran sendiri menyebut `urgent`.
+
+## Onboarding dan persetujuan
+
+- **Kontak pertama berkenalan dulu, dan gerbangnya sebelum `enqueue`.** Pengguna
+  yang `consentVersion`-nya belum sama dengan `CONSENT_VERSION` hanya boleh
+  mengirim **pesan pertama** ke satu triase keselamatan; ekstraksi, klasifikasi
+  batas bubble, personalisasi, telemetry berbasis pemilik, dan bubble berikutnya
+  tidak boleh sampai ke model. Gerbang wajib berada di handler `message:text`
+  sebelum `MessageBatcher.enqueue`, karena batcher memanggil
+  `classifyTurnBoundary`. Pesan pertama ditahan `HeldMessageStore` di memori
+  proses — tidak pernah ke berkas — lalu diproses sendiri setelah tombolnya
+  ditekan; pengguna tidak diminta mengetik ulang. `/start` hanya salah satu
+  pintu masuk, bukan syarat. Pengecualian triase pertama disahkan Konstitusi
+  v0.3 Pasal 3.9 dan naskah perkenalan mengatakannya apa adanya. Menghapus
+  seluruh memori tidak mereset persetujuan; menarik persetujuan memang
+  mengembalikan pesan berikutnya ke gerbang ini tanpa menghapus tugas, memori,
+  sesi, atau check-in. Ingress pesan, triase/intro, callback persetujuan, dan
+  callback penarikan persetujuan memakai satu rantai per pemilik; callback
+  tidak boleh hanya mengambil snapshot sekali lalu membiarkan pesan yang datang
+  saat perubahan persetujuan hilang atau terproses ganda.
+- **Hak menarik izin dan menghapus data tidak boleh digagalkan pre-clear run.**
+  Penarikan izin menutup ingress/history dan mempersistenkan profil lebih dulu,
+  lalu cleanup checkpoint dilakukan best-effort dengan scope tetap diblokir
+  bila I/O gagal. Penghapusan penuh harus mencapai tombstone profil sebelum
+  store run disentuh. Sebaliknya, consent baru tidak boleh dipersistenkan sampai
+  cleanup checkpoint consent lama benar-benar berhasil; hanya sesudah itu scope
+  boleh dibuka lagi.
+- **State percakapan mengikuti delivery.** Pertanyaan preferensi gaya baru
+  ditandai sudah diajukan setelah Telegram berhasil mengirimnya. Aturan yang
+  sama berlaku untuk sesi baru dan kemajuan tahap: kegagalan kirim tidak boleh
+  meninggalkan state yang tidak pernah dilihat pengguna. Seluruh prompt
+  `PendingStore` juga dibatalkan bila pengirimannya gagal. Bila pembuka sesi
+  sudah terlihat tetapi penyimpanan sesi gagal, state parsial dibersihkan dan
+  keyboard pesan itu dilepas sebagai kompensasi terbaik.
+
+## Sesi dan check-in
+
+- **Hanya satu sesi aktif per pengguna.** Sesi menjernihkan, memprioritaskan,
+  fokus, tutoring, rencana, dan jembatan manusia disimpan persisten. Memulai
+  sesi kedua tidak boleh menimpa tujuan pertama. Sesi baru maupun tahap
+  tutoring baru hanya di-commit sesudah pesan Telegram yang mewakilinya
+  berhasil dikirim; giliran berisiko tidak memajukan tahap. Sesi adalah konteks
+  lunak: topik yang tidak berkaitan tidak menerima prompt/tombol sesi dan tidak
+  memajukan state, tetapi sesi tetap dapat dilanjutkan. Bentuk jawaban yang
+  jelas seperti "karena …" boleh melanjutkan sesi; kalimat pendek biasa tidak
+  otomatis dianggap terkait; kata generik "masih", "belum", "udah", atau
+  "sudah" bukan bukti hubungan sesi. `done` dari model hanya sah bila kata
+  selesai juga merujuk sesi atau tumpang tindih dengan tujuan sesi; `cancel`
+  tetap memerlukan teks pengguna yang jelas.
+- **Check-in adalah satu kali dan selalu opt-in.** Pengguna memilih waktunya;
+  notifikasi generik tidak memuat tujuan. Diabaikan atau dijawab "masih jalan"
+  tidak membuat nudge baru. Worker menunggu owner idle dan jam tenang berakhir.
+  Penarikan persetujuan tidak menghapus sesi/check-in, tetapi worker menahan
+  pengirimannya sampai pengguna menyetujui lagi. Kegagalan membaca kandidat
+  reminder/check-in ditangkap agar tick berikutnya tetap berjalan.
+
+## Catatan tersembunyi
+
+- **Catatan tersembunyi hanya satu jenis, dan batasnya tertulis.**
+  `domain/insight.ts` adalah satu-satunya tempat data yang tidak dapat dilihat
+  penggunanya. Menambah field di sana berarti memperluas pengecualian terhadap
+  Larangan Mutlak; jangan melakukannya tanpa keputusan pemilik produk. Ia ikut
+  terhapus pada "Lupakan semua tentang aku" maupun penghapusan penuh. Ia tidak
+  masuk ekspor pengguna, sesuai pengecualian Konstitusi, tetapi generation guard
+  wajib mencegah refresh latar menghidupkannya kembali setelah penghapusan.
+  Runtime hanya menulis triase `bahaya` yang berhasil diparse setelah balasan
+  terkirim, menyimpannya 30 hari, dan tidak memasukkan inferensi gaya/tahap/
+  kerentanan ke prompt. Saat catatan lama dibaca, field inferensi warisan itu
+  dibersihkan secara fisik dan disimpan kembali; `refresh` tidak lagi memanggil
+  model atau menghidupkannya.
+
+## Ekspor dan penghapusan
+
+- **Ekspor dan penghapusan penuh berbeda dari kontrol memori.** Ekspor memuat
+  data yang dapat dilihat pengguna dan mengecualikan insight tersembunyi.
+  Penghapusan penuh memasang tombstone profil lebih dulu, menghapus seluruh
+  store termasuk insight dan telemetry, lalu menghapus profil terakhir.
+  Startup wajib meneruskan tombstone; pekerjaan latar memakai lock/generation
+  agar data tidak hidup kembali. Penghapusan menunggu pemadatan riwayat aktif,
+  memblokir append/compact baru sampai persetujuan berikutnya, dan memblokir
+  request telemetry/model sebelum store lain dibersihkan. Hanya penerimaan
+  persetujuan baru yang boleh memanggil `history.allow` dan `telemetry.allow`.
+
+## Telemetry
+
+- **Telemetry tidak boleh menyimpan isi.** Schema event tertutup hanya memuat
+  owner, tier, tujuan, model, token/perkiraan, latensi, keberhasilan, dan biaya.
+  Harga, retensi, dan batas 24 jam berasal dari environment. Reservasi kuota per
+  owner harus atomik; triase dan review keselamatan tidak pernah diblokir batas
+  biasa tetapi tetap dicatat. Penulisan repository berjalan di latar; summary,
+  ekspor, penghapusan, dan shutdown wajib memperhitungkan atau menguras antrean.
+  `drain` wajib menunggu antrean eksklusif per pemilik beserta flush
+  lanjutannya; kegagalan penulis tidak boleh dilaporkan seolah sudah terkuras.
+  Provider-attempt ledger tetap mencatat setiap fetch termasuk fallback,
+  kegagalan, dan `schema_rejected`; harga tak diketahui tidak boleh disebut
+  nol. Ledger entitlement adalah authority kapasitas: `reply`, `session`, dan
+  `group-reply` baru mendebit setelah adapter memastikan delivery. Due-date,
+  boundary, understanding, triase, review, ringkasan, insight,
+  group-participation, kegagalan parser/delivery, serta keselamatan tidak boleh
+  mengurangi paket. Runtime/probe/evaluator wajib memegang local runtime lock
+  karena repository JSON hanya aman satu proses.
+
+## AI dan model
+
+- **Harvy tidak punya cadangan berbasis aturan.** Provider AI cadangan mode uji
+  tidak mengubah invarian ini. Tanpa kunci API yang bekerja, bot tidak dapat
+  memproses pesan dan harus mengatakannya terus terang. Cancellation lifecycle
+  tidak boleh dianggap gangguan provider lalu menghidupkan failover.
+- **"Model Capybara" adalah identitas lapisan Harvy, bukan ID penyedia.**
+  Pertanyaan AI/model murni dijawab deterministik oleh `ai/identity.ts` sebelum
+  ekstraksi/triase biasa; ia tetap mengakui Harvy sebagai AI dan menjelaskan
+  bahwa Capybara memakai beberapa model. Pesan campuran tetap menjalani jalur
+  penuh agar permintaan lain/keselamatan tidak dibuang. Nilai `AI_MODEL_*`
+  harus tetap berisi ID model penyedia sebenarnya untuk routing dan telemetry.
+- **Katalog model Console berasal dari environment, bukan input operator.**
+  Snapshot aman dibuat sekali saat startup dari semua slot model yang dikenal.
+  Console hanya boleh membuat versi harga bagi pasangan provider+model pada
+  snapshot itu; ID environment yang tidak sah menggagalkan startup, bukan
+  diam-diam hilang. Katalog tidak dipersistenkan, sedangkan histori harga tetap
+  append-only walau model kemudian dihapus atau diganti di `.env`.
+
+## Log operasional
+
+- **Log operasional bukan telemetry dan tidak boleh menjadi arsip percakapan.**
+  Event boleh membawa waktu, komponen, tahap, trace acak, durasi, status,
+  jumlah, tipe/kode/status error, frame stack tanpa baris pesan, dan
+  fingerprint. Nama event stabil adalah deskripsi persisten; argumen deskripsi
+  bebas sengaja tidak ditulis. Detail event memakai allowlist scalar tertutup;
+  `Error.message`, thrown string bebas, serta object tak dikenal tidak
+  disimpan. Jangan pernah
+  menyerahkan update Telegram, `WAMessage`, node Baileys, request/response
+  model, isi chat, prompt/balasan, nama/ID pengguna atau grup, nomor, QR, token,
+  atau kredensial kepada logger. Account ID WhatsApp wajib alias operasional
+  non-pribadi yang diawali huruf. Trace tidak boleh berasal dari hash identitas.
+  `warn`/`error` dicatat di boundary yang mengetahui operasinya; pure core tetap
+  melempar error biasa. `LOG_RETENTION_DAYS` hanya menegakkan file lokal;
+  collector mempunyai kebijakan retensi terpisah. Lihat `ADR-010`.
+
+## Agent harness dan capability
+
+- **Capability snapshot, bukan prompt, adalah authority.** Model hanya boleh
+  mengusulkan tindakan; kode memeriksa ID+versi capability, surface aktif,
+  schema input, policy/approval, idempotency, deadline, cancellation, dan
+  generation sebelum executor boleh commit. Isi chat tidak dapat memasang
+  capability. Executor web dan aplikasi eksternal belum terpasang; jangan
+  mengklaim pencarian, pembacaan URL, atau aksi luar pernah dilakukan.
+- **Native tool calling tidak memindahkan authority ke provider.** Definisi
+  function action berasal dari executor pada irisan `callableCapabilities`,
+  bukan dari model atau daftar prompt terpisah. Nama+schema dibekukan dan ikut
+  hash checkpoint. Balasan provider harus tepat satu function call; plain text,
+  nama di luar registry, argumen non-JSON, dan multi-call gagal tertutup. Hasil
+  yang sah baru dinormalisasi menjadi `AgentPlannerDecision` dan tetap masuk
+  seluruh validasi kernel sebelum executor dipanggil.
+- **Fallback AI tidak otomatis mewarisi dukungan native tool.** Request native
+  tetap primary-only sampai provider cadangan diuji dengan wire contract yang
+  sama. Jangan menurunkannya diam-diam menjadi JSON/text atau mengirim schema
+  tool ke fallback yang belum diverifikasi.
+
+## Isolasi data
+
+- `ownerId` (Telegram `from.id`) adalah batas isolasi data privat lama. Setiap
+  metode repository pribadi menerima `ownerId`; jangan menambah kueri tugas
+  tanpa itu. Kode channel-neutral baru memakai `AgentScope`: privat adalah
+  kanal+owner, anggota grup adalah kanal+grup+anggota, dan Workspace adalah
+  workspace+membership+principal+ACL epoch. Kesamaan ID atau nama tidak
+  mengizinkan pembacaan lintas scope. Workspace scope harus dibentuk oleh
+  authority service, dicocokkan dengan namespace kanonik, dan direvalidasi
+  dengan resolver tepercaya sebelum planner atau executor berjalan. Perubahan
+  role/membership menaikkan `aclEpoch`; repository authority memakai CAS dan
+  scope lama wajib stale. Admin grup tidak menjadi admin Workspace.
+
+## Grup
+
+- **Grup tidak pernah memakai state pribadi.** `scopeKey` kanal+grup adalah
+  batas binding, memori, antrean, dedupe, konteks, dan telemetry grup. Nama atau
+  participant yang sama pada dua grup tidak boleh digabung. `GroupTurnService`
+  tidak boleh menerima `MemoryService`, `ProfileService`, `InsightService`,
+  `SessionService`, tugas, atau history pribadi sebagai dependency.
+- **Notice grup harus terkirim sebelum pesan diproses.** Binding menyimpan
+  `joinedAt`, notice version, account, dan status disable. `append`/history,
+  echo sendiri, pesan tanpa teks, serta timestamp sebelum `joinedAt` diabaikan.
+  Event self-add mengaktifkan akun yang sama dan mencoba notice segera; pesan
+  live pertama menjadi fallback tanpa kalah oleh presisi jam penerimaan.
+  Kegagalan notice menghentikan giliran; removal menaikkan generation sebelum
+  menulis disable, membatalkan batch, dan menghapus memori sosial. Disable
+  tetap harus masuk antrean penyimpanan saat snapshot binding masih kosong;
+  pemeriksaan generation sesudah setiap I/O wajib mencegah implicit activation,
+  notice, alias, konteks, atau marker risiko hidup lagi setelah removal.
+- **Panggilan grup dan pesan ambient berbeda.** Metadata platform untuk tag dan
+  quote serta julukan lokal berbentuk vocative selalu dianggap panggilan;
+  penyebutan Harvy sebagai topik bukan panggilan. Direct memakai settle 350 ms,
+  membatalkan planner ambient aktif, dan tidak menghabiskan budget sosial.
+  Pesan ambient melewati planner `speak|silent`, pagar bentuk lokal, serta
+  budget adaptif; planner atau triase yang gagal berarti diam. Kandidat bernilai
+  tinggi yang tersusul boleh menjadi satu pending candidate per runtime:
+  tunggu quiet gap 900 ms, kedaluwarsa 15 detik/empat giliran, lalu revalidasi
+  terhadap konteks aman. Revalidasi baru boleh mulai bila semua observation
+  yang sudah terlihat juga sudah settled; timer 900 ms tidak boleh mendahului
+  settle adapter 1,2 detik. Direct call, bahaya, kelanjutan pengirim target,
+  quote target, removal, atau shutdown wajib membatalkan timer dan request
+  revalidation/fact-reply yang sedang aktif. Panggilan langsung
+  dengan triase gagal memakai `uncertainTriage` dan review fail-closed. Ketika
+  FIFO sedang sibuk, triase awal boleh mengirim acknowledgment tetap untuk
+  `bahaya`; reservation/dedupe, batas empat aktif, dan antrean 32 wajib
+  dipertahankan. Balasan lengkap tetap FIFO. Harvy tidak mengirim DM dari
+  otorisasi grup.
+- **Ingress grup tidak menunggu AI.** Normalisasi dan enqueue berurutan per
+  grup, tetapi listener Baileys hanya melacak task `onMessage`; ia tidak boleh
+  menahan pesan berikutnya sampai planner/balasan selesai. Metadata refresh
+  adalah gerbang membership: refresh yang kedaluwarsa boleh ditunggu untuk
+  pesan yang sama tetapi wajib berbatas waktu, sedangkan metadata kosong,
+  pengirim nonmember, Harvy yang tidak ada di peserta, dan self-echo gagal
+  tertutup. Event authority menghapus cache serta membatalkan batch/pending
+  pada call stack yang sama sebelum pekerjaan antrean berjalan. Observation
+  revision dipasang sebelum speaker switch menutup batch lama; duplicate,
+  replay sebelum join, dan akun non-binding tidak boleh membatalkan kandidat
+  sah.
+- **Natural bukan berarti menyamar sebagai manusia.** Riwayat grup masuk sebagai
+  giliran chat beridentitas. Harvy perlu memahami lowercase, singkatan,
+  code-mix, elongation, emoji, dan beberapa bubble, tetapi tidak meniru typo,
+  mengarang pengalaman/kegiatan fisik, menawarkan DM, mendiagnosis/menuduh
+  pasti, atau menjamin transaksi. `fact_correction` harus diregenerasi lewat
+  tier `efficient`, bukan mengirim kandidat model cheap sebagai fakta final.
+- **Memori grup mempunyai room context dan member memory yang berbeda.** Raw
+  context beridentitas hanya berada
+  24 giliran atau dua jam di memori proses; pesan **dan balasan** giliran sensitif/berisiko
+  tidak masuk. Penanda tingkat risiko tanpa isi boleh hidup 30 menit agar
+  jawaban pendek tetap fail-closed. Repository menyimpan nama grup/julukan
+  selama aktif, pasangan PN/LID, nama tampilan/koreksi, last-seen dan aktivitas
+  harian 30 hari, dedupe 24 jam, serta cooldown; ranking selalu menyebut
+  jendela 7 hari dan bukan sifat permanen. Pembersihan berjalan berkala dan
+  seluruh memori sosial dihapus saat disable. Memori semantik hanya milik satu
+  kanal+grup+anggota, tidak boleh masuk state privat/grup lain, dan hanya boleh
+  dipakai saat anggota itu berbicara. Memori biasa hasil pesan direct boleh
+  ditulis setelah notice lalu diumumkan pada balasan yang sama; kegagalan kirim
+  wajib rollback. Jenis personal atau hasil triase sensitif tidak boleh
+  otomatis tersimpan; usulan personal hanya boleh disimpan sesudah anggota
+  yang sama mengonfirmasi pending 10 menit dalam scope yang sama. Pending baru
+  dipasang setelah promptnya berhasil dikirim dan baru dibersihkan setelah
+  acknowledgment sukses; kegagalan acknowledgment wajib rollback write dengan
+  identitas proposal yang dipakai saat menyimpan, bukan identitas pesan
+  konfirmasi terbaru. Lihat, koreksi, hapus satu, lupakan diri, dan reset admin
+  hadir bersama; penghapusan diri/reset wajib konfirmasi kedua 10 menit. Hanya
+  admin dapat menambah julukan Harvy. Shared room memory hanya lahir dari
+  proposal eksplisit anggota dan konfirmasi admin, kedaluwarsa 60 hari, terlihat
+  seluruh grup, dan tidak boleh disamakan dengan member-local memory. Reset
+  admin menghapus state bersama tetapi mempertahankan member-local memory.
+  Semua mutator user-facing wajib membawa guard authority yang diperiksa di
+  dalam antrean service tepat sebelum write. Pada repository file, lupakan diri
+  menghapus profil sosial, member-local memory, dan atribusi pengusul room dalam
+  satu commit; copy tidak boleh mengaku ledger teknis terhapus bila adapter
+  ledger menolak atau gagal.
+
+## WhatsApp dan Baileys
+
+- **Satu nomor Baileys berarti satu runtime terisolasi.** Auth folder, socket,
+  generation, cache metadata, reconnect, dan status tidak boleh dibagi.
+  Reconnect wajib mengosongkan cache metadata/admin; refresh memakai epoch per
+  grup sehingga completion dari socket lama atau sebelum self-remove tidak
+  boleh menghidupkan hak admin basi.
+  Binding grup menolak akun kedua dan tidak boleh dipindah otomatis ketika
+  nomor gagal. Semua nomor tinggal dalam satu proses selama repository masih
+  berbasis berkas. Reconnect wajib menunggu antrean save credentials; listener
+  wajib melanjutkan sisa array upsert bila satu pesan gagal dan shutdown wajib
+  menunggu pekerjaan event. Shutdown menghentikan ingress, menguras event saat
+  socket masih dapat mengirim, menguras batch/pending candidate, baru menutup
+  socket dengan `socket.end(undefined)`, bukan `logout()`, lalu menguras
+  telemetry/logger paling akhir. Auth multi-file adalah kredensial beta lokal
+  yang dilarang masuk Git; produksi memerlukan store database terenkripsi
+  dengan single writer.
+
+## Riwayat percakapan
+
+- Pemadatan riwayat berjalan setelah balasan dan tidak ditunggu pengguna.
+  `HistoryService.compact` hanya merangkum awalan mentah satu kali menjadi
+  episode v2; model wajib memberi provenance sequence, sedangkan kode membuat
+  rentang/source hash dan memeriksa generation, coverage, awalan, serta hash
+  sebelum commit. Bubble baru tidak tertimpa, kegagalan menunggu satu menit,
+  satu request dibatasi 12 giliran/12.000 karakter, backlog di atas ambang
+  dikejar setelah slot dilepas, maksimal dua compaction model berjalan global,
+  dan shutdown mengurasnya. Penarikan persetujuan wajib memanggil `suspend`
+  sebelum queued compaction dapat mulai memakai model.
+  Seluruh giliran mentah yang belum diringkas ikut prompt dengan hard cap 24;
+  episode dibatasi 12 dan context hasil render dibatasi 3.000 karakter. Setelah
+  raw source dibuang, sequence/hash hanya receipt concurrency/coverage, bukan
+  bukti bahwa klaim episode benar secara semantik.
+
+## Pending store
+
+- `PendingStore` adalah mirror in-memory satu langkah bertoken per pengguna.
+  Tawaran pencatatan, Ubah tenggat, sunting memori, pemilihan waktu
+  pengingat/check-in, jam tenang custom, izin memori sensitif, dan konfirmasi
+  destruktif bergantung padanya, jadi semuanya memang mati setelah restart.
+  Callback wajib membawa token proposal; klik lama tidak boleh menyimpan
+  proposal baru atau menghapus data baru. Pending baru hanya bertahan bila
+  promptnya berhasil dikirim. Sesi aktif tidak memakai `PendingStore` dan tetap
+  ada setelah restart.
+- `agent-input` adalah satu-satunya pengecualian: authority-nya berada pada
+  `AgentRunService`, hanya untuk status `waiting_input` privat Telegram. Record
+  wajib terikat scope/owner/run/mode/intent, revision CAS, codec checkpoint,
+  serta `expiresAt === deadlineAt` dengan horizon absolut maksimal 10 menit.
+  Ia baru disimpan setelah seluruh bubble prompt terkirim dan wajib masuk
+  ekspor/penghapusan data. Startup, load, dan worker retensi berkala membuang
+  expiry; `.tmp` yatim tidak boleh dipromosikan.
+- Classifier batas giliran tidak boleh memulihkan `PendingStore`, karena ia
+  berjalan di luar chain owner. Pemulihan durable hanya terjadi di handler
+  owner. Sebuah batch hanya boleh menjawab checkpoint agent bila sequence
+  bubble pertamanya lebih baru dari watermark delivery; bubble pra-prompt tidak
+  boleh ikut terseret oleh carrier bubble yang lebih baru.
+- Resume wajib claim dengan `runId + revision` sebelum model dipanggil. Prompt
+  lanjutan/final yang sudah terlihat tetapi gagal di-commit harus membatalkan
+  run secara fail-closed dan mengirim notice jujur. Delivery Telegram dan file
+  commit belum atomik; crash-window serta block cleanup yang belum durable
+  tetap batas eksplisit sampai outbox/receipt/reconciler tersedia.
+- Jawaban pending tidak menjalankan classifier/ekstraksi umum: burst pendek
+  langsung menuju triase lalu parser khusus; triase gagal/berisiko tidak
+  mengonsumsi pending.

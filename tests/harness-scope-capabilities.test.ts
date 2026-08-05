@@ -53,20 +53,15 @@ describe("capability catalog", () => {
     );
   });
 
-  it("jujur bahwa pencarian dan aksi eksternal belum dipasang", () => {
+  it("jujur bahwa aksi eksternal belum dipasang", () => {
     const scope = privateAgentScope("telegram", "rahasia-user");
     const snapshot = createHarvyCapabilityCatalog().snapshot(scope);
     const prompt = capabilitySystemContext(snapshot);
 
     assert.equal(
-      snapshot.entries.find((entry) => entry.id === "web.search")?.available,
-      false,
-    );
-    assert.equal(
       snapshot.entries.find((entry) => entry.id === "external.act")?.available,
       false,
     );
-    assert.match(prompt, /credential provider pencarian web belum dipasang/iu);
     assert.match(prompt, /menjawab dari pengetahuan model bukan pencarian/iu);
     assert.doesNotMatch(prompt, /rahasia-user/u);
     assert.equal(Object.isFrozen(snapshot), true);
@@ -74,33 +69,15 @@ describe("capability catalog", () => {
     assert.equal(Object.isFrozen(snapshot.entries[0]), true);
   });
 
-  it("mengaktifkan executor web hanya pada privat Telegram yang dikonfigurasi", () => {
-    const catalog = createHarvyCapabilityCatalog({
-      webSearchInstalled: true,
-      webOpenInstalled: true,
-    });
-    const privateTelegram = catalog.snapshot(
+  it("tidak mencantumkan tool research yang sudah dicabut", () => {
+    const snapshot = createHarvyCapabilityCatalog().snapshot(
       privateAgentScope("telegram", "1"),
     );
-    const groupWhatsapp = catalog.snapshot(
-      groupAgentScope("whatsapp", "g", "1"),
-    );
-
-    for (const id of ["web.search", "web.open"]) {
-      assert.equal(
-        privateTelegram.entries.find((entry) => entry.id === id)?.available,
-        true,
-      );
-      assert.equal(
-        groupWhatsapp.entries.find((entry) => entry.id === id)?.available,
-        false,
-      );
-    }
-    assert.notEqual(
-      privateTelegram.hash,
-      createHarvyCapabilityCatalog().snapshot(
-        privateAgentScope("telegram", "1"),
-      ).hash,
+    assert.equal(
+      snapshot.entries.some((entry) =>
+        entry.id === "web.search" || entry.id === "web.open"
+      ),
+      false,
     );
   });
 

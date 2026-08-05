@@ -8,6 +8,7 @@ import {
   withUsageAttribution,
 } from "./ai/usage-attribution.js";
 import { createBot } from "./bot/create-bot.js";
+import { startAgentRunRetentionWorker } from "./agent/agent-run-retention-worker.js";
 import {
   aiClientOptions,
   loadConfig,
@@ -15,6 +16,7 @@ import {
   type AiConfig,
 } from "./config.js";
 import { HistoryService } from "./core/history-service.js";
+import { AgentRunService } from "./core/agent-run-service.js";
 import { DataControlService } from "./core/data-control-service.js";
 import { GroupMemoryService } from "./core/group-memory-service.js";
 import {
@@ -37,6 +39,7 @@ import { ConsoleServer } from "./console/console-server.js";
 import { startCheckInWorker } from "./reminders/checkin-worker.js";
 import { startReminderWorker } from "./reminders/reminder-worker.js";
 import { FileHistoryRepository } from "./storage/file-history-repository.js";
+import { FileAgentRunRepository } from "./storage/file-agent-run-repository.js";
 import { FileGroupRepository } from "./storage/file-group-repository.js";
 import { FileProfileRepository } from "./storage/file-profile-repository.js";
 import { FileSessionRepository } from "./storage/file-session-repository.js";
@@ -72,12 +75,6 @@ import {
   localRuntimeLockPath,
   type LocalRuntimeLock,
 } from "./core/local-runtime-lock.js";
-import { BraveWebSearchProvider } from "./research/web-search.js";
-import { SafeWebReader } from "./research/safe-web-reader.js";
-import {
-  WebOpenExecutor,
-  WebSearchExecutor,
-} from "./research/web-executors.js";
 import { createInternalAgentExecutors } from "./agent/internal-executors.js";
 import { VirtualTerminalExecutor } from "./agent/virtual-terminal.js";
 import { ParallelDelegationExecutor } from "./agent/parallel-delegation.js";
@@ -151,19 +148,9 @@ const profiles = new ProfileService(
 );
 const sessionRepository = new FileSessionRepository(config.sessionFile);
 const sessions = new SessionService(sessionRepository, sessionRepository);
-const webExecutors = [
-  ...(config.web.searchApiKey
-    ? [new WebSearchExecutor(new BraveWebSearchProvider(
-        config.web.searchApiKey,
-        { timeoutMs: config.web.searchTimeoutMs },
-      ))]
-    : []),
-  ...(config.web.openEnabled
-    ? [new WebOpenExecutor(new SafeWebReader({
-        timeoutMs: config.web.openTimeoutMs,
-      }))]
-    : []),
-];
+const agentRuns = new AgentRunService(
+  new FileAgentRunRepository(config.agentRunFile),
+);
 const internalExecutors = createInternalAgentExecutors({
   tasks,
   profiles,
@@ -171,7 +158,6 @@ const internalExecutors = createInternalAgentExecutors({
   defaultTimeZone: config.defaultTimezone,
 });
 const agentExecutors = [
-  ...webExecutors,
   ...internalExecutors,
   new VirtualTerminalExecutor(),
   new ParallelDelegationExecutor(createModelAgentWorker(aiClient, config.ai)),
@@ -179,8 +165,6 @@ const agentExecutors = [
 // Satu registry tepercaya dipakai semua kanal. Capability hanya tersedia bila
 // executor dan dependency yang cocok benar-benar dipasang.
 const agentHarness = new AgentHarness(createHarvyCapabilityCatalog({
-  webSearchInstalled: config.web.searchApiKey !== null,
-  webOpenInstalled: config.web.openEnabled,
   internalToolsInstalled: true,
   virtualTerminalInstalled: true,
   parallelDelegationInstalled: true,
@@ -228,11 +212,14 @@ const dataControls = new DataControlService(
   insights,
   sessions,
   telemetry,
+  undefined,
+  agentRuns,
 );
 
 // Penghapusan lintas beberapa berkas dilanjutkan sebelum bot menerima update.
 // Profil tombstone-nya dihapus paling akhir oleh DataControlService.
 await telemetry.purgeExpired();
+await agentRuns.purgeExpired();
 await dataControls.resumePendingDeletions();
 logger.info(
   "startup_data_recovery_completed",
@@ -251,6 +238,7 @@ const bot = createBot(
   dataControls,
   telemetry,
   logger.child("telegram.bot"),
+  agentRuns,
 );
 
 let groupTurns: GroupTurnService | null = null;
@@ -457,6 +445,10 @@ const checkIns = startCheckInWorker(
   config,
   logger.child("worker.checkin"),
 );
+const agentRunRetention = startAgentRunRetentionWorker(
+  agentRuns,
+  logger.child("worker.agent-run-retention"),
+);
 
 const consoleServer = config.controlPlane.console.enabled
   ? new ConsoleServer(
@@ -540,6 +532,7 @@ const shutdown = (
         },
         reminders,
         checkIns,
+        agentRunRetention,
       );
       await consoleServer?.close();
       logger.info(

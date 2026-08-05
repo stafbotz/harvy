@@ -37,6 +37,39 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Function tool pada wire protocol chat-completions kompatibel OpenAI. */
+export interface ChatFunctionTool {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Readonly<Record<string, unknown>>;
+  };
+}
+
+export type ChatToolChoice =
+  | "auto"
+  | "none"
+  | "required"
+  | {
+      type: "function";
+      function: { name: string };
+    };
+
+export interface ChatToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    /** JSON arguments sebagaimana dikirim provider; parser domain tetap wajib. */
+    arguments: string;
+  };
+}
+
+export type ChatCompletion =
+  | { kind: "text"; content: string }
+  | { kind: "tool_calls"; toolCalls: readonly ChatToolCall[] };
+
 export type AiRequestOperation =
   | "group-plan-ambient"
   | "group-revalidate-ambient"
@@ -61,6 +94,14 @@ export interface ChatRequest {
   json?: boolean;
   /** Validasi bentuk domain lokal; tidak pernah dikirim ke provider. */
   validateResponse?: (content: string) => boolean;
+  /** Native function tools yang boleh diusulkan model pada request ini. */
+  tools?: readonly ChatFunctionTool[];
+  /** Dikirim sebagai `tool_choice`; planner Harvy memakai `required`. */
+  toolChoice?: ChatToolChoice;
+  /** Planner Harvy selalu false agar satu langkah berarti satu keputusan. */
+  parallelToolCalls?: boolean;
+  /** Validasi tool call domain lokal; tidak pernah dikirim ke provider. */
+  validateToolCalls?: (toolCalls: readonly ChatToolCall[]) => boolean;
   /** Metadata bebas isi dari context compiler; tidak dikirim ke provider. */
   contextManifest?: ContextManifest;
   /** Label route lokal untuk observability; tidak dikirim ke provider. */
@@ -124,7 +165,7 @@ interface LogicalRequestState {
 }
 
 interface CompletionResult {
-  content: string;
+  completion: ChatCompletion;
   usage: ProviderTokenUsage;
   model: string;
   responseAccepted: boolean;
@@ -141,6 +182,10 @@ export class AiError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_NATIVE_TOOLS = 32;
+const MAX_NATIVE_TOOL_SCHEMA_CHARACTERS = 64_000;
+const MAX_NATIVE_TOOL_CALLS = 8;
+const MAX_NATIVE_TOOL_ARGUMENT_CHARACTERS = 32_000;
 
 export class AiClient {
   private readonly logger: OperationalLogger;
@@ -159,6 +204,63 @@ export class AiClient {
    * kegagalan tetap cepat terlihat, bukan berputar diam-diam.
    */
   async complete(request: ChatRequest): Promise<string> {
+    if (request.tools) {
+      throw new AiError(
+        "Permintaan native tool harus memakai completeToolCalls().",
+      );
+    }
+    const result = await this.perform(request);
+    if (result.completion.kind !== "text") {
+      throw new AiError(
+        "Model memanggil tool pada permintaan yang mengharapkan teks.",
+      );
+    }
+    return result.completion.content;
+  }
+
+  /**
+   * Mengirim native function tools dan hanya menerima satu atau lebih
+   * `tool_calls`. Pemilihan capability tetap divalidasi harness; klien ini
+   * hanya menjaga kontrak wire provider.
+   */
+  async completeToolCalls(
+    request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+  ): Promise<readonly ChatToolCall[]> {
+    const normalizedRequest = {
+      ...request,
+      toolChoice: request.toolChoice ?? "required",
+      parallelToolCalls: request.parallelToolCalls ?? false,
+    };
+    assertNativeToolRequest(normalizedRequest);
+    const result = await this.perform(normalizedRequest);
+    if (result.completion.kind !== "tool_calls") {
+      throw new AiError(
+        "Model tidak menghasilkan native tool call yang diwajibkan.",
+      );
+    }
+    const calls = result.completion.toolCalls;
+    const availableNames = new Set(
+      normalizedRequest.tools.map((tool) => tool.function.name),
+    );
+    if (calls.some((call) => !availableNames.has(call.function.name))) {
+      throw new AiError("Model memanggil native tool yang tidak tersedia.");
+    }
+    if (!normalizedRequest.parallelToolCalls && calls.length !== 1) {
+      throw new AiError("Model mengembalikan lebih dari satu native tool call.");
+    }
+    const selectedToolName = typeof normalizedRequest.toolChoice === "object"
+      ? normalizedRequest.toolChoice.function.name
+      : null;
+    if (
+      selectedToolName !== null &&
+      calls.some((call) => call.function.name !== selectedToolName)
+    ) {
+      throw new AiError("Model mengabaikan native tool_choice yang ditetapkan.");
+    }
+    return calls;
+  }
+
+  private async perform(request: ChatRequest): Promise<CompletionResult> {
     const state: LogicalRequestState = {
       requestId: randomUUID(),
       nextAttemptNo: 1,
@@ -184,7 +286,7 @@ export class AiClient {
           this.logger,
         );
       }
-      return result.content;
+      return result;
     } catch (error) {
       if (usageContext && this.options.usageObserver) {
         await bestEffortUsage(
@@ -211,7 +313,9 @@ export class AiClient {
       keys: this.options.keys,
       modelInQuery: false,
     };
-    const fallback = this.options.fallback;
+    // Native tool support belum dibuktikan pada provider cadangan. Jangan
+    // mengubah wire contract diam-diam saat circuit fallback terbuka.
+    const fallback = request.tools ? undefined : this.options.fallback;
     if (
       fallback &&
       !request.signal?.aborted &&
@@ -451,6 +555,13 @@ export class AiClient {
             ...(request.json
               ? { response_format: { type: "json_object" } }
               : {}),
+            ...(request.tools
+              ? {
+                  tools: request.tools,
+                  tool_choice: request.toolChoice ?? "auto",
+                  parallel_tool_calls: request.parallelToolCalls ?? false,
+                }
+              : {}),
           }),
           signal: request.signal
             ? AbortSignal.any([controller.signal, request.signal])
@@ -470,10 +581,10 @@ export class AiClient {
       const finishReason = readFinishReason(payload);
 
       try {
-        const content = readContent(payload);
-        const responseAccepted = validateProviderContent(
-          request.validateResponse,
-          content,
+        const completion = readCompletion(payload);
+        const responseAccepted = validateProviderCompletion(
+          request,
+          completion,
         );
         if (attemptContext) {
           attemptFinished = true;
@@ -509,7 +620,7 @@ export class AiClient {
           },
         );
         return {
-          content,
+          completion,
           usage: tokenUsage,
           model: request.model,
           responseAccepted,
@@ -566,7 +677,7 @@ export class AiClient {
       channel: request.usage.channel ?? inferChannel(request.usage.ownerId),
       model: request.model,
       maxTokens: request.maxTokens ?? 800,
-      inputTokenEstimate: estimateInputTokens(request.messages),
+      inputTokenEstimate: estimateRequestInputTokens(request),
     };
   }
 
@@ -597,7 +708,7 @@ export class AiClient {
       environment: this.options.environment ?? "development",
       costCenter: this.options.costCenter ?? "runtime",
       maxOutputTokens: request.maxTokens ?? 800,
-      inputTokenEstimate: estimateInputTokens(request.messages),
+      inputTokenEstimate: estimateRequestInputTokens(request),
       safetyCritical: request.usage.safetyCritical,
       startedAt: new Date(startedAt).toISOString(),
     };
@@ -615,8 +726,16 @@ export class AiClient {
       operation: request.operation,
       tier: request.usage?.tier,
       jsonMode: request.json ?? false,
+      nativeToolCount: request.tools?.length ?? 0,
+      nativeToolChoice:
+        typeof request.toolChoice === "string"
+          ? request.toolChoice
+          : request.toolChoice
+            ? "named"
+            : "none",
+      parallelToolCalls: request.parallelToolCalls ?? false,
       maxTokens: request.maxTokens ?? 800,
-      inputTokenEstimate: estimateInputTokens(request.messages),
+      inputTokenEstimate: estimateRequestInputTokens(request),
       ...(request.contextManifest
         ? contextManifestLogFields(request.contextManifest)
         : {}),
@@ -848,12 +967,20 @@ function readTokenUsage(
 
   // Sebagian endpoint kompatibel OpenAI tidak mengembalikan `usage`. Angka
   // ini hanya untuk pagar biaya kasar dan ditandai sebagai estimasi.
-  const inputEstimate = estimateInputTokens(request.messages);
-  const content = (
-    payload as { choices?: { message?: { content?: unknown } }[] }
-  )?.choices?.[0]?.message?.content;
-  const outputEstimate =
-    typeof content === "string" ? Math.ceil(content.length / 4) : 0;
+  const inputEstimate = estimateRequestInputTokens(request);
+  const message = (
+    payload as {
+      choices?: {
+        message?: { content?: unknown; tool_calls?: unknown };
+      }[];
+    }
+  )?.choices?.[0]?.message;
+  const outputCharacters =
+    (typeof message?.content === "string" ? message.content.length : 0) +
+    (message?.tool_calls === undefined
+      ? 0
+      : safeSerializedLength(message.tool_calls));
+  const outputEstimate = Math.ceil(outputCharacters / 4);
 
   return {
     inputTokens: inputEstimate,
@@ -877,10 +1004,15 @@ function readFinishReason(payload: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function estimateInputTokens(messages: ChatMessage[]): number {
-  return Math.ceil(
-    messages.reduce((sum, message) => sum + message.content.length, 0) / 4,
+function estimateRequestInputTokens(request: ChatRequest): number {
+  const messageCharacters = request.messages.reduce(
+    (sum, message) => sum + message.content.length,
+    0,
   );
+  const toolCharacters = request.tools
+    ? safeSerializedLength(request.tools)
+    : 0;
+  return Math.ceil((messageCharacters + toolCharacters) / 4);
 }
 
 function inputTokenCalibrationFields(
@@ -888,7 +1020,7 @@ function inputTokenCalibrationFields(
   usage: ProviderTokenUsage,
 ): Record<string, number> {
   if (usage.estimated) return {};
-  const estimate = estimateInputTokens(request.messages);
+  const estimate = estimateRequestInputTokens(request);
   return {
     inputTokenEstimateErrorTokens: estimate - usage.inputTokens,
     ...(usage.inputTokens > 0
@@ -939,13 +1071,23 @@ function responseOutcomeForError(
     : "empty";
 }
 
-function validateProviderContent(
-  validator: ChatRequest["validateResponse"],
-  content: string,
+function validateProviderCompletion(
+  request: ChatRequest,
+  completion: ChatCompletion,
 ): boolean {
-  if (!validator) return true;
+  if (completion.kind === "tool_calls") {
+    if (!request.tools || request.tools.length === 0) return false;
+    if (!request.validateToolCalls) return true;
+    try {
+      return request.validateToolCalls(completion.toolCalls) === true;
+    } catch {
+      return false;
+    }
+  }
+  if (request.toolChoice === "required") return false;
+  if (!request.validateResponse) return true;
   try {
-    return validator(content) === true;
+    return request.validateResponse(completion.content) === true;
   } catch {
     return false;
   }
@@ -989,14 +1131,15 @@ function inferChannel(
   return ownerId.startsWith("whatsapp:") ? "whatsapp" : "telegram";
 }
 
-function readContent(payload: unknown): string {
+function readCompletion(payload: unknown): ChatCompletion {
   const choice = (
     payload as {
-      choices?: { message?: { content?: unknown }; finish_reason?: unknown }[];
+      choices?: {
+        message?: { content?: unknown; tool_calls?: unknown };
+        finish_reason?: unknown;
+      }[];
     }
   )?.choices?.[0];
-
-  const content = choice?.message?.content;
 
   // Balasan yang terpotong tampak seperti balasan rusak di lapisan atas, dan
   // penyebabnya tidak terlihat sama sekali. Model penalaran menghabiskan jatah
@@ -1008,11 +1151,161 @@ function readContent(payload: unknown): string {
     );
   }
 
+  const rawToolCalls = choice?.message?.tool_calls;
+  if (rawToolCalls !== undefined && rawToolCalls !== null) {
+    if (
+      !Array.isArray(rawToolCalls) ||
+      rawToolCalls.length < 1 ||
+      rawToolCalls.length > MAX_NATIVE_TOOL_CALLS
+    ) {
+      throw new AiError("Native tool call model tidak dikenali.");
+    }
+    const toolCalls = rawToolCalls.map(readToolCall);
+    return { kind: "tool_calls", toolCalls };
+  }
+
+  if (choice?.finish_reason === "tool_calls") {
+    throw new AiError("Model menandai tool call tanpa payload yang sah.");
+  }
+
+  const content = choice?.message?.content;
+
   if (typeof content !== "string" || !content.trim()) {
     throw new AiError("Balasan model kosong atau tidak dikenali.");
   }
 
-  return content.trim();
+  return { kind: "text", content: content.trim() };
+}
+
+function readToolCall(value: unknown): ChatToolCall {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new AiError("Native tool call model tidak dikenali.");
+  }
+  const record = value as Record<string, unknown>;
+  const fn = record.function;
+  if (!fn || typeof fn !== "object" || Array.isArray(fn)) {
+    throw new AiError("Native function call model tidak dikenali.");
+  }
+  const functionRecord = fn as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    record.id.length < 1 ||
+    record.id.length > 256 ||
+    record.type !== "function" ||
+    typeof functionRecord.name !== "string" ||
+    !/^[A-Za-z0-9_-]{1,64}$/u.test(functionRecord.name) ||
+    typeof functionRecord.arguments !== "string" ||
+    functionRecord.arguments.length > MAX_NATIVE_TOOL_ARGUMENT_CHARACTERS
+  ) {
+    throw new AiError("Native function call model tidak sah.");
+  }
+  return {
+    id: record.id,
+    type: "function",
+    function: {
+      name: functionRecord.name,
+      arguments: functionRecord.arguments,
+    },
+  };
+}
+
+function assertNativeToolRequest(
+  request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+): void {
+  if (request.json) {
+    throw new AiError("Mode JSON dan native tool calling tidak boleh digabung.");
+  }
+  if (
+    !Array.isArray(request.tools) ||
+    request.tools.length < 1 ||
+    request.tools.length > MAX_NATIVE_TOOLS
+  ) {
+    throw new AiError("Jumlah native tool tidak sah.");
+  }
+  const names = new Set<string>();
+  for (const tool of request.tools) {
+    const definition = tool?.function;
+    if (
+      tool?.type !== "function" ||
+      !definition ||
+      !/^[A-Za-z0-9_-]{1,64}$/u.test(definition.name) ||
+      names.has(definition.name) ||
+      !definition.description.trim() ||
+      definition.description.length > 1_024 ||
+      !isPlainJsonObject(definition.parameters) ||
+      definition.parameters["type"] !== "object"
+    ) {
+      throw new AiError("Definisi native tool tidak sah.");
+    }
+    names.add(definition.name);
+  }
+  const toolChoice: unknown = request.toolChoice;
+  if (
+    toolChoice === "none" ||
+    (typeof toolChoice === "string" &&
+      toolChoice !== "auto" &&
+      toolChoice !== "required") ||
+    (request.parallelToolCalls !== undefined &&
+      typeof request.parallelToolCalls !== "boolean")
+  ) {
+    throw new AiError("Konfigurasi native tool request tidak sah.");
+  }
+  if (toolChoice !== undefined && typeof toolChoice !== "string") {
+    if (
+      !toolChoice ||
+      typeof toolChoice !== "object" ||
+      Array.isArray(toolChoice) ||
+      (toolChoice as { type?: unknown }).type !== "function"
+    ) {
+      throw new AiError("Konfigurasi native tool_choice tidak sah.");
+    }
+    const namedFunction = (toolChoice as { function?: unknown }).function;
+    if (
+      !namedFunction ||
+      typeof namedFunction !== "object" ||
+      Array.isArray(namedFunction) ||
+      typeof (namedFunction as { name?: unknown }).name !== "string" ||
+      !names.has((namedFunction as { name: string }).name)
+    ) {
+      throw new AiError("tool_choice menunjuk function yang tidak tersedia.");
+    }
+  }
+  if (safeSerializedLength(request.tools) > MAX_NATIVE_TOOL_SCHEMA_CHARACTERS) {
+    throw new AiError("Schema native tool melewati batas ukuran.");
+  }
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return (
+    (prototype === Object.prototype || prototype === null) &&
+    isJsonData(value)
+  );
+}
+
+function isJsonData(value: unknown): boolean {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return true;
+  }
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonData);
+  if (!value || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  return Object.values(value as Record<string, unknown>).every(isJsonData);
+}
+
+function safeSerializedLength(value: unknown): number {
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
 }
 
 /** Penyedia menolak bentuk permintaannya, bukan kuncinya. */

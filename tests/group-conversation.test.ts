@@ -201,11 +201,8 @@ describe("percakapan grup", () => {
     );
 
     const system = requests[0]?.messages[0]?.content ?? "";
-    assert.match(system, /KEMAMPUAN RUNTIME TEPERCAYA/u);
-    assert.match(
-      system,
-      /web\.search: Credential provider pencarian web belum dipasang/u,
-    );
+   assert.match(system, /KEMAMPUAN RUNTIME TEPERCAYA/u);
+    assert.doesNotMatch(system, /web\.search|web\.open/u);
     assert.match(system, /Sedang belajar respirasi sel/u);
     assert.match(system, /Presentasi dilakukan Jumat/u);
     assert.match(system, /memori-ruang-bersama/u);

@@ -353,22 +353,6 @@ describe("pembacaan balasan model", () => {
     assert.equal(parseUnderstanding(berisiko)?.safetySensitive, true);
   });
 
-  it("mempertahankan intent research baca-saja", () => {
-    const understanding = parseUnderstanding(
-      JSON.stringify({
-        intent: "research",
-        taskAction: null,
-        memoryAction: null,
-        task: null,
-        memories: [],
-      }),
-    );
-
-    assert.equal(understanding?.intent, "research");
-    assert.equal(understanding?.taskAction, null);
-    assert.equal(understanding?.memoryAction, null);
-  });
-
   it("menyaring tindakan adaptif asing, duplikat, dan lebih dari tiga", () => {
     const understanding = parseUnderstanding(
       JSON.stringify({

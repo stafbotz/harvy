@@ -158,6 +158,19 @@ tahan salah-intent, tanggal lokal agenda besok, batas horizon, envelope worker,
 checkpoint/restart, cancellation root aktif, penolakan `.env`, dan capability
 honesty. Baseline terbaru menjadi **634 test lulus dalam 97 suite**,
 diverifikasi 4 Agustus 2026 dengan `npm test`.
+Checkpoint klarifikasi durable lokal `ADR-018` kemudian menambah repository
+file lintas restart, CAS claim/save/clear, watermark ingress Telegram, worker
+expiry, consent v6, ekspor/penghapusan, serta pagar kegagalan delivery dan
+cleanup. Baseline terbaru menjadi **658 test lulus dalam 99 suite**,
+diverifikasi 4 Agustus 2026 dengan `npm test`.
+Pencabutan executor research web kemudian menghapus tiga suite yang hanya
+menguji kemampuan tersebut. Baseline terbaru menjadi **634 test lulus dalam 93
+suite**, diverifikasi 5 Agustus 2026 dengan runner tes bersih; `npm test` resmi
+terkena timeout wrapper setelah proses anak tidak keluar.
+Native tool calling planner kemudian menambah coverage wire protocol,
+normalisasi fail-closed, fallback primary-only, dan binding schema executor ke
+checkpoint. Baseline terbaru menjadi **639 test lulus dalam 93 suite**,
+diverifikasi 5 Agustus 2026 dengan `npm test`.
 
 **Tes yang memanggil model sungguhan tidak boleh masuk gerbang otomatis.**
 Biayanya tidak dapat diprediksi dan hasilnya tidak dapat diulang. Yang diuji
@@ -179,7 +192,7 @@ Pengujian terarah tanpa jaringan:
 
 ```bash
 npm run build
-node --test dist/tests/agent-conversation.test.js dist/tests/agent-runtime.test.js dist/tests/internal-agent-executors.test.js dist/tests/agent-harness.test.js dist/tests/create-bot-flow.test.js dist/tests/usage-ledger-service.test.js
+node --test dist/tests/client.test.js dist/tests/agent-conversation.test.js dist/tests/agent-runtime.test.js dist/tests/internal-agent-executors.test.js dist/tests/agent-harness.test.js dist/tests/file-agent-run-repository.test.js dist/tests/agent-run-retention-worker.test.js dist/tests/message-batcher.test.js dist/tests/create-bot-flow.test.js dist/tests/data-control-service.test.js dist/tests/usage-ledger-service.test.js
 ```
 
 Tes wajib membuktikan root sederhana memakai `cheap`, pekerjaan kompleks
@@ -199,6 +212,26 @@ yang eksplisit ketika satu child gagal. Delivery/discard harus memfilter
 kandidat entitlement berdasarkan `ownerId + turnId`; concurrent run owner yang
 sama tidak boleh tersapu.
 
+Native planner wajib dibuktikan mengirim `tools`, `tool_choice: required`, dan
+`parallel_tool_calls: false` tanpa `response_format` JSON; hanya tool executor
+callable yang boleh muncul. Klien harus menolak definisi schema rusak, plain
+text, nama function asing, serta multi-call pada langkah serial. Parser wajib
+menolak argumen rusak/field control tambahan, sedangkan harness tetap
+memvalidasi input capability. Nama+schema executor harus ikut authority hash
+agar perubahan kontrak menghentikan checkpoint lama. Request native tidak boleh
+masuk fallback sebelum provider fallback itu diverifikasi.
+
+Checkpoint durable wajib diuji lintas instance repository dan restart bot,
+termasuk CAS claim, owner kanonis, horizon absolut, timestamp masa depan,
+record corrupt/tampered, `.tmp` yatim, expiry tanpa owner kembali, ekspor,
+penghapusan, penarikan/re-consent, serta race `forget` dengan load/save/claim.
+Adapter harus membuktikan classifier tidak memulihkan state di luar chain,
+seluruh bubble batch lebih baru dari watermark prompt, prompt gagal/parsial
+tidak membuat checkpoint aktif, balasan resume panjang dipecah sebelum clear,
+dan kegagalan save/clear pasca-delivery memberi notice serta menutup restore.
+Gerbang ini tetap tidak membuktikan atomicity Telegram+file, restart setelah
+cleanup ganda gagal, atau durability multi-instance.
+
 Acceptance model nyata memakai data sintetis dan tetap primary-only:
 
 ```bash
@@ -217,6 +250,9 @@ logis dan perilaku provider nyata, tetapi tidak membuktikan bahwa
 `cheap`/`efficient`/`ambitious` adalah tiga model fisik berbeda. Pemisahan model
 fisik tetap dibuktikan oleh tes routing production sintetis sampai konfigurasi
 staging per-tier tersedia.
+Probe tersebut belum dijalankan ulang setelah planner berpindah ke native
+function calling; sampai itu dilakukan, gerbang otomatis hanya membuktikan wire
+dan loop terhadap provider palsu.
 
 Matriks bukti dan checklist Telegram staging Agent Acceptance v1 berada di
 [`../evidence/agent-acceptance-v1-2026-08-04/README.md`](../evidence/agent-acceptance-v1-2026-08-04/README.md).
@@ -458,31 +494,6 @@ setiap langkah di bawah tetap harus diberi status PASS/FAIL/NOT RUN sendiri.
     12 detik. Pastikan shutdown menunggu batch diproses. Catat bahwa crash
     paksa tidak dijamin oleh antrean in-memory dan shutdown keluar paksa setelah
     grace period 60 detik.
-
-### Research web baca-saja
-
-Tahap ini sudah teruji dengan provider/reader palsu, tetapi belum dengan Brave
-dan Telegram nyata. Pakai data uji publik; jangan masukkan rahasia ke query.
-
-29a. Aktifkan `WEB_SEARCH_ENABLED=true` dengan key Brave yang sah dan biarkan
-     `WEB_OPEN_ENABLED=false`. Minta berita terbaru pada topik yang mudah
-     diverifikasi. Balasan harus mempunyai URL hasil search; Harvy tidak boleh
-     mengaku membuka halaman yang executor-nya mati.
-29b. Aktifkan `WEB_OPEN_ENABLED=true`, lalu minta Harvy membandingkan dua sumber.
-     Pastikan hanya URL dari pesan pengguna atau hasil search pada run itu yang
-     dibuka, redirect privat ditolak, dan URL yang mempunyai underscore tetap
-     identik/clickable di Telegram.
-29c. Matikan search atau hilangkan key, restart, lalu ulangi permintaan. Harvy
-     harus berkata tool tidak tersedia/gagal dan tidak memberi jawaban seolah
-     pencarian berhasil.
-29d. Pada profil consent versi lama, mulai percakapan. Versi 4 harus meminta
-     persetujuan lagi dan detailnya menjelaskan provider pencarian terpisah,
-     pengambilan URL oleh server, serta context lama privat yang tidak ikut
-     planner research.
-29e. Simpan string unik pada memori/riwayat lama, lalu lakukan research yang
-     tidak menyebut string itu. Periksa request provider search/model dari
-     environment uji: string itu tidak boleh muncul. Catat bahwa pembatalan run
-     research aktif lewat command/generation luar belum tersedia pada tahap ini.
 
 ### Aktor dan tindakan
 

@@ -10,40 +10,46 @@ import {
   welcomeBack,
 } from "../src/bot/onboarding.js";
 
+const TEST_TERMS_URL = "https://harvy.id/terms";
+
 describe("naskah perkenalan", () => {
-  it("menyapa dengan nama Telegram bila ada, tanpa memaksakannya", () => {
-    assert.match(introBubbles("Dimas", false)[0] ?? "", /^Hai Dimas, aku Harvy/);
-    assert.match(introBubbles(null, false)[0] ?? "", /^Hai, aku Harvy/);
+  it("menyapa dengan emoji 👋 lalu nama Telegram bila ada, tanpa memaksakannya", () => {
+    assert.equal(introBubbles("Dimas", false, TEST_TERMS_URL)[0], "👋");
+    assert.match(introBubbles("Dimas", false, TEST_TERMS_URL)[1] ?? "", /^Haloo Dimas, aku Harvy/);
+    assert.match(introBubbles(null, false, TEST_TERMS_URL)[1] ?? "", /^Haloo, aku Harvy/);
     assert.match(
-      introBubbles("x".repeat(40), false)[0] ?? "",
-      /^Hai, aku Harvy/,
+      introBubbles("x".repeat(40), false, TEST_TERMS_URL)[1] ?? "",
+      /^Haloo, aku Harvy/,
     );
   });
 
-  it("membuka dengan apa yang boleh dibawa, bukan daftar fitur", () => {
-    const [opening = ""] = introBubbles(null, false);
+  it("mengenalkan diri sebagai AI agent dan apa yang bisa dilakukan", () => {
+    const [, opening = ""] = introBubbles(null, false, TEST_TERMS_URL);
 
-    assert.match(opening, /cerita yang masih berantakan/);
-    // "AI pendamping" membuat kemampuannya terdengar sempit sejak kalimat
-    // pertama, dan daftar perintah adalah manual sebelum percakapan.
-    assert.doesNotMatch(opening, /AI pendamping/i);
+    assert.match(opening, /ai agent/i);
+    assert.match(opening, /nyelesain tugas/);
+    assert.match(opening, /mikir bareng/);
+    assert.match(opening, /belajar materi susah/);
+    // Tidak menyebut diri sebagai teman — Pasal 3.6.
+    assert.doesNotMatch(opening, /temen|teman/i);
     assert.doesNotMatch(opening, /\/tugas|\/bantuan/);
   });
 
-  it("mengatakan pesannya diproses layanan AI di luar Harvy", () => {
-    const consent = introBubbles(null, false)[1] ?? "";
+  it("mengatakan pesannya diproses oleh AI dan memberi link terms", () => {
+    const consent = introBubbles(null, false, TEST_TERMS_URL)[2] ?? "";
 
-    // Pasal 3.9: pengguna berhak tahu ke mana isi pesannya pergi, sebelum ia
-    // pergi ke sana.
-    assert.match(consent, /layanan AI di luar Harvy/i);
-    assert.match(consent, /model utama.*memori dan riwayat tersimpan/i);
+    // Pasal 3.9: pengguna berhak tahu pesannya diproses AI.
+    assert.match(consent, /diproses oleh AI/i);
+    // Pengguna tahu bisa lihat dan hapus data.
+    assert.match(consent, /lihat atau hapus/i);
+    // Link ke halaman persyaratan.
+    assert.match(consent, new RegExp(TEST_TERMS_URL));
+    // Framing sebagai janji bersama.
+    assert.match(consent, /janji di antara kita/i);
     assert.match(CONSENT_DETAIL, /model utama.*memori dan riwayat tersimpan/i);
-    assert.match(consent, /satu atau lebih/i);
-    assert.match(consent, /layanan cadangan/i);
-    assert.match(consent, /bisa salah/i);
     assert.match(CONSENT_DETAIL, /dikirim ulang ke layanan cadangan/i);
-    assert.match(CONSENT_DETAIL, /penyedia search terpisah/i);
-    assert.match(CONSENT_DETAIL, /memori dan riwayat lama tidak ikut/i);
+    assert.match(CONSENT_DETAIL, /bisa keliru/i);
+    assert.match(CONSENT_DETAIL, /checkpoint.*ekspor\/penghapusan data/i);
   });
 
   it("tidak menjanjikan penilai AI selalu mengenali catatan pribadi", () => {
@@ -55,14 +61,14 @@ describe("naskah perkenalan", () => {
   });
 
   it("mengaku apa adanya soal pemeriksaan bahaya sebelum persetujuan", () => {
-    const withHeld = introBubbles(null, true)[1] ?? "";
+    const withHeld = introBubbles(null, true, TEST_TERMS_URL)[2] ?? "";
 
     // Naskah lama berbunyi "belum aku baca". Sejak pemeriksaan bahaya boleh
     // berjalan lebih dulu, kalimat itu menjadi klaim yang tidak benar.
     assert.doesNotMatch(withHeld, /belum aku baca/i);
     assert.match(withHeld, /lihat sekilas/i);
     assert.match(withHeld, /bahaya/i);
-    assert.doesNotMatch(introBubbles(null, false)[1] ?? "", /lihat sekilas/i);
+    assert.doesNotMatch(introBubbles(null, false, TEST_TERMS_URL)[2] ?? "", /lihat sekilas/i);
   });
 
   it("menjelaskan penyimpanan dan cara menghapus hanya bila ditanya", () => {
@@ -83,12 +89,16 @@ describe("naskah perkenalan", () => {
     assert.match(PRE_CONSENT_SAFETY, /nggak bisa gantiin mereka/i);
   });
 
-  it("memberi jalur keselamatan eksplisit tanpa harus menyetujui AI", () => {
+  it("menyediakan satu tombol persetujuan", () => {
     const buttons = consentActions().inline_keyboard.flat();
-    const safety = buttons.find((button) => button.text.includes("nggak aman"));
+    assert.equal(buttons.length, 1);
     assert.equal(
-      (safety as { callback_data?: string } | undefined)?.callback_data,
-      "safety:now",
+      (buttons[0] as { text?: string } | undefined)?.text,
+      "Okei, mulai.",
+    );
+    assert.equal(
+      (buttons[0] as { callback_data?: string } | undefined)?.callback_data,
+      "consent:yes",
     );
   });
 

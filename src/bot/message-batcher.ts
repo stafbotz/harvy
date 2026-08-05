@@ -21,6 +21,8 @@ import {
 export interface MessageBatch<T> {
   text: string;
   carrier: T;
+  /** Sequence bubble pertama; seluruh batch harus lebih baru dari prompt. */
+  firstIngressSequence: number | null;
   /** Dibatalkan ketika command atau giliran urgent menggantikan run aktif. */
   signal: AbortSignal;
   /** Guard generasi adapter; hasil lama tidak boleh dikirim atau commit. */
@@ -30,6 +32,7 @@ export interface MessageBatch<T> {
 interface BatchEntry<T> {
   chunks: string[];
   carrier: T;
+  firstIngressSequence: number | null;
   revision: number;
   evaluationRequested: boolean;
   urgentAcknowledged: boolean;
@@ -93,7 +96,12 @@ export class MessageBatcher<T> {
    * grammY long-polling memproses update secara berurutan. Kalau metode ini
    * menunggu model atau balasan, update bubble berikutnya belum dapat masuk.
    */
-  enqueue(ownerId: string, text: string, carrier: T): void {
+  enqueue(
+    ownerId: string,
+    text: string,
+    carrier: T,
+    ingressSequence?: number,
+  ): void {
     const now = Date.now();
     const existing = this.entries.get(ownerId);
     if (existing) clearTimers(existing);
@@ -101,6 +109,8 @@ export class MessageBatcher<T> {
     const entry: BatchEntry<T> = existing ?? {
       chunks: [],
       carrier,
+      firstIngressSequence:
+        Number.isSafeInteger(ingressSequence) ? ingressSequence! : null,
       revision: 0,
       evaluationRequested: false,
       urgentAcknowledged: false,
@@ -111,6 +121,12 @@ export class MessageBatcher<T> {
 
     entry.chunks.push(text);
     entry.carrier = carrier;
+    if (
+      entry.firstIngressSequence === null &&
+      Number.isSafeInteger(ingressSequence)
+    ) {
+      entry.firstIngressSequence = ingressSequence!;
+    }
     entry.revision += 1;
     entry.evaluationRequested = false;
     entry.lastReceivedAt = now;
@@ -406,6 +422,7 @@ export class MessageBatcher<T> {
     const batch = {
       text: entry.chunks.join("\n"),
       carrier: entry.carrier,
+      firstIngressSequence: entry.firstIngressSequence,
     };
     const generation = this.generation(ownerId);
     const startedAt = Date.now();
@@ -492,6 +509,7 @@ export class MessageBatcher<T> {
     const batch = {
       text: entry.chunks.join("\n"),
       carrier: entry.carrier,
+      firstIngressSequence: entry.firstIngressSequence,
       signal: controller.signal,
       isCurrent: () => true,
     };

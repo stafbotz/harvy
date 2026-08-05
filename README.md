@@ -165,9 +165,11 @@ kosong per action untuk hitung serta file sementara, tanpa process, network,
 environment, atau data Harvy. Kernel memvalidasi action, schema, policy,
 idempotency key, cycle guard, dan pause/resume. Setiap pemanggilan aktif dibatasi
 45 detik; checkpoint Agent Runtime dapat dijawab ulang dalam horizon absolut 10
-menit tanpa menambah jatah langkah. Checkpoint itu hanya berada di memori proses,
-sehingga hilang saat restart; run belum mempunyai durable store, outbox, receipt,
-atau reconciler.
+menit tanpa menambah jatah langkah. Checkpoint `waiting_input` privat Telegram
+disimpan setelah prompt terkirim dan dapat dipulihkan setelah restart normal
+melalui adapter file satu-proses; expiry, ekspor, penghapusan, consent, serta CAS
+ikut ditegakkan. Run aktif belum dipulihkan dan Harvy belum mempunyai RunStore
+PostgreSQL, outbox, receipt, status `unknown`, atau reconciler.
 
 Harvy “belajar” dalam arti memakai memori semantik yang dapat dilihat,
 dikoreksi, dan dihapus pengguna serta episode percakapan untuk kesinambungan.

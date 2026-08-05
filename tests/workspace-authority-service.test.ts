@@ -129,7 +129,6 @@ describe("workspace authority", () => {
     const harness = new AgentHarness(
       createHarvyCapabilityCatalog({
         activeSurfaces: ["workspace:telegram"],
-        webSearchInstalled: true,
       }),
       service,
     );
@@ -159,44 +158,6 @@ describe("workspace authority", () => {
     });
     assert.equal(current.status, "completed");
     assert.equal(planned, 1);
-  });
-
-  it("menyembunyikan capability research dari viewer workspace", async () => {
-    const { service } = createService();
-    const ownerPrincipal = principal("owner");
-    const created = await service.createWorkspace("ACL", ownerPrincipal);
-    const added = await service.addMember(
-      created.scope,
-      principal("viewer"),
-      "viewer",
-    );
-    assert.equal(added.status, "updated");
-    const viewer = await service.resolveScope(
-      created.workspace.workspaceKey,
-      principal("viewer"),
-    );
-    const owner = await service.resolveScope(
-      created.workspace.workspaceKey,
-      ownerPrincipal,
-    );
-    assert.ok(viewer);
-    assert.ok(owner);
-    const catalog = createHarvyCapabilityCatalog({
-      activeSurfaces: ["workspace:telegram"],
-      webSearchInstalled: true,
-      webOpenInstalled: true,
-    });
-
-    assert.equal(
-      catalog.snapshot(viewer).entries.find((entry) => entry.id === "web.search")
-        ?.available,
-      false,
-    );
-    assert.equal(
-      catalog.snapshot(owner).entries.find((entry) => entry.id === "web.search")
-        ?.available,
-      true,
-    );
   });
 
   it("menolak write epoch lama dari dua service authority yang berlomba", async () => {

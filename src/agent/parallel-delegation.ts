@@ -2,6 +2,7 @@ import type {
   AgentCapabilityExecutor,
   AgentExecutionContext,
   AgentExecutorResult,
+  AgentNativeToolDefinition,
 } from "../harness/agent-harness.js";
 
 export type AgentWorkerTier = "cheap" | "efficient";
@@ -37,6 +38,38 @@ const MAX_INSTRUCTION_CHARACTERS = 1_200;
 const MAX_CHILD_OUTPUT_CHARACTERS = 800;
 const MAX_SUMMARY_CHARACTERS = 3_600;
 
+const PARALLEL_DELEGATION_NATIVE_TOOL = {
+  name: "harvy_agent_delegate_parallel_v1",
+  description:
+    "Delegasikan 2–3 subpekerjaan independen kepada worker read-only tanpa tool atau memori.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      tasks: {
+        type: "array",
+        minItems: 2,
+        maxItems: MAX_CHILDREN,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 32 },
+            instruction: {
+              type: "string",
+              minLength: 1,
+              maxLength: MAX_INSTRUCTION_CHARACTERS,
+            },
+            tier: { type: "string", enum: ["cheap", "efficient"] },
+          },
+          required: ["id", "instruction", "tier"],
+        },
+      },
+    },
+    required: ["tasks"],
+  },
+} satisfies AgentNativeToolDefinition;
+
 type DelegationChildResult =
   | {
       id: string;
@@ -60,6 +93,7 @@ export class ParallelDelegationExecutor
 implements AgentCapabilityExecutor<ParallelDelegationInput> {
   readonly capabilityId = "agent.delegate.parallel";
   readonly capabilityVersion = "1";
+  readonly nativeTool = PARALLEL_DELEGATION_NATIVE_TOOL;
   private readonly gate: ProviderSemaphore;
 
   constructor(

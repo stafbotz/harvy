@@ -4,6 +4,10 @@
 - **Tanggal:** 4 Agustus 2026
 - **Pemilik keputusan:** pemilik produk Harvy
 - **Terkait:** Konstitusi v0.5, ADR-003, ADR-006, ADR-008, ADR-012, ADR-013, ADR-015, ADR-016
+- **Diamendemen oleh:** ADR-018 untuk persistence checkpoint `waiting_input`;
+  run aktif dan tool write tetap mengikuti batas ADR ini
+- **Amendemen 5 Agustus 2026:** planner Agent Runtime memakai native function
+  calling; bentuk kanonik `final|need_input|action` tetap menjadi kontrak kernel
 
 ## Konteks
 
@@ -47,9 +51,11 @@ diklaim selesai dengan menyamarkan kekurangannya.
 3. **Planner hanya melihat capability callable.** Snapshot produk tetap
    menjelaskan seluruh kemampuan dan batas runtime, tetapi `AgentPlannerInput`
    membawa irisan entry `available` dengan executor yang benar-benar terpasang
-   pada run. Prompt action juga hanya memuat schema capability yang callable
-   pada langkah tersebut. Fitur seperti `task.manage` tidak lagi tampak callable
-   hanya karena workflow deterministiknya ada.
+   pada run. Executor yang sama memiliki nama dan JSON Schema native; hanya
+   definisi function dari irisan callable itu yang dikirim pada langkah
+   tersebut. Fitur seperti `task.manage` tidak lagi tampak callable hanya
+   karena workflow deterministiknya ada. Metadata native ikut hash authority
+   checkpoint agar resume tidak memperoleh kontrak tool yang berubah.
 4. **Tool internal v1 bersifat atomik dan baca-saja.** Runtime memasang
    `task.list_active`, `task.get`, `session.status`, `settings.time.get`, dan
    `calendar.agenda`. Seluruh schema tertutup dan berbatas. Owner selalu
@@ -134,8 +140,12 @@ Positif:
 
 Trade-off dan batas terbuka:
 
-- Root agent masih menggunakan keputusan JSON di atas chat completion, bukan
-  native `tools`/`tool_choice`.
+- Root agent memakai `tools` dan `tool_choice: required` pada endpoint chat
+  completion kompatibel OpenAI, lalu menormalisasi tepat satu function call ke
+  keputusan kernel. Plain text, function asing, argumen rusak, dan multi-call
+  gagal tertutup. Native request masih primary-only; fallback baru boleh dipakai
+  setelah kompatibilitas function calling-nya dibuktikan. Smoke model primary
+  dan Telegram staging untuk amendemen ini belum dijalankan.
 - Run masih sinkron dan checkpoint tidak durable. Signal command/generation
   Telegram sudah diteruskan ke jalur agent/research, tetapi delivery network
   tidak dapat dibuat atomik olehnya; belum ada cancellation lintas proses,
@@ -151,7 +161,9 @@ Trade-off dan batas terbuka:
 ## Bukti
 
 Tes deterministik mencakup pemilihan root cheap/ambitious, satu model testing,
-schema tool dinamis, pass delegasi context-free, peran chat pada sintesis,
+wire `tools`/`tool_choice`, schema native milik executor, penolakan plain text/
+function asing/multi-call, binding schema ke checkpoint, pass delegasi
+context-free, peran chat pada sintesis,
 checkpoint `need_input`, deadline aktif+horizon resume, perubahan executor,
 isolasi owner, WIB/WITA, agenda internal dan cakupannya, path escape/resource
 limit terminal, fan-out paralel nyata, tier+fair output worker, hasil parsial,

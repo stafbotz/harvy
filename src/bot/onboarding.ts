@@ -19,12 +19,15 @@ import type { StylePreference } from "../domain/profile.js";
 export function introBubbles(
   firstName: string | null,
   heldMessage: boolean,
+  termsUrl: string,
 ): string[] {
   const name = usableName(firstName);
-  const opening = name ? `Hai ${name}, aku Harvy 🌿` : "Hai, aku Harvy 🌿";
+  const greeting = name ? `Haloo ${name}, aku Harvy.` : "Haloo, aku Harvy.";
 
   const consent = [
-    "Satu hal dulu biar jujur di depan: aku jalan pakai AI, dan biar bisa ngerti pesanmu, isinya dapat dikirim ke satu atau lebih layanan AI di luar Harvy. Supaya obrolan nyambung, model utama juga dapat menerima potongan memori dan riwayat tersimpan yang relevan. Kalau layanan utama gagal, permintaan yang sama dapat dicoba lagi lewat layanan cadangan. Untuk permintaan rumit yang aman, bagian relevan dari permintaanmu juga dapat dibagi ke paling banyak tiga worker AI sekaligus; worker itu tidak menerima memori atau riwayat tersimpanmu. Kalau kamu memintaku research web dan fiturnya aktif, kata pencariannya juga dikirim ke layanan pencarian, lalu server Harvy dapat membuka URL publik yang dipilih. Kalau kamu memilih sesi atau check-in, keadaan singkatnya juga kusimpan supaya bisa dilanjutkan. Aku juga bisa salah, jadi hal penting tetap perlu kamu cek sendiri.",
+    "Sebelum mulai, jadilah pengguna yang bertanggung jawab dan bijaksana ya. Aku punya persyaratan dan layanan, semacam janji di antara kita biar obrolan kita tetap aman dan nyaman.",
+    "",
+    "Pesanmu bakal diproses oleh AI, dan apa yang aku ingat bisa kamu lihat atau hapus kapan aja.",
   ];
 
   if (heldMessage) {
@@ -39,11 +42,17 @@ export function introBubbles(
     );
   }
 
+  consent.push(
+    "",
+    `Penjelasan lengkapnya bisa kamu baca di sini: ${termsUrl}`,
+  );
+
   return [
+    "👋",
     [
-      opening,
+      greeting,
       "",
-      "Ke sini boleh bawa apa aja — cerita yang masih berantakan, pertanyaan, tugas yang numpuk, rencana, atau hal yang kamu sendiri belum tau mau mulai dari mana.",
+      "Aku AI agent yang siap bantu kamu untuk nyelesain tugas, mikir bareng, beresin tugas tugas rutin yang berulang biar ga kewalahan, belajar materi susah pelan pelan ampe ngerti, atau sekadar jadi tempat pas kamu pusing dan gatau mau mulai dari mana. Ada beberapa hal yang ga bisa aku lakuin, tapi aku bakal belajar buat bisa lebih baik ke depannya.",
     ].join("\n"),
     consent.join("\n"),
   ];
@@ -51,10 +60,7 @@ export function introBubbles(
 
 export function consentActions(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Oke, mulai", "consent:yes")
-    .text("Aku mau tanya dulu", "consent:info")
-    .row()
-    .text("Aku sedang nggak aman", "safety:now");
+    .text("Okei, mulai.", "consent:yes");
 }
 
 /**
@@ -73,7 +79,7 @@ export function consentDetail(
     "",
     "• Isi pesanmu dapat dikirim ke satu atau lebih layanan AI di luar Harvy supaya bisa dipahami. Model utama juga dapat menerima potongan memori dan riwayat tersimpan yang dipilih karena relevan agar percakapan tetap nyambung. Kalau layanan utama gagal, permintaan yang sama dapat dikirim ulang ke layanan cadangan. Tanpa layanan AI itu aku nggak bisa jalan sama sekali.",
     "• Untuk permintaan rumit yang sudah lolos pemeriksaan keselamatan, sistem dapat membagi bagian relevan permintaanmu menjadi dua atau tiga subpekerjaan model yang berjalan bersamaan. Worker itu tidak menerima memori, riwayat, credential, atau akses tool; satu model utama menyatukan hasilnya.",
-    "• Kalau kamu meminta research web dan operator mengaktifkan fiturnya, kata pencarian dikirim ke penyedia search terpisah. Server Harvy juga dapat membuka URL publik dari pesanmu atau hasil search untuk membaca teksnya. Memori dan riwayat lama tidak ikut diberikan ke planner research.",
+    "• Kalau run agent perlu satu jawaban tambahan darimu, permintaan awal, jawaban tool internal, dan progress run disimpan agar dapat dilanjutkan setelah restart. Checkpoint itu aktif paling lama 10 menit, tetap terikat ke akun dan kemampuan yang sama, ikut ekspor/penghapusan data, lalu dihapus ketika selesai, dibatalkan, atau setelah kedaluwarsa terdeteksi worker retensi berkala.",
     "• Satu pengecualian, dan cuma satu: pesan pertamamu aku lihat sekilas sebelum kamu setuju, khusus buat ngecek kamu lagi dalam bahaya atau nggak. Kalau iya, aku nggak mau kamu nunggu tombol dulu.",
     "• Aku nyimpen sebagian obrolan kita dan beberapa catatan tentang kamu, biar kamu nggak perlu ngulang cerita. Kalau sistemku menilai catatannya pribadi atau sensitif, aku tanya dulu. Penilaian AI bisa keliru; setiap catatan otomatis tetap aku tunjukkan dengan tombol untuk melupakannya.",
     "• Kalau kamu memilih sesi atau check-in, aku menyimpan tujuan singkat, tahapnya, dan waktu yang kamu pilih. Check-in cuma dikirim sekali dan tidak memuat tujuanmu di notifikasi.",
@@ -134,24 +140,24 @@ export const HOLD_LIMIT_REACHED =
   "Aku belum bisa menahan tambahan pesan lagi sebelum kamu memilih tombol di atas. Pesan yang sudah masuk tetap kupegang; setelah kamu setuju, kirim ulang bagian terakhir supaya tidak ada yang terlewat.";
 
 export const CONSENT_ACCEPTED = [
-  "Oke, kita mulai 🌿",
+  "Oke, kita mulai.",
   "",
   "Tulis aja apa yang ada di kepalamu, nggak usah dirapiin dulu.",
 ].join("\n");
 
 export const CONSENT_ACCEPTED_HELD =
-  "Oke. Aku baca pesanmu yang tadi dulu, ya.";
+  "Okeii, Aku baca pesanmu yang tadi dulu, yaa.";
 
 export function welcomeBack(activeTasks: number): string {
   if (activeTasks > 0) {
     return [
-      "Hai lagi 🌿",
+      "Haloo lagi,",
       "",
       `Di daftarmu masih ada ${activeTasks} yang belum kelar. Mau lanjut itu, atau ada hal lain hari ini?`,
     ].join("\n");
   }
 
-  return ["Hai lagi 🌿", "", "Ada apa hari ini?"].join("\n");
+  return ["Haloo lagi,", "", "Ada apa hari ini?"].join("\n");
 }
 
 /**

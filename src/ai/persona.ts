@@ -127,7 +127,7 @@ export function understandingPrompt(now: Date, timeZone: string): string {
     "",
     "Bentuk JSON:",
     "{",
-    '  "intent": "task" | "feeling" | "question" | "request" | "research" | "smalltalk" | "history" | "memory" | "control",',
+    '  "intent": "task" | "feeling" | "question" | "request" | "smalltalk" | "history" | "memory" | "control",',
     '  "taskAction": "save" | "offer" | null,',
     '  "memoryAction": "list" | "forget" | "edit" | "remember" | null,',
     '  "controlAction": "data" | "timezone" | "quiet-hours" | "active-session" | "withdraw-consent" | "export" | "delete-all" | null,',
@@ -149,7 +149,7 @@ export function understandingPrompt(now: Date, timeZone: string): string {
     "}",
     "",
     "Aturan:",
-    '- "intent" wajib salah satu dari tujuh nilai di atas. Jangan membuat nilai',
+    '- "intent" wajib salah satu dari delapan nilai di atas. Jangan membuat nilai',
     '  baru seperti "reminder".',
     '- "task" hanya untuk kewajiban milik pengguna yang ingin dicatat atau',
     "  ditawarkan pencatatannya. Jangan isi task untuk pekerjaan yang pengguna",
@@ -206,9 +206,6 @@ export function understandingPrompt(now: Date, timeZone: string): string {
     '- "controlAction" wajib sesuai permintaan: data untuk membuka pusat kontrol,',
     "  timezone, quiet-hours, active-session, withdraw-consent, export, atau",
     "  delete-all. Selain intent control, isi null.",
-    '- "research" hanya ketika pengguna eksplisit meminta mencari, mengecek,',
-    "  memverifikasi informasi terbaru di web, atau membuka/membaca URL.",
-    "  Pertanyaan pengetahuan biasa tanpa permintaan pencarian tetap question.",
     '- "sessionSignal" hanya menilai keadaan sesi aktif di KONTEKS: done bila',
     "  pengguna menyatakan tujuan selesai, cancel bila meminta berhenti, stuck",
     "  bila tersangkut, continue bila melanjutkan. Tanpa sesi aktif isi null.",
@@ -894,16 +891,6 @@ function intentGuidance(intent: ConversationIntent | null): string {
         "  penjelasan singkat agar pengguna tetap dapat memahami atau mengubahnya.",
         "- Jangan mengaku sudah membuat, mengirim, atau menyimpan sesuatu bila",
         "  tindakan itu sebenarnya belum dilakukan.",
-      ].join("\n");
-
-    case "research":
-      return [
-        "Pengguna meminta pencarian atau pembacaan web langsung.",
-        "",
-        "- Jalur agent research akan memakai capability yang benar-benar aktif.",
-        "- Jangan mengaku sudah mencari bila executor tidak memberi observasi.",
-        "- Jawaban akhir wajib membedakan bukti sumber dari inferensi dan",
-        "  membawa URL yang benar-benar diobservasi.",
       ].join("\n");
 
     case "history":

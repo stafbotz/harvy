@@ -19,7 +19,6 @@ export type ConversationIntent =
   | "feeling"
   | "question"
   | "request"
-  | "research"
   | "smalltalk"
   | "history"
   | "memory"
@@ -70,11 +69,6 @@ export function selectTier(input: RoutingInput): ModelTier {
       return input.needsStepByStep || input.messageLength > LONG_MESSAGE
         ? "ambitious"
         : "efficient";
-
-    case "research":
-      // Planner awal boleh murah, tetapi jawaban biasa yang sampai ke jalur
-      // percakapan tetap perlu memahami permintaan sumber dengan baik.
-      return "efficient";
 
     case "feeling":
       // Menanggapi keadaan diri butuh kepekaan bahasa, bukan penalaran berat.

@@ -308,12 +308,9 @@ describe("balasan percakapan", () => {
     );
 
     const system = requests[0]?.messages[0]?.content ?? "";
-    assert.match(system, /KEMAMPUAN RUNTIME TEPERCAYA/u);
-    assert.match(
-      system,
-      /web\.search: Credential provider pencarian web belum dipasang/u,
-    );
-    assert.match(system, /Model hanya boleh mengusulkan tindakan/u);
+   assert.match(system, /KEMAMPUAN RUNTIME TEPERCAYA/u);
+    assert.doesNotMatch(system, /web\.search|web\.open/u);
+   assert.match(system, /Model hanya boleh mengusulkan tindakan/u);
     assert.doesNotMatch(system, /pemilik-rahasia/u);
   });
 

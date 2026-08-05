@@ -118,9 +118,10 @@ dapat menghapus data member-local yang seharusnya hanya dikuasai anggotanya.
 - Gerbang Brave+Telegram nyata belum lulus karena deployment saat implementasi
   tidak mempunyai `WEB_SEARCH_API_KEY` maupun flag web aktif. Bukti tahap ini
   adalah tes deterministik, bukan klaim end-to-end provider/channel.
-- Durable PostgreSQL `RunStore`, progress/cancellation lintas restart, report
-  artifact, native tool calling, X/Threads, outbox, receipt, dan reconciler
-  tetap tahap berikutnya.
+- Native tool calling kini ada untuk Agent Runtime privat internal dan tetap
+  melewati authority kernel. Durable PostgreSQL `RunStore`, progress/
+  cancellation lintas restart, report artifact dan surface Workspace,
+  X/Threads, outbox, receipt, serta reconciler tetap tahap berikutnya.
 
 ## Konsekuensi
 

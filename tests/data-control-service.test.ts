@@ -9,6 +9,8 @@ import type { ProfileService } from "../src/core/profile-service.js";
 import type { SessionService } from "../src/core/session-service.js";
 import type { TaskService } from "../src/core/task-service.js";
 import type { TelemetryService } from "../src/core/telemetry-service.js";
+import type { AgentRunService } from "../src/core/agent-run-service.js";
+import type { DurableAgentRun } from "../src/domain/agent-run.js";
 
 function cast<T>(value: object): T {
   return value as T;
@@ -59,6 +61,13 @@ describe("DataControlService", () => {
           calls.push("telemetry");
         },
       }),
+      undefined,
+      cast<AgentRunService>({
+        async forget(): Promise<number> {
+          calls.push("agent-run");
+          return 1;
+        },
+      }),
     );
 
     await service.deleteAll("student");
@@ -72,6 +81,7 @@ describe("DataControlService", () => {
       "insight",
       "memories",
       "telemetry",
+      "agent-run",
       "profile",
     ]));
   });
@@ -184,11 +194,18 @@ describe("DataControlService", () => {
         },
       }),
       () => new Date("2026-07-27T10:00:00.000Z"),
+      cast<AgentRunService>({
+        async export() {
+          return { runId: "run-export" } as DurableAgentRun;
+        },
+      }),
     );
 
     const exported = await service.export("student");
     assert.equal(exported.aiTelemetryRetained.events.length, 1);
     assert.equal(exported.hiddenSafetyData.included, false);
+    assert.equal(exported.activeAgentRun?.runId, "run-export");
+    assert.equal(exported.version, 2);
     assert.equal(insightRead, false);
   });
 });

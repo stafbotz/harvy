@@ -16,6 +16,8 @@ import {
   styleAck,
   welcomeBack,
 } from "../src/bot/onboarding.js";
+
+const TEST_TERMS_URL = "https://harvy.id/terms";
 import {
   emptyListNote,
   nothingLeftNote,
@@ -43,7 +45,7 @@ function hardWrappedLine(text: string): string | null {
     const next = lines[index + 1];
     if (!line.trim() || !next?.trim()) continue;
 
-    const endsSentence = /[.!?:•🌿]$|[.!?]”$/u.test(line.trim());
+    const endsSentence = /[.!?:•]$|[.!?]"$/u.test(line.trim());
     const continues = /^[a-z“(]/u.test(next.trim());
 
     if (!endsSentence && continues) return `${line} ⏎ ${next}`;
@@ -65,9 +67,10 @@ function memory(): MemoryItem {
 }
 
 const SCREENS: [string, string][] = [
-  ["intro 1", introBubbles("Dimas", false)[0] ?? ""],
-  ["intro 2", introBubbles("Dimas", false)[1] ?? ""],
-  ["intro 2 dengan pesan tertahan", introBubbles(null, true)[1] ?? ""],
+  ["intro 0", introBubbles("Dimas", false, TEST_TERMS_URL)[0] ?? ""],
+  ["intro 1", introBubbles("Dimas", false, TEST_TERMS_URL)[1] ?? ""],
+  ["intro 2", introBubbles("Dimas", false, TEST_TERMS_URL)[2] ?? ""],
+  ["intro 2 dengan pesan tertahan", introBubbles(null, true, TEST_TERMS_URL)[2] ?? ""],
   ["penjelasan persetujuan", CONSENT_DETAIL],
   ["arahan keselamatan", PRE_CONSENT_SAFETY],
   ["pengingat pesan tertahan", HOLD_REMINDER],

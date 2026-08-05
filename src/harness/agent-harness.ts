@@ -29,6 +29,7 @@ export const DEFAULT_AGENT_RUN_LIMITS: AgentRunLimits = Object.freeze({
 
 /** Ruang aman untuk envelope JSON executor di bawah budget observation runtime. */
 export const MAX_AGENT_EXECUTOR_SUMMARY_CHARACTERS = 3_600;
+export const MAX_AGENT_CHECKPOINT_HORIZON_MS = 10 * 60 * 1_000;
 
 export type AgentPlannerDecision =
   | { kind: "final"; reply: string }
@@ -48,16 +49,28 @@ export interface AgentObservation {
   summary: string;
 }
 
+/** Kontrak provider-neutral yang dimiliki executor, bukan prompt atau model. */
+export interface AgentNativeToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: Readonly<Record<string, unknown>>;
+}
+
+export interface AgentCallableCapability extends Pick<
+  CapabilitySnapshotEntry,
+  "id" | "version" | "effect" | "description"
+> {
+  /** Ada bila executor menyediakan schema native untuk planner provider. */
+  nativeTool?: AgentNativeToolDefinition;
+}
+
 export interface AgentPlannerInput {
   runId: string;
   step: number;
   request: string;
   scope: Pick<AgentScope, "kind" | "channel">;
   /** Irisan snapshot runtime dengan executor yang benar-benar terpasang. */
-  callableCapabilities: readonly Pick<
-    CapabilitySnapshotEntry,
-    "id" | "version" | "effect" | "description"
-  >[];
+  callableCapabilities: readonly AgentCallableCapability[];
   capabilities: CapabilitySnapshot;
   observations: readonly AgentObservation[];
   userInputs: readonly AgentUserInput[];
@@ -99,6 +112,8 @@ export interface AgentExecutorResult {
 export interface AgentCapabilityExecutor<T = unknown> {
   capabilityId: string;
   capabilityVersion: string;
+  /** Schema native ikut authority hash checkpoint bila tersedia. */
+  nativeTool?: AgentNativeToolDefinition;
   validate(
     input: unknown,
   ): AgentExecutorValidationSuccess<T> | AgentExecutorValidationFailure;
@@ -872,37 +887,55 @@ function initialCheckpoint(
     };
   }
   const checkpoint = structuredClone(input.checkpoint);
-  if (
-    checkpoint.version !== 1 ||
-    checkpoint.scopeKey !== scopeKey(input.scope) ||
-    checkpoint.request !== input.request ||
-    !checkpoint.runId ||
-    typeof checkpoint.callableHash !== "string" ||
-    !/^[a-f0-9]{64}$/u.test(checkpoint.callableHash) ||
-    typeof checkpoint.startedAt !== "string" ||
-    typeof checkpoint.deadlineAt !== "string" ||
-    !Number.isFinite(Date.parse(checkpoint.startedAt)) ||
-    !Number.isFinite(Date.parse(checkpoint.deadlineAt)) ||
-    Date.parse(checkpoint.deadlineAt) <= Date.parse(checkpoint.startedAt) ||
-    !Number.isInteger(checkpoint.maxSteps) ||
-    checkpoint.maxSteps <= 0 ||
-    !Number.isInteger(checkpoint.step) ||
-    checkpoint.step < 0 ||
-    !Array.isArray(checkpoint.observations) ||
-    !checkpoint.observations.every(validCheckpointObservation) ||
-    !Array.isArray(checkpoint.userInputs) ||
-    !checkpoint.userInputs.every(validUserInput) ||
-    !Array.isArray(checkpoint.seenActionDigests) ||
-    !checkpoint.seenActionDigests.every(
-      (digest) => typeof digest === "string" && /^[a-f0-9]{64}$/u.test(digest),
-    ) ||
-    !validPendingCheckpoint(checkpoint, input.scope) ||
-    !validPendingInput(checkpoint) ||
-    (checkpoint.pending !== null && checkpoint.pendingInput !== null)
-  ) {
+  if (!isValidAgentRunCheckpoint(checkpoint, input.scope, input.request)) {
     return { ok: false };
   }
   return { ok: true, value: checkpoint };
+}
+
+/** Codec tunggal untuk checkpoint dari proses maupun penyimpanan durable. */
+export function isValidAgentRunCheckpoint(
+  value: unknown,
+  scope: AgentScope,
+  request: string,
+): value is AgentRunCheckpoint {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const checkpoint = value as AgentRunCheckpoint;
+  const startedAt = Date.parse(checkpoint.startedAt);
+  const deadlineAt = Date.parse(checkpoint.deadlineAt);
+  return (
+    checkpoint.version === 1 &&
+    checkpoint.scopeKey === scopeKey(scope) &&
+    checkpoint.request === request &&
+    typeof checkpoint.runId === "string" &&
+    checkpoint.runId.length > 0 &&
+    typeof checkpoint.capabilityHash === "string" &&
+    /^[a-f0-9]{16}$/u.test(checkpoint.capabilityHash) &&
+    typeof checkpoint.callableHash === "string" &&
+    /^[a-f0-9]{64}$/u.test(checkpoint.callableHash) &&
+    typeof checkpoint.startedAt === "string" &&
+    typeof checkpoint.deadlineAt === "string" &&
+    Number.isFinite(startedAt) &&
+    Number.isFinite(deadlineAt) &&
+    deadlineAt > startedAt &&
+    deadlineAt - startedAt <= MAX_AGENT_CHECKPOINT_HORIZON_MS &&
+    Number.isInteger(checkpoint.maxSteps) &&
+    checkpoint.maxSteps > 0 &&
+    Number.isInteger(checkpoint.step) &&
+    checkpoint.step >= 0 &&
+    checkpoint.step < checkpoint.maxSteps &&
+    Array.isArray(checkpoint.observations) &&
+    checkpoint.observations.every(validCheckpointObservation) &&
+    Array.isArray(checkpoint.userInputs) &&
+    checkpoint.userInputs.every(validUserInput) &&
+    Array.isArray(checkpoint.seenActionDigests) &&
+    checkpoint.seenActionDigests.every(
+      (digest) => typeof digest === "string" && /^[a-f0-9]{64}$/u.test(digest),
+    ) &&
+    validPendingCheckpoint(checkpoint, scope) &&
+    validPendingInput(checkpoint) &&
+    !(checkpoint.pending !== null && checkpoint.pendingInput !== null)
+  );
 }
 
 function validUserInput(value: unknown): value is AgentUserInput {
@@ -1029,12 +1062,18 @@ function callableCapabilities(
         const executor = executors.get(entry.id);
         return entry.available && executor?.capabilityVersion === entry.version;
       })
-      .map((entry) => Object.freeze({
-        id: entry.id,
-        version: entry.version,
-        effect: entry.effect,
-        description: entry.description,
-      })),
+      .map((entry) => {
+        const nativeTool = executors.get(entry.id)?.nativeTool;
+        return Object.freeze({
+          id: entry.id,
+          version: entry.version,
+          effect: entry.effect,
+          description: entry.description,
+          ...(nativeTool
+            ? { nativeTool: immutableNativeTool(nativeTool) }
+            : {}),
+        });
+      }),
   );
 }
 
@@ -1045,21 +1084,57 @@ function callableCapabilityHash(
   const authority = callableCapabilities(snapshot, executors).map((entry) => ({
     id: entry.id,
     version: entry.version,
+    nativeTool: entry.nativeTool ?? null,
   }));
-  return createHash("sha256").update(JSON.stringify(authority)).digest("hex");
+  return createHash("sha256").update(canonicalJson(authority)).digest("hex");
 }
 
 function executorMap(
   executors: readonly AgentCapabilityExecutor[],
 ): ReadonlyMap<string, AgentCapabilityExecutor> {
   const result = new Map<string, AgentCapabilityExecutor>();
+  const nativeNames = new Set<string>();
   for (const executor of executors) {
     if (result.has(executor.capabilityId)) {
       throw new Error(`Executor capability duplikat: ${executor.capabilityId}.`);
     }
+    if (executor.nativeTool) {
+      if (!validNativeTool(executor.nativeTool)) {
+        throw new Error(`Schema native executor tidak sah: ${executor.capabilityId}.`);
+      }
+      if (nativeNames.has(executor.nativeTool.name)) {
+        throw new Error(`Nama native tool duplikat: ${executor.nativeTool.name}.`);
+      }
+      nativeNames.add(executor.nativeTool.name);
+    }
     result.set(executor.capabilityId, executor);
   }
   return result;
+}
+
+function immutableNativeTool(
+  tool: AgentNativeToolDefinition,
+): AgentNativeToolDefinition {
+  return Object.freeze({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: freezeJsonValue(structuredClone(tool.inputSchema)) as Readonly<
+      Record<string, unknown>
+    >,
+  });
+}
+
+function validNativeTool(tool: AgentNativeToolDefinition): boolean {
+  return (
+    /^[A-Za-z0-9_-]{1,64}$/u.test(tool.name) &&
+    tool.description.trim().length > 0 &&
+    tool.description.length <= 1_024 &&
+    tool.inputSchema !== null &&
+    typeof tool.inputSchema === "object" &&
+    !Array.isArray(tool.inputSchema) &&
+    tool.inputSchema["type"] === "object" &&
+    isJsonValue(tool.inputSchema)
+  );
 }
 
 function conservativePolicy(input: {
@@ -1085,6 +1160,9 @@ function resolvedLimits(overrides?: Partial<AgentRunLimits>): AgentRunLimits {
     if (!Number.isInteger(value) || value <= 0) {
       throw new Error(`Batas agent ${name} tidak sah.`);
     }
+  }
+  if (limits.resumeWindowMs > MAX_AGENT_CHECKPOINT_HORIZON_MS) {
+    throw new Error("Horizon resume agent maksimal sepuluh menit.");
   }
   return limits;
 }

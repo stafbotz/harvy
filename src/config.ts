@@ -66,15 +66,6 @@ export interface ControlPlaneConfig {
   };
 }
 
-export interface WebToolsConfig {
-  /** Null berarti capability web.search tidak boleh muncul sebagai tersedia. */
-  searchApiKey: string | null;
-  searchTimeoutMs: number;
-  /** web.open harus diaktifkan eksplisit karena membuka egress HTTP umum. */
-  openEnabled: boolean;
-  openTimeoutMs: number;
-}
-
 export interface AppConfig {
   telegramBotToken: string;
   dataFile: string;
@@ -88,6 +79,8 @@ export interface AppConfig {
   profileFile: string;
   /** Satu sesi aktif dan check-in satu kali per pengguna. */
   sessionFile: string;
+  /** Checkpoint agent yang menunggu jawaban; berisi data percakapan sementara. */
+  agentRunFile: string;
   /** Token dan event bertipe tertutup; tidak berisi isi percakapan. */
   telemetryFile: string;
   telemetryRetentionDays: number;
@@ -96,8 +89,9 @@ export interface AppConfig {
   operationalLog: OperationalLogOptions;
   controlPlane: ControlPlaneConfig;
   ai: AiConfig;
-  web: WebToolsConfig;
   whatsapp: WhatsAppConfig;
+  /** URL halaman persyaratan dan layanan yang dirujuk dari naskah perkenalan. */
+  termsUrl: string;
 }
 
 const GOOGLE_BASE_URL =
@@ -154,6 +148,9 @@ export function loadConfig(): AppConfig {
     historyFile: resolve(process.env.HISTORY_FILE ?? "./data/history.json"),
     profileFile: resolve(process.env.PROFILE_FILE ?? "./data/profiles.json"),
     sessionFile: resolve(process.env.SESSION_FILE ?? "./data/sessions.json"),
+    agentRunFile: resolve(
+      process.env.AGENT_RUN_FILE ?? "./data/agent-runs.json",
+    ),
     telemetryFile: resolve(
       process.env.TELEMETRY_FILE ?? "./data/telemetry.json",
     ),
@@ -166,40 +163,8 @@ export function loadConfig(): AppConfig {
     operationalLog,
     controlPlane: loadControlPlaneConfig(operationalLog.environment),
     ai: loadAiConfig(),
-    web: loadWebToolsConfig(),
     whatsapp: loadWhatsAppConfig(),
-  };
-}
-
-export function loadWebToolsConfig(): WebToolsConfig {
-  const searchEnabled = readBoolean("WEB_SEARCH_ENABLED", false);
-  const key = process.env.WEB_SEARCH_API_KEY?.trim() ?? "";
-  if (searchEnabled && !key) {
-    throw configurationError(
-      "CONFIG_WEB_SEARCH_API_KEY_MISSING",
-      "WEB_SEARCH_API_KEY wajib diisi ketika WEB_SEARCH_ENABLED=true.",
-    );
-  }
-  if (key && (key.length > 512 || /[\u0000-\u001f\u007f]/u.test(key))) {
-    throw configurationError(
-      "CONFIG_WEB_SEARCH_API_KEY_INVALID",
-      "WEB_SEARCH_API_KEY mempunyai bentuk yang tidak sah.",
-    );
-  }
-
-  return {
-    searchApiKey: searchEnabled ? key : null,
-    searchTimeoutMs: readBoundedPositiveInteger(
-      "WEB_SEARCH_TIMEOUT_MS",
-      10_000,
-      60_000,
-    ),
-    openEnabled: readBoolean("WEB_OPEN_ENABLED", false),
-    openTimeoutMs: readBoundedPositiveInteger(
-      "WEB_OPEN_TIMEOUT_MS",
-      10_000,
-      60_000,
-    ),
+    termsUrl: process.env.TERMS_URL?.trim() || "https://harvy.id/terms",
   };
 }
 
@@ -698,21 +663,6 @@ function readPositiveInteger(name: string, fallback: number): number {
     throw configurationError(
       `CONFIG_${name}_INVALID`,
       `${name} harus berupa bilangan bulat positif.`,
-    );
-  }
-  return value;
-}
-
-function readBoundedPositiveInteger(
-  name: string,
-  fallback: number,
-  maximum: number,
-): number {
-  const value = readPositiveInteger(name, fallback);
-  if (value > maximum) {
-    throw configurationError(
-      `CONFIG_${name}_INVALID`,
-      `${name} maksimal ${maximum}.`,
     );
   }
   return value;

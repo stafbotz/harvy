@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AiClient, ChatRequest } from "../src/ai/client.js";
+import type {
+  AiClient,
+  ChatFunctionTool,
+  ChatRequest,
+  ChatToolCall,
+} from "../src/ai/client.js";
 import { createModelAgentWorker } from "../src/ai/agent.js";
 import { Conversation, type RoutingConfig } from "../src/ai/conversation.js";
 import { ParallelDelegationExecutor } from "../src/agent/parallel-delegation.js";
 import {
   AgentHarness,
   type AgentCapabilityExecutor,
+  type AgentPlannerDecision,
 } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 
@@ -52,6 +58,17 @@ describe("Conversation agent runtime", () => {
       "cheap-model",
     ]);
     assert.equal(requests.every((request) => request.usage?.purpose === "agent"), true);
+    assert.equal(requests.every((request) => request.json === undefined), true);
+    assert.equal(requests.every((request) => request.toolChoice === "required"), true);
+    assert.equal(requests.every((request) => request.parallelToolCalls === false), true);
+    assert.deepEqual(
+      requests[0]?.tools?.map((tool) => tool.function.name),
+      [
+        "harvy_final_v1",
+        "harvy_need_input_v1",
+        "harvy_settings_time_get_v1",
+      ],
+    );
     assert.match(requests[0]?.messages[0]?.content ?? "", /Kamu Harvy/u);
     assert.match(requests[0]?.messages[0]?.content ?? "", /model Capybara/u);
     assert.match(requests[0]?.messages[0]?.content ?? "", /settings\.time\.get/u);
@@ -304,6 +321,7 @@ describe("Conversation agent runtime", () => {
     const calendar: AgentCapabilityExecutor<{ days: number }> = {
       capabilityId: "calendar.agenda",
       capabilityVersion: "1",
+      nativeTool: testNativeTool("calendar.agenda"),
       validate(input) {
         const days = input && typeof input === "object" && !Array.isArray(input)
           ? (input as Record<string, unknown>).days
@@ -351,6 +369,7 @@ describe("Conversation agent runtime", () => {
     const calendar: AgentCapabilityExecutor<{ days: number }> = {
       capabilityId: "calendar.agenda",
       capabilityVersion: "1",
+      nativeTool: testNativeTool("calendar.agenda"),
       validate(input) {
         const days = input && typeof input === "object" && !Array.isArray(input)
           ? (input as Record<string, unknown>).days
@@ -401,6 +420,7 @@ describe("Conversation agent runtime", () => {
     const calendar: AgentCapabilityExecutor<{ days: number }> = {
       capabilityId: "calendar.agenda",
       capabilityVersion: "1",
+      nativeTool: testNativeTool("calendar.agenda"),
       validate(input) {
         const days = input && typeof input === "object" && !Array.isArray(input)
           ? (input as Record<string, unknown>).days
@@ -453,6 +473,7 @@ describe("Conversation agent runtime", () => {
     }> = {
       capabilityId: "calendar.agenda",
       capabilityVersion: "1",
+      nativeTool: testNativeTool("calendar.agenda"),
       validate(input) {
         if (!input || typeof input !== "object" || Array.isArray(input)) {
           return { ok: false, reason: "input" };
@@ -519,6 +540,7 @@ describe("Conversation agent runtime", () => {
     const taskList: AgentCapabilityExecutor<{ limit: number }> = {
       capabilityId: "task.list_active",
       capabilityVersion: "1",
+      nativeTool: testNativeTool("task.list_active"),
       validate(input) {
         const limit = input && typeof input === "object" && !Array.isArray(input)
           ? (input as Record<string, unknown>).limit
@@ -598,11 +620,14 @@ describe("model agent worker envelope", () => {
     const client = {
       complete: async (request: ChatRequest) => {
         requests.push(request);
-        if (/worker satu tugas/u.test(request.messages[0]?.content ?? "")) {
-          return "hasil worker";
-        }
+        return "hasil worker";
+      },
+      completeToolCalls: async (
+        request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+      ) => {
+        requests.push(request);
         plannerCalls += 1;
-        return JSON.stringify(plannerCalls === 1
+        return [nativeDecisionCall(plannerCalls === 1
           ? {
               kind: "action",
               capabilityId: "agent.delegate.parallel",
@@ -614,7 +639,7 @@ describe("model agent worker envelope", () => {
                 ],
               },
             }
-          : { kind: "final", reply: "Sintesis selesai." });
+          : { kind: "final", reply: "Sintesis selesai." })];
       },
     } as unknown as AiClient;
     const conversation = new Conversation(
@@ -687,15 +712,21 @@ describe("model agent worker envelope", () => {
 
 function fixture(
   sink: ChatRequest[],
-  decisions: unknown[],
+  decisions: AgentPlannerDecision[],
   executors: AgentCapabilityExecutor[],
   routing: RoutingConfig = PRODUCTION_ROUTING,
 ): Conversation {
   let index = 0;
   const client = {
-    async complete(request: ChatRequest): Promise<string> {
+    async completeToolCalls(
+      request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+    ): Promise<readonly ChatToolCall[]> {
       sink.push(request);
-      return JSON.stringify(decisions[index++] ?? { kind: "final", reply: "selesai" });
+      const calls = [nativeDecisionCall(
+        decisions[index++] ?? { kind: "final", reply: "selesai" },
+      )];
+      assert.equal(request.validateToolCalls?.(calls), true);
+      return calls;
     },
   } as unknown as AiClient;
   return new Conversation(
@@ -713,6 +744,35 @@ function fixture(
   );
 }
 
+const NATIVE_CAPABILITY_NAMES: Readonly<Record<string, string>> = {
+  "task.list_active": "harvy_task_list_active_v1",
+  "task.get": "harvy_task_get_v1",
+  "session.status": "harvy_session_status_v1",
+  "settings.time.get": "harvy_settings_time_get_v1",
+  "calendar.agenda": "harvy_calendar_agenda_v1",
+  "terminal.run": "harvy_terminal_run_v1",
+  "agent.delegate.parallel": "harvy_agent_delegate_parallel_v1",
+};
+
+function nativeDecisionCall(decision: AgentPlannerDecision): ChatToolCall {
+  const name = decision.kind === "final"
+    ? "harvy_final_v1"
+    : decision.kind === "need_input"
+      ? "harvy_need_input_v1"
+      : NATIVE_CAPABILITY_NAMES[decision.capabilityId];
+  assert.ok(name, `Native name tidak ada untuk ${decision.kind === "action" ? decision.capabilityId : decision.kind}`);
+  const input = decision.kind === "final"
+    ? { reply: decision.reply }
+    : decision.kind === "need_input"
+      ? { prompt: decision.prompt }
+      : decision.input;
+  return {
+    id: `call-${name}`,
+    type: "function",
+    function: { name, arguments: JSON.stringify(input) },
+  };
+}
+
 function executor(
   capabilityId: string,
   summary: unknown,
@@ -720,11 +780,24 @@ function executor(
   return {
     capabilityId,
     capabilityVersion: "1",
+    nativeTool: testNativeTool(capabilityId),
     validate(input) {
       return input && typeof input === "object" && !Array.isArray(input)
         ? { ok: true, value: input as Record<string, unknown> }
         : { ok: false, reason: "input" };
     },
     execute: async () => ({ status: "ok", summary: JSON.stringify(summary) }),
+  };
+}
+
+function testNativeTool(capabilityId: string) {
+  return {
+    name: NATIVE_CAPABILITY_NAMES[capabilityId] ??
+      `harvy_test_${capabilityId.replaceAll(".", "_")}_v1`,
+    description: `Test native tool untuk ${capabilityId}.`,
+    inputSchema: {
+      type: "object",
+      additionalProperties: true,
+    },
   };
 }

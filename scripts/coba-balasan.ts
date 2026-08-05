@@ -103,8 +103,6 @@ const conversation = new Conversation(
   undefined,
   undefined,
   new AgentHarness(createHarvyCapabilityCatalog({
-    webSearchInstalled: config.web.searchApiKey !== null,
-    webOpenInstalled: config.web.openEnabled,
     internalToolsInstalled: true,
     virtualTerminalInstalled: true,
     parallelDelegationInstalled: true,

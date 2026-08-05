@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { AiClient } from "../src/ai/client.js";
+import {
+  AiClient,
+  type ChatFunctionTool,
+} from "../src/ai/client.js";
 import { ApiKeyPool } from "../src/ai/key-pool.js";
 import { compileHarvyContext } from "../src/harness/context-budget.js";
 import type {
@@ -47,6 +50,112 @@ describe("AiClient", () => {
           messages: [{ role: "user", content: "halo" }],
         }),
       /terpotong karena batas token/,
+    );
+  });
+
+  it("mengirim native tools dan membaca tool_calls tanpa mode JSON", async () => {
+    let body: Record<string, unknown> | null = null;
+    globalThis.fetch = async (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return nativeToolResponse("harvy_final_v1", { reply: "Selesai." });
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+
+    const calls = await client.completeToolCalls({
+      model: "model-uji",
+      messages: [{ role: "user", content: "selesaikan" }],
+      tools: TEST_NATIVE_TOOLS,
+      validateToolCalls: (received) => received.length === 1,
+    });
+
+    assert.deepEqual(calls, [{
+      id: "call-uji",
+      type: "function",
+      function: {
+        name: "harvy_final_v1",
+        arguments: '{"reply":"Selesai."}',
+      },
+    }]);
+    assert.ok(body);
+    assert.deepEqual(body["tools"], TEST_NATIVE_TOOLS);
+    assert.equal(body["tool_choice"], "required");
+    assert.equal(body["parallel_tool_calls"], false);
+    assert.equal(body["response_format"], undefined);
+    assert.equal(body["validateToolCalls"], undefined);
+  });
+
+  it("menolak plain text dan nama tool response di luar registry", async () => {
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+    globalThis.fetch = async () => chatResponse("teks biasa");
+    await assert.rejects(
+      () => client.completeToolCalls(nativeToolRequest()),
+      /tidak menghasilkan native tool call/u,
+    );
+
+    globalThis.fetch = async () => nativeToolResponse("harvy_unknown_v1", {});
+    await assert.rejects(
+      () => client.completeToolCalls(nativeToolRequest()),
+      /tool yang tidak tersedia/u,
+    );
+  });
+
+  it("memvalidasi definisi native tool sebelum menyentuh provider", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return nativeToolResponse("harvy_final_v1", { reply: "Selesai." });
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+
+    await assert.rejects(
+      () => client.completeToolCalls({
+        ...nativeToolRequest(),
+        tools: [{
+          type: "function",
+          function: {
+            name: "nama.berdot",
+            description: "Tidak sah.",
+            parameters: { type: "object" },
+          },
+        }],
+      }),
+      /Definisi native tool tidak sah/u,
+    );
+    assert.equal(fetchCalls, 0);
+  });
+
+  it("tidak mengalihkan native tool request ke fallback yang belum diverifikasi", async () => {
+    const urls: string[] = [];
+    globalThis.fetch = async (input) => {
+      urls.push(String(input));
+      if (String(input).startsWith("https://fallback.invalid/")) {
+        return nativeToolResponse("harvy_final_v1", { reply: "fallback" });
+      }
+      return new Response("provider down", { status: 503 });
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      fallback: testFallback(),
+    });
+
+    await assert.rejects(
+      () => client.completeToolCalls(nativeToolRequest()),
+      /503/u,
+    );
+    assert.equal(urls.length, 1);
+    assert.equal(
+      urls.some((url) => url.startsWith("https://fallback.invalid/")),
+      false,
     );
   });
 
@@ -662,6 +771,55 @@ describe("AiClient", () => {
     assert.equal(fetches, 2);
   });
 });
+
+const TEST_NATIVE_TOOLS = [{
+  type: "function",
+  function: {
+    name: "harvy_final_v1",
+    description: "Berikan jawaban final.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: { reply: { type: "string" } },
+      required: ["reply"],
+    },
+  },
+}] satisfies readonly ChatFunctionTool[];
+
+function nativeToolRequest(): Parameters<AiClient["completeToolCalls"]>[0] {
+  return {
+    model: "model-uji",
+    messages: [{ role: "user", content: "selesaikan" }],
+    tools: TEST_NATIVE_TOOLS,
+  };
+}
+
+function nativeToolResponse(
+  name: string,
+  input: Record<string, unknown>,
+): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [{
+        message: {
+          content: null,
+          tool_calls: [{
+            id: "call-uji",
+            type: "function",
+            function: { name, arguments: JSON.stringify(input) },
+          }],
+        },
+        finish_reason: "tool_calls",
+      }],
+      usage: {
+        prompt_tokens: 8,
+        completion_tokens: 4,
+        total_tokens: 12,
+      },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
 
 function recordingLogger(
   onInfo: (

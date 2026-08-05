@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Update } from "grammy/types";
 import { CALM_TRIAGE } from "../src/ai/safety.js";
@@ -7,6 +10,7 @@ import type { Conversation } from "../src/ai/conversation.js";
 import { createBot } from "../src/bot/create-bot.js";
 import type { AppConfig } from "../src/config.js";
 import type { DataControlService } from "../src/core/data-control-service.js";
+import { AgentRunService } from "../src/core/agent-run-service.js";
 import type { HistoryService } from "../src/core/history-service.js";
 import type { InsightService } from "../src/core/insight-service.js";
 import type { MemoryService } from "../src/core/memory-service.js";
@@ -18,6 +22,10 @@ import type { SessionService } from "../src/core/session-service.js";
 import type { TaskService } from "../src/core/task-service.js";
 import type { TelemetryService } from "../src/core/telemetry-service.js";
 import type { ConversationTurn } from "../src/domain/history.js";
+import type {
+  AgentRunRepository,
+  DurableAgentRun,
+} from "../src/domain/agent-run.js";
 import type { MemoryItem } from "../src/domain/memory.js";
 import type {
   ProfileRepository,
@@ -26,6 +34,8 @@ import type {
 import type { ActiveSession } from "../src/domain/session.js";
 import type { NewTask, StudentTask } from "../src/domain/task.js";
 import type { AgentRunCheckpoint } from "../src/harness/agent-harness.js";
+import { privateAgentScope, scopeKey } from "../src/harness/scope.js";
+import { FileAgentRunRepository } from "../src/storage/file-agent-run-repository.js";
 
 describe("alur adapter Telegram", () => {
   it("tidak menyimpan tugas dari usulan model tanpa izin eksplisit", async () => {
@@ -142,7 +152,7 @@ describe("alur adapter Telegram", () => {
     await bot.drainPending();
 
     assert.equal(triageCalls, 1);
-    assert.equal(sent.filter((text) => text.startsWith("Hai ")).length, 1);
+    assert.equal(sent.filter((text) => text.startsWith("Haloo ")).length, 1);
     assert.equal(
       sent.filter((text) => text.includes("Pesan tambahanmu masih aku pegang"))
         .length,
@@ -150,11 +160,11 @@ describe("alur adapter Telegram", () => {
     );
   });
 
-  it("menahan pesan pengguna consent v4 sampai menyetujui versi 5", async () => {
+  it("menahan pesan pengguna consent v5 sampai menyetujui versi 6", async () => {
     const sent: string[] = [];
     let triageCalls = 0;
     let fullProcessingCalls = 0;
-    let stored = profile({ consentVersion: 4 });
+    let stored = profile({ consentVersion: 5 });
     const legacyProfiles = new ProfileService({
       find: async () => stored,
       save: async (value) => {
@@ -197,10 +207,39 @@ describe("alur adapter Telegram", () => {
 
     assert.equal(triageCalls, 1);
     assert.equal(fullProcessingCalls, 0);
-    assert.equal(stored.consentVersion, 4);
-    assert.ok(sent.some((text) => text.startsWith("Hai ")));
-    assert.ok(sent.some((text) => /layanan cadangan/iu.test(text)));
-    assert.ok(sent.some((text) => /tiga worker AI/iu.test(text)));
+    assert.equal(stored.consentVersion, 5);
+    assert.ok(sent.some((text) => text.startsWith("Haloo ")));
+    assert.ok(sent.some((text) => /diproses oleh AI/iu.test(text)));
+    assert.ok(sent.some((text) => /janji di antara kita/iu.test(text)));
+  });
+
+  it("tidak menerima consent baru sebelum checkpoint lama berhasil dibersihkan", async () => {
+    let accepted = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        profiles: {
+          acceptConsent: async () => {
+            accepted += 1;
+            return profile();
+          },
+        } as unknown as ProfileService,
+        agentRuns: {
+          forget: async () => {
+            throw new Error("checkpoint lama belum dapat dihapus");
+          },
+        } as unknown as AgentRunService,
+      },
+    );
+
+    await harness.bot.handleUpdate(callbackUpdate("consent:yes", 1));
+    await harness.bot.drainPending();
+
+    assert.equal(accepted, 0);
   });
 
   it("gagal tertutup ketika triase rusak: meninjau balasan tetapi tidak memutasi", async () => {
@@ -604,6 +643,11 @@ describe("alur adapter Telegram", () => {
             deletions += 1;
           },
         } as unknown as DataControlService,
+        agentRuns: {
+          clear: async () => {
+            throw new Error("agent run file rusak");
+          },
+        } as unknown as AgentRunService,
         telegramCalls,
       },
     );
@@ -709,6 +753,14 @@ describe("alur adapter Telegram", () => {
             sessionForgets += 1;
           },
         } as unknown as SessionService,
+        agentRuns: {
+          clear: async () => {
+            throw new Error("agent run file rusak");
+          },
+          forget: async () => {
+            throw new Error("agent run file rusak");
+          },
+        } as unknown as AgentRunService,
         telegramCalls,
       },
     );
@@ -729,7 +781,7 @@ describe("alur adapter Telegram", () => {
 
     assert.equal(understandCalls, 0);
     assert.equal(sessionForgets, 0);
-    assert.ok(harness.sent.some((text) => text.startsWith("Hai ")));
+    assert.ok(harness.sent.some((text) => text.startsWith("Haloo ")));
   });
 
   it("membuang pending bila pertanyaannya gagal terkirim", async () => {
@@ -763,65 +815,6 @@ describe("alur adapter Telegram", () => {
     assert.equal(dueCalls, 0);
     assert.equal(understandCalls, 1);
     assert.ok(harness.sent.includes("Percakapan biasa tetap jalan."));
-  });
-
-  it("mengarahkan intent research ke loop agent tanpa memakai balasan biasa", async () => {
-    let researchCalls = 0;
-    let replyCalls = 0;
-    let markedUsed = 0;
-    const harness = basicHarness(
-      {
-        classifyTurnBoundary: async () => "complete",
-        triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "research" }),
-        research: async (request: string) => {
-          researchCalls += 1;
-          assert.equal(request, "cari kabar terbaru Harvy");
-          return [
-            "Saya menemukan laporan terbaru.",
-            "",
-            "Sumber:",
-            "- https://example.com/report",
-          ].join("\n");
-        },
-        reply: async () => {
-          replyCalls += 1;
-          return "Jalur balasan biasa tidak boleh dipakai.";
-        },
-      } as unknown as Conversation,
-      {} as TaskService,
-      {
-        memories: {
-          relevantTo: async () => [],
-          markUsed: async () => {
-            markedUsed += 1;
-          },
-        } as unknown as MemoryService,
-      },
-    );
-
-    await harness.bot.handleUpdate(messageUpdate("cari kabar terbaru Harvy"));
-    await harness.bot.drainPending();
-
-    assert.equal(researchCalls, 1);
-    assert.equal(replyCalls, 0);
-    assert.equal(markedUsed, 1);
-    assert.ok(harness.sent.some((text) => text.includes("example.com/report")));
-    assert.deepEqual(
-      harness.turns.map(({ role, text }) => ({ role, text })),
-      [
-        { role: "user", text: "cari kabar terbaru Harvy" },
-        {
-          role: "harvy",
-          text: [
-            "Saya menemukan laporan terbaru.",
-            "",
-            "Sumber:",
-            "- https://example.com/report",
-          ].join("\n"),
-        },
-      ],
-    );
   });
 
   it("mengarahkan pertanyaan biasa ke root agent cheap-first dan mengikat settlement ke turn", async () => {
@@ -1011,9 +1004,9 @@ describe("alur adapter Telegram", () => {
       },
     );
 
-    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal"));
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal", 1));
     await harness.bot.drainPending();
-    await harness.bot.handleUpdate(messageUpdate("30 hari"));
+    await harness.bot.handleUpdate(messageUpdate("30 hari", 2));
     await harness.bot.drainPending();
 
     assert.ok(harness.sent.some((text) => text.includes("Rentang tanggal")));
@@ -1022,6 +1015,455 @@ describe("alur adapter Telegram", () => {
     assert.equal(deliveredTurns.length, 2);
     assert.equal(deliveredTurns.every((turnId) => typeof turnId === "string"), true);
     assert.equal(discarded, 0);
+  });
+
+  it("tidak memakai pesan yang masuk sebelum prompt sebagai jawaban checkpoint", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-bot-agent-causal-"));
+    const baseRepository = new FileAgentRunRepository(
+      join(root, "agent-runs.json"),
+    );
+    const saveStarted = deferredVoid();
+    const releaseSave = deferredVoid();
+    const runs = new AgentRunService(gatedFirstSaveRepository(
+      baseRepository,
+      saveStarted,
+      releaseSave,
+    ));
+    const started = deferredVoid();
+    const release = deferredVoid();
+    const checkpoint = durableCheckpoint("123", "run-causal");
+    const answers: string[] = [];
+    let agentCalls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async (message: string) =>
+          understanding({
+            intent: message.includes("analisis") ? "question" : "smalltalk",
+          }),
+        agent: async (
+          _request: string,
+          _mode: string,
+          _context: HarvyContext,
+          _runtime: unknown,
+          restored?: AgentRunCheckpoint,
+          answer?: string,
+        ) => {
+          agentCalls += 1;
+          if (!restored) {
+            started.resolve();
+            await release.promise;
+            return {
+              status: "needs_input",
+              prompt: "Rentang tanggal mana yang kamu maksud?",
+              checkpoint,
+            };
+          }
+          answers.push(answer ?? "");
+          return { status: "completed", reply: "Siap, kupakai 30 hari." };
+        },
+        reply: async (message: string) => `Pesan biasa: ${message}`,
+      } as unknown as Conversation,
+      {} as TaskService,
+      { agentRuns: runs },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal", 1));
+    const draining = harness.bot.drainPending();
+    await started.promise;
+    await harness.bot.handleUpdate(messageUpdate("pesan sela", 2));
+    release.resolve();
+    await saveStarted.promise;
+    await harness.bot.handleUpdate(messageUpdate("pesan setelah prompt", 3));
+    releaseSave.resolve();
+    await draining;
+
+    assert.equal(agentCalls, 1);
+    assert.deepEqual(answers, []);
+    assert.ok(harness.sent.includes(
+      "Pesan biasa: pesan sela\npesan setelah prompt",
+    ));
+    assert.equal(
+      (await runs.loadWaitingInput("telegram", "123"))
+        ?.acceptAnswersAfterUpdateId,
+      2,
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("30 hari", 4));
+    await harness.bot.drainPending();
+    assert.equal(agentCalls, 2);
+    assert.deepEqual(answers, ["30 hari"]);
+  });
+
+  it("memulihkan checkpoint agent dari file setelah bot restart", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-bot-agent-run-"));
+    const file = join(root, "agent-runs.json");
+    const firstRuns = new AgentRunService(new FileAgentRunRepository(file));
+    const checkpoint = durableCheckpoint("123", "run-restart");
+    const first = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async () => ({
+          status: "needs_input",
+          prompt: "Rentang tanggal mana yang kamu maksud?",
+          checkpoint,
+        }),
+      } as unknown as Conversation,
+      {} as TaskService,
+      { agentRuns: firstRuns },
+    );
+
+    await first.bot.handleUpdate(messageUpdate("buat analisis jadwal", 1));
+    await first.bot.drainPending();
+    assert.equal(
+      (await firstRuns.loadWaitingInput("telegram", "123"))?.revision,
+      1,
+    );
+
+    let resumed = 0;
+    const restartedRuns = new AgentRunService(new FileAgentRunRepository(file));
+    const restarted = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        agent: async (
+          request: string,
+          mode: string,
+          _context: HarvyContext,
+          runtime: { intent?: string },
+          restored?: AgentRunCheckpoint,
+          answer?: string,
+        ) => {
+          resumed += 1;
+          assert.equal(request, "buat analisis jadwal");
+          assert.equal(mode, "tools");
+          assert.equal(runtime.intent, "question");
+          assert.deepEqual(restored, checkpoint);
+          assert.equal(answer, "30 hari");
+          return { status: "completed", reply: "Siap, kupakai 30 hari." };
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      { agentRuns: restartedRuns },
+    );
+
+    await restarted.bot.handleUpdate(messageUpdate("30 hari", 2));
+    await restarted.bot.drainPending();
+
+    assert.equal(resumed, 1, JSON.stringify(restarted.sent));
+    assert.ok(restarted.sent.some((text) => text.includes("kupakai 30 hari")));
+    assert.equal(
+      await restartedRuns.loadWaitingInput("telegram", "123"),
+      null,
+    );
+  });
+
+  it("classifier lambat tidak menghidupkan checkpoint yang dibatalkan command", async () => {
+    const checkpoint = durableCheckpoint("123", "run-classifier-race");
+    const stale: DurableAgentRun = {
+      version: 1,
+      scopeKey: checkpoint.scopeKey,
+      channel: "telegram",
+      ownerId: "123",
+      runId: checkpoint.runId,
+      request: checkpoint.request,
+      mode: "tools",
+      intent: "question",
+      acceptAnswersAfterUpdateId: 0,
+      status: "waiting_input",
+      checkpoint,
+      revision: 1,
+      createdAt: checkpoint.startedAt,
+      updatedAt: checkpoint.startedAt,
+      expiresAt: checkpoint.deadlineAt,
+    };
+    const loadStarted = deferredVoid();
+    const releaseLoad = deferredVoid();
+    const cleared = deferredVoid();
+    let loadCalls = 0;
+    let agentCalls = 0;
+    const runs = {
+      loadWaitingInput: async () => {
+        loadCalls += 1;
+        if (loadCalls === 1) {
+          loadStarted.resolve();
+          await releaseLoad.promise;
+          return stale;
+        }
+        return null;
+      },
+      clear: async () => {
+        cleared.resolve();
+        return true;
+      },
+    } as unknown as AgentRunService;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "smalltalk" }),
+        agent: async () => {
+          agentCalls += 1;
+          return { status: "completed", reply: "tidak boleh terpanggil" };
+        },
+        reply: async () => "Percakapan baru.",
+      } as unknown as Conversation,
+      { listActive: async () => [] } as unknown as TaskService,
+      { agentRuns: runs },
+    );
+
+    const keepAlive = setTimeout(() => undefined, 2_000);
+    try {
+      await harness.bot.handleUpdate(messageUpdate("pesan sebelum command", 1));
+      await loadStarted.promise;
+      await harness.bot.handleUpdate(commandUpdate("/start", 2));
+      await cleared.promise;
+      releaseLoad.resolve();
+      await harness.bot.drainPending();
+    } finally {
+      clearTimeout(keepAlive);
+    }
+
+    await harness.bot.handleUpdate(messageUpdate("pesan sesudah command", 3));
+    await harness.bot.drainPending();
+    assert.equal(agentCalls, 0);
+    assert.ok(harness.sent.includes("Percakapan baru."));
+  });
+
+  it("tidak membuat checkpoint durable bila prompt pertama gagal terkirim", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-bot-agent-send-fail-"));
+    const runs = new AgentRunService(
+      new FileAgentRunRepository(join(root, "agent-runs.json")),
+    );
+    const prompt = "Rentang tanggal mana yang kamu maksud?";
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async () => ({
+          status: "needs_input",
+          prompt,
+          checkpoint: durableCheckpoint("123", "run-send-fail"),
+        }),
+      } as unknown as Conversation,
+      {} as TaskService,
+      { agentRuns: runs, failSend: (text) => text === prompt },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal"));
+    await harness.bot.drainPending();
+
+    assert.equal(await runs.loadWaitingInput("telegram", "123"), null);
+    assert.equal(harness.sent.includes(prompt), false);
+  });
+
+  it("membatalkan checkpoint bila prompt panjang hanya terkirim sebagian", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-bot-agent-partial-"));
+    const runs = new AgentRunService(
+      new FileAgentRunRepository(join(root, "agent-runs.json")),
+    );
+    const prompt = "p".repeat(5_000);
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async () => ({
+          status: "needs_input",
+          prompt,
+          checkpoint: durableCheckpoint("123", "run-partial-prompt"),
+        }),
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        agentRuns: runs,
+        failSend: (text) => text.length === 1_000,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal", 1));
+    await harness.bot.drainPending();
+
+    assert.equal(harness.sent[0]?.length, 4_000);
+    assert.ok(harness.sent.some((text) => /progress run-nya gagal/iu.test(text)));
+    assert.equal(await runs.loadWaitingInput("telegram", "123"), null);
+  });
+
+  it("memecah jawaban resume panjang lalu membersihkan checkpoint", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-bot-agent-long-resume-"));
+    const runs = new AgentRunService(
+      new FileAgentRunRepository(join(root, "agent-runs.json")),
+    );
+    const checkpoint = durableCheckpoint("123", "run-long-resume");
+    const finalReply = "j".repeat(5_000);
+    let calls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async () => {
+          calls += 1;
+          return calls === 1
+            ? {
+                status: "needs_input",
+                prompt: "Rentang tanggal mana yang kamu maksud?",
+                checkpoint,
+              }
+            : { status: "completed", reply: finalReply };
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      { agentRuns: runs },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal", 1));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(messageUpdate("30 hari", 2));
+    await harness.bot.drainPending();
+
+    const finalBubbles = harness.sent.filter((text) => /^j+$/u.test(text));
+    assert.deepEqual(finalBubbles.map((text) => text.length), [4_000, 1_000]);
+    assert.equal(await runs.loadWaitingInput("telegram", "123"), null);
+  });
+
+  it("membatalkan run bila checkpoint prompt berikutnya gagal disimpan", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-bot-agent-save-fail-"));
+    const base = new FileAgentRunRepository(join(root, "agent-runs.json"));
+    const runs = new AgentRunService(faultingAgentRunRepository(base, {
+      failSaveAt: 3,
+    }));
+    const firstCheckpoint = durableCheckpoint("123", "run-save-fail");
+    const nextCheckpoint = structuredClone(firstCheckpoint);
+    nextCheckpoint.pendingInput = {
+      step: 0,
+      prompt: "Kamu ingin hasil ringkas atau rinci?",
+    };
+    let calls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async () => {
+          calls += 1;
+          return calls === 1
+            ? {
+                status: "needs_input",
+                prompt: "Rentang tanggal mana yang kamu maksud?",
+                checkpoint: firstCheckpoint,
+              }
+            : {
+                status: "needs_input",
+                prompt: "Kamu ingin hasil ringkas atau rinci?",
+                checkpoint: nextCheckpoint,
+              };
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      { agentRuns: runs },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal", 1));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(messageUpdate("30 hari", 2));
+    await harness.bot.drainPending();
+
+    assert.equal(calls, 2);
+    assert.ok(harness.sent.includes("Kamu ingin hasil ringkas atau rinci?"));
+    assert.ok(harness.sent.some((text) => /progress run-nya gagal/iu.test(text)));
+    assert.equal(await runs.loadWaitingInput("telegram", "123"), null);
+  });
+
+  it("membatalkan run bila clear sesudah jawaban final sempat gagal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-bot-agent-clear-fail-"));
+    const base = new FileAgentRunRepository(join(root, "agent-runs.json"));
+    const runs = new AgentRunService(faultingAgentRunRepository(base, {
+      failRemoveAt: 1,
+    }));
+    const checkpoint = durableCheckpoint("123", "run-clear-fail");
+    let calls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async () => {
+          calls += 1;
+          return calls === 1
+            ? {
+                status: "needs_input",
+                prompt: "Rentang tanggal mana yang kamu maksud?",
+                checkpoint,
+              }
+            : { status: "completed", reply: "Analisis 30 hari sudah siap." };
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      { agentRuns: runs },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal", 1));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(messageUpdate("30 hari", 2));
+    await harness.bot.drainPending();
+
+    assert.equal(calls, 2);
+    assert.ok(harness.sent.includes("Analisis 30 hari sudah siap."));
+    assert.ok(harness.sent.some((text) => /checkpoint itu kubatalkan/iu.test(text)));
+    assert.equal(await runs.loadWaitingInput("telegram", "123"), null);
+  });
+
+  it("memblokir restore bila cleanup pasca-delivery juga gagal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-bot-agent-cleanup-fail-"));
+    const base = new FileAgentRunRepository(join(root, "agent-runs.json"));
+    const runs = new AgentRunService(faultingAgentRunRepository(base, {
+      failRemoveAt: 1,
+      failRemoveOwnerAt: 1,
+    }));
+    const checkpoint = durableCheckpoint("123", "run-cleanup-fail");
+    let calls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async (message: string) => understanding({
+          intent: message.includes("analisis") ? "question" : "smalltalk",
+        }),
+        agent: async () => {
+          calls += 1;
+          return calls === 1
+            ? {
+                status: "needs_input",
+                prompt: "Rentang tanggal mana yang kamu maksud?",
+                checkpoint,
+              }
+            : { status: "completed", reply: "Analisis selesai." };
+        },
+        reply: async () => "Checkpoint lama tidak dipakai.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      { agentRuns: runs },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal", 1));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(messageUpdate("30 hari", 2));
+    await harness.bot.drainPending();
+    assert.ok(await base.load(checkpoint.scopeKey));
+    assert.equal(await runs.loadWaitingInput("telegram", "123"), null);
+    await harness.bot.handleUpdate(messageUpdate("permintaan baru", 3));
+    await harness.bot.drainPending();
+
+    assert.equal(calls, 2);
+    assert.ok(harness.sent.includes("Checkpoint lama tidak dipakai."));
+    assert.ok(harness.sent.some((text) => /belum dapat kupastikan terhapus/iu.test(text)));
+    assert.equal(await base.load(checkpoint.scopeKey), null);
+    assert.equal(await runs.loadWaitingInput("telegram", "123"), null);
   });
 
   it("menjawab pertanyaan jam lewat clock deterministik tanpa planner", async () => {
@@ -1218,6 +1660,7 @@ function config(): AppConfig {
     historyFile: "unused",
     profileFile: "unused",
     sessionFile: "unused",
+    agentRunFile: "unused",
     telemetryFile: "unused",
     telemetryRetentionDays: 30,
     defaultTimezone: "Asia/Jakarta",
@@ -1250,12 +1693,6 @@ function config(): AppConfig {
       },
     },
     ai: {} as AppConfig["ai"],
-    web: {
-      searchApiKey: null,
-      searchTimeoutMs: 10_000,
-      openEnabled: false,
-      openTimeoutMs: 10_000,
-    },
     whatsapp: {
       enabled: false,
       pairingMode: "qr",
@@ -1265,7 +1702,104 @@ function config(): AppConfig {
       reconnectBaseMs: 2_000,
       reconnectMaxMs: 60_000,
     },
+    termsUrl: "https://harvy.id/terms",
   };
+}
+
+function durableCheckpoint(
+  ownerId: string,
+  runId: string,
+): AgentRunCheckpoint {
+  const startedAt = new Date();
+  return {
+    version: 1,
+    runId,
+    scopeKey: scopeKey(privateAgentScope("telegram", ownerId)),
+    capabilityHash: "a".repeat(16),
+    callableHash: "b".repeat(64),
+    request: "buat analisis jadwal",
+    startedAt: startedAt.toISOString(),
+    deadlineAt: new Date(startedAt.getTime() + 10 * 60 * 1_000).toISOString(),
+    maxSteps: 6,
+    step: 0,
+    observations: [],
+    userInputs: [],
+    seenActionDigests: [],
+    pending: null,
+    pendingInput: {
+      step: 0,
+      prompt: "Rentang tanggal mana yang kamu maksud?",
+    },
+  };
+}
+
+function faultingAgentRunRepository(
+  delegate: AgentRunRepository,
+  faults: {
+    failSaveAt?: number;
+    failRemoveAt?: number;
+    failRemoveOwnerAt?: number;
+  },
+): AgentRunRepository {
+  let saves = 0;
+  let removes = 0;
+  let ownerRemoves = 0;
+  return {
+    load: (scope) => delegate.load(scope),
+    save: async (run, expectedRevision) => {
+      saves += 1;
+      if (saves === faults.failSaveAt) {
+        throw new Error("fault injection: save agent run");
+      }
+      return delegate.save(run, expectedRevision);
+    },
+    remove: async (scope, expectedRunId, expectedRevision) => {
+      removes += 1;
+      if (removes === faults.failRemoveAt) {
+        throw new Error("fault injection: remove agent run");
+      }
+      return delegate.remove(scope, expectedRunId, expectedRevision);
+    },
+    removeOwner: async (channel, ownerId) => {
+      ownerRemoves += 1;
+      if (ownerRemoves === faults.failRemoveOwnerAt) {
+        throw new Error("fault injection: remove agent owner");
+      }
+      return delegate.removeOwner(channel, ownerId);
+    },
+    removeExpired: (now) => delegate.removeExpired(now),
+  };
+}
+
+function gatedFirstSaveRepository(
+  delegate: AgentRunRepository,
+  started: { resolve: () => void },
+  release: { promise: Promise<void> },
+): AgentRunRepository {
+  let saves = 0;
+  return {
+    load: (scope) => delegate.load(scope),
+    save: async (run, expectedRevision) => {
+      saves += 1;
+      if (saves === 1) {
+        started.resolve();
+        await release.promise;
+      }
+      return delegate.save(run, expectedRevision);
+    },
+    remove: (scope, expectedRunId, expectedRevision) =>
+      delegate.remove(scope, expectedRunId, expectedRevision),
+    removeOwner: (channel, ownerId) => delegate.removeOwner(channel, ownerId),
+    removeExpired: (now) => delegate.removeExpired(now),
+  };
+}
+
+function deferredVoid(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 function messageUpdate(text: string, updateId = 1): Update {
@@ -1387,6 +1921,7 @@ function basicHarness(
     sessions?: SessionService;
     dataControls?: DataControlService;
     telemetry?: TelemetryService;
+    agentRuns?: AgentRunService;
     telegramCalls?: TelegramCall[];
     failSend?: (text: string) => boolean;
   } = {},
@@ -1428,6 +1963,8 @@ function basicHarness(
       event: async () => undefined,
       drain: async () => undefined,
     } as unknown as TelemetryService,
+    undefined,
+    overrides.agentRuns,
   );
   installFakeTelegram(bot, sent, telegramCalls, overrides.failSend);
   return { bot, sent, turns, telegramCalls };

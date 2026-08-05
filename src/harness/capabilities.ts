@@ -53,8 +53,6 @@ export type AgentSurface = `${"private" | "group" | "workspace"}:${AgentChannel}
 
 export interface HarvyCapabilityCatalogOptions {
   activeSurfaces?: readonly AgentSurface[];
-  webSearchInstalled?: boolean;
-  webOpenInstalled?: boolean;
   /** Tool baca state Harvy yang benar-benar mempunyai executor agent. */
   internalToolsInstalled?: boolean;
   /** Terminal virtual sementara; tidak pernah berarti shell host. */
@@ -196,18 +194,6 @@ export function createHarvyCapabilityCatalog(
     ? {}
     : options as HarvyCapabilityCatalogOptions;
   const definitions = HARVY_CAPABILITIES.map((definition) => {
-    if (definition.id === "web.search") {
-      return {
-        ...definition,
-        installed: configured.webSearchInstalled === true,
-      };
-    }
-    if (definition.id === "web.open") {
-      return {
-        ...definition,
-        installed: configured.webOpenInstalled === true,
-      };
-    }
     if (INTERNAL_TOOL_IDS.has(definition.id)) {
       return {
         ...definition,
@@ -318,34 +304,6 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     spaces: ["private"],
     channels: ["telegram"],
     installed: true,
-  },
-  {
-    id: "web.search",
-    version: "1",
-    title: "Pencarian web",
-    description: "mencari hasil web terbaru melalui indeks pencarian resmi",
-    effect: "read",
-    confirmation: "none",
-    idempotency: "read-only",
-    spaces: ["private", "workspace"],
-    channels: ["telegram"],
-    requiredWorkspacePermissions: ["run.create"],
-    installed: false,
-    unavailableReason: "Credential provider pencarian web belum dipasang.",
-  },
-  {
-    id: "web.open",
-    version: "1",
-    title: "Pembacaan halaman web",
-    description: "membuka satu URL publik dan membaca teksnya dengan batas keamanan",
-    effect: "read",
-    confirmation: "none",
-    idempotency: "read-only",
-    spaces: ["private", "workspace"],
-    channels: ["telegram"],
-    requiredWorkspacePermissions: ["run.create"],
-    installed: false,
-    unavailableReason: "Pembacaan URL publik belum diaktifkan operator.",
   },
   {
     id: "task.list_active",
