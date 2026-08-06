@@ -21,8 +21,11 @@ Manual:
 
 ## Konteks
 
-- [ ] `docs/LOG.md` sudah berisi entri untuk pekerjaan ini.
-- [ ] `docs/engineering/STATUS.md` diperbarui bila kemampuan Harvy bergeser.
+- [ ] Dokumentasi material diperbarui bila capability, perilaku, kontrak,
+      keputusan, defect, atau bukti live berubah; bila tidak, tulis `N/A`.
+- [ ] `docs/engineering/STATUS.md` dan detail subsystem diperbarui hanya bila
+      keadaan kemampuan Harvy benar-benar bergeser.
+- [ ] `docs/LOG.md` berisi entri ringkas hanya bila perubahan ini material.
 - Dokumentasi lain yang diubah:
 - Asumsi:
 - Risiko atau pekerjaan tersisa:

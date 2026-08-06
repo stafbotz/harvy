@@ -1,9 +1,15 @@
 # ADR-005: Konteks Menggantikan Work Order
 
-- Status: Accepted
+- Status: Superseded sebagian
 - Tanggal: 26 Juli 2026
 - Pemilik keputusan: pengguna Harvy
 - Menggantikan sebagian: [`ADR-001`](ADR-001-agent-orchestration.md)
+- Diganti sebagian oleh: [`ADR-019`](ADR-019-code-first-progressive-context.md)
+
+> **Perubahan keputusan 6 Agustus 2026.** Konteks tetap menggantikan Work Order,
+> tetapi kewajiban membaca empat dokumen sebelum bekerja dan menulis LOG pada
+> setiap sesi tidak lagi berlaku. `ADR-019` menetapkan code-first progressive
+> loading, snapshot berbatas, status per subsystem, dan LOG material saja.
 
 ## Konteks
 
@@ -25,14 +31,14 @@ sebenarnya**, lalu menulis dokumen berdasarkan dugaan yang masuk akal.
 
 Formulir tidak menyembuhkan itu. Konteks yang menyembuhkannya.
 
-## Keputusan
+## Keputusan historis
 
 1. **Work Order tidak lagi menjadi syarat untuk bekerja.** Folder
    `docs/work-orders/` dihapus beserta templatnya. Tidak ada lagi status
    `DRAFT`/`READY`/`ACCEPTED`, prompt peran, maupun aturan 5×1.
-2. **Konteks menjadi kewajiban yang menggantikannya.** Siapa pun yang mulai
-   bekerja — manusia maupun AI — harus dapat menjawab empat pertanyaan tanpa
-   bertanya kepada siapa pun:
+2. **[Disupersesi ADR-019] Konteks menjadi kewajiban yang menggantikannya.**
+   Siapa pun yang mulai bekerja — manusia maupun AI — harus dapat menjawab
+   empat pertanyaan tanpa bertanya kepada siapa pun:
 
    | Pertanyaan | Dijawab oleh |
    |---|---|
@@ -41,9 +47,10 @@ Formulir tidak menyembuhkan itu. Konteks yang menyembuhkannya.
    | Apa yang sudah benar-benar berjalan? | [`engineering/STATUS.md`](../engineering/STATUS.md) |
    | Apa yang dikerjakan terakhir kali, dan kenapa? | [`LOG.md`](../LOG.md) |
 
-3. **Setiap sesi kerja meninggalkan catatan di `docs/LOG.md`.** Ini pengganti
-   serah-terima. Satu entri berisi tanggal, apa yang berubah, alasannya, bukti
-   verifikasi, dan apa yang sengaja ditinggalkan.
+3. **[Disupersesi ADR-019] Setiap sesi kerja meninggalkan catatan di
+   `docs/LOG.md`.** Ini pengganti serah-terima. Satu entri berisi tanggal, apa
+   yang berubah, alasannya, bukti verifikasi, dan apa yang sengaja
+   ditinggalkan.
 4. **Yang tetap berlaku dari ADR-001:** satu penulis aktif pada satu waktu,
    bukti tes wajib disebut, dan dokumentasi keputusan permanen tetap di
    `docs/decisions/`. Keputusan pemilik produk pada 26 Juli 2026 kemudian

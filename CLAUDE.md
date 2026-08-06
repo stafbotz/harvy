@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Sesuai ADR-001, file ini hanya adaptor tipis. Seluruh instruksi ada di
-`AGENTS.md` agar Codex, Claude Code, dan Antigravity membaca sumber yang sama.
+File ini hanya adaptor tipis. Seluruh kontrak ada di `AGENTS.md`; SessionStart
+hanya menambahkan snapshot kecil dari sumber yang sama.
 
 @AGENTS.md

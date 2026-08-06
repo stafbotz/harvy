@@ -1,38 +1,41 @@
 #!/bin/sh
-#
-# Menolak commit yang mengubah pekerjaan tetapi tidak meninggalkan konteks.
-#
-# Berlaku untuk siapa pun yang melakukan commit di repositori ini: manusia,
-# Codex, Claude Code, maupun Antigravity. Instruksi dalam AGENTS.md hanya
-# berharap dibaca; hook ini tidak.
-#
-# Aktifkan sekali per clone:
-#   git config core.hooksPath .githooks
+# Validate the staged compact-context snapshot when one of its sources changes.
+# Semantic materiality cannot be inferred safely from file paths or diff size.
 
-staged=$(git diff --cached --name-only)
+staged=$(
+  git diff --cached --name-status |
+    tr '\t' '\n' |
+    grep -Ev '^[ACDMRTUXB][0-9]*$'
+)
 
-# Tidak ada yang perlu dijaga bila commit ini tidak menyentuh pekerjaan.
-work=$(printf '%s\n' "$staged" | grep -E '^(src/|tests/|docs/|AGENTS\.md|README\.md)' | grep -v '^docs/LOG\.md$')
-[ -z "$work" ] && exit 0
+guarded=$(printf '%s\n' "$staged" | grep -E '^((AGENTS|CLAUDE)\.md|\.claude/settings\.json|\.agent/rules/.*|\.githooks/pre-commit|scripts/session-context\.(mjs|sh)|docs/(LOG\.md|agent/CURRENT\.md)|docs/engineering/STATUS\.md|docs/engineering/status/.*|docs/operations/WORKFLOW\.md|docs/INDEX\.md|tests/agent-context-contract\.test\.ts|package\.json)$')
 
-# Konteksnya ada. Lanjutkan.
-printf '%s\n' "$staged" | grep -q '^docs/LOG\.md$' && exit 0
+[ -z "$guarded" ] && exit 0
 
-cat >&2 <<'PESAN'
+repository_root=$(git rev-parse --show-toplevel) || exit 1
+staged_generator=$(mktemp "${TMPDIR:-/tmp}/harvy-context.XXXXXX.mjs") || exit 1
 
-  Commit ditahan: docs/LOG.md tidak ikut berubah.
+cleanup() {
+  rm -f -- "$staged_generator"
+}
+trap cleanup EXIT HUP INT TERM
 
-  Repositori ini dikerjakan bergantian oleh manusia dan beberapa AI yang tidak
-  dapat membaca riwayat percakapan satu sama lain. Tanpa entri LOG, sesi
-  berikutnya harus menebak apa yang sudah terjadi — dan tebakan yang masuk akal
-  pernah masuk ke dokumen sebagai fakta yang tidak pernah terjadi.
+if ! git show :scripts/session-context.mjs >"$staged_generator"; then
+  echo "Commit ditahan: generator konteks tidak ada pada snapshot staged." >&2
+  exit 1
+fi
 
-  Tulis satu entri di docs/LOG.md: kenapa, yang berubah, yang dibahas, bukti
-  verifikasi, dan yang sengaja ditinggalkan. Lalu commit ulang.
+HARVY_CONTEXT_ROOT="$repository_root" node "$staged_generator" --check-staged || {
+  cat >&2 <<'MESSAGE'
 
-  Kalau commit ini memang tidak layak dicatat, lewati dengan sadar:
-      git commit --no-verify
+  Commit ditahan: kontrak konteks agent pada snapshot staged tidak valid.
 
-PESAN
+  Stage seluruh sumber kontrak yang saling bergantung, jalankan
+  `npm run context:check`, lalu commit ulang. Hook ini tidak menilai
+  materialitas perubahan dan tidak mewajibkan catatan untuk commit kecil.
 
-exit 1
+MESSAGE
+  exit 1
+}
+
+exit 0

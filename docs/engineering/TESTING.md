@@ -2,9 +2,10 @@
 
 Dokumen ini mendefinisikan bukti minimum bahwa perubahan aman untuk ditinjau.
 
-Sebelum menyusun skenario, baca [`STATUS.md`](STATUS.md). Menguji kemampuan yang
-memang belum ada menghasilkan laporan `FAIL` yang menyesatkan, dan `PASS` untuk
-kemampuan yang sebenarnya belum tersambung jauh lebih berbahaya lagi.
+Sebelum menyusun skenario, cari baris area di [`STATUS.md`](STATUS.md), lalu
+baca hanya detail subsystem yang diuji. Menguji kemampuan yang memang belum ada
+menghasilkan laporan `FAIL` yang menyesatkan, dan `PASS` untuk kemampuan yang
+sebenarnya belum tersambung jauh lebih berbahaya lagi.
 
 ## Lingkungan
 
@@ -402,8 +403,9 @@ invoice. Jalur produksi mengikuti checklist di
 - Perubahan dokumentasi atau konfigurasi agen tidak memerlukan tes unit baru,
   tetapi gerbang otomatis tetap dijalankan untuk mendeteksi kerusakan tak
   sengaja.
-- Jangan menghapus atau melemahkan tes hanya agar build lulus. Kalau sebuah tes
-  memang harus berubah, tulis alasannya di [`../LOG.md`](../LOG.md).
+- Jangan menghapus atau melemahkan tes hanya agar build lulus. Jelaskan alasan
+  perubahan kontrak tes pada diff/PR; tambahkan [`../LOG.md`](../LOG.md) hanya
+  bila perubahan itu material menurut `AGENTS.md`.
 
 ## Uji manual Telegram
 

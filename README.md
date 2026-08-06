@@ -140,14 +140,11 @@ dalam satu commit.
 
 Harvy memakai satu capability catalog dan scope bertipe pada percakapan privat
 maupun grup. Snapshot itu ikut ke prompt agar model tidak mengaku mempunyai alat
-yang tidak dipasang. Chat privat Telegram kini dapat memakai `web.search` dan
-`web.open` baca-saja bila operator mengaktifkan keduanya; konfigurasi bawaan
-pencarian mengirim query yang dipilih untuk request itu ke penyedia search dan
-server Harvy mengambil URL yang dipilih. Riwayat serta memori privat lama tidak
-diberikan ke planner research. Satu run hanya boleh mencari sekali dan membuka
-URL dari pesan pengguna atau hasil search run yang sama; jawaban tanpa hasil web
-sukses ditahan. X/Threads, function calling ke aplikasi luar, kalender eksternal/email,
-pembacaan file host, dan memori lintas kanal belum tersedia.
+yang tidak dipasang. Executor `web.search` dan `web.open` sudah dicabut dari
+runtime; Harvy saat ini tidak dapat melakukan pencarian web langsung. X/Threads,
+function calling ke aplikasi luar, kalender eksternal/email, pembacaan file
+host, dan memori lintas kanal juga belum tersedia. Pengetahuan bawaan model
+bukan hasil pencarian atau verifikasi sumber terkini.
 
 Pertanyaan dan permintaan tenang tanpa sesi aktif kini memakai root agent
 `cheap`; pekerjaan bertahap/panjang naik ke root `ambitious`, yang boleh
@@ -230,19 +227,10 @@ Zona waktu bawaan, lokasi berkas sesi/telemetry/log, retensi, batas token 24
 jam, dan harga tiap model juga dapat diatur lewat `.env`; lihat
 [`.env.example`](.env.example) untuk daftar lengkap.
 
-Pencarian web baca-saja bersifat opsional. Search memakai Brave Search API,
-sedangkan open memberi egress HTTP umum yang dipagari sehingga harus diaktifkan
-terpisah:
-
-```text
-WEB_SEARCH_ENABLED=true
-WEB_SEARCH_API_KEY=isi-key-brave
-WEB_OPEN_ENABLED=true
-```
-
-Harvy hanya membuka URL HTTP/HTTPS publik bertipe teks/HTML/JSON dengan batas
-ukuran, timeout, pemeriksaan DNS/redirect, dan perlakuan isi sebagai data tak
-tepercaya. Fitur ini belum diuji end-to-end lewat Telegram atau provider nyata.
+Konfigurasi `WEB_SEARCH_*` dan `WEB_OPEN_*` sudah dihapus bersama executor web.
+Riwayat keputusannya dipertahankan di
+[`ADR-015`](docs/decisions/ADR-015-executor-web-baca-saja.md), bukan sebagai
+petunjuk setup aktif.
 
 Setelah itu:
 
@@ -401,12 +389,11 @@ npm test
   surface belum tercapai: chat privat masih hanya Telegram dan grup yang aktif
   masih hanya WhatsApp. Registry sengaja menandai Telegram grup dan WhatsApp
   privat tidak tersedia sampai adapter-nya benar-benar disambungkan.
-- Tool baca-saja `web.search`/`web.open` tersedia opsional pada privat Telegram,
-  mati secara default, dan belum diuji dengan Brave+Telegram nyata. Tool state
-  internal, agenda Harvy, terminal virtual, dan delegasi read-only baru teruji
-  otomatis/adapter palsu. Pembacaan dokumen/lampiran/host, X/Threads khusus,
-  kalender eksternal, email, shell/program, dan aksi aplikasi tetap belum
-  dibuat; pengetahuan bawaan model bukan hasil pencarian langsung.
+- Tool state internal, agenda Harvy, terminal virtual, dan delegasi read-only
+  baru teruji otomatis/adapter palsu. Executor `web.search`/`web.open` telah
+  dicabut; pembacaan dokumen/lampiran/host, X/Threads khusus, kalender eksternal,
+  email, shell/program, dan aksi aplikasi belum dibuat. Pengetahuan bawaan
+  model bukan hasil pencarian langsung.
 - Workspace Scope & Authority v1 baru merupakan fondasi core teruji. Tidak ada
   kanal Workspace, UI membership, artifact, account linking, atau durable run;
   adapter authority file hanya aman untuk satu proses.
@@ -448,8 +435,12 @@ Codex, Claude Code, dan Antigravity menggunakan satu protokol bersama. Mulai
 dari [AGENTS.md](AGENTS.md), lalu pilih dokumentasi melalui
 [docs/INDEX.md](docs/INDEX.md).
 
-Sekali per clone, aktifkan hook yang menolak commit tanpa catatan konteks:
+Sekali per clone, aktifkan hook yang memvalidasi pointer dan batas konteks agent
+ketika file bootstrap/status terkait berubah:
 
 ```bash
 git config core.hooksPath .githooks
 ```
+
+Hook tidak mewajibkan LOG untuk setiap commit; aturan materialitas dokumentasi
+ada di [AGENTS.md](AGENTS.md).

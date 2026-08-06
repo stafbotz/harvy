@@ -9,6 +9,7 @@
     "start": "node dist/src/app.js",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
+    "context:check": "node scripts/session-context.mjs --check",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "eval:conversation": "tsx scripts/evaluasi-percakapan.ts --all",
     "eval:group": "tsx scripts/evaluasi-grup.ts",

@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/session-context.sh"
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/scripts/session-context.mjs"]
           }
         ]
       }

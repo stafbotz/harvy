@@ -82,11 +82,10 @@ Konfigurasi runtime berasal dari `.env` (lihat `.env.example`):
 `MEMORY_FOLDER`, `PROFILE_FILE`, `SESSION_FILE`, `AGENT_RUN_FILE`, `TELEMETRY_FILE`,
 `TELEMETRY_RETENTION_DAYS`, `DEFAULT_TIMEZONE`, `REMINDER_INTERVAL_MS`, serta
 kelompok `AI_*` termasuk `AI_BASE_URL`, batas token 24 jam, dan harga input /
-output tiap tier. Executor web opsional memakai `WEB_SEARCH_ENABLED`,
-`WEB_SEARCH_API_KEY`, `WEB_SEARCH_TIMEOUT_MS`, `WEB_OPEN_ENABLED`, dan
-`WEB_OPEN_TIMEOUT_MS`; search dan egress open mati secara default serta
-diaktifkan terpisah. Control plane lokal memakai `CONTROL_PLANE_FILE`,
-`USAGE_LEDGER_FILE`, `ENTITLEMENT_LEDGER_FILE`, retensi ledger,
+output tiap tier. Executor web dan konfigurasi `WEB_SEARCH_*`/`WEB_OPEN_*` sudah
+dicabut; lihat ADR-015 sebagai histori, bukan setup aktif. Control plane lokal
+memakai `CONTROL_PLANE_FILE`, `USAGE_LEDGER_FILE`, `ENTITLEMENT_LEDGER_FILE`,
+retensi ledger,
 `BETA_QUOTA_MULTIPLIER`, serta kelompok `HARVY_CONSOLE_*`; Console saat ini
 wajib loopback dan bukan server internet-ready. Cadangan mode uji memakai
 `AI_TESTING_FALLBACK_BASE_URL`, `AI_TESTING_FALLBACK_API_KEY`,
