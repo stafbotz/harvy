@@ -717,7 +717,7 @@ agent dalam teks.
    sebagai fondasi; belum ada surface atau artifact.
 6. Bangun PostgreSQL `RunStore`, state machine durable, progress, dan artifact
    report bersitasi untuk tool baca yang sudah ada.
-7. **Selesai 5 Agustus 2026 untuk runtime internal:** native/canonical tool
+7. **Selesai 6 Agustus 2026 untuk runtime internal:** native/canonical tool
    calling dengan schema executor, normalisasi fail-closed, dan binding
    checkpoint. Pagination, groundedness per klaim, source-diversity eval, serta
    konektor X/Threads tetap belum dibangun.

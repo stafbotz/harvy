@@ -13,6 +13,7 @@ import {
   AgentHarness,
   type AgentCapabilityExecutor,
   type AgentPlannerDecision,
+  type AgentRunCheckpoint,
 } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 
@@ -59,7 +60,11 @@ describe("Conversation agent runtime", () => {
     ]);
     assert.equal(requests.every((request) => request.usage?.purpose === "agent"), true);
     assert.equal(requests.every((request) => request.json === undefined), true);
-    assert.equal(requests.every((request) => request.toolChoice === "required"), true);
+    assert.deepEqual(requests[0]?.toolChoice, {
+      type: "function",
+      function: { name: "harvy_settings_time_get_v1" },
+    });
+    assert.equal(requests[1]?.toolChoice, "required");
     assert.equal(requests.every((request) => request.parallelToolCalls === false), true);
     assert.deepEqual(
       requests[0]?.tools?.map((tool) => tool.function.name),
@@ -76,6 +81,190 @@ describe("Conversation agent runtime", () => {
     assert.doesNotMatch(requests[0]?.messages[0]?.content ?? "", /agent\.delegate\.parallel/u);
     assert.match(requests[0]?.messages[1]?.content ?? "", /settings\.time\.get/u);
     assert.doesNotMatch(requests[0]?.messages[1]?.content ?? "", /task\.manage/u);
+    assert.deepEqual(
+      requests[1]?.tools?.map((tool) => tool.function.name),
+      [
+        "harvy_final_v1",
+        "harvy_need_input_v1",
+        "harvy_settings_time_get_v1",
+      ],
+    );
+    const assistantCall = requests[1]?.messages.at(-2);
+    const toolResult = requests[1]?.messages.at(-1);
+    assert.ok(
+      assistantCall?.role === "assistant" && "tool_calls" in assistantCall,
+    );
+    assert.ok(toolResult?.role === "tool");
+    assert.equal(
+      assistantCall.tool_calls[0]?.extra_content?.google.thought_signature,
+      "signature-0",
+    );
+    assert.equal(toolResult.tool_call_id, assistantCall.tool_calls[0]?.id);
+    assert.equal(toolResult.name, "harvy_settings_time_get_v1");
+    assert.match(toolResult.content, /settings\.time\.get\.result/u);
+  });
+
+  it("meneruskan observation native pada konteks dua giliran tanpa cycle", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = fixture(
+      requests,
+      [
+        {
+          kind: "action",
+          capabilityId: "settings.time.get",
+          capabilityVersion: "1",
+          input: {},
+        },
+        { kind: "final", reply: "Tadi jalur agent-ku sempat gagal." },
+      ],
+      [executor("settings.time.get", {
+        kind: "settings.time.get.result",
+        local: "Kamis, 6 Agustus 2026 pukul 18.06 WIB",
+      })],
+    );
+
+    const result = await conversation.agent(
+      "lah kenapa?",
+      "tools",
+      {
+        summary: null,
+        turns: [
+          {
+            role: "user",
+            text: "harvy sekarang jam berapa",
+            at: "2026-08-06T11:06:00.000Z",
+          },
+          {
+            role: "harvy",
+            text: "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.",
+            at: "2026-08-06T11:06:01.000Z",
+          },
+        ],
+        memories: [],
+      },
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(result.status, "completed");
+    assert.equal(requests[1]?.toolChoice, "required");
+    assert.equal(requests[1]?.messages.at(-1)?.role, "tool");
+  });
+
+  it("tidak memotong rencana multi-tool setelah observation live pertama", async () => {
+    const requests: ChatRequest[] = [];
+    const executed: string[] = [];
+    const session = executor("session.status", {
+      kind: "session.status.result",
+      active: true,
+    });
+    const time = executor("settings.time.get", {
+      kind: "settings.time.get.result",
+      local: "Kamis, 6 Agustus 2026 pukul 18.06 WIB",
+    });
+    const conversation = fixture(
+      requests,
+      [
+        {
+          kind: "action",
+          capabilityId: "session.status",
+          capabilityVersion: "1",
+          input: {},
+        },
+        {
+          kind: "action",
+          capabilityId: "settings.time.get",
+          capabilityVersion: "1",
+          input: {},
+        },
+        { kind: "final", reply: "Sesimu aktif pada pukul 18.06 WIB." },
+      ],
+      [
+        {
+          ...session,
+          execute: async () => {
+            executed.push("session.status");
+            return {
+              status: "ok" as const,
+              summary: JSON.stringify({
+                kind: "session.status.result",
+                active: true,
+              }),
+            };
+          },
+        },
+        {
+          ...time,
+          execute: async () => {
+            executed.push("settings.time.get");
+            return {
+              status: "ok" as const,
+              summary: JSON.stringify({
+                kind: "settings.time.get.result",
+                local: "Kamis, 6 Agustus 2026 pukul 18.06 WIB",
+              }),
+            };
+          },
+        },
+      ],
+    );
+
+    const result = await conversation.agent(
+      "cek sesi aktif dan jam lokal lalu bandingkan",
+      "tools",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(result.status, "completed");
+    assert.deepEqual(executed, ["session.status", "settings.time.get"]);
+    assert.deepEqual(requests[0]?.toolChoice, {
+      type: "function",
+      function: { name: "harvy_session_status_v1" },
+    });
+    assert.equal(requests[1]?.toolChoice, "required");
+    assert.equal(requests[2]?.toolChoice, "required");
+  });
+
+  it("resume baru membawa pasangan prompt dan jawaban tanpa transcript provider lama", async () => {
+    const beforeRestart: ChatRequest[] = [];
+    const firstConversation = fixture(
+      beforeRestart,
+      [{ kind: "need_input", prompt: "Kapan rencana ini dimulai?" }],
+      [],
+    );
+    const paused = await firstConversation.agent(
+      "buatkan rencana belajar",
+      "tools",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+    assert.equal(paused.status, "needs_input");
+    if (paused.status !== "needs_input") return;
+
+    const serializedCheckpoint = JSON.parse(
+      JSON.stringify(paused.checkpoint),
+    ) as AgentRunCheckpoint;
+    const afterRestart: ChatRequest[] = [];
+    const restartedConversation = fixture(
+      afterRestart,
+      [{ kind: "final", reply: "Rencananya dimulai besok." }],
+      [],
+    );
+    const resumed = await restartedConversation.agent(
+      "buatkan rencana belajar",
+      "tools",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+      serializedCheckpoint,
+      "besok",
+    );
+
+    assert.equal(resumed.status, "completed");
+    const resumeMessages = afterRestart[0]?.messages ?? [];
+    assert.equal(resumeMessages.some((message) => message.role === "assistant"), false);
+    const resumeInput = resumeMessages.find((message) => message.role === "user");
+    assert.match(resumeInput?.content ?? "", /Kapan rencana ini dimulai\?/u);
+    assert.match(resumeInput?.content ?? "", /besok/u);
   });
 
   it("root kompleks memakai ambitious untuk plan dan sintesis delegasi", async () => {
@@ -270,7 +459,12 @@ describe("Conversation agent runtime", () => {
     const conversation = fixture(
       requests,
       [
-        { kind: "final", reply: "Agendamu kosong menurut memoriku." },
+        {
+          kind: "action",
+          capabilityId: "calendar.agenda",
+          capabilityVersion: "1",
+          input: { days: 7 },
+        },
         { kind: "final", reply: "Ada satu tenggat di agenda internalmu." },
       ],
       [{
@@ -312,7 +506,10 @@ describe("Conversation agent runtime", () => {
     assert.equal(result.status, "completed");
     assert.equal(agendaCalls, 1);
     assert.equal(requests.length, 2);
-    assert.match(requests[1]?.messages[1]?.content ?? "", /calendar\.agenda\.result/u);
+    assert.match(
+      requests[1]?.messages.at(-1)?.content ?? "",
+      /calendar\.agenda\.result/u,
+    );
   });
 
   it("memaksa observation live sebelum menerima need_input yang tidak diperlukan", async () => {
@@ -345,7 +542,12 @@ describe("Conversation agent runtime", () => {
     const conversation = fixture(
       requests,
       [
-        { kind: "need_input", prompt: "Mau berapa minggu?" },
+        {
+          kind: "action",
+          capabilityId: "calendar.agenda",
+          capabilityVersion: "1",
+          input: { days: 21 },
+        },
         { kind: "final", reply: "Agenda tiga minggumu kosong." },
       ],
       [calendar],
@@ -393,7 +595,12 @@ describe("Conversation agent runtime", () => {
     const conversation = fixture(
       requests,
       [
-        { kind: "final", reply: "Aku bisa membaca seluruh rentang itu." },
+        {
+          kind: "action",
+          capabilityId: "calendar.agenda",
+          capabilityVersion: "1",
+          input: { days: 31 },
+        },
         { kind: "final", reply: "Tidak ada agenda." },
       ],
       [calendar],
@@ -446,7 +653,12 @@ describe("Conversation agent runtime", () => {
           capabilityVersion: "1",
           input: { days: 7 },
         },
-        { kind: "final", reply: "Hasil tujuh hari." },
+        {
+          kind: "action",
+          capabilityId: "calendar.agenda",
+          capabilityVersion: "1",
+          input: { days: 30 },
+        },
         { kind: "final", reply: "Hasil tiga puluh hari." },
       ],
       [calendar],
@@ -513,7 +725,12 @@ describe("Conversation agent runtime", () => {
           capabilityVersion: "1",
           input: { days: 2 },
         },
-        { kind: "final", reply: "Besok kosong." },
+        {
+          kind: "action",
+          capabilityId: "calendar.agenda",
+          capabilityVersion: "1",
+          input: { days: 2, localDate: "2026-08-05" },
+        },
         { kind: "final", reply: "Besok benar-benar kosong." },
       ],
       [calendar],
@@ -566,7 +783,12 @@ describe("Conversation agent runtime", () => {
           capabilityVersion: "1",
           input: { limit: 1 },
         },
-        { kind: "final", reply: "Hanya satu tugas." },
+        {
+          kind: "action",
+          capabilityId: "task.list_active",
+          capabilityVersion: "1",
+          input: { limit: 20 },
+        },
         { kind: "final", reply: "Daftar tugas lengkap." },
       ],
       [taskList],
@@ -697,8 +919,12 @@ describe("model agent worker envelope", () => {
         /(?:SUMMARY|HISTORY|MEMORY_CREDENTIAL|OWNER)_SECRET_CANARY/u,
       );
       assert.doesNotMatch(providerMessages, /callableCapabilities/u);
-      const envelopeText = request.messages[1]?.content
-        .match(/<subtask-json>\n([\s\S]+)\n<\/subtask-json>/u)?.[1];
+      const envelopeContent = request.messages[1]?.content;
+      const envelopeText = typeof envelopeContent === "string"
+        ? envelopeContent.match(
+            /<subtask-json>\n([\s\S]+)\n<\/subtask-json>/u,
+          )?.[1]
+        : undefined;
       assert.ok(envelopeText);
       const envelope = JSON.parse(envelopeText) as Record<string, unknown>;
       assert.deepEqual(
@@ -722,9 +948,9 @@ function fixture(
       request: ChatRequest & { tools: readonly ChatFunctionTool[] },
     ): Promise<readonly ChatToolCall[]> {
       sink.push(request);
-      const calls = [nativeDecisionCall(
-        decisions[index++] ?? { kind: "final", reply: "selesai" },
-      )];
+      const decision = decisions[index] ?? { kind: "final", reply: "selesai" };
+      const calls = [nativeDecisionCall(decision, index)];
+      index += 1;
       assert.equal(request.validateToolCalls?.(calls), true);
       return calls;
     },
@@ -754,7 +980,10 @@ const NATIVE_CAPABILITY_NAMES: Readonly<Record<string, string>> = {
   "agent.delegate.parallel": "harvy_agent_delegate_parallel_v1",
 };
 
-function nativeDecisionCall(decision: AgentPlannerDecision): ChatToolCall {
+function nativeDecisionCall(
+  decision: AgentPlannerDecision,
+  index = 0,
+): ChatToolCall {
   const name = decision.kind === "final"
     ? "harvy_final_v1"
     : decision.kind === "need_input"
@@ -767,9 +996,16 @@ function nativeDecisionCall(decision: AgentPlannerDecision): ChatToolCall {
       ? { prompt: decision.prompt }
       : decision.input;
   return {
-    id: `call-${name}`,
+    id: `call-${index}-${name}`,
     type: "function",
     function: { name, arguments: JSON.stringify(input) },
+    ...(decision.kind === "action"
+      ? {
+          extra_content: {
+            google: { thought_signature: `signature-${index}` },
+          },
+        }
+      : {}),
   };
 }
 

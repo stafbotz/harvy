@@ -32,10 +32,30 @@ import {
  *
  * Memakai `fetch` bawaan Node 22; tidak ada dependency baru.
  */
-export interface ChatMessage {
+export interface ChatTextMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
+
+/** Respons assistant yang harus diputar ulang sebelum hasil tool. */
+export interface ChatAssistantToolMessage {
+  role: "assistant";
+  content: null;
+  tool_calls: readonly ChatToolCall[];
+}
+
+/** Hasil executor lokal pada continuation native chat-completions. */
+export interface ChatToolResultMessage {
+  role: "tool";
+  tool_call_id: string;
+  name?: string;
+  content: string;
+}
+
+export type ChatMessage =
+  | ChatTextMessage
+  | ChatAssistantToolMessage
+  | ChatToolResultMessage;
 
 /** Function tool pada wire protocol chat-completions kompatibel OpenAI. */
 export interface ChatFunctionTool {
@@ -63,6 +83,12 @@ export interface ChatToolCall {
     name: string;
     /** JSON arguments sebagaimana dikirim provider; parser domain tetap wajib. */
     arguments: string;
+  };
+  /** Metadata Gemini yang wajib diputar ulang persis pada continuation. */
+  extra_content?: {
+    google: {
+      thought_signature: string;
+    };
   };
 }
 
@@ -186,6 +212,7 @@ const MAX_NATIVE_TOOLS = 32;
 const MAX_NATIVE_TOOL_SCHEMA_CHARACTERS = 64_000;
 const MAX_NATIVE_TOOL_CALLS = 8;
 const MAX_NATIVE_TOOL_ARGUMENT_CHARACTERS = 32_000;
+const MAX_NATIVE_THOUGHT_SIGNATURE_CHARACTERS = 64_000;
 
 export class AiClient {
   private readonly logger: OperationalLogger;
@@ -1006,7 +1033,15 @@ function readFinishReason(payload: unknown): string | null {
 
 function estimateRequestInputTokens(request: ChatRequest): number {
   const messageCharacters = request.messages.reduce(
-    (sum, message) => sum + message.content.length,
+    (sum, message) =>
+      sum +
+      (typeof message.content === "string" ? message.content.length : 0) +
+      (message.role === "assistant" && "tool_calls" in message
+        ? safeSerializedLength(message.tool_calls)
+        : 0) +
+      (message.role === "tool"
+        ? message.tool_call_id.length + (message.name?.length ?? 0)
+        : 0),
     0,
   );
   const toolCharacters = request.tools
@@ -1199,6 +1234,7 @@ function readToolCall(value: unknown): ChatToolCall {
   ) {
     throw new AiError("Native function call model tidak sah.");
   }
+  const extraContent = readToolCallExtraContent(record.extra_content);
   return {
     id: record.id,
     type: "function",
@@ -1206,7 +1242,34 @@ function readToolCall(value: unknown): ChatToolCall {
       name: functionRecord.name,
       arguments: functionRecord.arguments,
     },
+    ...(extraContent ? { extra_content: extraContent } : {}),
   };
+}
+
+function readToolCallExtraContent(
+  value: unknown,
+): ChatToolCall["extra_content"] | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainJsonObject(value)) {
+    throw new AiError("Metadata native tool call tidak sah.");
+  }
+  const google = value["google"];
+  if (
+    Object.keys(value).length !== 1 ||
+    !isPlainJsonObject(google) ||
+    Object.keys(google).length !== 1
+  ) {
+    throw new AiError("Metadata native tool call tidak sah.");
+  }
+  const signature = google["thought_signature"];
+  if (
+    typeof signature !== "string" ||
+    signature.length < 1 ||
+    signature.length > MAX_NATIVE_THOUGHT_SIGNATURE_CHARACTERS
+  ) {
+    throw new AiError("Thought signature native tool call tidak sah.");
+  }
+  return { google: { thought_signature: signature } };
 }
 
 function assertNativeToolRequest(

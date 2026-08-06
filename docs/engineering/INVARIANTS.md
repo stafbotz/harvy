@@ -341,6 +341,17 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   nama di luar registry, argumen non-JSON, dan multi-call gagal tertutup. Hasil
   yang sah baru dinormalisasi menjadi `AgentPlannerDecision` dan tetap masuk
   seluruh validasi kernel sebelum executor dipanggil.
+- **Continuation native adalah transcript sementara, bukan authority.** Dalam
+  satu invocation, setiap observation harus mengikuti exact assistant
+  `tool_calls` dengan pesan `tool` dan `tool_call_id` yang cocok; thought
+  signature provider yang dikenal diputar ulang exact. Call ID dan signature
+  hanya untuk kontinuitas provider, tidak boleh menjadi approval, idempotency,
+  scope, checkpoint durable, atau isi log. Kebutuhan live-state harus memilih
+  named function sebelum inference, bukan mengganti keputusan model sesudah
+  raw call terbentuk. Setelah observation, planner tetap boleh memilih tool
+  berbeda; cycle guard fingerprint, bukan terminasi paksa, yang menahan proposal
+  identik. Resume klarifikasi menyimpan pasangan prompt+jawaban sebagai state
+  provider-neutral agar referen tidak bergantung pada transcript provider.
 - **Fallback AI tidak otomatis mewarisi dukungan native tool.** Request native
   tetap primary-only sampai provider cadangan diuji dengan wire contract yang
   sama. Jangan menurunkannya diam-diam menjadi JSON/text atau mengirim schema

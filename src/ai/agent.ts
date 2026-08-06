@@ -9,6 +9,7 @@ import { currentUsageAttribution } from "./usage-attribution.js";
 import { resolveModel } from "./model-policy.js";
 import type { RoutingConfig } from "./conversation.js";
 import type { AgentWorker } from "../agent/parallel-delegation.js";
+import { isDirectTimeQuestion } from "../agent/time-fast-path.js";
 import type {
   AgentPlannerDecision,
   AgentPlannerInput,
@@ -117,6 +118,7 @@ export function parseAgentNativeDecision(
   if (
     call.function.name === FINAL_TOOL_NAME &&
     typeof input.reply === "string" &&
+    input.reply.trim().length > 0 &&
     exactKeys(input, ["reply"])
   ) {
     return { kind: "final", reply: input.reply };
@@ -124,6 +126,7 @@ export function parseAgentNativeDecision(
   if (
     call.function.name === NEED_INPUT_TOOL_NAME &&
     typeof input.prompt === "string" &&
+    input.prompt.trim().length > 0 &&
     exactKeys(input, ["prompt"])
   ) {
     return { kind: "need_input", prompt: input.prompt };
@@ -284,7 +287,8 @@ export function liveStateRequirement(
   }
   if (
     /\b(?:zona waktu|timezone)(?:ku| saya| aku| harvy| yang kupakai| yang saya pakai)\b/u.test(text) ||
-    /\b(?:jam lokal|waktu sekarang|tanggal sekarang|hari apa sekarang)\b/u.test(text)
+    /\b(?:jam lokal|waktu sekarang|tanggal sekarang|hari apa sekarang)\b/u.test(text) ||
+    isDirectTimeQuestion(text)
   ) {
     return { capabilityId: "settings.time.get", input: {} };
   }

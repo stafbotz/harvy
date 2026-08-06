@@ -29,6 +29,92 @@ AI — tidak dapat membacanya.
 
 ---
 
+## 6 Agustus 2026 — Memperbaiki siklus native pada pertanyaan waktu nyata
+
+**Kenapa.** Percobaan Telegram nyata menjawab `harvy sekarang jam berapa` dan
+giliran lanjutan `lah kenapa?` dengan pesan bahwa run agent berhenti sebelum
+menghasilkan jawaban tepercaya. Log menunjukkan primary Gemini menerima native
+request dan mengembalikan dua `tool_calls` pada tiap giliran; kegagalan terjadi
+di loop lokal, bukan sebagai HTTP/provider error.
+
+**Yang berubah.** Fast path waktu tetap closed-set, tetapi kini menerima tepat
+satu vokatif `harvy` di tepi awal atau akhir. Selama satu invocation, planner
+menyimpan transcript provider secara ephemeral dan meneruskan action dengan
+urutan native yang benar: exact assistant `tool_calls`, lalu pesan `tool` dengan
+`tool_call_id` yang cocok. `extra_content.google.thought_signature` Gemini
+dipertahankan dan diputar ulang secara exact, tanpa masuk checkpoint atau log.
+Kebutuhan live-state sekarang memilih function yang diperlukan sebelum
+inference. Sesudah observation, continuation native membiarkan planner memilih
+final atau tool berikutnya; permintaan multi-tool tidak dipotong, sedangkan
+proposal identik tetap ditahan cycle guard kernel. Prompt `need_input` kini
+disimpan bersama jawaban di state provider-neutral agar resume baru maupun
+restart tidak kehilangan referen. Parser juga menolak balasan final/prompt
+klarifikasi kosong. Boundary bot mencatat alasan stop yang aman dan memberi copy
+khusus ketika cycle guard aktif.
+
+**Dibahas.** Dua call yang diterima provider mempunyai bentuk dan pertambahan
+input identik, sehingga bukti terkuat adalah action yang sama diusulkan kembali
+setelah observation lalu dihentikan cycle guard. Nama tool tidak disimpan di
+log, jadi `settings.time.get` tetap inferensi kuat dari konteks, bukan fakta log.
+Checkpoint sengaja tetap provider-neutral; ID call dan thought signature hanya
+hidup untuk korelasi transcript invocation aktif, bukan authority atau
+idempotensi eksekusi.
+
+**Bukti.** `npm run check` PASS. Tes terarah PASS — **118 test dalam 9 suite**.
+`npm test` PASS — **644 test dalam 93 suite**,
+0 gagal. Tes regresi mencakup frasa Telegram persis, vokatif tepi positif dan
+negatif, continuation `assistant.tool_calls → tool`, kecocokan call ID, replay
+thought signature, `content:null`, pemilihan function live, redaksi log, konteks
+dua giliran `lah kenapa?`, rencana dua tool yang tidak diterminasi dini, serta
+resume terserialisasi yang membawa pasangan prompt+jawaban. Percobaan
+primary+Telegram sebelum perbaikan adalah bukti kegagalan nyata; build sesudah
+perbaikan belum dijalankan ulang pada primary atau Telegram. Native fallback,
+tombol, pengingat, dan acceptance staging juga tidak diuji pada sesi ini.
+
+**Sengaja ditinggalkan.** Smoke post-fix pada primary, percobaan ulang Telegram,
+verifikasi native fallback, dan RunStore produksi untuk run aktif.
+
+---
+
+## 6 Agustus 2026 — Agent harness memakai native tool calling
+
+**Kenapa.** Pemilik produk meminta native tool calling untuk agent harness
+Harvy, menggantikan keputusan planner berbentuk JSON teks.
+
+**Yang berubah.** `AiClient` kini mempunyai boundary `completeToolCalls()` yang
+mengirim `tools`, `tool_choice`, dan kontrak serial call, membaca
+`message.tool_calls`, membatasi ukuran schema/argumen, serta menolak plain text,
+function asing, dan multi-call. Setiap executor internal, terminal virtual, dan
+delegasi memiliki nama+JSON Schema native tanpa titik. Harness membekukan
+metadata itu pada `callableCapabilities` dan memasukkannya ke hash checkpoint;
+perubahan kontrak native membuat resume berhenti sebagai `capability_changed`.
+Conversation menormalisasi tepat satu call ke `final|need_input|action`, lalu
+tetap menyerahkannya ke validasi capability, input, policy, freshness,
+idempotensi, dan executor kernel yang sudah ada.
+
+**Dibahas.** `harvy_final_v1` dan `harvy_need_input_v1` dipakai sebagai control
+function agar setiap langkah tetap native. Request native sengaja primary-only
+sampai fallback dibuktikan mendukung wire contract yang sama; tidak ada
+downgrade diam-diam ke JSON/text. Schema provider adalah antarmuka planner,
+sedangkan validator executor tetap authority eksekusi.
+
+**Bukti.** `npm run check` PASS. Tes terarah boundary+runtime PASS — **47 test
+dalam 6 suite**. Satu `npm test` di sandbox membuat tes child-process
+`dev-runner` gagal melihat lock; tes yang sama lulus 1/1 di luar sandbox.
+`npm test` penuh di luar sandbox kemudian PASS — **639 test dalam 93 suite**,
+0 gagal. Selama sesi, actor eksternal membuat dan mendorong commit `fc88565`
+yang menangkap working tree ini; Codex tidak menjalankan commit atau push
+tersebut. Gerbang otomatis memakai provider, storage, dan adapter palsu: model
+Google/OpenRouter nyata, grammY/Telegram nyata, tombol, pengingat, dan
+acceptance staging tidak dijalankan.
+
+**Sengaja ditinggalkan.** Smoke native pada provider primary, verifikasi native
+fallback, Telegram staging, RunStore produksi untuk run aktif, outbox, receipt,
+reconciler, Workspace aktif, konektor eksternal, dan seluruh tool write tetap
+belum dikerjakan.
+
+---
+
 ## 6 Agustus 2026 — Synchronize & push repositori Harvy ke GitHub
 
 **Kenapa.** Pengguna meminta untuk melakukan commit dan push seluruh perubahan Harvy ke repositori GitHub remote.

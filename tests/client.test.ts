@@ -3,6 +3,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   AiClient,
   type ChatFunctionTool,
+  type ChatToolCall,
 } from "../src/ai/client.js";
 import { ApiKeyPool } from "../src/ai/key-pool.js";
 import { compileHarvyContext } from "../src/harness/context-budget.js";
@@ -85,6 +86,78 @@ describe("AiClient", () => {
     assert.equal(body["parallel_tool_calls"], false);
     assert.equal(body["response_format"], undefined);
     assert.equal(body["validateToolCalls"], undefined);
+  });
+
+  it("mempertahankan thought signature pada transcript native tool-result", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const infoLogs: Record<string, unknown>[] = [];
+    const signature = "SIGNATURE_CANARY_NATIVE_123";
+    let call = 0;
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      call += 1;
+      return call === 1
+        ? nativeToolResponse(
+            "harvy_final_v1",
+            { reply: "baca" },
+            { google: { thought_signature: signature } },
+          )
+        : nativeToolResponse("harvy_final_v1", { reply: "selesai" });
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      logger: recordingLogger((_event, fields) => infoLogs.push(fields ?? {})),
+    });
+
+    const first = await client.completeToolCalls(nativeToolRequest());
+    assert.deepEqual(first[0]?.extra_content, {
+      google: { thought_signature: signature },
+    });
+    await client.completeToolCalls({
+      ...nativeToolRequest(),
+      messages: [
+        { role: "user", content: "selesaikan" },
+        { role: "assistant", content: null, tool_calls: first },
+        {
+          role: "tool",
+          tool_call_id: first[0]!.id,
+          name: first[0]!.function.name,
+          content: '{"status":"ok"}',
+        },
+      ],
+    });
+
+    const sentMessages = bodies[1]?.["messages"] as unknown[];
+    assert.deepEqual(sentMessages, [
+      { role: "user", content: "selesaikan" },
+      { role: "assistant", content: null, tool_calls: first },
+      {
+        role: "tool",
+        tool_call_id: first[0]!.id,
+        name: first[0]!.function.name,
+        content: '{"status":"ok"}',
+      },
+    ]);
+    assert.doesNotMatch(JSON.stringify(infoLogs), /SIGNATURE_CANARY_NATIVE_123/u);
+  });
+
+  it("menolak thought signature native yang kosong", async () => {
+    globalThis.fetch = async () =>
+      nativeToolResponse(
+        "harvy_final_v1",
+        { reply: "selesai" },
+        { google: { thought_signature: "" } },
+      );
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+
+    await assert.rejects(
+      () => client.completeToolCalls(nativeToolRequest()),
+      /Thought signature native tool call tidak sah/u,
+    );
   });
 
   it("menolak plain text dan nama tool response di luar registry", async () => {
@@ -797,6 +870,7 @@ function nativeToolRequest(): Parameters<AiClient["completeToolCalls"]>[0] {
 function nativeToolResponse(
   name: string,
   input: Record<string, unknown>,
+  extraContent?: NonNullable<ChatToolCall["extra_content"]>,
 ): Response {
   return new Response(
     JSON.stringify({
@@ -807,6 +881,7 @@ function nativeToolResponse(
             id: "call-uji",
             type: "function",
             function: { name, arguments: JSON.stringify(input) },
+            ...(extraContent ? { extra_content: extraContent } : {}),
           }],
         },
         finish_reason: "tool_calls",

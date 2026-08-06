@@ -575,10 +575,14 @@ describe("agent harness", () => {
   });
 
   it("melanjutkan need_input pada checkpoint yang sama", async () => {
-    const planner: AgentPlanner = async ({ userInputs }) =>
-      userInputs.length === 0
-        ? { kind: "need_input", prompt: "Jam berapa?" }
-        : { kind: "final", reply: `Oke, ${userInputs[0]?.text}.` };
+    let resumedInput: { step: number; prompt?: string; text: string } | undefined;
+    const planner: AgentPlanner = async ({ userInputs }) => {
+      if (userInputs.length === 0) {
+        return { kind: "need_input", prompt: "Jam berapa?" };
+      }
+      resumedInput = userInputs[0];
+      return { kind: "final", reply: `Oke, ${userInputs[0]?.text}.` };
+    };
     const common = {
       scope: privateAgentScope("telegram", "1"),
       request: "ingatkan aku",
@@ -599,6 +603,11 @@ describe("agent harness", () => {
     if (resumed.status === "completed") {
       assert.equal(resumed.reply, "Oke, jam delapan.");
     }
+    assert.deepEqual(resumedInput, {
+      step: 0,
+      prompt: "Jam berapa?",
+      text: "jam delapan",
+    });
   });
 
   it("menghentikan proposal identik agar loop tidak berputar", async () => {

@@ -1492,7 +1492,7 @@ describe("alur adapter Telegram", () => {
       { profiles: profiles({ timeZone: "Asia/Jayapura" }) },
     );
 
-    await harness.bot.handleUpdate(messageUpdate("Sekarang jam berapa?"));
+    await harness.bot.handleUpdate(messageUpdate("harvy sekarang jam berapa"));
     await harness.bot.drainPending();
 
     assert.equal(agentCalls, 0);

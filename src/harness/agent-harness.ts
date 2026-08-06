@@ -78,6 +78,8 @@ export interface AgentPlannerInput {
 
 export interface AgentUserInput {
   step: number;
+  /** Pertanyaan yang dijawab; optional hanya untuk kompatibilitas checkpoint lama. */
+  prompt?: string;
   text: string;
 }
 
@@ -340,6 +342,7 @@ export class AgentHarness {
     }
 
     if (checkpoint.pendingInput) {
+      const pendingInput = checkpoint.pendingInput;
       const answer = input.answer
         ? boundedText(input.answer, limits.maxObservationCharacters)
         : "";
@@ -352,7 +355,8 @@ export class AgentHarness {
         };
       }
       checkpoint.userInputs.push({
-        step: checkpoint.pendingInput.step,
+        step: pendingInput.step,
+        prompt: pendingInput.prompt,
         text: answer,
       });
       checkpoint.pendingInput = null;
@@ -944,6 +948,8 @@ function validUserInput(value: unknown): value is AgentUserInput {
   return (
     Number.isInteger(record.step) &&
     (record.step as number) >= 0 &&
+    (record.prompt === undefined ||
+      (typeof record.prompt === "string" && record.prompt.trim().length > 0)) &&
     typeof record.text === "string" &&
     record.text.length > 0
   );

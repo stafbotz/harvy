@@ -101,7 +101,15 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   agar kontrak provider tidak berubah saat resume. Native call tetap proposal
   yang dinormalisasi menjadi `final|need_input|action`; kernel
   memvalidasi capability dan input sebelum eksekusi. Checkpoint juga membekukan
-  batas langkah. Kernel
+  batas langkah. `conversation.ts` memegang transcript provider hanya selama
+  satu invocation: exact assistant `tool_calls` diteruskan dengan pesan `tool`
+  dan `tool_call_id` yang cocok, termasuk replay thought signature Gemini.
+  Transcript ini dibuang saat invocation berakhir; checkpoint tetap
+  provider-neutral dan resume membangun transcript baru dari state tepercaya.
+  Untuk klarifikasi, checkpoint memasangkan prompt `need_input` dengan jawaban
+  pengguna sehingga jawaban pendek tetap mempunyai referen tanpa menyimpan
+  call ID atau metadata provider.
+  Kernel
   dipakai Agent Runtime read-only; kernel tetap stateless,
   sedangkan adapter Telegram dapat mempersistenkan hanya status
   `waiting_input`. Run aktif masih sinkron dan workflow mutasi tugas/memori/

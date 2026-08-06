@@ -435,6 +435,7 @@ describe("file agent run repository", () => {
       scope: privateAgentScope("telegram", "alice"),
       request: "buat analisis",
       planner: async (input) => {
+        assert.equal(input.userInputs[0]?.prompt, "Rentang mana?");
         assert.equal(input.userInputs[0]?.text, "30 hari");
         return { kind: "final", reply: "Siap." };
       },

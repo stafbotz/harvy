@@ -163,12 +163,34 @@ describe("agent routing dan planner contract", () => {
       }], callable),
       null,
     );
+    assert.equal(
+      parseAgentNativeDecision([nativeCall("harvy_final_v1", { reply: "  " })], callable),
+      null,
+    );
+    assert.equal(
+      parseAgentNativeDecision([
+        nativeCall("harvy_need_input_v1", { prompt: "\n" }),
+      ], callable),
+      null,
+    );
   });
 
   it("fast path waktu hanya menangkap pertanyaan yang berdiri sendiri", () => {
     assert.equal(isDirectTimeQuestion("Sekarang jam berapa?"), true);
     assert.equal(isDirectTimeQuestion("Sekarang tanggal berapa?"), true);
+    assert.equal(isDirectTimeQuestion("harvy sekarang jam berapa"), true);
+    assert.equal(isDirectTimeQuestion("Harvy, sekarang jam berapa?"), true);
+    assert.equal(isDirectTimeQuestion("sekarang jam berapa, Harvy?"), true);
+    assert.equal(isDirectTimeQuestion("HARVY: jam berapa sekarang?"), true);
     assert.equal(isDirectTimeQuestion("jam berapa final bolanya?"), false);
+    assert.equal(isDirectTimeQuestion("Harvy, jam berapa final bolanya?"), false);
+    assert.equal(
+      isDirectTimeQuestion("Harvy sekarang jam berapa dan cuacanya?"),
+      false,
+    );
+    assert.equal(isDirectTimeQuestion("menurut Harvy sekarang jam berapa?"), false);
+    assert.equal(isDirectTimeQuestion("Harvy Harvy sekarang jam berapa?"), false);
+    assert.equal(isDirectTimeQuestion("Harvy sekarang jam berapa untuk meeting?"), false);
     const reply = deterministicTimeReply(
       new Date("2026-08-04T05:00:00.000Z"),
       "Asia/Jakarta",

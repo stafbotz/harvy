@@ -1192,6 +1192,18 @@ export function createBot(
                 intent: agentIntent,
               },
             );
+            if (agentResult.status === "stopped") {
+              logger.warn(
+                "agent_run_stopped",
+                "Run agent dihentikan oleh guard runtime.",
+                {
+                  status: agentResult.status,
+                  reason: agentResult.reason,
+                  outcome: agentResult.trace.at(-1)?.outcome,
+                  count: agentResult.trace.length,
+                },
+              );
+            }
             // `needs_input` adalah prompt model yang benar-benar dikirim, jadi
             // usage-nya diselesaikan setelah delivery seperti jawaban final.
             // Status lain di bawah diganti copy deterministik adapter.
@@ -1221,7 +1233,9 @@ export function createBot(
                   ? "Aku menghentikan run ini karena agent baca-saja meminta izin untuk perubahan yang tidak tersedia."
                   : agentResult.reason === "deadline"
                     ? "Aku belum menyelesaikan run ini sebelum batas waktunya. Aku tidak akan mengarang hasilnya."
-                    : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
+                    : agentResult.reason === "cycle"
+                      ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
+                      : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
           } else {
             reply = await conversation.reply(
               text,
@@ -1709,6 +1723,18 @@ export function createBot(
       await telemetry.discardUndelivered?.(ownerId, currentTurnId());
       return;
     }
+    if (result.status === "stopped") {
+      logger.warn(
+        "agent_run_stopped",
+        "Run agent lanjutan dihentikan oleh guard runtime.",
+        {
+          status: result.status,
+          reason: result.reason,
+          outcome: result.trace.at(-1)?.outcome,
+          count: result.trace.length,
+        },
+      );
+    }
 
     let debitDeliveredReply = true;
     let nextPending: Extract<Pending, { kind: "agent-input" }> | null = null;
@@ -1725,7 +1751,9 @@ export function createBot(
       debitDeliveredReply = false;
       response = result.reason === "deadline"
         ? "Waktu run sebelumnya sudah habis, jadi aku tidak melanjutkannya seolah hasilnya masih segar. Coba minta lagi kalau kamu masih perlu."
-        : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
+        : result.reason === "cycle"
+          ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
+          : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
     }
     response = normalizeTelegramText(response);
     if (!debitDeliveredReply) {

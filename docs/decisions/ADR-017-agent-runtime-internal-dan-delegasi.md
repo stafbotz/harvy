@@ -6,7 +6,7 @@
 - **Terkait:** Konstitusi v0.5, ADR-003, ADR-006, ADR-008, ADR-012, ADR-013, ADR-015, ADR-016
 - **Diamendemen oleh:** ADR-018 untuk persistence checkpoint `waiting_input`;
   run aktif dan tool write tetap mengikuti batas ADR ini
-- **Amendemen 5 Agustus 2026:** planner Agent Runtime memakai native function
+- **Amendemen 6 Agustus 2026:** planner Agent Runtime memakai native function
   calling; bentuk kanonik `final|need_input|action` tetap menjadi kontrak kernel
 
 ## Konteks

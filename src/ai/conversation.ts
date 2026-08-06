@@ -8,7 +8,13 @@ import type { StylePreference } from "../domain/profile.js";
 import type { ActiveSession } from "../domain/session.js";
 import type { AiPurpose } from "../domain/telemetry.js";
 import type { TurnBoundaryState } from "../core/turn-taking-policy.js";
-import type { AiClient, ChatMessage, ChatRequest } from "./client.js";
+import type {
+  AiClient,
+  ChatMessage,
+  ChatRequest,
+  ChatToolCall,
+  ChatToolChoice,
+} from "./client.js";
 import { currentUsageAttribution } from "./usage-attribution.js";
 import { EMPTY_CONTEXT, type HarvyContext } from "./context.js";
 import {
@@ -165,6 +171,20 @@ const INSIGHT_MAX_TOKENS = 512;
  */
 const EPISODE_SUMMARY_MAX_TOKENS = 768;
 const AGENT_PLANNER_MAX_TOKENS = 4096;
+
+interface AgentNativeThread {
+  messages: ChatMessage[];
+  pending: {
+    step: number;
+    capabilityId: string;
+    call: ChatToolCall;
+  } | null;
+}
+
+interface RequestedAgentDecision {
+  decision: AgentPlannerDecision;
+  call: ChatToolCall;
+}
 
 /**
  * Menyatukan pemahaman dan balasan menjadi satu alur percakapan.
@@ -568,6 +588,9 @@ export class Conversation {
     answer?: string,
   ): Promise<AgentRunResult> {
     const compiled = compileHarvyContext(context);
+    // Transcript provider hanya hidup selama invocation sinkron ini. Checkpoint
+    // tetap provider-neutral; resume baru memulai transcript dari state kernel.
+    const nativeThread: AgentNativeThread = { messages: [], pending: null };
     const allowed = new Set([
       "task.list_active",
       "task.get",
@@ -599,6 +622,7 @@ export class Conversation {
           mode,
           runtime,
           signal,
+          nativeThread,
         ),
       ...(runtime.signal ? { signal: runtime.signal } : {}),
       ...(runtime.isCurrent ? { isCurrent: runtime.isCurrent } : {}),
@@ -619,22 +643,55 @@ export class Conversation {
     mode: AgentMode,
     runtime: ConversationRuntime,
     signal: AbortSignal,
+    nativeThread: AgentNativeThread,
   ): Promise<unknown> {
+    continueAgentNativeThread(nativeThread, input, mode);
+    const required = liveStateRequirement(input.request, {
+      now: this.now(),
+      timeZone: runtime.timeZone ?? this.defaultTimeZone,
+    });
+    const observed = required
+      ? input.observations.some((observation) =>
+          satisfiesLiveStateRequirement(observation, required)
+        )
+      : false;
+    const requiredFailed = required
+      ? input.observations.some(
+          (observation) =>
+            observation.capabilityId === required.capabilityId &&
+            observation.status !== "ok",
+        )
+      : false;
     // Langkah nol adalah satu-satunya tempat delegasi dapat dieksekusi. Dengan
     // mengosongkan konteks di fase ini, root tidak dapat menyalin memori atau
     // riwayat tersimpan ke instruksi worker. Konteks kembali untuk sintesis.
     const plannerContext =
       mode === "orchestrate" && input.step === 0 ? EMPTY_CONTEXT : context;
-    let plannerInput: AgentPlannerInput = input.step === 0
-      ? input
-      : {
-          ...input,
-          callableCapabilities: input.callableCapabilities.filter(
-            (capability) => capability.id !== "agent.delegate.parallel",
-          ),
-        };
-    const isContextFreeFanout = mode === "orchestrate" && input.step === 0;
-    let decision = await this.requestAgentDecision(
+    let plannerInput: AgentPlannerInput = {
+      ...input,
+      callableCapabilities: input.callableCapabilities.filter(
+        (capability) =>
+          !(input.step > 0 && capability.id === "agent.delegate.parallel"),
+      ),
+    };
+    const mustReadLiveState = required !== null && !observed && !requiredFailed;
+    const requiredCapability = mustReadLiveState
+      ? plannerInput.callableCapabilities.find(
+          (capability) => capability.id === required.capabilityId,
+        )
+      : undefined;
+    if (mustReadLiveState && !requiredCapability?.nativeTool) {
+      throw new Error("Capability state-live yang diperlukan tidak callable.");
+    }
+    const forcedToolChoice: ChatToolChoice | undefined = requiredCapability
+      ? {
+          type: "function",
+          function: { name: requiredCapability.nativeTool!.name },
+        }
+      : undefined;
+    const isContextFreeFanout =
+      mode === "orchestrate" && input.step === 0 && !mustReadLiveState;
+    let planned = await this.requestAgentDecision(
       plannerInput,
       plannerContext,
       isContextFreeFanout
@@ -645,7 +702,10 @@ export class Conversation {
       signal,
       isContextFreeFanout,
       isContextFreeFanout,
+      nativeThread.messages,
+      forcedToolChoice,
     );
+    let decision = planned.decision;
     // Jawaban/pertanyaan langsung dari fase fanout belum melihat konteks. Ulangi
     // sekali sebagai sintesis kontekstual dengan delegasi dihapus dari authority.
     if (
@@ -659,7 +719,7 @@ export class Conversation {
           (capability) => capability.id !== "agent.delegate.parallel",
         ),
       };
-      decision = await this.requestAgentDecision(
+      planned = await this.requestAgentDecision(
         plannerInput,
         context,
         contextManifest,
@@ -668,32 +728,19 @@ export class Conversation {
         signal,
         false,
         false,
+        nativeThread.messages,
       );
+      decision = planned.decision;
     }
-    const callableIds = new Set(
-      plannerInput.callableCapabilities.map((capability) => capability.id),
-    );
-    const required = liveStateRequirement(input.request, {
-      now: this.now(),
-      timeZone: runtime.timeZone ?? this.defaultTimeZone,
-    });
     if (required) {
-      const observed = input.observations.some((observation) =>
-        satisfiesLiveStateRequirement(observation, required)
-      );
-      // Query state-live berpresisi tinggi sudah memuat input yang cukup.
-      // Planner tidak boleh mengubahnya menjadi klarifikasi sebelum authority
-      // live dibaca, sama seperti ia tidak boleh memberi final dari memori.
-      if (!observed && decision.kind !== "action") {
-        if (!callableIds.has(required.capabilityId)) {
-          throw new Error("Capability state-live yang diperlukan tidak callable.");
-        }
-        return {
-          kind: "action",
-          capabilityId: required.capabilityId,
-          capabilityVersion: "1",
-          input: required.input,
-        };
+      // Named tool_choice menggantikan override post-hoc: raw call dan thought
+      // signature yang dieksekusi kini selalu sama dengan transcript provider.
+      if (
+        mustReadLiveState &&
+        (decision.kind !== "action" ||
+          decision.capabilityId !== required.capabilityId)
+      ) {
+        throw new Error("Planner mengabaikan capability state-live wajib.");
       }
       if (
         observed &&
@@ -707,6 +754,13 @@ export class Conversation {
         };
       }
     }
+    if (decision.kind === "action") {
+      nativeThread.pending = {
+        step: input.step,
+        capabilityId: decision.capabilityId,
+        call: planned.call,
+      };
+    }
     return decision;
   }
 
@@ -719,7 +773,9 @@ export class Conversation {
     signal: AbortSignal,
     contextFree: boolean,
     suppressFirstMessageClaim: boolean,
-  ): Promise<AgentPlannerDecision> {
+    nativeMessages: readonly ChatMessage[],
+    toolChoice: ChatToolChoice = "required",
+  ): Promise<RequestedAgentDecision> {
     const tier: ModelTier = mode === "orchestrate" ? "ambitious" : "cheap";
     // Prompt sistem membawa suara/waktu/gaya. Konteks tersimpan berada sekali:
     // ringkasan/memori sebagai data terbungkus di system prompt, dan
@@ -741,7 +797,7 @@ export class Conversation {
       signal,
       contextManifest,
       tools: nativeTools,
-      toolChoice: "required",
+      toolChoice,
       parallelToolCalls: false,
       validateToolCalls: (calls) =>
         parseAgentNativeDecision(
@@ -755,18 +811,17 @@ export class Conversation {
           content: `${persona}\n\n${agentPlannerPrompt(plannerInput.callableCapabilities)}`,
         },
         ...recentTurnMessages(plannerContext.turns),
-        {
-          role: "user",
-          content: agentPlannerInput(plannerInput, EMPTY_CONTEXT, mode),
-        },
+        ...nativeMessages,
       ],
     });
     const decision = parseAgentNativeDecision(
       toolCalls,
       plannerInput.callableCapabilities,
     );
-    if (!decision) throw new Error("Planner agent mengembalikan keputusan tidak sah.");
-    return decision;
+    if (!decision || !toolCalls[0]) {
+      throw new Error("Planner agent mengembalikan keputusan tidak sah.");
+    }
+    return { decision, call: toolCalls[0] };
   }
 
   /**
@@ -924,6 +979,48 @@ function sessionIntent(session: ActiveSession): ConversationIntent {
     case "focus":
     case "plan":
       return "task";
+  }
+}
+
+function continueAgentNativeThread(
+  thread: AgentNativeThread,
+  input: AgentPlannerInput,
+  mode: AgentMode,
+): void {
+  if (thread.pending) {
+    const pending = thread.pending;
+    const observation = input.observations.find(
+      (candidate) =>
+        candidate.step === pending.step &&
+        candidate.capabilityId === pending.capabilityId,
+    );
+    if (!observation) {
+      throw new Error("Hasil native tool belum tersedia untuk continuation.");
+    }
+    thread.messages.push(
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [pending.call],
+      },
+      {
+        role: "tool",
+        tool_call_id: pending.call.id,
+        name: pending.call.function.name,
+        content: JSON.stringify({
+          capabilityId: observation.capabilityId,
+          status: observation.status,
+          summary: observation.summary,
+        }),
+      },
+    );
+    thread.pending = null;
+  }
+  if (thread.messages.length === 0) {
+    thread.messages.push({
+      role: "user",
+      content: agentPlannerInput(input, EMPTY_CONTEXT, mode),
+    });
   }
 }
 

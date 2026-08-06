@@ -170,7 +170,12 @@ terkena timeout wrapper setelah proses anak tidak keluar.
 Native tool calling planner kemudian menambah coverage wire protocol,
 normalisasi fail-closed, fallback primary-only, dan binding schema executor ke
 checkpoint. Baseline terbaru menjadi **639 test lulus dalam 93 suite**,
-diverifikasi 5 Agustus 2026 dengan `npm test`.
+diverifikasi 6 Agustus 2026 dengan `npm test`.
+Regresi continuation native dan fast path vokatif waktu kemudian menambah
+replay assistant/tool, call ID, thought signature Gemini, pilihan function
+live, penolakan control call kosong, kelanjutan multi-tool, dan pasangan
+prompt+jawaban pada resume. Baseline terbaru menjadi **644
+test lulus dalam 93 suite**, diverifikasi 6 Agustus 2026 dengan `npm test`.
 
 **Tes yang memanggil model sungguhan tidak boleh masuk gerbang otomatis.**
 Biayanya tidak dapat diprediksi dan hasilnya tidak dapat diulang. Yang diuji
@@ -212,14 +217,26 @@ yang eksplisit ketika satu child gagal. Delivery/discard harus memfilter
 kandidat entitlement berdasarkan `ownerId + turnId`; concurrent run owner yang
 sama tidak boleh tersapu.
 
-Native planner wajib dibuktikan mengirim `tools`, `tool_choice: required`, dan
-`parallel_tool_calls: false` tanpa `response_format` JSON; hanya tool executor
-callable yang boleh muncul. Klien harus menolak definisi schema rusak, plain
-text, nama function asing, serta multi-call pada langkah serial. Parser wajib
-menolak argumen rusak/field control tambahan, sedangkan harness tetap
-memvalidasi input capability. Nama+schema executor harus ikut authority hash
-agar perubahan kontrak menghentikan checkpoint lama. Request native tidak boleh
-masuk fallback sebelum provider fallback itu diverifikasi.
+Native planner wajib dibuktikan mengirim `tools`, `tool_choice` required atau
+nama function yang benar-benar tersedia, dan `parallel_tool_calls: false` tanpa
+`response_format` JSON; hanya tool executor callable yang boleh muncul. Klien
+harus menolak definisi schema rusak, plain text, nama function asing, serta
+multi-call pada langkah serial. Parser wajib menolak argumen rusak, field
+control tambahan, dan balasan final/prompt klarifikasi kosong, sedangkan harness
+tetap memvalidasi input capability. Continuation satu invocation wajib memutar
+ulang exact assistant `tool_calls`, lalu pesan `tool` dengan `tool_call_id` yang
+cocok; thought signature Gemini harus dipertahankan secara exact, tidak masuk
+log/checkpoint, dan estimator harus menerima `content:null`. Live-state wajib
+memilih action sebelum inference. Sesudah observation, `tool_choice` kembali
+membolehkan final maupun action lain: tes multi-tool wajib membuktikan pembacaan
+live pertama tidak memotong tool kedua, sementara proposal identik tetap
+ditahan cycle guard kernel. Fast path waktu harus mencakup tepat satu vokatif
+`harvy` di tepi sambil mempertahankan closed-set negatif. Resume `need_input`
+wajib membawa prompt yang dijawab bersama teks jawaban setelah round-trip
+serialisasi/restart, tanpa menyimpan transcript provider. Nama+schema executor
+harus ikut authority hash agar perubahan kontrak menghentikan checkpoint lama.
+Request native tidak boleh masuk fallback sebelum provider fallback itu
+diverifikasi.
 
 Checkpoint durable wajib diuji lintas instance repository dan restart bot,
 termasuk CAS claim, owner kanonis, horizon absolut, timestamp masa depan,
@@ -250,9 +267,12 @@ logis dan perilaku provider nyata, tetapi tidak membuktikan bahwa
 `cheap`/`efficient`/`ambitious` adalah tiga model fisik berbeda. Pemisahan model
 fisik tetap dibuktikan oleh tes routing production sintetis sampai konfigurasi
 staging per-tier tersedia.
-Probe tersebut belum dijalankan ulang setelah planner berpindah ke native
-function calling; sampai itu dilakukan, gerbang otomatis hanya membuktikan wire
-dan loop terhadap provider palsu.
+Probe `coba-agent.ts` belum dijalankan ulang setelah planner berpindah ke native
+function calling. Satu percobaan Telegram nyata pada 6 Agustus membuktikan
+primary menerima native calls, tetapi build pre-fix berhenti karena loop lokal
+sebelum reply. Perbaikan continuation sesudah insiden baru dibuktikan oleh
+gerbang otomatis terhadap provider palsu; smoke post-fix primary dan Telegram
+masih NOT RUN.
 
 Matriks bukti dan checklist Telegram staging Agent Acceptance v1 berada di
 [`../evidence/agent-acceptance-v1-2026-08-04/README.md`](../evidence/agent-acceptance-v1-2026-08-04/README.md).
