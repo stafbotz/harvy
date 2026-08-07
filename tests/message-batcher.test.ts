@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { MessageBatcher } from "../src/bot/message-batcher.js";
+import {
+  MessageBatcher,
+  type MessageBatchMetrics,
+} from "../src/bot/message-batcher.js";
 import type { TurnBoundaryState } from "../src/core/turn-taking-policy.js";
 
 describe("MessageBatcher", () => {
@@ -664,6 +667,86 @@ describe("MessageBatcher", () => {
       "mulai:darurat",
       "selesai:darurat",
     ]);
+  });
+
+  it("memakai turnId yang sama dari boundary sampai metrik handler", async () => {
+    let classifiedTurnId: string | undefined;
+    let handledTurnId: string | undefined;
+    const metrics: MessageBatchMetrics[] = [];
+    const batcher = new MessageBatcher<string>(
+      async (_text, _ownerId, turnId) => {
+        classifiedTurnId = turnId;
+        return "complete";
+      },
+      async (_ownerId, batch) => {
+        handledTurnId = batch.turnId;
+      },
+      100,
+      1,
+      20,
+      20,
+      undefined,
+      (record) => {
+        metrics.push(record);
+      },
+    );
+
+    batcher.enqueue("A", "pesan lengkap", "ctx");
+    await waitFor(() => metrics.length === 1);
+
+    assert.ok(classifiedTurnId);
+    assert.equal(handledTurnId, classifiedTurnId);
+    assert.equal(metrics[0]?.turnId, classifiedTurnId);
+    assert.equal(metrics[0]?.outcome, "completed");
+    assert.equal(metrics[0]?.bubbleCount, 1);
+    assert.ok((metrics[0]?.totalLatencyMs ?? -1) >= 0);
+  });
+
+  it("menutup span batch tertunda sebagai cancelled saat diinvalidasi", async () => {
+    const metrics: MessageBatchMetrics[] = [];
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async () => undefined,
+      100,
+      20,
+      20,
+      20,
+      undefined,
+      (record) => {
+        metrics.push(record);
+      },
+    );
+
+    batcher.enqueue("A", "pesan batal", "ctx");
+    batcher.invalidate("A");
+
+    await waitFor(() => metrics.length === 1);
+    assert.equal(metrics.length, 1);
+    assert.equal(metrics[0]?.outcome, "cancelled");
+    assert.equal(metrics[0]?.bubbleCount, 1);
+  });
+
+  it("kegagalan sinkron observer tidak membatalkan invalidasi", async () => {
+    const handled: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async (_ownerId, batch) => {
+        handled.push(batch.text);
+      },
+      50,
+      5,
+      20,
+      20,
+      undefined,
+      () => {
+        throw new Error("observer sengaja gagal");
+      },
+    );
+
+    batcher.enqueue("A", "jangan diproses", "ctx");
+    assert.doesNotThrow(() => batcher.invalidate("A"));
+    await delay(60);
+    assert.deepEqual(handled, []);
   });
 });
 

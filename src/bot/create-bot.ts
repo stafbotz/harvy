@@ -54,6 +54,7 @@ import type { TaskService } from "../core/task-service.js";
 import {
   UsageLimitError,
   type TelemetryService,
+  type TurnTelemetrySignal,
 } from "../core/telemetry-service.js";
 import {
   INDONESIAN_TIME_ZONES,
@@ -225,6 +226,21 @@ export function createBot(
 ): HarvyBot {
   const currentTurnId = (): string | null =>
     currentUsageAttribution()?.turnId ?? null;
+  const noteTurnSignal = async (
+    ownerId: string,
+    signal: TurnTelemetrySignal,
+    turnId: string | null = currentTurnId(),
+  ): Promise<void> => {
+    try {
+      await telemetry.noteTurnSignal(ownerId, turnId, signal);
+    } catch (error) {
+      logger.warn(
+        "turn_telemetry_signal_failed",
+        "Sinyal metrik giliran gagal dicatat.",
+        { error },
+      );
+    }
+  };
   const dropKeyboard = (ctx: Context): Promise<void> =>
     dropKeyboardSafely(ctx, logger);
   const safeEdit = (
@@ -389,24 +405,36 @@ export function createBot(
   }
 
   const messageBatcher = new MessageBatcher<Context>(
-    async (text, ownerId) => {
-      // Evaluasi boundary berjalan di luar chain pemilik. Ia hanya boleh
-      // membaca durable state; memulihkan PendingStore di sini dapat
-      // menghidupkan kembali run yang baru dibatalkan command.
-      if (
-        ownerId &&
-        (pending.peek(ownerId) ||
-          (agentRuns &&
-            await agentRuns.loadWaitingInput("telegram", ownerId)))
-      ) {
-        return "complete";
-      }
-      return conversation.classifyTurnBoundary(text, ownerId);
-    },
-    (ownerId, batch) =>
-      withUsageAttribution(
+    async (text, ownerId, turnId) => {
+      if (ownerId && turnId) await telemetry.beginTurn(ownerId, turnId);
+      return withUsageAttribution(
         {
-          turnId: randomUUID(),
+          turnId: turnId ?? null,
+          subjectKind: "private",
+          channel: "telegram",
+          actorAliases: [],
+        },
+        async () => {
+          // Evaluasi boundary berjalan di luar chain pemilik. Ia hanya boleh
+          // membaca durable state; memulihkan PendingStore di sini dapat
+          // menghidupkan kembali run yang baru dibatalkan command.
+          if (
+            ownerId &&
+            (pending.peek(ownerId) ||
+              (agentRuns &&
+                await agentRuns.loadWaitingInput("telegram", ownerId)))
+          ) {
+            return "complete";
+          }
+          return conversation.classifyTurnBoundary(text, ownerId);
+        },
+      );
+    },
+    async (ownerId, batch) => {
+      await telemetry.beginTurn(ownerId, batch.turnId);
+      return withUsageAttribution(
+        {
+          turnId: batch.turnId,
           subjectKind: "private",
           channel: "telegram",
           actorAliases: [],
@@ -421,14 +449,25 @@ export function createBot(
           },
           batch.firstIngressSequence ?? batch.carrier.update.update_id,
         ),
-      ),
+      );
+    },
     undefined,
     undefined,
     undefined,
     undefined,
     logger.child("telegram.message-batcher"),
+    (metrics) => telemetry.recordTurn({
+      ...metrics,
+      subjectKind: "private",
+      channel: "telegram",
+    }),
   ).onUrgent(async (_ownerId, batch) => {
     await batch.carrier.reply(URGENT_ACKNOWLEDGEMENT);
+    await noteTurnSignal(
+      _ownerId,
+      "urgent-acknowledgement",
+      batch.turnId,
+    );
   });
 
   /**
@@ -905,6 +944,7 @@ export function createBot(
     // sehingga tetap dapat dijawab saat model dasar atau kuota biasa sedang
     // tidak tersedia. Pesan campuran tetap masuk triase penuh.
     if (canUseModelIdentityFastPath(text, context.turns)) {
+      await noteTurnSignal(ownerId, "deterministic-fast-path");
       await history.append(ownerId, "user", text);
       if (!(await runtimeIsCurrent(runtime))) return;
       await ctx.reply(CAPYBARA_MODEL_REPLY);
@@ -1035,6 +1075,9 @@ export function createBot(
 
     // Triase yang gagal tidak boleh terlihat seperti percakapan yang baik-baik
     // saja ketika ekstraksi masih menemukan sinyal keselamatan.
+    if (risk === null) {
+      await noteTurnSignal(ownerId, "risk-triage-unavailable");
+    }
     triage =
       risk ?? uncertainTriage(understanding?.safetySensitive === true);
     if (understanding?.safetySensitive === true && triage.level === "biasa") {
@@ -1562,6 +1605,7 @@ export function createBot(
         "Pemeriksaan balasan gagal.",
         error,
       );
+      await noteTurnSignal(ownerId, "safety-fallback");
       return safeFallbackReply(triage.level);
     }
 
@@ -1570,9 +1614,10 @@ export function createBot(
         "reply_review_rejected",
         "Balasan ditolak pemeriksaan keselamatan; balasan pengganti dipakai.",
       );
-      return safeFallbackReply(triage.level);
     }
-    return verdict === true ? reply : safeFallbackReply(triage.level);
+    if (verdict === true) return reply;
+    await noteTurnSignal(ownerId, "safety-fallback");
+    return safeFallbackReply(triage.level);
   }
 
   async function contextFor(

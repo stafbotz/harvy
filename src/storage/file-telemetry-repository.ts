@@ -4,12 +4,14 @@ import type {
   AiUsageRecord,
   ProductEvent,
   TelemetryRepository,
+  TurnTelemetryRecord,
 } from "../domain/telemetry.js";
 
 interface TelemetryDatabase {
-  version: 2;
+  version: 3;
   usage: AiUsageRecord[];
   events: ProductEvent[];
+  turns: TurnTelemetryRecord[];
 }
 
 export class FileTelemetryRepository implements TelemetryRepository {
@@ -34,6 +36,23 @@ export class FileTelemetryRepository implements TelemetryRepository {
     });
   }
 
+  async appendTurn(record: TurnTelemetryRecord): Promise<void> {
+    await this.exclusive(async () => {
+      const database = await this.readDatabase();
+      if (
+        database.turns.some(
+          (stored) =>
+            stored.ownerId === record.ownerId &&
+            stored.turnId === record.turnId,
+        )
+      ) {
+        return;
+      }
+      database.turns.push(record);
+      await this.writeDatabase(database);
+    });
+  }
+
   async usageSince(ownerId: string, since: Date): Promise<AiUsageRecord[]> {
     const database = await this.readDatabase();
     const threshold = since.getTime();
@@ -54,6 +73,19 @@ export class FileTelemetryRepository implements TelemetryRepository {
     );
   }
 
+  async turnsSince(
+    ownerId: string,
+    since: Date,
+  ): Promise<TurnTelemetryRecord[]> {
+    const database = await this.readDatabase();
+    const threshold = since.getTime();
+    return database.turns.filter(
+      (record) =>
+        record.ownerId === ownerId &&
+        new Date(record.at).getTime() >= threshold,
+    );
+  }
+
   async removeBefore(before: Date): Promise<void> {
     await this.exclusive(async () => {
       const database = await this.readDatabase();
@@ -64,14 +96,18 @@ export class FileTelemetryRepository implements TelemetryRepository {
       const events = database.events.filter(
         (event) => new Date(event.at).getTime() >= threshold,
       );
+      const turns = database.turns.filter(
+        (record) => new Date(record.at).getTime() >= threshold,
+      );
 
       if (
         usage.length === database.usage.length &&
-        events.length === database.events.length
+        events.length === database.events.length &&
+        turns.length === database.turns.length
       ) {
         return;
       }
-      await this.writeDatabase({ ...database, usage, events });
+      await this.writeDatabase({ ...database, usage, events, turns });
     });
   }
 
@@ -85,6 +121,9 @@ export class FileTelemetryRepository implements TelemetryRepository {
         ),
         events: database.events.filter(
           (event) => event.ownerId !== ownerId,
+        ),
+        turns: database.turns.filter(
+          (record) => record.ownerId !== ownerId,
         ),
       });
     });
@@ -102,26 +141,33 @@ export class FileTelemetryRepository implements TelemetryRepository {
         version?: unknown;
         usage?: unknown;
         events?: unknown;
+        turns?: unknown;
       };
       if (
         !Array.isArray(parsed.usage) ||
         !Array.isArray(parsed.events) ||
-        (parsed.version !== 1 && parsed.version !== 2)
+        (parsed.version !== 1 &&
+          parsed.version !== 2 &&
+          parsed.version !== 3) ||
+        (parsed.version === 3 && !Array.isArray(parsed.turns))
       ) {
         throw new Error("Format basis observabilitas tidak dikenali.");
       }
       const database: TelemetryDatabase = {
-        version: 2,
+        version: 3,
         usage: parsed.usage.map(normalizeUsageRecord),
         events: parsed.events as ProductEvent[],
+        turns: Array.isArray(parsed.turns)
+          ? parsed.turns.map(normalizeTurnRecord)
+          : [],
       };
-      if (parsed.version === 1) {
+      if (parsed.version !== 3) {
         await this.persistDatabase(database);
       }
       return database;
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") {
-        return { version: 2, usage: [], events: [] };
+        return { version: 3, usage: [], events: [], turns: [] };
       }
       throw error;
     }
@@ -151,6 +197,51 @@ export class FileTelemetryRepository implements TelemetryRepository {
     );
     return next;
   }
+}
+
+function normalizeTurnRecord(value: unknown, index: number): TurnTelemetryRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Record turn telemetry ${index} tidak dikenali.`);
+  }
+  const record = value as Record<string, unknown>;
+  const at = requiredString(record.at, "at", index);
+  if (!Number.isFinite(Date.parse(at))) {
+    throw new Error(`Waktu turn telemetry ${index} tidak sah.`);
+  }
+  return {
+    id: requiredString(record.id, "id", index),
+    at,
+    turnId: requiredString(record.turnId, "turnId", index),
+    ownerId: requiredString(record.ownerId, "ownerId", index),
+    subjectKind: oneOf(record.subjectKind, ["private", "group"] as const, "private"),
+    channel: oneOf(
+      record.channel,
+      ["telegram", "whatsapp", "system"] as const,
+      "telegram",
+    ),
+    outcome: oneOf(
+      record.outcome,
+      ["completed", "failed", "cancelled"] as const,
+      "failed",
+    ),
+    bubbleCount: count(record.bubbleCount),
+    batchWaitMs: count(record.batchWaitMs),
+    queueWaitMs: count(record.queueWaitMs),
+    handlingLatencyMs: count(record.handlingLatencyMs),
+    totalLatencyMs: count(record.totalLatencyMs),
+    modelCallCount: count(record.modelCallCount),
+    failedModelCallCount: count(record.failedModelCallCount),
+    boundaryCallCount: count(record.boundaryCallCount),
+    understandingCallCount: count(record.understandingCallCount),
+    riskTriageCallCount: count(record.riskTriageCallCount),
+    replyCallCount: count(record.replyCallCount),
+    replyReviewCallCount: count(record.replyReviewCallCount),
+    agentCallCount: count(record.agentCallCount),
+    deterministicFastPathCount: count(record.deterministicFastPathCount),
+    riskTriageUnavailableCount: count(record.riskTriageUnavailableCount),
+    safetyFallbackCount: count(record.safetyFallbackCount),
+    urgentAcknowledgementCount: count(record.urgentAcknowledgementCount),
+  };
 }
 
 function normalizeUsageRecord(value: unknown, index: number): AiUsageRecord {

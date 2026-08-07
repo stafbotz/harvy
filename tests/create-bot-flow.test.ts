@@ -93,7 +93,10 @@ describe("alur adapter Telegram", () => {
       } as unknown as SessionService,
       {} as DataControlService,
       {
+        beginTurn: async () => undefined,
         event: async () => undefined,
+        noteTurnSignal: async () => undefined,
+        recordTurn: async () => undefined,
         drain: async () => undefined,
       } as unknown as TelemetryService,
     );
@@ -136,6 +139,9 @@ describe("alur adapter Telegram", () => {
       {} as SessionService,
       {} as DataControlService,
       {
+        beginTurn: async () => undefined,
+        noteTurnSignal: async () => undefined,
+        recordTurn: async () => undefined,
         drain: async () => undefined,
       } as unknown as TelemetryService,
     );
@@ -197,6 +203,9 @@ describe("alur adapter Telegram", () => {
       {} as SessionService,
       {} as DataControlService,
       {
+        beginTurn: async () => undefined,
+        noteTurnSignal: async () => undefined,
+        recordTurn: async () => undefined,
         drain: async () => undefined,
       } as unknown as TelemetryService,
     );
@@ -377,7 +386,10 @@ describe("alur adapter Telegram", () => {
         profiles: profileService,
         telemetry: {
           allow: async () => undefined,
+          beginTurn: async () => undefined,
           event: async () => undefined,
+          noteTurnSignal: async () => undefined,
+          recordTurn: async () => undefined,
           drain: async () => undefined,
         } as unknown as TelemetryService,
       },
@@ -839,7 +851,10 @@ describe("alur adapter Telegram", () => {
       {} as TaskService,
       {
         telemetry: {
+          beginTurn: async () => undefined,
           event: async () => undefined,
+          noteTurnSignal: async () => undefined,
+          recordTurn: async () => undefined,
           markDelivered: async (_ownerId: string, turnId?: string | null) => {
             deliveredTurn = turnId;
           },
@@ -992,7 +1007,10 @@ describe("alur adapter Telegram", () => {
       {} as TaskService,
       {
         telemetry: {
+          beginTurn: async () => undefined,
           event: async () => undefined,
+          noteTurnSignal: async () => undefined,
+          recordTurn: async () => undefined,
           markDelivered: async (_ownerId: string, turnId?: string | null) => {
             deliveredTurns.push(turnId);
           },
@@ -1960,7 +1978,10 @@ function basicHarness(
     } as unknown as SessionService,
     overrides.dataControls ?? ({} as DataControlService),
     overrides.telemetry ?? {
+      beginTurn: async () => undefined,
       event: async () => undefined,
+      noteTurnSignal: async () => undefined,
+      recordTurn: async () => undefined,
       drain: async () => undefined,
     } as unknown as TelemetryService,
     undefined,

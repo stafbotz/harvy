@@ -1,7 +1,8 @@
 # Status — Telegram Privat
 
-Verified: 6 Agustus 2026 pada baseline `43d8e16`; mayoritas bukti terbaru adalah
-tes otomatis/adaptor palsu. Baca untuk task `src/bot/` dan surface Telegram.
+Verified: 7 Agustus 2026 pada working tree Phase A di atas `8be00be`; mayoritas
+bukti terbaru adalah tes otomatis/adaptor palsu. Baca untuk task `src/bot/` dan
+surface Telegram.
 
 ## Keadaan saat ini
 
@@ -18,6 +19,9 @@ tes otomatis/adaptor palsu. Baca untuk task `src/bot/` dan surface Telegram.
   memory, safety, serta Agent Runtime. Fast path waktu deterministik tersedia.
 - Model mengusulkan action dari allowlist; kode tetap menguasai callback,
   ownership, expiry, dan batas pilihan.
+- Free-text memakai satu `turnId` dari boundary sampai handler terminal.
+  Telemetry content-free memisahkan waktu batch, FIFO, handler, total, jumlah
+  model per purpose, fallback safety, dan outcome completed/failed/cancelled.
 
 ## Batas dan defect aktif
 
@@ -27,6 +31,8 @@ tes otomatis/adaptor palsu. Baca untuk task `src/bot/` dan surface Telegram.
 - Antrean percakapan dan pesan pra-consent masih in-memory. Crash atau force
   stop dapat kehilangan giliran yang belum selesai.
 - Request model biasa yang aktif belum mempunyai cancellation kooperatif penuh.
+- Metrik turn belum mengukur TTFR terpisah dan belum mencakup command, callback,
+  grup, atau durable AgentRun. Belum ada dashboard agregat.
 - Ada bukti live lama untuk onboarding/task/tombol dasar, tetapi bukti lama
   tidak membuktikan build terbaru.
 
@@ -36,4 +42,3 @@ tes otomatis/adaptor palsu. Baca untuk task `src/bot/` dan surface Telegram.
 - Tes: `tests/create-bot.test.ts`, `tests/conversation.test.ts`,
   `tests/message-batcher.test.ts`, `tests/onboarding.test.ts`.
 - Keputusan: ADR-002, ADR-004, ADR-007, ADR-008.
-

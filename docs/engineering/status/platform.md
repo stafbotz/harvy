@@ -1,7 +1,7 @@
 # Status — Platform dan Operasi Runtime
 
-Verified: 6 Agustus 2026 pada baseline `43d8e16`; unit/integration lokal dan
-smoke provider terbatas tersedia.
+Verified: 7 Agustus 2026 pada working tree Phase A di atas `8be00be`;
+unit/integration lokal dan smoke provider lama yang terbatas tersedia.
 
 ## Keadaan saat ini
 
@@ -18,6 +18,10 @@ smoke provider terbatas tersedia.
   meminta shutdown child lewat IPC dan menunggu lock dilepas sebelum restart.
 - Context manifest dan token estimate tersedia sebagai metadata lokal; usage
   provider dipakai bila ada.
+- Repository telemetry v3 menambah turn record content-free yang ikut retensi,
+  export, full deletion, flush, dan shutdown drain. Service menyediakan
+  nearest-rank p50/p95 serta rate boundary/triage/review/fast-path per owner;
+  retry fisik tetap dicatat terpisah di provider-attempt ledger.
 
 ## Batas dan defect aktif
 
@@ -31,6 +35,8 @@ smoke provider terbatas tersedia.
 - Kebijakan privacy/retention provider cadangan belum diverifikasi.
 - Token selection masih character/count-based; belum ada tokenizer atau
   adaptive calibration per route/model.
+- Turn summary belum menjadi dashboard agregat lintas owner dan belum mengukur
+  time-to-first-response; wiring terminal saat ini baru free-text Telegram.
 
 ## Bukti dan pointer
 

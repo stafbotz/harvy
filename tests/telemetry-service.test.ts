@@ -8,14 +8,17 @@ import {
 } from "../src/core/telemetry-service.js";
 import type {
   AiUsageContext,
+  AiPurpose,
   AiUsageRecord,
   ProductEvent,
   TelemetryRepository,
+  TurnTelemetryRecord,
 } from "../src/domain/telemetry.js";
 
 class MemoryTelemetryRepository implements TelemetryRepository {
   usage: AiUsageRecord[] = [];
   events: ProductEvent[] = [];
+  turns: TurnTelemetryRecord[] = [];
 
   async appendUsage(record: AiUsageRecord): Promise<void> {
     this.usage.push(structuredClone(record));
@@ -23,6 +26,19 @@ class MemoryTelemetryRepository implements TelemetryRepository {
 
   async appendEvent(event: ProductEvent): Promise<void> {
     this.events.push(structuredClone(event));
+  }
+
+  async appendTurn(record: TurnTelemetryRecord): Promise<void> {
+    if (
+      this.turns.some(
+        (stored) =>
+          stored.ownerId === record.ownerId &&
+          stored.turnId === record.turnId,
+      )
+    ) {
+      return;
+    }
+    this.turns.push(structuredClone(record));
   }
 
   async usageSince(
@@ -47,6 +63,17 @@ class MemoryTelemetryRepository implements TelemetryRepository {
     );
   }
 
+  async turnsSince(
+    ownerId: string,
+    since: Date,
+  ): Promise<TurnTelemetryRecord[]> {
+    return this.turns.filter(
+      (record) =>
+        record.ownerId === ownerId &&
+        new Date(record.at).getTime() >= since.getTime(),
+    );
+  }
+
   async removeBefore(before: Date): Promise<void> {
     this.usage = this.usage.filter(
       (record) => new Date(record.at).getTime() >= before.getTime(),
@@ -54,11 +81,15 @@ class MemoryTelemetryRepository implements TelemetryRepository {
     this.events = this.events.filter(
       (event) => new Date(event.at).getTime() >= before.getTime(),
     );
+    this.turns = this.turns.filter(
+      (record) => new Date(record.at).getTime() >= before.getTime(),
+    );
   }
 
   async removeAll(ownerId: string): Promise<void> {
     this.usage = this.usage.filter((record) => record.ownerId !== ownerId);
     this.events = this.events.filter((event) => event.ownerId !== ownerId);
+    this.turns = this.turns.filter((record) => record.ownerId !== ownerId);
   }
 }
 
@@ -90,6 +121,36 @@ function usageContext(
     requestId: overrides.requestId ?? "request-uji",
     turnId: overrides.turnId ?? null,
   };
+}
+
+async function observeModelCall(
+  telemetry: TelemetryService,
+  ownerId: string,
+  turnId: string,
+  purpose: AiPurpose,
+  requestId: string,
+  succeeded = true,
+): Promise<void> {
+  const context = usageContext(ownerId, {
+    requestId,
+    turnId,
+    purpose,
+    maxTokens: 10,
+    inputTokenEstimate: 1,
+    safetyCritical:
+      purpose === "risk-triage" || purpose === "reply-review",
+  });
+  await telemetry.beforeRequest(context);
+  await telemetry.afterRequest(
+    context,
+    {
+      inputTokens: 1,
+      outputTokens: 1,
+      totalTokens: 2,
+      estimated: false,
+    },
+    { succeeded, latencyMs: 5 },
+  );
 }
 
 function relatedLedger(
@@ -335,8 +396,9 @@ describe("TelemetryService", () => {
   it("forget mencegah request lama menghidupkan telemetry kembali", async () => {
     const repository = new MemoryTelemetryRepository();
     const telemetry = new TelemetryService(repository, options());
-    const old = usageContext("student");
+    const old = usageContext("student", { turnId: "turn-lama" });
 
+    await telemetry.beginTurn("student", "turn-lama");
     await telemetry.beforeRequest(old);
     await telemetry.event("student", "session_started");
     await telemetry.forget("student");
@@ -351,9 +413,22 @@ describe("TelemetryService", () => {
       { succeeded: true, latencyMs: 10 },
     );
     await telemetry.event("student", "session_stopped");
+    await telemetry.recordTurn({
+      ownerId: "student",
+      turnId: "turn-lama",
+      subjectKind: "private",
+      channel: "telegram",
+      outcome: "completed",
+      bubbleCount: 1,
+      batchWaitMs: 1,
+      queueWaitMs: 1,
+      handlingLatencyMs: 1,
+      totalLatencyMs: 3,
+    });
 
     assert.equal(repository.usage.length, 0);
     assert.equal(repository.events.length, 0);
+    assert.equal(repository.turns.length, 0);
 
     const fresh = usageContext("student");
     await assert.rejects(
@@ -373,6 +448,85 @@ describe("TelemetryService", () => {
       { succeeded: true, latencyMs: 1 },
     );
     assert.equal(repository.usage.length, 1);
+  });
+
+  it("menahan allow sampai seluruh penghapusan owner selesai", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const removeAll = repository.removeAll.bind(repository);
+    let deletionStarted!: () => void;
+    let releaseDeletion!: () => void;
+    const started = new Promise<void>((resolve) => {
+      deletionStarted = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      releaseDeletion = resolve;
+    });
+    repository.removeAll = async (ownerId) => {
+      deletionStarted();
+      await blocked;
+      await removeAll(ownerId);
+    };
+    const telemetry = new TelemetryService(repository, options());
+
+    const forgetting = telemetry.forget("student");
+    await started;
+    let allowed = false;
+    const allowing = telemetry.allow("student").then(() => {
+      allowed = true;
+    });
+    await Promise.resolve();
+
+    assert.equal(allowed, false);
+    await assert.rejects(
+      telemetry.beforeRequest(usageContext("student")),
+      TelemetryOwnerBlockedError,
+    );
+
+    releaseDeletion();
+    await Promise.all([forgetting, allowing]);
+    assert.equal(allowed, true);
+    const fresh = usageContext("student", { requestId: "request-baru" });
+    await telemetry.beforeRequest(fresh);
+    await telemetry.afterRequest(
+      fresh,
+      {
+        inputTokens: 1,
+        outputTokens: 1,
+        totalTokens: 2,
+        estimated: false,
+      },
+      { succeeded: true, latencyMs: 1 },
+    );
+    await telemetry.drain();
+    assert.equal(repository.usage.length, 1);
+  });
+
+  it("memakai ID turn durable yang sama setelah service dibuat ulang", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const completion = {
+      ownerId: "student",
+      turnId: "turn-replay",
+      subjectKind: "private" as const,
+      channel: "telegram" as const,
+      outcome: "completed" as const,
+      bubbleCount: 1,
+      batchWaitMs: 1,
+      queueWaitMs: 1,
+      handlingLatencyMs: 1,
+      totalLatencyMs: 3,
+    };
+    const first = new TelemetryService(repository, options());
+    await first.recordTurn(completion);
+    await first.drain();
+    const firstId = repository.turns[0]?.id;
+
+    const restarted = new TelemetryService(repository, options());
+    await restarted.recordTurn(completion);
+    await restarted.drain();
+
+    assert.ok(firstId);
+    assert.equal(repository.turns.length, 1);
+    assert.equal(repository.turns[0]?.id, firstId);
   });
 
   it("mengekspor usage dan event tanpa field isi percakapan", async () => {
@@ -395,10 +549,174 @@ describe("TelemetryService", () => {
     const exported = await telemetry.export("student");
     assert.equal(exported.usage.length, 1);
     assert.equal(exported.events.length, 1);
+    assert.deepEqual(exported.turns, []);
     assert.doesNotMatch(
       JSON.stringify(exported),
       /"(?:message|prompt|reply)"\s*:/u,
     );
+  });
+
+  it("mengagregasi seluruh model dan sinyal dalam satu turnId tanpa isi", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const telemetry = new TelemetryService(repository, options());
+    await telemetry.beginTurn("student", "turn-1");
+    await observeModelCall(telemetry, "student", "turn-1", "turn-boundary", "boundary-1");
+    await observeModelCall(telemetry, "student", "turn-1", "understanding", "understanding-1");
+    await observeModelCall(telemetry, "student", "turn-1", "risk-triage", "triage-1", false);
+    await observeModelCall(telemetry, "student", "turn-1", "reply", "reply-1");
+    await observeModelCall(telemetry, "student", "turn-1", "reply-review", "review-1");
+    await telemetry.noteTurnSignal("student", "turn-1", "risk-triage-unavailable");
+    await telemetry.noteTurnSignal("student", "turn-1", "safety-fallback");
+    await telemetry.recordTurn({
+      ownerId: "student",
+      turnId: "turn-1",
+      subjectKind: "private",
+      channel: "telegram",
+      outcome: "completed",
+      bubbleCount: 2,
+      batchWaitMs: 10,
+      queueWaitMs: 5,
+      handlingLatencyMs: 20,
+      totalLatencyMs: 30,
+    });
+    await telemetry.drain();
+
+    assert.equal(repository.turns.length, 1);
+    assert.deepEqual(
+      { ...repository.turns[0], id: "[id]", at: "[at]" },
+      {
+        id: "[id]",
+        at: "[at]",
+        ownerId: "student",
+        turnId: "turn-1",
+        subjectKind: "private",
+        channel: "telegram",
+        outcome: "completed",
+        bubbleCount: 2,
+        batchWaitMs: 10,
+        queueWaitMs: 5,
+        handlingLatencyMs: 20,
+        totalLatencyMs: 35,
+        modelCallCount: 5,
+        failedModelCallCount: 1,
+        boundaryCallCount: 1,
+        understandingCallCount: 1,
+        riskTriageCallCount: 1,
+        replyCallCount: 1,
+        replyReviewCallCount: 1,
+        agentCallCount: 0,
+        deterministicFastPathCount: 0,
+        riskTriageUnavailableCount: 1,
+        safetyFallbackCount: 1,
+        urgentAcknowledgementCount: 0,
+      },
+    );
+    assert.doesNotMatch(
+      JSON.stringify(repository.turns[0]),
+      /"(?:message|prompt|reply|reasoning|content|toolOutput)"\s*:/iu,
+    );
+  });
+
+  it("menghitung p50/p95 dan rate dengan turn tanpa model sebagai denominator", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const telemetry = new TelemetryService(repository, options());
+
+    await telemetry.beginTurn("student", "turn-a");
+    await observeModelCall(telemetry, "student", "turn-a", "turn-boundary", "a-boundary");
+    await observeModelCall(telemetry, "student", "turn-a", "risk-triage", "a-triage");
+    await observeModelCall(telemetry, "student", "turn-a", "reply-review", "a-review");
+    await telemetry.recordTurn({
+      ownerId: "student",
+      turnId: "turn-a",
+      subjectKind: "private",
+      channel: "telegram",
+      outcome: "completed",
+      bubbleCount: 1,
+      batchWaitMs: 2,
+      queueWaitMs: 3,
+      handlingLatencyMs: 5,
+      totalLatencyMs: 10,
+    });
+
+    await telemetry.beginTurn("student", "turn-b");
+    await telemetry.noteTurnSignal("student", "turn-b", "deterministic-fast-path");
+    for (const [turnId, outcome, totalLatencyMs] of [
+      ["turn-b", "completed", 20],
+      ["turn-c", "failed", 30],
+      ["turn-d", "cancelled", 40],
+    ] as const) {
+      await telemetry.recordTurn({
+        ownerId: "student",
+        turnId,
+        subjectKind: "private",
+        channel: "telegram",
+        outcome,
+        bubbleCount: 1,
+        batchWaitMs: 0,
+        queueWaitMs: 0,
+        handlingLatencyMs: totalLatencyMs,
+        totalLatencyMs,
+      });
+    }
+    await telemetry.drain();
+
+    const summary = await telemetry.performanceSummary("student", new Date(0));
+    assert.equal(summary.turnCount, 4);
+    assert.equal(summary.completedCount, 2);
+    assert.equal(summary.failedCount, 1);
+    assert.equal(summary.cancelledCount, 1);
+    assert.deepEqual(summary.totalLatencyMs, { p50: 20, p95: 40 });
+    assert.equal(summary.averageModelCalls, 0.75);
+    assert.equal(summary.boundaryClassifierRate, 0.25);
+    assert.equal(summary.riskTriageRate, 0.25);
+    assert.equal(summary.replyReviewRate, 0.25);
+    assert.equal(summary.deterministicFastPathRate, 0.25);
+  });
+
+  it("tidak mencampur accumulator dua turn concurrent milik owner yang sama", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const telemetry = new TelemetryService(repository, options());
+    await Promise.all([
+      telemetry.beginTurn("student", "turn-one"),
+      telemetry.beginTurn("student", "turn-two"),
+    ]);
+    await Promise.all([
+      observeModelCall(telemetry, "student", "turn-one", "reply", "one-reply"),
+      observeModelCall(telemetry, "student", "turn-two", "turn-boundary", "two-boundary"),
+    ]);
+    await Promise.all([
+      telemetry.recordTurn({
+        ownerId: "student",
+        turnId: "turn-one",
+        subjectKind: "private",
+        channel: "telegram",
+        outcome: "completed",
+        bubbleCount: 1,
+        batchWaitMs: 1,
+        queueWaitMs: 1,
+        handlingLatencyMs: 1,
+        totalLatencyMs: 3,
+      }),
+      telemetry.recordTurn({
+        ownerId: "student",
+        turnId: "turn-two",
+        subjectKind: "private",
+        channel: "telegram",
+        outcome: "completed",
+        bubbleCount: 1,
+        batchWaitMs: 1,
+        queueWaitMs: 1,
+        handlingLatencyMs: 1,
+        totalLatencyMs: 3,
+      }),
+    ]);
+    await telemetry.drain();
+
+    const turns = new Map(repository.turns.map((turn) => [turn.turnId, turn]));
+    assert.equal(turns.get("turn-one")?.replyCallCount, 1);
+    assert.equal(turns.get("turn-one")?.boundaryCallCount, 0);
+    assert.equal(turns.get("turn-two")?.replyCallCount, 0);
+    assert.equal(turns.get("turn-two")?.boundaryCallCount, 1);
   });
 
   it("menolak konfigurasi harga atau retensi yang tidak sah", () => {

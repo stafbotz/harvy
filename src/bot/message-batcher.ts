@@ -6,6 +6,7 @@ import {
   OPEN_IDLE_MS,
   type TurnBoundaryState,
 } from "../core/turn-taking-policy.js";
+import { randomUUID } from "node:crypto";
 import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
@@ -21,6 +22,8 @@ import {
 export interface MessageBatch<T> {
   text: string;
   carrier: T;
+  /** Korelasi acak satu giliran dari boundary sampai delivery. */
+  turnId: string;
   /** Sequence bubble pertama; seluruh batch harus lebih baru dari prompt. */
   firstIngressSequence: number | null;
   /** Dibatalkan ketika command atau giliran urgent menggantikan run aktif. */
@@ -29,10 +32,23 @@ export interface MessageBatch<T> {
   isCurrent: () => boolean;
 }
 
+export interface MessageBatchMetrics {
+  ownerId: string;
+  turnId: string;
+  outcome: "completed" | "failed" | "cancelled";
+  bubbleCount: number;
+  batchWaitMs: number;
+  queueWaitMs: number;
+  handlingLatencyMs: number;
+  totalLatencyMs: number;
+}
+
 interface BatchEntry<T> {
   chunks: string[];
   carrier: T;
+  turnId: string;
   firstIngressSequence: number | null;
+  firstReceivedAt: number;
   revision: number;
   evaluationRequested: boolean;
   urgentAcknowledged: boolean;
@@ -60,6 +76,7 @@ export class MessageBatcher<T> {
     private readonly classify: (
       text: string,
       ownerId?: string,
+      turnId?: string,
     ) => Promise<TurnBoundaryState>,
     private readonly handle: (
       ownerId: string,
@@ -74,6 +91,9 @@ export class MessageBatcher<T> {
     ),
     private readonly logger: OperationalLogger =
       NOOP_OPERATIONAL_LOGGER.child("telegram.message-batcher"),
+    private readonly observeTurn?: (
+      metrics: MessageBatchMetrics,
+    ) => Promise<void> | void,
   ) {}
 
   /**
@@ -109,8 +129,10 @@ export class MessageBatcher<T> {
     const entry: BatchEntry<T> = existing ?? {
       chunks: [],
       carrier,
+      turnId: randomUUID(),
       firstIngressSequence:
         Number.isSafeInteger(ingressSequence) ? ingressSequence! : null,
+      firstReceivedAt: now,
       revision: 0,
       evaluationRequested: false,
       urgentAcknowledged: false,
@@ -168,7 +190,20 @@ export class MessageBatcher<T> {
 
   clear(ownerId: string): void {
     const entry = this.entries.get(ownerId);
-    if (entry) clearTimers(entry);
+    if (entry) {
+      clearTimers(entry);
+      const endedAt = Date.now();
+      this.notifyTurn({
+        ownerId,
+        turnId: entry.turnId,
+        outcome: "cancelled",
+        bubbleCount: entry.chunks.length,
+        batchWaitMs: endedAt - entry.firstReceivedAt,
+        queueWaitMs: 0,
+        handlingLatencyMs: 0,
+        totalLatencyMs: endedAt - entry.firstReceivedAt,
+      });
+    }
     this.entries.delete(ownerId);
     this.cleanupOwner(ownerId);
   }
@@ -372,6 +407,7 @@ export class MessageBatcher<T> {
         state = await this.classify(
           evaluated.chunks.join("\n"),
           ownerId,
+          evaluated.turnId,
         );
       } catch (error) {
         // Keputusan ini hanya optimasi UX. Kalau model cepat gagal, pesan
@@ -422,19 +458,33 @@ export class MessageBatcher<T> {
     const batch = {
       text: entry.chunks.join("\n"),
       carrier: entry.carrier,
+      turnId: entry.turnId,
       firstIngressSequence: entry.firstIngressSequence,
     };
     const generation = this.generation(ownerId);
-    const startedAt = Date.now();
+    const queuedAt = Date.now();
 
     // Satu pengguna diproses berurutan. Bubble baru boleh dikumpulkan ketika
     // balasan lama sedang dibuat, tetapi konteksnya baru dibaca setelah giliran
     // sebelumnya selesai sehingga riwayat tidak saling menyalip.
     await this.enqueueAction(ownerId, async () => {
+      const handlingStartedAt = Date.now();
       // `/start` atau `/bantuan` dapat datang ketika batch ini sudah masuk
       // chain tetapi belum mulai. Generasi baru membatalkannya tanpa memutus
       // pekerjaan deterministik yang tidak mengamati signal.
-      if (this.generation(ownerId) !== generation) return;
+      if (this.generation(ownerId) !== generation) {
+        this.notifyTurn({
+          ownerId,
+          turnId: entry.turnId,
+          outcome: "cancelled",
+          bubbleCount: entry.chunks.length,
+          batchWaitMs: queuedAt - entry.firstReceivedAt,
+          queueWaitMs: handlingStartedAt - queuedAt,
+          handlingLatencyMs: 0,
+          totalLatencyMs: handlingStartedAt - entry.firstReceivedAt,
+        });
+        return;
+      }
       const controller = new AbortController();
       const active = { generation, controller };
       this.activeRuns.set(ownerId, active);
@@ -446,21 +496,42 @@ export class MessageBatcher<T> {
           this.generation(ownerId) === generation &&
           this.activeRuns.get(ownerId) === active,
       };
+      let outcome: MessageBatchMetrics["outcome"] = "completed";
       try {
         await this.handle(ownerId, runtimeBatch);
+        if (controller.signal.aborted) outcome = "cancelled";
+      } catch (error) {
+        outcome = controller.signal.aborted ? "cancelled" : "failed";
+        throw error;
       } finally {
         if (this.activeRuns.get(ownerId) === active) {
           this.activeRuns.delete(ownerId);
         }
-      }
-      this.logger.info(
-        "telegram_turn_completed",
-        "Giliran Telegram selesai diproses.",
-        {
+        const endedAt = Date.now();
+        const metrics: MessageBatchMetrics = {
+          ownerId,
+          turnId: entry.turnId,
+          outcome,
           bubbleCount: entry.chunks.length,
-          durationMs: Date.now() - startedAt,
-        },
-      );
+          batchWaitMs: queuedAt - entry.firstReceivedAt,
+          queueWaitMs: handlingStartedAt - queuedAt,
+          handlingLatencyMs: endedAt - handlingStartedAt,
+          totalLatencyMs: endedAt - entry.firstReceivedAt,
+        };
+        this.logger.info(
+          "telegram_turn_completed",
+          "Giliran Telegram selesai diproses.",
+          {
+            bubbleCount: metrics.bubbleCount,
+            batchWaitMs: metrics.batchWaitMs,
+            queueWaitMs: metrics.queueWaitMs,
+            handlingLatencyMs: metrics.handlingLatencyMs,
+            durationMs: metrics.totalLatencyMs,
+            outcome: metrics.outcome,
+          },
+        );
+        this.notifyTurn(metrics);
+      }
     });
   }
 
@@ -509,6 +580,7 @@ export class MessageBatcher<T> {
     const batch = {
       text: entry.chunks.join("\n"),
       carrier: entry.carrier,
+      turnId: entry.turnId,
       firstIngressSequence: entry.firstIngressSequence,
       signal: controller.signal,
       isCurrent: () => true,
@@ -606,6 +678,19 @@ export class MessageBatcher<T> {
     ) {
       this.generations.delete(ownerId);
     }
+  }
+
+  private notifyTurn(metrics: MessageBatchMetrics): void {
+    if (!this.observeTurn) return;
+    void Promise.resolve()
+      .then(() => this.observeTurn?.(metrics))
+      .catch((error: unknown) => {
+        this.logger.warn(
+          "turn_telemetry_failed",
+          "Metrik giliran gagal dicatat.",
+          { error },
+        );
+      });
   }
 }
 

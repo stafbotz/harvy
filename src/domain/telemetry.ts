@@ -71,6 +71,43 @@ export interface AiUsageRecord extends TokenUsage {
   latencyMs: number;
 }
 
+export type TurnTelemetryOutcome = "completed" | "failed" | "cancelled";
+
+/**
+ * Metrik satu giliran logis tanpa isi percakapan.
+ *
+ * Seluruh field sengaja berupa enum/count/durasi. Record ini tidak boleh
+ * membawa prompt, balasan, ringkasan, label risiko seseorang, atau reasoning
+ * provider. `turnId` hanya korelasi acak per giliran dan bukan identitas
+ * pengguna.
+ */
+export interface TurnTelemetryRecord {
+  id: string;
+  at: string;
+  turnId: string;
+  ownerId: string;
+  subjectKind: "private" | "group";
+  channel: "telegram" | "whatsapp" | "system";
+  outcome: TurnTelemetryOutcome;
+  bubbleCount: number;
+  batchWaitMs: number;
+  queueWaitMs: number;
+  handlingLatencyMs: number;
+  totalLatencyMs: number;
+  modelCallCount: number;
+  failedModelCallCount: number;
+  boundaryCallCount: number;
+  understandingCallCount: number;
+  riskTriageCallCount: number;
+  replyCallCount: number;
+  replyReviewCallCount: number;
+  agentCallCount: number;
+  deterministicFastPathCount: number;
+  riskTriageUnavailableCount: number;
+  safetyFallbackCount: number;
+  urgentAcknowledgementCount: number;
+}
+
 export type ProductEventKind =
   | "adaptive_action_chosen"
   | "session_started"
@@ -94,8 +131,11 @@ export interface ProductEvent {
 export interface TelemetryRepository {
   appendUsage(record: AiUsageRecord): Promise<void>;
   appendEvent(event: ProductEvent): Promise<void>;
+  /** Idempoten untuk pasangan `ownerId` + `turnId`. */
+  appendTurn(record: TurnTelemetryRecord): Promise<void>;
   usageSince(ownerId: string, since: Date): Promise<AiUsageRecord[]>;
   eventsSince(ownerId: string, since: Date): Promise<ProductEvent[]>;
+  turnsSince(ownerId: string, since: Date): Promise<TurnTelemetryRecord[]>;
   removeBefore(before: Date): Promise<void>;
   removeAll(ownerId: string): Promise<void>;
 }

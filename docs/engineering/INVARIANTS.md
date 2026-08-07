@@ -289,6 +289,17 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   group-participation, kegagalan parser/delivery, serta keselamatan tidak boleh
   mengurangi paket. Runtime/probe/evaluator wajib memegang local runtime lock
   karena repository JSON hanya aman satu proses.
+- **Satu giliran free-text Telegram memakai satu `turnId` dari boundary sampai
+  handler terminal.** Telemetry v3 memisahkan waktu menunggu bubble, FIFO, dan
+  handler; menghitung logical model purpose serta sinyal operasional tertutup;
+  lalu menutup outcome sebagai completed/failed/cancelled. Turn tanpa model
+  tetap menjadi denominator rate. Record dilarang membawa prompt, balasan,
+  reasoning, tool output, atau label risiko seseorang dan wajib ikut retensi,
+  export, full deletion, generation block, flush, serta drain telemetry. Retry
+  terminal turn wajib idempoten lintas restart untuk pasangan owner+turn;
+  `forget`/`allow` harus tetap terbarier sampai deletion selesai. Retry fisik
+  provider tetap milik provider-attempt ledger. Observer turn tidak boleh
+  mengubah delivery, authority, mutasi, atau safety bila pencatatannya gagal.
 
 ## AI dan model
 

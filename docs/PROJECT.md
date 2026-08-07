@@ -223,7 +223,10 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 - [x] Observabilitas pemakaian dan biaya tanpa mencatat isi pesan, prompt,
   atau balasan. Retensi dan routing model berasal dari environment; harga
   provider+model dikelola sebagai versi append-only di Console, dengan nilai
-  environment lama hanya sebagai bootstrap.
+  environment lama hanya sebagai bootstrap. Sejak ADR-020, free-text Telegram
+  juga mempunyai baseline per giliran: korelasi boundary→handler, waktu tunggu
+  batch/FIFO/handler/total, model-call rate, safety fallback, serta ringkasan
+  p50/p95 tanpa menyimpan isi. Dashboard agregat dan TTFR terpisah belum ada.
 - [x] Log operasional produksi terpisah dari telemetry: NDJSON terstruktur,
   trace per giliran, allowlist scalar tanpa pesan error bebas, redaksi
   isi/identitas/kredensial, rotasi ukuran+hari, retensi dan batas disk,
