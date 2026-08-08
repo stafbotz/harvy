@@ -1,8 +1,8 @@
 # Status — Telegram Privat
 
-Verified: 7 Agustus 2026 pada working tree Phase A di atas `8be00be`; mayoritas
-bukti terbaru adalah tes otomatis/adaptor palsu. Baca untuk task `src/bot/` dan
-surface Telegram.
+Verified: 8 Agustus 2026 pada working tree Phase B di atas `d80ed85`; `npm test`
+PASS 674 test / 95 suite dan `npm run check` PASS. Baca untuk task `src/bot/`
+dan surface Telegram.
 
 ## Keadaan saat ini
 
@@ -11,12 +11,18 @@ surface Telegram.
 - Onboarding menahan pesan pertama sampai consent, mempertahankan urutan bubble,
   dan menyediakan jalur safety tanpa consent. Bubble setelah pesan pertama
   tidak dikirim ke model sebelum consent.
-- Ingress pesan nonblocking memakai batcher adaptif: settle awal 650 ms, lalu
+- Ingress pesan nonblocking memakai boundary local-first untuk satu bubble
+  jelas dan model fallback untuk ambiguitas. Settle awal tetap 650 ms, lalu
   jendela 4/7/12 detik menurut keadaan. Command/callback diserialkan per owner.
+- Emergency preflight lokal berpresisi tinggi dapat mengirim ACK sebelum
+  debounce; full triage, review sesuai policy, handler, dan mutasi tetap memakai
+  pipeline/FIFO. Batch biasa lama yang belum mulai dibatalkan lewat generation
+  guard ketika giliran urgent masuk.
 - Balasan dibagi maksimal tiga bubble, teks Telegram dinormalisasi, dan blok
   kode dipertahankan bila muat.
 - Route privat mencakup percakapan, action offer, task, session, data control,
-  memory, safety, serta Agent Runtime. Fast path waktu deterministik tersedia.
+  memory, safety, serta Agent Runtime. Waktu berdiri sendiri tanpa episode
+  hangat memakai fast path tanpa boundary/understanding/triage model.
 - Model mengusulkan action dari allowlist; kode tetap menguasai callback,
   ownership, expiry, dan batas pilihan.
 - Free-text memakai satu `turnId` dari boundary sampai handler terminal.
@@ -31,6 +37,9 @@ surface Telegram.
 - Antrean percakapan dan pesan pra-consent masih in-memory. Crash atau force
   stop dapat kehilangan giliran yang belum selesai.
 - Request model biasa yang aktif belum mempunyai cancellation kooperatif penuh.
+- Emergency preflight closed-set belum mencakup pesan pra-consent, command,
+  callback, WhatsApp, atau grup dan bukan pengganti triase; false negative tetap
+  mungkin. Debounce juga belum adaptif per pengguna.
 - Metrik turn belum mengukur TTFR terpisah dan belum mencakup command, callback,
   grup, atau durable AgentRun. Belum ada dashboard agregat.
 - Ada bukti live lama untuk onboarding/task/tombol dasar, tetapi bukti lama
@@ -41,4 +50,4 @@ surface Telegram.
 - Kode: `src/bot/`, `src/ai/conversation.ts`, `src/app.ts`.
 - Tes: `tests/create-bot.test.ts`, `tests/conversation.test.ts`,
   `tests/message-batcher.test.ts`, `tests/onboarding.test.ts`.
-- Keputusan: ADR-002, ADR-004, ADR-007, ADR-008.
+- Keputusan: ADR-002, ADR-004, ADR-007, ADR-008, ADR-021.

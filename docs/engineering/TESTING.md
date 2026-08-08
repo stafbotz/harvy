@@ -480,7 +480,8 @@ setiap langkah di bawah tetap harus diberi status PASS/FAIL/NOT RUN sendiri.
 23. Tulis "kamu ingat isi chat kita kah", lalu "isi chat sebelumnya apa".
     Pastikan Harvy menjawab kemampuan dan isi riwayat, bukan menampilkan daftar
     memori kosong.
-24. Uji batas giliran adaptif dengan beberapa irama:
+24. Uji batas giliran state-aware dan emergency preflight dengan beberapa
+    irama:
     - Kirim "eh tau ga", "sumpah", "aku cape banget", "ada tigasss", lalu "aku
       takutttt banget" dengan jeda 3–5 detik. Tidak boleh ada indikator atau
       balasan di sela bubble; riwayat harus menyimpan satu pesan pengguna.
@@ -488,12 +489,19 @@ setiap langkah di bawah tetap harus diberi status PASS/FAIL/NOT RUN sendiri.
       Tunggu lebih dari tujuh detik dan pastikan fragmen terakhir masih belum
       dijawab; kirim lanjutan sebelum 12 detik dan pastikan semuanya tetap satu
       giliran. Ulangi tanpa lanjutan dan pastikan fail-safe akhirnya memproses.
-    - Kirim "halo" sendirian dan pastikan Harvy tidak menunggu jendela 4/7/12
-      detik setelah model menyatakan lengkap.
-    - Kirim kalimat uji bahaya segera yang sudah disepakati untuk pengujian
-      keselamatan. Periksa apakah model batas giliran mengembalikan `urgent` dan
-      karenanya memotong debounce. Tidak ada lagi pengenal bahaya lokal; handler
-      lengkap masih dapat menunggu handler pengguna yang sudah aktif.
+    - Kirim bentuk closed set seperti "oke" dan fragmen "karena"; keduanya
+      tidak boleh memanggil boundary model, tetapi fragmen tetap menunggu
+      jendela panjang. Bentuk ambigu seperti "jadi gini", "aku mau cerita",
+      dan "aku capek banget" harus memakai fallback model.
+    - Kirim kalimat bahaya langsung yang disepakati untuk pengujian keselamatan
+      dan pastikan ACK tetap mulai dikirim sebelum debounce/provider model.
+      Handler penuh tetap menjalani triase dan review sesuai policy, berada di
+      FIFO setelah handler aktif, dan membatalkan batch biasa lama yang belum
+      mulai.
+    - Ulangi dengan kutipan, berita/cerita, negasi atau pembatalan, histori,
+      pertanyaan umum, dan distress samar. Bentuk tersebut tidak boleh memicu
+      ACK lokal; hasil negatif tetap masuk classifier/triase, bukan dianggap
+      aman.
 25. Tekan Lupakan pada catatan `📎` yang menempel di sebuah balasan. Pastikan
     yang hilang hanya barisnya: teks balasannya harus tetap utuh, tidak diganti
     daftar memori, dan tidak dihapus. Tanyakan lagi apa yang Harvy ingat untuk

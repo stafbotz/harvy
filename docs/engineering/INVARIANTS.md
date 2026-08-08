@@ -83,18 +83,20 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 
 ## Bubble dan giliran
 
-- **Satu giliran dapat terdiri dari beberapa bubble.** Model `cheap`
-  menggolongkan gabungan sebagai `complete`, `open`, `incomplete`, atau
-  `urgent`; `turn-taking-policy.ts` mengoreksi pembuka, fragmen tata bahasa,
-  serta penutup eksplisit, tetapi tidak mengenali bahaya. `MessageBatcher.enqueue`
-  harus mengembalikan kendali segera karena long-polling grammY memproses update
-  satu per satu. Jeda hening 650 milidetik mengumpulkan burst. Sesudah
-  pemeriksaan, pesan lengkap tunggal diproses langsung, gabungan lengkap diberi
-  ruang 4 detik, pembuka/narasi terbuka 7 detik, dan fragmen keras 12 detik
-  sejak bubble terakhir. Hanya hasil `urgent` dari model yang memotong debounce
-  dan mengirim acknowledgment tetap di luar FIFO; timer 12 detik tetap menjadi
-  fail-safe saat model berpikir. Handler lengkap dan semua mutasi tetap FIFO di
-  belakang handler pengguna yang sudah aktif.
+- **Satu giliran dapat terdiri dari beberapa bubble.** Emergency preflight
+  berpresisi tinggi berjalan saat `enqueue`, sebelum jeda 650 milidetik; hasil
+  positif hanya mengirim acknowledgment tetap dan mempercepat flush, bukan
+  menetapkan disposition atau izin mutasi. Pada jalur boundary umum setelah
+  fast path/pending dikecualikan, satu bubble dalam closed set diputus lokal
+  sebagai `complete`/`incomplete`; multi-bubble dan bentuk ambigu memakai model
+  `cheap` sebagai fallback `complete|open|incomplete|urgent`. Guard lokal tetap
+  mengoreksi bentuk hasil itu. Pesan lengkap tunggal diproses langsung sesudah
+  settle, gabungan lengkap diberi ruang 4 detik, pembuka/narasi terbuka 7 detik,
+  dan fragmen keras 12 detik sejak bubble terakhir. Emergency lokal maupun hasil `urgent` model
+  mengirim acknowledgment di luar FIFO; timer 12 detik tetap fail-safe saat
+  model berpikir. Jalur urgent menaikkan generation dan mengirim `AbortSignal`:
+  batch biasa lama yang belum mulai dibatalkan, sedangkan handler lengkap dan
+  semua mutasi tetap FIFO di belakang handler pengguna yang masih aktif.
   Satu pemilik hanya boleh memiliki satu pemeriksaan batas yang aktif; revisi
   perantara dikoaleskan ke bubble terbaru. Indikator mengetik hanya dikirim
   setelah batch mulai ditangani dan kegagalannya wajib dianggap kosmetik.
@@ -157,8 +159,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 ## Keselamatan
 
 - **Keselamatan adalah pemeriksaan tersendiri, bukan satu field di antara
-  belasan field lain.** `Conversation.triageRisk` berjalan **paralel** dengan
-  `understand`, bukan sesudahnya: keduanya memakai model termurah, jadi giliran
+  belasan field lain.** Pada pipeline generatif, `Conversation.triageRisk`
+  berjalan **paralel** dengan `understand`, bukan sesudahnya: keduanya memakai
+  model termurah, jadi giliran
   menunggu yang terlama dari dua, bukan jumlahnya. Triase yang gagal tidak
   boleh terlihat seperti percakapan yang baik-baik saja — `parseRiskTriage`
   mengembalikan `null`, dan `understanding.safetySensitive` menjadi jaring
@@ -180,14 +183,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   dan menggantinya dengan bantuan yang tidak menuntut kepercayaan lebih dulu.
   Nudge profesional otomatis ditangguhkan sejak `ADR-008` sampai false positive
   triase dievaluasi; jangan mengaktifkannya kembali hanya dari satu label model.
-- **Pengenalan tentang penggunanya dilakukan model, bukan daftar kata.** Daftar
-  kata sensitif, pagar daftar memori, dan pagar bahaya lokal dihapus pada 27
-  Juli 2026. `ADR-008` mengembalikan hanya pagar bentuk izin tugas dan payload
-  konkret; ia tidak menilai keadaan pribadi. Yang tersisa di
-  `turn-taking-policy.ts` hanya penilaian bentuk kalimat — apakah pengguna
-  tampak selesai mengetik — dan itu memang bukan pengenalan tentang orangnya.
-  Akibat yang diketahui dan diterima: bahaya tidak lagi memotong antrean batas
-  giliran kecuali model batas giliran sendiri menyebut `urgent`.
+- **Disposition keselamatan tetap milik triase, bukan daftar kata.** Sejak
+  `ADR-021`, pure policy terpisah boleh mengenali pernyataan bahaya langsung
+  dengan pelaku/korban yang cukup jelas dan berjangka segera untuk satu tujuan
+  sempit: acknowledgment sebelum debounce. Ia tidak menyatakan pengguna aman/bahaya, tidak menyimpan
+  memory, dan tidak memberi izin atau menolak mutasi; pipeline triase penuh dan
+  review sesuai disposition/policy tetap berjalan. Kutipan, negasi, histori,
+  contoh, idiom, distress samar, dan bentuk lain tetap jatuh ke model. Policy
+  boundary terpisah hanya menilai
+  bentuk satu bubble dari closed set; pada jalur boundary umum, multi-bubble dan
+  ambiguitas memakai model.
 
 ## Onboarding dan persetujuan
 

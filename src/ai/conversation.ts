@@ -291,9 +291,10 @@ export class Conversation {
   /**
    * Menentukan apakah kumpulan bubble complete, open, incomplete, atau urgent.
    *
-   * Selalu memakai tingkatan termurah dan hanya satu percobaan. Kegagalannya
-   * ditangani `MessageBatcher` dengan memproses pesan yang sudah ada, jadi
-   * keputusan UX ini tidak boleh menahan percakapan selama rotasi seluruh kunci.
+   * Dipakai hanya sebagai fallback untuk boundary yang ambigu. Ia memakai
+   * tingkatan termurah dan satu percobaan. Kegagalannya ditangani
+   * `MessageBatcher`, jadi keputusan UX ini tidak boleh menahan percakapan
+   * selama rotasi seluruh kunci.
    */
   async classifyTurnBoundary(
     message: string,

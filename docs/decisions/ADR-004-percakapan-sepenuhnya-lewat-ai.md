@@ -5,6 +5,12 @@
 - Pemilik keputusan: pengguna Harvy
 - Menggantikan sebagian: [`ADR-002`](ADR-002-percakapan-bahasa-alami.md)
 
+> **Supersesi parsial 8 Agustus 2026.** [`ADR-021`](ADR-021-emergency-preflight-dan-boundary-local-first.md)
+> mengganti klaim bahwa setiap free-text wajib memanggil model. Boundary bentuk
+> jelas, emergency preflight, waktu tanpa episode hangat, dan fakta identitas
+> model yang murni kini boleh deterministik. Percakapan generatif dan pemahaman
+> pesan yang tidak berada dalam closed set tetap memakai model.
+
 > **Koreksi 26 Juli 2026.** Versi pertama ADR ini menyebut modul `intent.ts`,
 > `natural-language.ts`, dan `time.ts`. Ketiga nama itu tidak ditemukan pada
 > commit mana pun dalam riwayat Git repositori ini. Modul berbasis aturan yang

@@ -11,6 +11,8 @@ const DIRECT_TIME_QUESTIONS = new Set([
   "sekarang hari apa",
 ]);
 
+const DIRECT_TIME_FAST_PATH_CONTEXT_MS = 30 * 60 * 1_000;
+
 /** Hanya pertanyaan jam/tanggal yang berdiri sendiri; bukan classifier umum. */
 export function isDirectTimeQuestion(message: string): boolean {
   const tokens = message
@@ -27,6 +29,23 @@ export function isDirectTimeQuestion(message: string): boolean {
   if (tokens[0] === "harvy") tokens.shift();
   else if (tokens.at(-1) === "harvy") tokens.pop();
   return DIRECT_TIME_QUESTIONS.has(tokens.join(" "));
+}
+
+/**
+ * Melewati model hanya ketika tidak ada episode hangat yang perlu tetap
+ * menjalani triase dan pemahaman konteks.
+ */
+export function canUseDirectTimeFastPath(
+  message: string,
+  turns: readonly { at: string }[],
+  now = new Date(),
+): boolean {
+  if (!isDirectTimeQuestion(message)) return false;
+  const latest = turns.at(-1);
+  if (!latest) return true;
+  const at = new Date(latest.at).getTime();
+  if (!Number.isFinite(at)) return false;
+  return now.getTime() - at > DIRECT_TIME_FAST_PATH_CONTEXT_MS;
 }
 
 export function deterministicTimeReply(now: Date, timeZone: string): string {

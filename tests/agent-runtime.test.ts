@@ -5,6 +5,7 @@ import {
   type AgentWorker,
 } from "../src/agent/parallel-delegation.js";
 import {
+  canUseDirectTimeFastPath,
   deterministicTimeReply,
   isDirectTimeQuestion,
 } from "../src/agent/time-fast-path.js";
@@ -191,6 +192,23 @@ describe("agent routing dan planner contract", () => {
     assert.equal(isDirectTimeQuestion("menurut Harvy sekarang jam berapa?"), false);
     assert.equal(isDirectTimeQuestion("Harvy Harvy sekarang jam berapa?"), false);
     assert.equal(isDirectTimeQuestion("Harvy sekarang jam berapa untuk meeting?"), false);
+    assert.equal(canUseDirectTimeFastPath("jam berapa?", []), true);
+    assert.equal(
+      canUseDirectTimeFastPath(
+        "jam berapa?",
+        [{ at: "2026-08-08T09:50:00.000Z" }],
+        new Date("2026-08-08T10:00:00.000Z"),
+      ),
+      false,
+    );
+    assert.equal(
+      canUseDirectTimeFastPath(
+        "jam berapa?",
+        [{ at: "2026-08-08T09:00:00.000Z" }],
+        new Date("2026-08-08T10:00:00.000Z"),
+      ),
+      true,
+    );
     const reply = deterministicTimeReply(
       new Date("2026-08-04T05:00:00.000Z"),
       "Asia/Jakarta",

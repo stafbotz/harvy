@@ -6,6 +6,12 @@
 - Terkait: `ADR-003` (routing model), `ADR-006` (memori dan riwayat),
   Konstitusi Pasal 3.6, 3.9, 3.11, dan Pasal 4
 
+> **Supersesi parsial 8 Agustus 2026.** [`ADR-021`](ADR-021-emergency-preflight-dan-boundary-local-first.md)
+> menjadikan policy lokal sebagai penilai pertama untuk bentuk tertutup dan
+> emergency langsung. Model `cheap` sekarang fallback untuk boundary ambigu,
+> bukan biaya wajib setiap batch. Timer, revision guard, FIFO, dan shutdown
+> contract ADR ini tetap berlaku.
+
 ## Konteks
 
 Uji Telegram nyata menunjukkan empat kegagalan yang saling berkaitan.

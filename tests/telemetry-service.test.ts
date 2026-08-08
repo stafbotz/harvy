@@ -617,6 +617,35 @@ describe("TelemetryService", () => {
     );
   });
 
+  it("mempertahankan sinyal urgent yang mendahului span handler", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const telemetry = new TelemetryService(repository, options());
+    const signal = telemetry.noteTurnSignal(
+      "student",
+      "turn-urgent",
+      "urgent-acknowledgement",
+    );
+    const begin = telemetry.beginTurn("student", "turn-urgent");
+    const record = telemetry.recordTurn({
+      ownerId: "student",
+      turnId: "turn-urgent",
+      subjectKind: "private",
+      channel: "telegram",
+      outcome: "completed",
+      bubbleCount: 1,
+      batchWaitMs: 0,
+      queueWaitMs: 0,
+      handlingLatencyMs: 1,
+      totalLatencyMs: 1,
+    });
+
+    await Promise.all([signal, begin, record]);
+    await telemetry.drain();
+
+    assert.equal(repository.turns.length, 1);
+    assert.equal(repository.turns[0]?.urgentAcknowledgementCount, 1);
+  });
+
   it("menghitung p50/p95 dan rate dengan turn tanpa model sebagai denominator", async () => {
     const repository = new MemoryTelemetryRepository();
     const telemetry = new TelemetryService(repository, options());

@@ -1,8 +1,9 @@
 # Status — Agent Runtime
 
-Verified: 6 Agustus 2026 pada baseline `43d8e16`; gerbang otomatis 644 test / 93
-suite. Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`,
-planner agent, scope/authority, atau executor internal.
+Verified: 8 Agustus 2026 pada working tree Phase B di atas `d80ed85`; `npm test`
+PASS 674 test / 95 suite dan `npm run check` PASS. Detail ini dibaca hanya untuk
+task di `src/agent/`, `src/harness/`, planner agent, scope/authority, atau
+executor internal.
 
 ## Keadaan saat ini
 
@@ -12,6 +13,9 @@ planner agent, scope/authority, atau executor internal.
   multi-call, argumen rusak, dan control output kosong ditolak sebelum kernel.
 - Tool callable saat ini read-only: daftar/detail tugas, status sesi, waktu,
   agenda internal Harvy, terminal virtual in-memory, dan delegasi read-only.
+- Pertanyaan waktu sempit tetap dijawab dari clock deterministik. Ia melewati
+  boundary/understanding/triage hanya bila tidak ada episode hangat dalam 30
+  menit; episode hangat tetap menjalani pipeline keselamatan dan pemahaman.
 - Delegasi hanya dari root ambitious pada langkah awal, depth satu, 2–3 worker,
   tanpa memory/history/tool/credential, dengan deadline dan output berbatas.
 - Checkpoint `waiting_input` privat tahan restart normal lewat file repository
@@ -38,9 +42,9 @@ planner agent, scope/authority, atau executor internal.
 
 ## Bukti dan pointer
 
-- Kode: `src/agent/`, `src/harness/`, `src/ai/agent.ts`,
-  `src/core/agent-run-service.ts`.
+- Kode: `src/agent/`, `src/agent/time-fast-path.ts`, `src/harness/`,
+  `src/ai/agent.ts`, `src/core/agent-run-service.ts`.
 - Tes: `tests/agent-runtime.test.ts`, `tests/agent-harness.test.ts`,
-  `tests/harness-context-budget.test.ts`, `tests/harness-scope-capabilities.test.ts`.
-- Keputusan: ADR-012, ADR-016, ADR-017, ADR-018.
-
+  `tests/create-bot-flow.test.ts`, `tests/harness-context-budget.test.ts`,
+  `tests/harness-scope-capabilities.test.ts`.
+- Keputusan: ADR-012, ADR-016, ADR-017, ADR-018, ADR-021.

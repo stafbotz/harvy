@@ -11,12 +11,12 @@ benar-benar berjalan; jika detail status berbeda, laporkan perbedaannya.
 
 | Area | Status ringkas | Blocker utama | Diverifikasi | Detail |
 |---|---|---|---|---|
-| Agent Runtime | Native planner, tool internal read-only, terminal virtual, delegasi, dan checkpoint klarifikasi ada | Post-fix belum smoke primary/Telegram; RunStore produksi belum ada | 2026-08-06 | [`status/agent-runtime.md`](status/agent-runtime.md) |
-| Telegram privat | Percakapan, onboarding, tombol, batching, dan route privat ada | Banyak perubahan terakhir baru teruji otomatis, belum E2E ulang | 2026-08-06 | [`status/telegram.md`](status/telegram.md) |
+| Agent Runtime | Native planner, tool internal read-only, terminal virtual, delegasi, checkpoint klarifikasi, dan fast path waktu berbatas ada | Post-fix belum smoke primary/Telegram; RunStore produksi belum ada | 2026-08-08 | [`status/agent-runtime.md`](status/agent-runtime.md) |
+| Telegram privat | Percakapan, onboarding, local-first batching, dan route privat ada | Banyak perubahan terakhir baru teruji otomatis, belum E2E ulang | 2026-08-08 | [`status/telegram.md`](status/telegram.md) |
 | WhatsApp grup | Fondasi beta grup dan multi-account satu proses ada | Perilaku lengkap dan dua nomor nyata belum diuji | 2026-08-06 | [`status/whatsapp.md`](status/whatsapp.md) |
 | Tasks & sessions | Tugas, pengingat, tutoring, sesi, check-in, dan waktu ada | Delivery worker masih punya jendela at-least-once; banyak jalur belum live | 2026-08-06 | [`status/tasks.md`](status/tasks.md) |
 | Memory & data | Memori, history, episodic compaction, ekspor/hapus, dan file storage ada | Storage satu proses; klasifikasi sensitif dan scrub sumber belum sempurna | 2026-08-06 | [`status/memory.md`](status/memory.md) |
-| Safety & privacy | Triase fail-closed, review risiko, consent, dan kontrol data ada | Salah klasifikasi ganda untuk memori sensitif belum tertutup penuh | 2026-08-06 | [`status/safety-privacy.md`](status/safety-privacy.md) |
+| Safety & privacy | Emergency preflight, triase fail-closed, review, consent, dan kontrol data ada | Preflight sempit; salah klasifikasi ganda memori sensitif belum tertutup | 2026-08-08 | [`status/safety-privacy.md`](status/safety-privacy.md) |
 | Console & control plane | Console localhost, paket pilot, entitlement, dan ledger ada | Belum internet-ready atau billing production | 2026-08-06 | [`status/console.md`](status/console.md) |
 | Platform | Provider routing/fallback, runtime lock, dan log operasional ada | Storage/log satu proses; lock stale pasca penghentian paksa masih mungkin | 2026-08-06 | [`status/platform.md`](status/platform.md) |
 

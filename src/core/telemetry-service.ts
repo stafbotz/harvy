@@ -340,8 +340,8 @@ export class TelemetryService implements UsageObserver {
   }
 
   /**
-   * Membuka korelasi satu giliran sebelum model boundary pertama berjalan.
-   * Tidak ada record yang ditulis sampai `recordTurn` menutup span tersebut.
+   * Membuka korelasi saat handler biasa dimulai. Sinyal urgent out-of-band
+   * dapat membuka korelasinya sendiri sebelum handler mencapai jalur ini.
    */
   async beginTurn(ownerId: string, turnId: string): Promise<void> {
     if (!turnId) return;
@@ -349,7 +349,7 @@ export class TelemetryService implements UsageObserver {
       if (this.forgottenOwners.has(ownerId)) return;
       const key = turnKey(ownerId, turnId);
       this.pruneTurnState();
-      if (!this.closedTurns.has(key)) {
+      if (!this.closedTurns.has(key) && !this.openTurns.has(key)) {
         this.openTurns.set(key, this.now().getTime());
       }
     });
@@ -364,7 +364,12 @@ export class TelemetryService implements UsageObserver {
     await this.exclusive(ownerId, async () => {
       if (this.forgottenOwners.has(ownerId)) return;
       const key = turnKey(ownerId, turnId);
-      if (!this.openTurns.has(key) || this.closedTurns.has(key)) return;
+      if (this.closedTurns.has(key)) return;
+      if (!this.openTurns.has(key)) {
+        if (signal !== "urgent-acknowledgement") return;
+        this.pruneTurnState();
+        this.openTurns.set(key, this.now().getTime());
+      }
       const accumulator = this.turnAccumulators.get(key) ?? emptyTurnAccumulator();
       switch (signal) {
         case "deterministic-fast-path":

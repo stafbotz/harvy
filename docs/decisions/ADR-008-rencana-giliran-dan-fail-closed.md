@@ -6,6 +6,11 @@
 - Terkait: `ADR-002`, `ADR-003`, `ADR-004`, `ADR-006`, `ADR-007`,
   Konstitusi Pasal 3, 4, dan 5
 
+> **Supersesi parsial 8 Agustus 2026.** [`ADR-021`](ADR-021-emergency-preflight-dan-boundary-local-first.md)
+> menambah emergency preflight lokal berpresisi tinggi sebelum debounce.
+> Keputusan ini hanya mempercepat acknowledgment; triase penuh, review sesuai
+> policy, mutation gate, consent, dan FIFO fail-closed di ADR ini tidak berubah.
+
 ## Konteks
 
 Audit percakapan menemukan bahwa ekstraksi, balasan, tombol, tugas, memori,

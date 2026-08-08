@@ -16,6 +16,7 @@ import {
 } from "../src/ai/safety.js";
 import {
   FOLLOW_UP_COOLDOWN_MS,
+  hasExplicitImmediateDangerSignal,
   needsReplyReview,
   shouldRaiseProfessionalHelp,
   worthRecording,
@@ -26,6 +27,60 @@ const NOW = new Date("2026-07-27T10:00:00.000Z");
 function triage(overrides: Partial<RiskTriage> = {}): RiskTriage {
   return { ...CALM_TRIAGE, ...overrides };
 }
+
+describe("sinyal darurat lokal", () => {
+  it("mengenali hanya pernyataan langsung dan segera", () => {
+    for (const message of [
+      "aku mau menyakiti diri sekarang",
+      "mau bunuh diri sekarang",
+      "aku mau mati sekarang",
+      "Harvy, tolong, aku akan bunuh diri malam ini",
+      "gue lagi melukai diri",
+      "aku mau bunuh dia sekarang",
+      "tolong aku sedang dipukul",
+      "aku lagi dikunci di kamar",
+      "aku sedang diancam akan dibunuh",
+      "aku nggak aman sekarang",
+      "ada orang yang mau menyerang aku saat ini",
+      "sekarang aku mau bunuh diri",
+      "tolong dia lagi mencekik aku",
+      "orang itu akan menyerang saya sekarang",
+      "aku mau bunuh diri sekarang\ntolong bantu aku",
+    ]) {
+      assert.equal(
+        hasExplicitImmediateDangerSignal(message),
+        true,
+        message,
+      );
+    }
+  });
+
+  it("membiarkan kutipan, negasi, histori, dan pembahasan umum ke triase", () => {
+    for (const message of [
+      '"aku mau bunuh diri sekarang" kata tokoh itu',
+      "temanku bilang aku mau bunuh diri sekarang",
+      "aku tidak mau bunuh diri sekarang",
+      "dulu aku mau bunuh diri",
+      "apa arti menyakiti diri?",
+      "contoh dialog aku mau bunuh diri sekarang",
+      "aku capek banget",
+      "aku mau membunuh waktu sekarang sambil menunggu",
+      "aku lagi dikunci dari akun",
+      "aku lagi diserang netizen",
+      "aku sedang dipukul rasa bersalah",
+      "aku mau bunuh dia sekarang di game",
+      "aku mau bunuh dia sekarang, eh nggak jadi",
+      "contoh dialog:\naku mau bunuh diri sekarang",
+      "pesan dari temanku:\naku mau bunuh diri sekarang",
+    ]) {
+      assert.equal(
+        hasExplicitImmediateDangerSignal(message),
+        false,
+        message,
+      );
+    }
+  });
+});
 
 describe("triase risiko", () => {
   it("membaca tiga tingkat beserta tanda pendampingnya", () => {

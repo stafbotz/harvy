@@ -1,6 +1,6 @@
 # Harvy — Keputusan Proyek dan Backlog
 
-Terakhir diperbarui: 3 Agustus 2026.
+Terakhir diperbarui: 8 Agustus 2026.
 
 ## Identitas dan produk
 
@@ -203,6 +203,10 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 - [x] Bubble yang dipenggal dapat digabung menjadi satu giliran, dan balasan
   panjang dapat dikirim sebagai beberapa bubble. Lihat
   [`ADR-007`](decisions/ADR-007-bubble-dan-riwayat-percakapan-natural.md).
+- [x] Boundary local-first untuk bentuk satu bubble yang jelas, fallback model
+  untuk ambiguitas, serta emergency acknowledgment sebelum debounce. Pertanyaan
+  waktu tanpa episode hangat juga tidak lagi membayar understanding/triage.
+  Lihat [`ADR-021`](decisions/ADR-021-emergency-preflight-dan-boundary-local-first.md).
 - [x] Tombol tindakan cepat untuk selesai, ingatkan, ubah tenggat, dan batalkan.
 - [x] Tombol adaptif menurut keadaan percakapan. Model hanya boleh mengusulkan
   ID tindakan dari daftar tertutup; kode memilih maksimum satu sebelum balasan
@@ -239,8 +243,11 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 - Deployment dan backup.
 - [x] Kebijakan routing model dan konfigurasi tiga tingkatan. Lihat
   [`decisions/ADR-003-routing-model.md`](decisions/ADR-003-routing-model.md).
-- [x] Seluruh percakapan diproses model AI; jalur berbasis aturan dihapus. Lihat
-  [`decisions/ADR-004-percakapan-sepenuhnya-lewat-ai.md`](decisions/ADR-004-percakapan-sepenuhnya-lewat-ai.md).
+- [x] Percakapan generatif dan pemahaman pesan di luar closed set diproses
+  model AI. Parser tugas berbasis aturan lama tetap dihapus; boundary jelas,
+  emergency preflight, waktu tanpa episode hangat, dan identitas model murni
+  menjadi pengecualian deterministik menurut
+  [`ADR-021`](decisions/ADR-021-emergency-preflight-dan-boundary-local-first.md).
 - [x] Memasang pembungkus anti-injeksi, menyambungkan `remindAt` ke pembuatan
   tugas, dan menyalakan mode JSON penyedia. Ketiganya sudah ditulis tetapi tidak
   pernah tersambung.
@@ -310,8 +317,9 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   tingkat, arahan yang melarang menolak lalu menutup, dan pemeriksaan balasan
   sebelum dikirim. Penanganan pengguna di bawah 18 tahun berjalan tanpa pernah
   menanyakan umur — perlindungannya menyesuaikan isi percakapan.
-- [x] Acknowledgment prioritas untuk boundary `urgent`, dikirim di luar FIFO.
-  Handler lengkap dan mutasi tetap FIFO agar state tidak korup.
+- [x] Acknowledgment prioritas untuk emergency preflight lokal atau boundary
+  model `urgent`, dikirim di luar FIFO. Handler lengkap dan mutasi tetap FIFO
+  agar state tidak korup.
 - [ ] Pembatalan kooperatif request biasa yang belum commit ketika pesan urgent
   masuk.
 - [x] Batas pemakaian token 24 jam dan pemantauan biaya per pengguna. Jalur

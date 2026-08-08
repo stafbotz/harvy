@@ -82,6 +82,7 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 | [`ADR-018`](decisions/ADR-018-checkpoint-klarifikasi-agent-durable-lokal.md) | durable clarification checkpoint |
 | [`ADR-019`](decisions/ADR-019-code-first-progressive-context.md) | code-first context, material docs, bounded bootstrap |
 | [`ADR-020`](decisions/ADR-020-baseline-telemetry-per-giliran.md) | baseline turn telemetry, korelasi, latency/rate p50-p95 |
+| [`ADR-021`](decisions/ADR-021-emergency-preflight-dan-boundary-local-first.md) | emergency preflight, local-first boundary, deterministic time fast path |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.

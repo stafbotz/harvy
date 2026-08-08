@@ -13,11 +13,15 @@ import {
 } from "../ai/usage-attribution.js";
 import { selectAgentMode } from "../ai/model-policy.js";
 import { liveStateRequirement } from "../ai/agent.js";
-import { isDirectTimeQuestion } from "../agent/time-fast-path.js";
+import {
+  canUseDirectTimeFastPath,
+  isDirectTimeQuestion,
+} from "../agent/time-fast-path.js";
 import {
   CAPYBARA_MODEL_REPLY,
   canUseModelIdentityFastPath,
   isModelIdentityQuestion,
+  isPureModelIdentityQuestion,
 } from "../ai/identity.js";
 import type {
   ExtractedMemory,
@@ -426,6 +430,12 @@ export function createBot(
           ) {
             return "complete";
           }
+          if (
+            isDirectTimeQuestion(text) ||
+            isPureModelIdentityQuestion(text)
+          ) {
+            return "complete";
+          }
           return conversation.classifyTurnBoundary(text, ownerId);
         },
       );
@@ -462,12 +472,14 @@ export function createBot(
       channel: "telegram",
     }),
   ).onUrgent(async (_ownerId, batch) => {
-    await batch.carrier.reply(URGENT_ACKNOWLEDGEMENT);
-    await noteTurnSignal(
+    // Observer dimulai lebih dulu agar lifecycle-nya terurut sebelum
+    // `recordTurn`, tetapi tidak ditunggu: telemetry tidak boleh menahan ACK.
+    void noteTurnSignal(
       _ownerId,
       "urgent-acknowledgement",
       batch.turnId,
     );
+    await batch.carrier.reply(URGENT_ACKNOWLEDGEMENT);
   });
 
   /**
@@ -599,10 +611,9 @@ export function createBot(
     }
 
     // Gerbang persetujuan wajib berada di sini, sebelum `enqueue`.
-    // `MessageBatcher` memanggil `classifyTurnBoundary` untuk menentukan batas
-    // giliran, dan panggilan itu sudah mengirim teks pengguna ke penyedia model.
-    // Gerbang yang dipasang lebih dalam berarti izinnya ditanyakan setelah
-    // isinya telanjur keluar.
+    // Boundary lokal tidak mengirim isi keluar, tetapi bentuk ambigu masih
+    // memakai `classifyTurnBoundary` dan mengirim teks ke penyedia model.
+    // Karena itu gerbang consent tetap wajib berada sebelum `enqueue`.
     const ingress = enqueueConsentIngress(ctx, ownerId, text)
       .catch((error: unknown) => {
         logger.error(
@@ -949,6 +960,17 @@ export function createBot(
       if (!(await runtimeIsCurrent(runtime))) return;
       await ctx.reply(CAPYBARA_MODEL_REPLY);
       await history.append(ownerId, "harvy", CAPYBARA_MODEL_REPLY);
+      void history.compact(ownerId);
+      return;
+    }
+
+    if (canUseDirectTimeFastPath(text, context.turns)) {
+      const response = conversation.deterministicTimeReply(timeZone);
+      await noteTurnSignal(ownerId, "deterministic-fast-path");
+      await history.append(ownerId, "user", text);
+      if (!(await runtimeIsCurrent(runtime))) return;
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
       void history.compact(ownerId);
       return;
     }

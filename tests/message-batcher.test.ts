@@ -61,6 +61,68 @@ describe("MessageBatcher", () => {
     assert.deepEqual(handled, ["halo"]);
   });
 
+  it("melewati classifier untuk bentuk lokal yang jelas", async () => {
+    const classified: string[] = [];
+    const handled: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      async (text) => {
+        classified.push(text);
+        return "complete";
+      },
+      async (_ownerId, batch) => {
+        handled.push(batch.text);
+      },
+      30,
+      1,
+      20,
+      20,
+    );
+    const messages = [
+      "iya",
+      "oke",
+      "makasih",
+      "B",
+      "karena",
+      "tapi",
+      "terus aku",
+      "jadi tadi aku mau",
+    ];
+
+    messages.forEach((message, index) => {
+      batcher.enqueue(`student-${index}`, message, message);
+    });
+    await waitFor(() => handled.length === messages.length, 1_500);
+
+    assert.deepEqual(classified, []);
+    assert.deepEqual(handled.sort(), [...messages].sort());
+  });
+
+  it("memakai classifier hanya untuk bentuk ambigu", async () => {
+    const classified: string[] = [];
+    const handled: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      async (text) => {
+        classified.push(text);
+        return "complete";
+      },
+      async (_ownerId, batch) => {
+        handled.push(batch.text);
+      },
+      40,
+      1,
+      20,
+      20,
+    );
+    const messages = ["jadi gini", "aku mau cerita", "aku capek banget"];
+
+    messages.forEach((message, index) => {
+      batcher.enqueue(`student-${index}`, message, message);
+    });
+    await waitFor(() => handled.length === messages.length, 1_500);
+
+    assert.deepEqual(classified.sort(), [...messages].sort());
+  });
+
   it("menyimak seluruh rangkaian curhat meski jedanya melewati debounce", async () => {
     const handled: string[] = [];
     const examined: string[] = [];
@@ -138,7 +200,7 @@ describe("MessageBatcher", () => {
     ]);
   });
 
-  it("memproses seketika ketika model menyatakan urgent", async () => {
+  it("memproses seketika ketika fallback model menyatakan urgent", async () => {
     const handled: string[] = [];
     const batcher = new MessageBatcher<string>(
       async () => "urgent" as TurnBoundaryState,
@@ -151,35 +213,71 @@ describe("MessageBatcher", () => {
       80,
     );
 
-    batcher.enqueue("student", "aku mau menyakiti diri sekarang", "ctx-1");
+    batcher.enqueue("student", "aku capek banget", "ctx-1");
 
     await waitFor(() => handled.length === 1, 120);
-    assert.deepEqual(handled, ["aku mau menyakiti diri sekarang"]);
+    assert.deepEqual(handled, ["aku capek banget"]);
   });
 
-  it("tetap memproses lewat deadline ketika penilaian model menggantung", async () => {
+  it("mengakui bahaya eksplisit sebelum debounce tanpa classifier", async () => {
+    let classifierCalls = 0;
     const handled: string[] = [];
+    const acknowledgements: string[] = [];
     const batcher = new MessageBatcher<string>(
-      () => new Promise<TurnBoundaryState>(() => undefined),
+      () => {
+        classifierCalls += 1;
+        return new Promise<TurnBoundaryState>(() => undefined);
+      },
       async (_ownerId, batch) => {
         handled.push(batch.text);
       },
-      200,
-      5,
+      500,
       150,
-      80,
+      300,
+      200,
+    ).onUrgent(async (_ownerId, batch) => {
+      acknowledgements.push(batch.text);
+    });
+
+    const emergency = "aku mau menyakiti diri sekarang\ntolong jawab cepat";
+    batcher.enqueue("student", emergency, "ctx-1");
+
+    await waitFor(
+      () => acknowledgements.length === 1 && handled.length === 1,
+      120,
     );
+    assert.equal(classifierCalls, 0);
+    assert.deepEqual(acknowledgements, [emergency]);
+    assert.deepEqual(handled, [emergency]);
+  });
 
-    batcher.enqueue("student", "aku mau curhat", "ctx-1");
-    await delay(20);
-    batcher.enqueue("student", "aku mau menyakiti diri sekarang", "ctx-2");
+  it("menyerahkan kutipan bahaya ke classifier tanpa urgent palsu", async () => {
+    let classifierCalls = 0;
+    const acknowledgements: string[] = [];
+    const handled: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      async () => {
+        classifierCalls += 1;
+        return "complete";
+      },
+      async (_ownerId, batch) => {
+        handled.push(batch.text);
+      },
+      100,
+      1,
+    ).onUrgent(async (_ownerId, batch) => {
+      acknowledgements.push(batch.text);
+    });
 
-    // Sejak pagar bahaya lokal dihapus, satu-satunya yang menyelamatkan giliran
-    // ini adalah deadline. Ia tetap terproses, tetapi tidak lagi seketika.
-    await waitFor(() => handled.length === 1, 800);
-    assert.deepEqual(handled, [
-      "aku mau curhat\naku mau menyakiti diri sekarang",
-    ]);
+    batcher.enqueue(
+      "student",
+      "contoh dialog:\naku mau bunuh diri sekarang",
+      "ctx",
+    );
+    await waitFor(() => handled.length === 1);
+
+    assert.equal(classifierCalls, 1);
+    assert.deepEqual(acknowledgements, []);
   });
 
   it("mengabaikan keputusan model yang kalah cepat dari bubble berikutnya", async () => {
@@ -197,7 +295,7 @@ describe("MessageBatcher", () => {
       1,
     );
 
-    batcher.enqueue("student", "aku boleh curhat kah", "ctx-1");
+    batcher.enqueue("student", "aku capek banget", "ctx-1");
     await waitFor(() => decisions.length === 1, 1_500);
     batcher.enqueue("student", "lanjutannya ini", "ctx-2");
 
@@ -208,7 +306,7 @@ describe("MessageBatcher", () => {
     await waitFor(() => decisions.length === 2, 1_500);
     decisions[1]?.("complete");
     await waitFor(() => handled.length === 1, 1_500);
-    assert.deepEqual(handled, ["aku boleh curhat kah\nlanjutannya ini"]);
+    assert.deepEqual(handled, ["aku capek banget\nlanjutannya ini"]);
   });
 
   it("tidak membiarkan model lambat melewati batas hening", async () => {
@@ -666,6 +764,56 @@ describe("MessageBatcher", () => {
       "selesai:lama",
       "mulai:darurat",
       "selesai:darurat",
+    ]);
+  });
+
+  it("membatalkan batch biasa yang sudah antre sebelum giliran urgent", async () => {
+    let releaseOld: (() => void) | undefined;
+    let queuedClassified = false;
+    const events: string[] = [];
+    const batcher = new MessageBatcher<string>(
+      async (text) => {
+        if (text === "pesan antre") queuedClassified = true;
+        return "complete";
+      },
+      async (_ownerId, batch) => {
+        events.push(`mulai:${batch.text}`);
+        if (batch.text === "lama") {
+          await new Promise<void>((resolve) => {
+            releaseOld = resolve;
+          });
+        }
+        events.push(`selesai:${batch.text}`);
+      },
+      200,
+      1,
+    ).onUrgent(async (_ownerId, batch) => {
+      events.push(`ack:${batch.text}`);
+    });
+
+    batcher.enqueue("A", "lama", "ctx-lama");
+    await waitFor(() => releaseOld !== undefined);
+    batcher.enqueue("A", "pesan antre", "ctx-antre");
+    await waitFor(() => queuedClassified);
+    await delay(5);
+    batcher.enqueue(
+      "A",
+      "aku mau menyakiti diri sekarang",
+      "ctx-urgent",
+    );
+    await waitFor(() =>
+      events.includes("ack:aku mau menyakiti diri sekarang")
+    );
+
+    releaseOld?.();
+    await batcher.drainAll();
+
+    assert.deepEqual(events, [
+      "mulai:lama",
+      "ack:aku mau menyakiti diri sekarang",
+      "selesai:lama",
+      "mulai:aku mau menyakiti diri sekarang",
+      "selesai:aku mau menyakiti diri sekarang",
     ]);
   });
 

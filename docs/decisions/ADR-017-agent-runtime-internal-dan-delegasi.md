@@ -3,9 +3,11 @@
 - **Status:** Diterima
 - **Tanggal:** 4 Agustus 2026
 - **Pemilik keputusan:** pemilik produk Harvy
-- **Terkait:** Konstitusi v0.5, ADR-003, ADR-006, ADR-008, ADR-012, ADR-013, ADR-015, ADR-016
+- **Terkait:** Konstitusi v0.5, ADR-003, ADR-006, ADR-008, ADR-012, ADR-013,
+  ADR-015, ADR-016, ADR-021
 - **Diamendemen oleh:** ADR-018 untuk persistence checkpoint `waiting_input`;
-  run aktif dan tool write tetap mengikuti batas ADR ini
+  ADR-021 untuk guard konteks fast path waktu; run aktif dan tool write tetap
+  mengikuti batas ADR ini
 - **Amendemen 6 Agustus 2026:** planner Agent Runtime memakai native function
   calling; bentuk kanonik `final|need_input|action` tetap menjadi kontrak kernel
 
@@ -64,9 +66,13 @@ diklaim selesai dengan menyamarkan kekurangannya.
    buatan pengguna yang tidak tepercaya.
 5. **Jam mempunyai fast path deterministik.** Pertanyaan sempit seperti
    “sekarang jam berapa?” dijawab dari clock runtime dan zona waktu profil tanpa
-   planner. Tool `settings.time.get` menyediakan instant UTC, bentuk lokal,
-   zona waktu, dan jam tenang bagi rencana yang lebih luas. Ini tidak bergantung
-   pada pengetahuan tanggal model.
+   planner. Sejak ADR-021, ia juga melewati boundary/understanding/triage hanya
+   ketika tidak ada episode hangat dalam 30 menit. Pada episode hangat ia tetap
+   menjalani pipeline keselamatan dan pemahaman; jawaban clock deterministik
+   dipakai hanya bila disposition mengizinkan jalur biasa. Tool
+   `settings.time.get` menyediakan instant UTC, bentuk lokal, zona waktu, dan
+   jam tenang bagi rencana yang lebih luas. Ini tidak bergantung pada
+   pengetahuan tanggal model.
 6. **Kalender v1 berarti agenda internal Harvy.** `calendar.agenda` hanya
    memproyeksikan tenggat, pengingat tugas, dan check-in yang sudah ada di state
    Harvy untuk 1–31 hari. Observation selalu menyatakan

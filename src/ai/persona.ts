@@ -268,10 +268,11 @@ export function understandingPrompt(now: Date, timeZone: string): string {
 }
 
 /**
- * Model murah menentukan batas satu giliran percakapan.
+ * Model murah menjadi fallback ketika batas satu giliran masih ambigu.
  *
- * Ia tidak menulis balasan, hanya memperkirakan apakah pengguna tampaknya
- * sedang memenggal cerita menjadi beberapa bubble.
+ * Bentuk lokal yang jelas sudah diputus kode. Model ini tidak menulis balasan,
+ * hanya memperkirakan apakah bentuk lain tampaknya dipenggal menjadi beberapa
+ * bubble.
  */
 export const TURN_BOUNDARY_PROMPT = [
   "Kamu menentukan keadaan batas giliran chat pengguna.",

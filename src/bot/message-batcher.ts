@@ -1,4 +1,5 @@
 import {
+  classifyTurnBoundaryLocally,
   guardTurnBoundary,
   idleWindowMs,
   INCOMPLETE_IDLE_MS,
@@ -6,6 +7,7 @@ import {
   OPEN_IDLE_MS,
   type TurnBoundaryState,
 } from "../core/turn-taking-policy.js";
+import { hasExplicitImmediateDangerSignal } from "../core/safety-policy.js";
 import { randomUUID } from "node:crypto";
 import {
   NOOP_OPERATIONAL_LOGGER,
@@ -15,9 +17,9 @@ import {
 /**
  * Satu giliran percakapan boleh datang sebagai beberapa bubble Telegram.
  *
- * Model murah memutuskan apakah kalimatnya tampak masih akan dilanjutkan.
- * Kalau iya, Harvy menunggu sebentar; bubble baru membatalkan keputusan lama
- * dan seluruh potongan diproses sebagai satu pesan logis.
+ * Kebijakan lokal menangani bentuk yang jelas. Classifier murah hanya menjadi
+ * fallback untuk ambiguitas; bubble baru membatalkan keputusan lama dan
+ * seluruh potongan diproses sebagai satu pesan logis.
  */
 export interface MessageBatch<T> {
   text: string;
@@ -73,7 +75,7 @@ export class MessageBatcher<T> {
     | undefined;
 
   constructor(
-    private readonly classify: (
+    private readonly classifyAmbiguous: (
       text: string,
       ownerId?: string,
       turnId?: string,
@@ -160,6 +162,12 @@ export class MessageBatcher<T> {
     );
 
     const revision = entry.revision;
+    if (hasExplicitImmediateDangerSignal(entry.chunks.join("\n"))) {
+      this.acknowledgeUrgent(ownerId, entry);
+      this.scheduleDeadline(ownerId, entry, revision, 0);
+      return;
+    }
+
     entry.settleTimer = setTimeout(() => {
       entry.settleTimer = null;
       void this.evaluate(ownerId, revision).catch((error: unknown) => {
@@ -402,27 +410,33 @@ export class MessageBatcher<T> {
       if (!evaluated || evaluated.revision !== targetRevision) return;
       evaluated.evaluationRequested = false;
 
-      let state: TurnBoundaryState = "complete";
-      try {
-        state = await this.classify(
-          evaluated.chunks.join("\n"),
-          ownerId,
-          evaluated.turnId,
-        );
-      } catch (error) {
-        // Keputusan ini hanya optimasi UX. Kalau model cepat gagal, pesan
-        // tetap harus diproses.
-        this.logger.warn(
-          "turn_boundary_check_failed",
-          "Pemeriksaan sambungan bubble gagal; giliran diproses sekarang.",
-          { error },
-        );
+      const text = evaluated.chunks.join("\n");
+      let state: TurnBoundaryState | null = hasExplicitImmediateDangerSignal(text)
+        ? "urgent"
+        : classifyTurnBoundaryLocally(text);
+      if (state === null) {
+        state = "complete";
+        try {
+          state = await this.classifyAmbiguous(
+            text,
+            ownerId,
+            evaluated.turnId,
+          );
+        } catch (error) {
+          // Keputusan ini hanya optimasi UX. Kalau fallback model gagal, pesan
+          // tetap harus diproses.
+          this.logger.warn(
+            "turn_boundary_check_failed",
+            "Fallback batas bubble gagal; giliran diproses sekarang.",
+            { error },
+          );
+        }
       }
 
       const current = this.entries.get(ownerId);
       if (current === evaluated && current.revision === targetRevision) {
         const guarded = guardTurnBoundary(
-          evaluated.chunks.join("\n"),
+          text,
           state,
         );
         if (guarded === "urgent") {
@@ -573,9 +587,14 @@ export class MessageBatcher<T> {
   private acknowledgeUrgent(ownerId: string, entry: BatchEntry<T>): void {
     // ACK boleh mendahului FIFO, dan run agent lama harus berhenti agar tidak
     // menyelipkan balasan biasa sebelum giliran keselamatan diproses.
-    this.abortActive(ownerId);
-    if (entry.urgentAcknowledged || !this.urgentHandler) return;
+    if (entry.urgentAcknowledged) return;
     entry.urgentAcknowledged = true;
+    // Batch biasa yang sudah menunggu di chain membawa generation lama dan
+    // akan berhenti sebelum handler. Giliran urgent sendiri baru menangkap
+    // generation baru ketika `flush` dipanggil setelah metode ini.
+    this.generations.set(ownerId, this.generation(ownerId) + 1);
+    this.abortActive(ownerId);
+    if (!this.urgentHandler) return;
     const controller = new AbortController();
     const batch = {
       text: entry.chunks.join("\n"),

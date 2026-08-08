@@ -37,8 +37,9 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   pemilihan memori untuk prompt), `memory-service.ts`, `history-policy.ts`
   (jendela dan ambang pemadatan), `history-service.ts`, `profile-service.ts`
   (`CONSENT_VERSION`, `needsOnboarding`, `shouldAskStyle`),
-  `safety-policy.ts` (`RiskLevel`, `needsReplyReview`,
-  `shouldRaiseProfessionalHelp`), `insight-service.ts` (catatan tersembunyi dan
+  `safety-policy.ts` (`RiskLevel`, sinyal immediate-danger berpresisi tinggi,
+  `needsReplyReview`, `shouldRaiseProfessionalHelp`), `insight-service.ts`
+  (catatan tersembunyi dan
   riwayat giliran berisiko), `action-policy.ts` (allowlist tindakan adaptif),
   `session-policy.ts` (hubungan sesi lunak dan izin sinyal destruktif),
   `time-policy.ts` (zona waktu dan jam tenang), `session-service.ts` (satu sesi
@@ -48,8 +49,9 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   expiry absolut, dan lifecycle checkpoint klarifikasi),
   `data-control-service.ts` (ekspor,
   tombstone, dan penghapusan lintas store), serta
-  `turn-taking-policy.ts` (jendela adaptif batas giliran dan koreksi bentuk
-  kalimat; pagar bahaya lokalnya dipindahkan ke triase risiko).
+  `turn-taking-policy.ts` (closed set boundary lokal, koreksi bentuk, serta
+  jendela state-aware 4/7/12 detik). Policy emergency dan policy bentuk giliran
+  sengaja terpisah; disposition keselamatan tetap milik triase risiko.
   `HistoryService` menerima fungsi peringkas episode dari luar supaya `core/`
   tetap bebas jaringan. `episodic-compaction.ts` membuat provenance/hash,
   retensi, dan rendering context v2 tanpa merangkum ulang episode lama;
@@ -76,13 +78,16 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   memori), `safety.ts` (triase risiko, arahan anti-penolakan, pemeriksaan
   balasan, dan prompt pemahaman), dan `conversation.ts` (menyatukan pemahaman,
   balasan, peringkasan episode, dan Agent Runtime).
-  Sebelum percakapan, model `cheap` menggolongkan batas bubble sebagai
-  `complete`, `open`, `incomplete`, atau `urgent`; kebijakan lokal mengoreksi
-  bentuk fragmen, bukan mengenali orang atau bahaya. Giliran yang sudah utuh
-  menjalankan ekstraksi dan triase risiko secara paralel, lalu memilih tier
-  balasan. Ekstraksi tidak pernah membayar harga model besar; giliran
-  `dukungan`/`bahaya` selalu memakai `efficient` dan diperiksa fail-closed
-  sebelum dikirim. Tutor memakai `ambitious` hanya pada giliran tenang.
+  Pada free-text Telegram privat pasca-consent, pure policy immediate-danger
+  berjalan saat ingress sebelum debounce dan hanya dapat mempercepat ACK.
+  Sesudah settle, closed set lokal memutus satu bubble yang jelas sebagai
+  `complete`/`incomplete`; model `cheap` hanya menjadi fallback
+  `complete|open|incomplete|urgent` untuk jalur boundary yang ambigu. Giliran
+  yang sudah utuh menjalankan ekstraksi dan triase risiko secara paralel, lalu
+  memilih tier balasan. Ekstraksi tidak pernah membayar harga model besar;
+  giliran `dukungan`/`bahaya` selalu memakai `efficient` dan diperiksa
+  fail-closed sebelum dikirim. Tutor memakai `ambitious` hanya pada giliran
+  tenang.
 
 ## Harness
 

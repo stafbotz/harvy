@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Update } from "grammy/types";
-import { CALM_TRIAGE } from "../src/ai/safety.js";
+import {
+  CALM_TRIAGE,
+  URGENT_ACKNOWLEDGEMENT,
+} from "../src/ai/safety.js";
 import type { HarvyContext } from "../src/ai/context.js";
 import type { Conversation } from "../src/ai/conversation.js";
 import { createBot } from "../src/bot/create-bot.js";
@@ -472,6 +475,58 @@ describe("alur adapter Telegram", () => {
     assert.equal(reviewed, 1);
     assert.equal(replySession, null);
     assert.ok(harness.sent.some((text) => text.includes("Aku tetap di sini")));
+  });
+
+  it("telemetry lambat tidak menahan ACK urgent lokal", async () => {
+    let boundaryCalls = 0;
+    let urgentSignalStarted = false;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => {
+          boundaryCalls += 1;
+          return "complete";
+        },
+        understand: async () => understanding(),
+        triageRisk: async () => ({
+          level: "bahaya",
+          alone: false,
+          sensitive: true,
+          summary: "bahaya langsung",
+          certain: true,
+        }),
+        reply: async () => "Aku tetap di sini bersamamu.",
+        reviewReply: async () => true,
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        telemetry: {
+          beginTurn: async () => undefined,
+          event: async () => undefined,
+          noteTurnSignal: async (
+            _ownerId: string,
+            _turnId: string | null,
+            signal: string,
+          ) => {
+            if (signal !== "urgent-acknowledgement") return;
+            urgentSignalStarted = true;
+            await new Promise<void>(() => undefined);
+          },
+          recordTurn: async () => undefined,
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("aku mau menyakiti diri sekarang"),
+    );
+    await waitFor(() =>
+      urgentSignalStarted && harness.sent.includes(URGENT_ACKNOWLEDGEMENT)
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(boundaryCalls, 0);
+    assert.ok(harness.sent.includes(URGENT_ACKNOWLEDGEMENT));
   });
 
   it("menghapus memori biasa lagi bila pemberitahuannya gagal terkirim", async () => {
@@ -1485,14 +1540,27 @@ describe("alur adapter Telegram", () => {
   });
 
   it("menjawab pertanyaan jam lewat clock deterministik tanpa planner", async () => {
+    let boundaryCalls = 0;
+    let understandCalls = 0;
+    let triageCalls = 0;
     let agentCalls = 0;
     let replyCalls = 0;
     let receivedTimeZone = "";
+    const turnSignals: string[] = [];
     const harness = basicHarness(
       {
-        classifyTurnBoundary: async () => "complete",
-        triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        classifyTurnBoundary: async () => {
+          boundaryCalls += 1;
+          return "complete";
+        },
+        triageRisk: async () => {
+          triageCalls += 1;
+          return CALM_TRIAGE;
+        },
+        understand: async () => {
+          understandCalls += 1;
+          return understanding({ intent: "question" });
+        },
         deterministicTimeReply: (timeZone: string) => {
           receivedTimeZone = timeZone;
           return `Sekarang Rabu pukul 01.30 WIT. Zona waktunya ${timeZone}.`;
@@ -1507,16 +1575,36 @@ describe("alur adapter Telegram", () => {
         },
       } as unknown as Conversation,
       {} as TaskService,
-      { profiles: profiles({ timeZone: "Asia/Jayapura" }) },
+      {
+        profiles: profiles({ timeZone: "Asia/Jayapura" }),
+        telemetry: {
+          beginTurn: async () => undefined,
+          event: async () => undefined,
+          noteTurnSignal: async (
+            _ownerId: string,
+            _turnId: string | null,
+            signal: string,
+          ) => {
+            turnSignals.push(signal);
+          },
+          recordTurn: async () => undefined,
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
+      },
     );
 
     await harness.bot.handleUpdate(messageUpdate("harvy sekarang jam berapa"));
+    await waitFor(() => harness.sent.some((text) => text.includes("01.30 WIT")));
     await harness.bot.drainPending();
 
+    assert.equal(boundaryCalls, 0);
+    assert.equal(understandCalls, 0);
+    assert.equal(triageCalls, 0);
     assert.equal(agentCalls, 0);
     assert.equal(replyCalls, 0);
     assert.equal(receivedTimeZone, "Asia/Jayapura");
     assert.ok(harness.sent.some((text) => text.includes("01.30 WIT")));
+    assert.deepEqual(turnSignals, ["deterministic-fast-path"]);
   });
 
   it("mempertahankan kontrak identitas model pada episode aktif", async () => {
