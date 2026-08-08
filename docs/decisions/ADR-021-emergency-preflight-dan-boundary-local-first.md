@@ -8,6 +8,12 @@
 - Supersesi parsial: kewajiban classifier model pada setiap free-text dan
   penghapusan mutlak seluruh sinyal bahaya lokal
 
+> **Supersesi parsial lanjutan 8 Agustus 2026.**
+> [`ADR-022`](ADR-022-selective-safety-routing-dan-privacy-memory.md)
+> menyelesaikan selective triage, `unavailable`, privacy separation,
+> conditional review, pending/ack fast path, dan izin per efek untuk Telegram
+> privat. Port grup dan debounce adaptif tetap belum dimigrasikan.
+
 ## Konteks
 
 Baseline Phase A menunjukkan bahwa boundary adalah satu logical model call pada
@@ -89,11 +95,11 @@ Trade-off dan batas:
   diputus lokal masih memakai model;
 - sinyal emergency lokal dapat mempunyai false negative; fallback model dan
   triase penuh tetap wajib, sedangkan review berjalan sesuai disposition/policy;
-- local preflight ini belum dipasang pada pesan pertama pra-consent, command,
-  callback, WhatsApp, atau group runtime;
+- ADR-022 memasang local preflight pada pesan pertama pra-consent tanpa provider;
+  command, callback, WhatsApp, dan group runtime masih belum memakai jalur ini;
 - debounce belum adaptif; nilai 650 ms dan jendela 4/7/12 detik belum berubah;
-- selective triage, disposition `unavailable`, pemisahan privacy sensitivity,
-  conditional reply review, dan action-level safety belum diimplementasikan.
+- selective routing grup dan platform selain Telegram privat belum
+  diimplementasikan; perubahan privatnya dicatat oleh ADR-022.
 
 ## Verifikasi
 

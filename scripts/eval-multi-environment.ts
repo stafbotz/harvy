@@ -13,7 +13,18 @@
 
 import { Conversation } from "../src/ai/conversation.js";
 import { GroupConversation, type GroupConversationContext } from "../src/ai/group-conversation.js";
-import { uncertainTriage } from "../src/ai/safety.js";
+import {
+  resolveRiskAssessment,
+  safetyOnlyUnderstanding,
+  uncertainTriage,
+} from "../src/ai/safety.js";
+import {
+  hasExplicitImmediateDangerSignal,
+  needsConditionalReplyReview,
+  NO_RISK_HINT,
+  parseRiskHint,
+  withImmediateDangerHint,
+} from "../src/core/safety-policy.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 import type { ConversationTurn } from "../src/domain/history.js";
@@ -261,32 +272,33 @@ async function runMultiEnvironmentEval() {
 
           const scope = privateAgentScope("telegram", `eval-${scenario.envId}`);
 
-          const [understanding, assessed] = await Promise.all([
-            withSmartRetry(
+          const immediateDanger = hasExplicitImmediateDangerSignal(step.message);
+          const understanding = immediateDanger
+            ? safetyOnlyUnderstanding()
+            : await withSmartRetry(
               () => conversation.understand(step.message, harvyContext, { ownerId: scope.userId, timeZone: config.defaultTimezone }),
               `Understand [${scenario.envId} Turn ${step.turnIndex}]`
-            ),
-            withSmartRetry(
+            );
+          const parsedHint = understanding
+            ? parseRiskHint(
+                understanding.riskHint,
+                understanding.safetySensitive,
+              ) ?? NO_RISK_HINT
+            : NO_RISK_HINT;
+          const riskHint = withImmediateDangerHint(parsedHint, immediateDanger);
+          const assessed = understanding === null || riskHint.level !== "none"
+            ? await withSmartRetry(
               () => conversation.triageRisk(step.message, scope.userId, harvyContext),
               `Triage [${scenario.envId} Turn ${step.turnIndex}]`
-            ),
-          ]);
-
-          const triage = assessed ?? uncertainTriage(false);
+            )
+            : undefined;
+          const triage = resolveRiskAssessment(riskHint, assessed);
 
           const replyText = await withSmartRetry(
             () =>
               conversation.reply(
                 step.message,
-                understanding ?? {
-                  intent: "smalltalk",
-                  taskAction: null,
-                  memoryAction: null,
-                  safetySensitive: false,
-                  needsStepByStep: false,
-                  task: null,
-                  memories: [],
-                },
+                understanding ?? safetyOnlyUnderstanding(),
                 harvyContext,
                 "advice",
                 triage,
@@ -296,6 +308,18 @@ async function runMultiEnvironmentEval() {
               ),
             `Reply [${scenario.envId} Turn ${step.turnIndex}]`
           );
+          const reviewPassed = needsConditionalReplyReview(triage.routing)
+            ? await withSmartRetry(
+                () => conversation.reviewReply(
+                  step.message,
+                  replyText,
+                  triage,
+                  scope.userId,
+                  harvyContext,
+                ),
+                `Review [${scenario.envId} Turn ${step.turnIndex}]`,
+              ) === true
+            : true;
 
           const elapsed = Date.now() - stepStart;
           console.log(`     [${scenario.envId.toUpperCase()}] Latensi: ${elapsed}ms | Intent: ${understanding?.intent ?? "fallback"} | Risk: ${triage.level}`);
@@ -311,7 +335,7 @@ async function runMultiEnvironmentEval() {
             risk: triage.level,
             reply: replyText,
             elapsedMs: elapsed,
-            passed: true,
+            passed: understanding !== null && reviewPassed,
           });
 
           // Tambahkan ke riwayat turn untuk menjaga kontinuitas percakapan

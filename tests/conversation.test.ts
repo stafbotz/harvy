@@ -25,6 +25,7 @@ const SMALLTALK = JSON.stringify({
   intent: "smalltalk",
   taskAction: null,
   memoryAction: null,
+  riskHint: { level: "none", category: null, confidence: 1 },
   safetySensitive: false,
   needsStepByStep: false,
   task: null,
@@ -151,6 +152,53 @@ describe("pemahaman pesan", () => {
     assert.equal(manifest?.sourceMemoryCount, 1);
     assert.equal(manifest?.eligibleMemoryCount, 0);
     assert.equal(manifest?.includedTurnCount, 1);
+  });
+
+  it("port grup mempertahankan screening privasi secara eksplisit", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(
+        requests,
+        '{"risiko":"biasa","sendirian":false,"sensitif":true,"ringkasan":""}',
+      ),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const result = await conversation.triageRisk(
+      "cerita pribadi",
+      "group",
+      undefined,
+      undefined,
+      { includePrivacySensitivity: true },
+    );
+
+    assert.equal(result?.sensitive, true);
+    assert.match(requests[0]?.messages[0]?.content ?? "", /"sensitif"/u);
+  });
+
+  it("menilai privasi hanya ketika ada kandidat memori dan bukan sebagai safety-critical", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, '{"sensitive":true}'),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    assert.equal(await conversation.assessMemoryPrivacy([]), false);
+    assert.equal(requests.length, 0);
+    assert.equal(
+      await conversation.assessMemoryPrivacy(
+        [{ kind: "preference", content: "Kesulitan membaca soal panjang" }],
+        "student",
+      ),
+      true,
+    );
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.usage?.purpose, "memory-privacy");
+    assert.equal(requests[0]?.usage?.safetyCritical, false);
+    assert.match(requests[0]?.messages[0]?.content ?? "", /TIDAK menilai bahaya akut/u);
   });
 
   it("membungkus konteks agar tidak terbaca sebagai perintah", async () => {
@@ -369,6 +417,7 @@ describe("balasan percakapan", () => {
         intent: "smalltalk",
         taskAction: null,
         memoryAction: null,
+        riskHint: { level: "none", confidence: 1 },
         safetySensitive: false,
         needsStepByStep: false,
         task: null,
@@ -396,6 +445,7 @@ describe("balasan percakapan", () => {
         intent: "history",
         taskAction: null,
         memoryAction: null,
+        riskHint: { level: "none", confidence: 1 },
         safetySensitive: false,
         needsStepByStep: false,
         task: null,
@@ -612,6 +662,7 @@ describe("balasan percakapan", () => {
         intent: "request",
         taskAction: null,
         memoryAction: null,
+        riskHint: { level: "none", confidence: 1 },
         safetySensitive: false,
         needsStepByStep: false,
         task: null,
@@ -715,6 +766,7 @@ function understanding(intent: Understanding["intent"]): Understanding {
     intent,
     taskAction: null,
     memoryAction: null,
+    riskHint: { level: "none", confidence: 1 },
     safetySensitive: false,
     needsStepByStep: false,
     task: null,

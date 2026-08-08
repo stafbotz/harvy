@@ -341,16 +341,43 @@ describe("pembacaan balasan model", () => {
     assert.deepEqual(understanding?.memories, []);
   });
 
-  it("membaca tanda keselamatan sebagai boolean tegas", () => {
+  it("membaca RiskHint terstruktur dan menerima boolean lama selama migrasi", () => {
     const aman = JSON.stringify({ intent: "feeling", task: null });
-    assert.equal(parseUnderstanding(aman)?.safetySensitive, false);
+    assert.deepEqual(parseUnderstanding(aman)?.riskHint, {
+      level: "none",
+      confidence: 1,
+    });
 
     const berisiko = JSON.stringify({
       intent: "feeling",
-      safetySensitive: true,
+      riskHint: {
+        level: "strong",
+        category: "self_harm",
+        confidence: 0.95,
+      },
       task: null,
     });
+    assert.deepEqual(parseUnderstanding(berisiko)?.riskHint, {
+      level: "strong",
+      category: "self_harm",
+      confidence: 0.95,
+    });
     assert.equal(parseUnderstanding(berisiko)?.safetySensitive, true);
+
+    assert.equal(
+      parseUnderstanding(JSON.stringify({
+        intent: "feeling",
+        riskHint: { level: "strong", confidence: 2 },
+      })),
+      null,
+    );
+    assert.equal(
+      parseUnderstanding(JSON.stringify({
+        intent: "feeling",
+        safetySensitive: true,
+      }))?.riskHint.level,
+      "possible",
+    );
   });
 
   it("menyaring tindakan adaptif asing, duplikat, dan lebih dari tiga", () => {

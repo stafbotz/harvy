@@ -9,7 +9,16 @@
 > **Supersesi parsial 8 Agustus 2026.** [`ADR-021`](ADR-021-emergency-preflight-dan-boundary-local-first.md)
 > menambah emergency preflight lokal berpresisi tinggi sebelum debounce.
 > Keputusan ini hanya mempercepat acknowledgment; triase penuh, review sesuai
-> policy, mutation gate, consent, dan FIFO fail-closed di ADR ini tidak berubah.
+> policy, mutation gate, consent, dan FIFO fail-closed di ADR ini saat itu tidak
+> berubah.
+
+> **Supersesi parsial lanjutan 8 Agustus 2026.**
+> [`ADR-022`](ADR-022-selective-safety-routing-dan-privacy-memory.md) mengganti
+> keputusan 6 dan 12 serta amandemen 1, 6, dan 9 untuk chat privat: outage
+> menjadi disposition `unavailable`, acute triage dan review selektif, privacy
+> memory terpisah, pending closed-set dapat melewati triase umum, dan izin
+> dinilai per efek. Danger, bukti kuat unresolved, consent, delivery rollback,
+> serta port grup lama tetap fail-closed.
 
 ## Konteks
 

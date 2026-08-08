@@ -68,6 +68,7 @@ export type TurnTelemetrySignal =
   | "deterministic-fast-path"
   | "risk-triage-unavailable"
   | "safety-fallback"
+  | "safe-action-blocked"
   | "urgent-acknowledgement";
 
 export interface PercentileSummary {
@@ -90,6 +91,7 @@ export interface TurnPerformanceSummary {
   replyReviewRate: number;
   riskTriageUnavailableRate: number;
   safetyFallbackRate: number;
+  safeActionBlockedRate: number;
   deterministicFastPathRate: number;
   urgentAcknowledgementRate: number;
 }
@@ -107,6 +109,7 @@ type TurnAccumulator = Pick<
   | "deterministicFastPathCount"
   | "riskTriageUnavailableCount"
   | "safetyFallbackCount"
+  | "safeActionBlockedCount"
   | "urgentAcknowledgementCount"
 >;
 
@@ -380,6 +383,9 @@ export class TelemetryService implements UsageObserver {
           break;
         case "safety-fallback":
           accumulator.safetyFallbackCount += 1;
+          break;
+        case "safe-action-blocked":
+          accumulator.safeActionBlockedCount += 1;
           break;
         case "urgent-acknowledgement":
           accumulator.urgentAcknowledgementCount += 1;
@@ -942,6 +948,7 @@ function emptyTurnAccumulator(): TurnAccumulator {
     deterministicFastPathCount: 0,
     riskTriageUnavailableCount: 0,
     safetyFallbackCount: 0,
+    safeActionBlockedCount: 0,
     urgentAcknowledgementCount: 0,
   };
 }
@@ -985,6 +992,7 @@ export function summarizeTurnPerformance(
       (record) => record.riskTriageUnavailableCount > 0,
     ),
     safetyFallbackRate: rate((record) => record.safetyFallbackCount > 0),
+    safeActionBlockedRate: rate((record) => record.safeActionBlockedCount > 0),
     deterministicFastPathRate: rate(
       (record) => record.deterministicFastPathCount > 0,
     ),
@@ -1078,6 +1086,7 @@ function isBillable(context: AiUsageContext, succeeded: boolean): boolean {
     context.purpose === "understanding" ||
     context.purpose === "due-date" ||
     context.purpose === "risk-triage" ||
+    context.purpose === "memory-privacy" ||
     context.purpose === "reply-review" ||
     context.purpose === "summary" ||
     context.purpose === "insight" ||

@@ -45,7 +45,14 @@ import {
   AgentRunConflictError,
   type AgentRunService,
 } from "../core/agent-run-service.js";
-import { needsReplyReview } from "../core/safety-policy.js";
+import {
+  hasExplicitImmediateDangerSignal,
+  needsConditionalReplyReview,
+  NO_RISK_HINT,
+  parseRiskHint,
+  safetyEffectPermissions,
+  withImmediateDangerHint,
+} from "../core/safety-policy.js";
 import {
   ActiveSessionError,
   type SessionService,
@@ -68,8 +75,10 @@ import {
 import {
   safeFallbackReply,
   URGENT_ACKNOWLEDGEMENT,
-  uncertainTriage,
+  resolveRiskAssessment,
   withEmergencyAvailability,
+  safetyOnlyUnderstanding,
+  type RiskAssessment,
   type RiskTriage,
 } from "../ai/safety.js";
 import type { MemoryItem } from "../domain/memory.js";
@@ -134,6 +143,10 @@ import {
   welcomeBack,
 } from "./onboarding.js";
 import { PendingStore, type Pending } from "./pending.js";
+import {
+  deterministicQuickChatReply,
+  isNarrowPendingAnswer,
+} from "./fast-path-policy.js";
 import {
   emptyListNote,
   notUnderstoodNote,
@@ -906,6 +919,11 @@ export function createBot(
   async function assessPreConsentRisk(
     text: string,
   ): Promise<"danger" | "calm" | "unknown"> {
+    const immediateDanger = hasExplicitImmediateDangerSignal(text);
+    // Pengguna belum memberi consent dan pesan pertama ini tidak melewati
+    // MessageBatcher. Sinyal lokal yang sangat sempit harus menampilkan copy
+    // safety segera, tanpa menunggu atau mengirim teks ke provider.
+    if (immediateDanger) return "danger";
     try {
       const triage = await conversation.triageRisk(text);
       if (!triage) return "unknown";
@@ -921,9 +939,10 @@ export function createBot(
   }
 
   /**
-   * Setiap pesan bebas dibaca model lebih dulu. Tugas hanya dicatat ketika
-   * maksudnya memang mencatat pekerjaan; selebihnya Harvy menjawab sebagai
-   * teman bicara dan hanya *menawarkan* pencatatan.
+   * Di luar jalur deterministik yang sempit, pesan bebas masuk compiler lebih
+   * dulu. Tugas hanya dicatat ketika maksudnya memang mencatat pekerjaan;
+   * selebihnya Harvy menjawab sebagai teman bicara dan hanya *menawarkan*
+   * pencatatan.
    */
   async function handleFreeText(
     ctx: Context,
@@ -975,67 +994,84 @@ export function createBot(
       return;
     }
 
-    let understanding: Understanding | null;
-    let triage: RiskTriage;
-    let userAlreadyAppended = false;
-    let pendingRisk: RiskTriage | null | undefined;
-
-    // Jawaban formulir sempit tidak perlu melewati ekstraksi intent umum.
-    // Triase tetap berjalan lebih dulu; bila gagal atau berisiko, pending tidak
-    // dikonsumsi dan pesan masuk jalur percakapan keselamatan.
     // `drainPending()` pada shutdown/test dapat mem-flush bubble sebelum timer
-    // klasifikasi sempat memuat checkpoint dari disk. Boundary handler tetap
-    // menjadi authority terakhir agar restart tidak bergantung pada timer UX.
+    // klasifikasi sempat memuat checkpoint dari disk. Handler tetap authority
+    // terakhir agar restart tidak bergantung pada timer UX.
     const restoredAtStart = await restoreAgentPending(ownerId);
-    const waitingAtStart = restoredAtStart && pendingAnswerIsEligible(
+    const pendingAtStart = restoredAtStart ?? pending.peek(ownerId);
+    const waitingAtStart = pendingAtStart && pendingAnswerIsEligible(
       firstIngressUpdateId,
-      restoredAtStart,
+      pendingAtStart,
     )
-      ? restoredAtStart
+      ? pendingAtStart
       : null;
-    if (waitingAtStart) {
-      pendingRisk = await conversation
+    const immediateDanger = hasExplicitImmediateDangerSignal(text);
+
+    // Nilai formulir yang closed-set melewati compiler dan triase umum. Sinyal
+    // darurat lokal tetap diperiksa lebih dulu dan membuat jalur ini gagal
+    // tertutup ke pipeline safety penuh.
+    if (
+      waitingAtStart &&
+      !immediateDanger &&
+      isNarrowPendingAnswer(waitingAtStart, text)
+    ) {
+      await noteTurnSignal(ownerId, "deterministic-fast-path");
+      await history.append(ownerId, "user", text);
+      if (!(await runtimeIsCurrent(runtime))) return;
+      if (
+        await handlePendingText(
+          ctx,
+          ownerId,
+          waitingAtStart,
+          text,
+          timeZone,
+          context,
+          runtime,
+          profile.stylePreference,
+        )
+      ) {
+        void history.compact(ownerId);
+        return;
+      }
+    }
+
+    const quickReply =
+      !waitingAtStart &&
+      !activeSession &&
+      context.turns.length === 0 &&
+      !context.summary
+        ? deterministicQuickChatReply(text)
+        : null;
+    if (quickReply) {
+      await noteTurnSignal(ownerId, "deterministic-fast-path");
+      await history.append(ownerId, "user", text);
+      if (!(await runtimeIsCurrent(runtime))) return;
+      await ctx.reply(quickReply);
+      await history.append(ownerId, "harvy", quickReply);
+      void history.compact(ownerId);
+      return;
+    }
+
+    let understanding: Understanding | null;
+    let triage: RiskAssessment;
+    let userAlreadyAppended = false;
+    const requestRiskTriage = (): Promise<RiskTriage | null> =>
+      conversation
         .triageRisk(text, ownerId, context, runtime.signal)
         .catch((error: unknown) => {
           logger.error(
-            "pending_answer_triage_failed",
-            "Triase keselamatan untuk jawaban tertunda gagal.",
+            "risk_triage_failed",
+            "Triase keselamatan gagal.",
             error,
           );
           return null;
         });
-      if (!(await runtimeIsCurrent(runtime))) {
-        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
-        return;
-      }
-      if (
-        pendingRisk?.certain &&
-        pendingRisk.level === "biasa"
-      ) {
-        await history.append(ownerId, "user", text);
-        userAlreadyAppended = true;
-        if (
-          await handlePendingText(
-            ctx,
-            ownerId,
-            waitingAtStart,
-            text,
-            timeZone,
-            context,
-            runtime,
-            profile.stylePreference,
-          )
-        ) {
-          void history.compact(ownerId);
-          return;
-        }
-      }
-    }
-
-    // Kedua hasil ditangkap terpisah. Batas pemakaian boleh menolak ekstraksi,
-    // tetapi tidak boleh membuang hasil triase yang memang selalu dibebaskan.
-    const [readResult, risk] = await Promise.all([
-      conversation
+    // Bahaya eksplisit tidak menunggu compiler. Pesan lain baru membayar
+    // triase setelah RiskHint compiler menyatakan possible/strong.
+    const earlyRisk = immediateDanger ? requestRiskTriage() : undefined;
+    const readResult = immediateDanger
+      ? ({ value: safetyOnlyUnderstanding() } as const)
+      : await conversation
         .understand(text, context, {
           ...runtime,
           ownerId,
@@ -1045,24 +1081,35 @@ export function createBot(
         .then(
           (value) => ({ value } as const),
           (error: unknown) => ({ error } as const),
-        ),
-      pendingRisk === undefined
-          ? conversation
-            .triageRisk(text, ownerId, context, runtime.signal)
-            .catch((error: unknown) => {
-              logger.error(
-                "risk_triage_failed",
-                "Triase keselamatan gagal.",
-                error,
-              );
-              return null;
-            })
-        : Promise.resolve(pendingRisk),
-    ]);
+        );
     if (!(await runtimeIsCurrent(runtime))) {
       await telemetry.discardUndelivered?.(ownerId, currentTurnId());
       return;
     }
+
+    understanding = "error" in readResult ? null : readResult.value;
+    const parsedHint = understanding
+      ? parseRiskHint(
+          understanding.riskHint,
+          understanding.safetySensitive,
+        ) ?? NO_RISK_HINT
+      : NO_RISK_HINT;
+    const riskHint = withImmediateDangerHint(parsedHint, immediateDanger);
+    // Bila compiler gagal, tidak adanya RiskHint bukan bukti tenang. Jalankan
+    // triase sebagai fallback; bila itu juga gagal, policy tetap memetakan
+    // keadaan tanpa bukti kuat ke `unavailable` + jalur percakapan biasa.
+    const triageRequired = understanding === null || riskHint.level !== "none";
+    const risk = triageRequired
+      ? await (earlyRisk ?? requestRiskTriage())
+      : undefined;
+    if (!(await runtimeIsCurrent(runtime))) {
+      await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+      return;
+    }
+    if (triageRequired && risk === null) {
+      await noteTurnSignal(ownerId, "risk-triage-unavailable");
+    }
+    triage = resolveRiskAssessment(riskHint, risk);
 
     if ("error" in readResult) {
       logger.error(
@@ -1070,8 +1117,8 @@ export function createBot(
         "Pemahaman pesan gagal.",
         readResult.error,
       );
-      if (!risk || risk.level !== "biasa") {
-        understanding = safetyUnderstanding();
+      if (triage.level !== "biasa") {
+        understanding = safetyOnlyUnderstanding();
       } else {
         if (!userAlreadyAppended) {
           await history.append(ownerId, "user", text);
@@ -1088,30 +1135,8 @@ export function createBot(
         await history.append(ownerId, "harvy", response);
         return;
       }
-    } else {
-      understanding = readResult.value;
-      if (!understanding && risk && risk.level !== "biasa") {
-        understanding = safetyUnderstanding();
-      }
-    }
-
-    // Triase yang gagal tidak boleh terlihat seperti percakapan yang baik-baik
-    // saja ketika ekstraksi masih menemukan sinyal keselamatan.
-    if (risk === null) {
-      await noteTurnSignal(ownerId, "risk-triage-unavailable");
-    }
-    triage =
-      risk ?? uncertainTriage(understanding?.safetySensitive === true);
-    if (understanding?.safetySensitive === true && triage.level === "biasa") {
-      // Dua penilai berjalan independen. Satu suara "biasa" tidak boleh
-      // membatalkan sinyal keselamatan dari penilai lain lalu membuka mutasi.
-      triage = uncertainTriage(true);
-    }
-    if (triage.level !== "biasa" || !triage.certain) {
-      // Sesi, kontrol, dan mutasi tidak boleh membentuk giliran keselamatan.
-      // Ekstraksi tetap berjalan paralel demi latensi, tetapi hasil operasional
-      // itu dibuang sebelum balasan disusun.
-      understanding = safetyUnderstanding();
+    } else if (!understanding && triage.level !== "biasa") {
+      understanding = safetyOnlyUnderstanding();
     }
 
     if (!userAlreadyAppended) {
@@ -1130,9 +1155,13 @@ export function createBot(
         return;
       }
 
-      // Jawaban sempit dari tombol tetap baru diproses setelah triase. Pesan
-      // berisiko di tengah edit waktu/memori harus masuk jalur keselamatan,
-      // bukan dianggap sebagai nilai formulir.
+      const effectPermissions = safetyEffectPermissions(
+        triage.routing,
+        immediateDanger,
+      );
+
+      // Jawaban bebas untuk pending tetap memakai compiler + routing safety.
+      // Hanya closed-set yang sudah keluar lewat fast path di atas.
       const pendingNow = pending.peek(ownerId);
       const waiting = pendingNow && pendingAnswerIsEligible(
         firstIngressUpdateId,
@@ -1141,7 +1170,7 @@ export function createBot(
         ? pendingNow
         : null;
       if (
-        triage.level === "biasa" &&
+        effectPermissions.generalState &&
         waiting &&
         (await handlePendingText(
           ctx,
@@ -1157,17 +1186,25 @@ export function createBot(
         return;
       }
 
-      const mutationsAllowed = triage.certain && triage.level === "biasa";
       // Pertanyaan state-live yang dikenali pagar lokal harus selalu mencapai
       // runtime read-only. Label intent/action model tidak boleh membajaknya ke
       // kontrol memori atau kontrol data sebelum tool authority hidup.
       const requiresLiveState = liveStateRequirement(text) !== null;
       const requiresAgentPlanning = isExplicitPlanningRequest(text);
       const proposedRoute = immediateUnderstandingRoute(understanding, text);
+      const proposedRouteAllowed = proposedRoute.kind === "save-task"
+        ? effectPermissions.ordinaryTask
+        : proposedRoute.kind === "memory-control" ||
+            proposedRoute.kind === "control"
+          ? effectPermissions.explicitControl
+          : effectPermissions.generalState;
+      if (proposedRoute.kind !== "conversation" && !proposedRouteAllowed) {
+        await noteTurnSignal(ownerId, "safe-action-blocked");
+      }
       const route =
-        mutationsAllowed && !requiresLiveState && !requiresAgentPlanning
-        ? proposedRoute
-        : ({ kind: "conversation" } as const);
+        proposedRouteAllowed && !requiresLiveState && !requiresAgentPlanning
+          ? proposedRoute
+          : ({ kind: "conversation" } as const);
 
       if (route.kind === "memory-control") {
         await clearPending(ownerId);
@@ -1181,14 +1218,16 @@ export function createBot(
         return;
       }
 
-      const offeredTask = mutationsAllowed
+      const offeredTask = effectPermissions.generalState
         ? taskToOffer(understanding)
         : null;
       const styleEligible =
+        effectPermissions.generalState &&
         shouldAskStyle(profile) &&
         context.turns.length >= HISTORY_WINDOW &&
         !activeSession;
       const proposedActions =
+        effectPermissions.generalState &&
         !activeSession &&
         route.kind === "conversation" &&
         understanding.memories.length === 0 &&
@@ -1208,6 +1247,16 @@ export function createBot(
         understanding.task?.title.trim() ||
         (proposedActions[0] === "listen" ? "Menyimak cerita ini" : "");
       const plannedActions = actionGoal ? proposedActions : [];
+      const memoryCandidates = effectPermissions.generalState
+        ? understanding.memories
+        : [];
+      // Berjalan bersama generasi balasan; hanya kandidat memori yang membayar
+      // classifier privasi terpisah ini.
+      const memorySensitivity = assessMemorySensitivity(
+        ownerId,
+        memoryCandidates,
+        runtime,
+      );
 
       // Balasan disusun lebih dulu, termasuk untuk pesan yang berisi tugas.
       // Kalimat yang membawa perasaan sekaligus pekerjaan pernah dijawab hanya
@@ -1221,10 +1270,10 @@ export function createBot(
           ? "request"
           : "question";
       try {
-        if (mutationsAllowed && isDirectTimeQuestion(text)) {
+        if (effectPermissions.generalState && isDirectTimeQuestion(text)) {
           reply = conversation.deterministicTimeReply(timeZone);
         } else if (
-          mutationsAllowed &&
+          effectPermissions.generalState &&
           !activeSession &&
           route.kind === "conversation" &&
           (understanding.intent === "question" ||
@@ -1332,7 +1381,7 @@ export function createBot(
               ...runtime,
               ownerId,
               timeZone,
-              session: mutationsAllowed ? engagedSession : null,
+              session: effectPermissions.generalState ? engagedSession : null,
               plannedActionLabels: plannedActions.map(adaptiveActionLabel),
             },
           );
@@ -1352,7 +1401,10 @@ export function createBot(
         );
         debitDeliveredReply = false;
         await telemetry.discardUndelivered?.(ownerId, currentTurnId());
-        if (route.kind !== "save-task") {
+        if (triage.level !== "biasa") {
+          await noteTurnSignal(ownerId, "safety-fallback");
+          reply = safeFallbackReply(triage.level);
+        } else if (route.kind !== "save-task") {
           await ctx.reply(AI_FAILURE_MESSAGE);
           await history.append(ownerId, "harvy", AI_FAILURE_MESSAGE);
           return;
@@ -1366,10 +1418,18 @@ export function createBot(
         return;
       }
 
+      const sensitiveByModel = await memorySensitivity;
+      // Classifier privacy berjalan overlap dengan reply. Cancellation dapat
+      // terjadi selama await itu; jangan menulis lalu mengandalkan rollback
+      // setelah turn sudah stale atau penghapusan data sudah dimulai.
+      if (!(await runtimeIsCurrent(runtime))) {
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        return;
+      }
       const remembered = await storeOrdinaryMemories(
         ownerId,
-        mutationsAllowed ? understanding.memories : [],
-        triage.sensitive,
+        memoryCandidates,
+        sensitiveByModel,
       );
       if (!(await runtimeIsCurrent(runtime))) {
         await rollbackOrdinaryMemories(ownerId, remembered.saved);
@@ -1398,7 +1458,7 @@ export function createBot(
           let deliveredBySession = false;
           if (
             engagedSession &&
-            mutationsAllowed &&
+            effectPermissions.generalState &&
             route.kind === "conversation"
           ) {
             const sessionSignal = authorizedSessionSignal(
@@ -1605,11 +1665,11 @@ export function createBot(
     ownerId: string,
     message: string,
     reply: string,
-    triage: RiskTriage,
+    triage: RiskAssessment,
     context: HarvyContext,
     runtime: ConversationRuntime = {},
   ): Promise<string> {
-    if (!needsReplyReview(triage.level)) return reply;
+    if (!needsConditionalReplyReview(triage.routing)) return reply;
 
     let verdict: boolean | null = null;
     try {
@@ -2263,6 +2323,31 @@ export function createBot(
     await ctx.reply(memoryNoteLines(items), {
       reply_markup: memoryNoteActions(items),
     });
+  }
+
+  async function assessMemorySensitivity(
+    ownerId: string,
+    items: readonly ExtractedMemory[],
+    runtime: ConversationRuntime,
+  ): Promise<boolean> {
+    if (items.length === 0) return false;
+    if (items.some((item) => isSensitiveMemory(item))) return true;
+
+    try {
+      // Null/parse error gagal tertutup ke consent, bukan penyimpanan otomatis.
+      return (await conversation.assessMemoryPrivacy(
+        items,
+        ownerId,
+        runtime.signal,
+      )) ?? true;
+    } catch (error) {
+      logger.error(
+        "memory_privacy_failed",
+        "Penilaian privasi kandidat memori gagal.",
+        error,
+      );
+      return true;
+    }
   }
 
   /**
@@ -3662,22 +3747,6 @@ function sleep(ms: number): Promise<void> {
     const timer = setTimeout(() => resolve(), ms);
     timer.unref?.();
   });
-}
-
-function safetyUnderstanding(): Understanding {
-  return {
-    intent: "feeling",
-    taskAction: null,
-    memoryAction: null,
-    safetySensitive: true,
-    needsStepByStep: false,
-    task: null,
-    memories: [],
-    suggestedActions: [],
-    actionGoal: null,
-    controlAction: null,
-    sessionSignal: null,
-  };
 }
 
 async function dropKeyboardSafely(

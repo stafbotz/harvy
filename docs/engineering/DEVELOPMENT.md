@@ -59,9 +59,12 @@ npx tsx scripts/coba-agent.ts
 Tiga probe ini adalah jalur pemeriksaan model tanpa membuka Telegram dan
 menampilkan balasan mentah model — termasuk jalur sempit
 Ubah tenggat dengan `--due` dan keputusan menyimak bubble dengan `--boundary`.
-`coba-balasan.ts` menjalankan lapisan model (pemahaman dan triase paralel,
-balasan, lalu review) dan menampilkan normalisasi/pemecahan bubble; ia tidak
-menjalankan tombol atau state adapter. `coba-agent.ts` menjalankan root tools,
+`coba-balasan.ts` meniru routing privat ADR-022: emergency lokal langsung ke
+triase, pesan lain menjalankan compiler lalu hanya mentriase RiskHint
+`possible|strong` atau compiler failure, dan review hanya pada danger/support
+yang belum pasti. Ia menampilkan disposition serta normalisasi/pemecahan
+bubble, tetapi tidak menjalankan tombol atau state adapter. `coba-agent.ts`
+menjalankan root tools,
 delegasi paralel, dan agenda besok terhadap executor sintetis/virtual; trace
 yang dicetak hanya capability/status, bukan observation atau credential.
 `--riwayat` menyisipkan giliran contoh sehingga kesinambungan dan pengulangan pembuka ikut

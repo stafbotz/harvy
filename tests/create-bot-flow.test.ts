@@ -6,11 +6,13 @@ import { describe, it } from "node:test";
 import type { Update } from "grammy/types";
 import {
   CALM_TRIAGE,
+  DANGER_FALLBACK_REPLY,
   URGENT_ACKNOWLEDGEMENT,
 } from "../src/ai/safety.js";
 import type { HarvyContext } from "../src/ai/context.js";
 import type { Conversation } from "../src/ai/conversation.js";
 import { createBot } from "../src/bot/create-bot.js";
+import { PRE_CONSENT_SAFETY } from "../src/bot/onboarding.js";
 import type { AppConfig } from "../src/config.js";
 import type { DataControlService } from "../src/core/data-control-service.js";
 import { AgentRunService } from "../src/core/agent-run-service.js";
@@ -169,6 +171,41 @@ describe("alur adapter Telegram", () => {
     );
   });
 
+  it("mengirim safety pre-consent lokal tanpa menunggu provider", async () => {
+    const sent: string[] = [];
+    let triageCalls = 0;
+    const bot = createBot(
+      config(),
+      {} as TaskService,
+      {
+        triageRisk: async () => {
+          triageCalls += 1;
+          await new Promise<void>(() => undefined);
+          return CALM_TRIAGE;
+        },
+      } as unknown as Conversation,
+      {} as MemoryService,
+      {} as HistoryService,
+      { needsOnboarding: async () => true } as unknown as ProfileService,
+      {} as InsightService,
+      {} as SessionService,
+      {} as DataControlService,
+      {
+        beginTurn: async () => undefined,
+        noteTurnSignal: async () => undefined,
+        recordTurn: async () => undefined,
+        drain: async () => undefined,
+      } as unknown as TelemetryService,
+    );
+    installFakeTelegram(bot, sent);
+
+    await bot.handleUpdate(messageUpdate("aku mau menyakiti diri sekarang"));
+    await bot.drainPending();
+
+    assert.equal(triageCalls, 0);
+    assert.ok(sent.includes(PRE_CONSENT_SAFETY));
+  });
+
   it("menahan pesan pengguna consent v5 sampai menyetujui versi 6", async () => {
     const sent: string[] = [];
     let triageCalls = 0;
@@ -254,9 +291,10 @@ describe("alur adapter Telegram", () => {
     assert.equal(accepted, 0);
   });
 
-  it("gagal tertutup ketika triase rusak: meninjau balasan tetapi tidak memutasi", async () => {
+  it("triage unavailable dengan hint lemah tidak memblokir task aman", async () => {
     let creates = 0;
     let reviews = 0;
+    let triageCalls = 0;
     const harness = basicHarness(
       {
         classifyTurnBoundary: async () => "complete",
@@ -265,6 +303,11 @@ describe("alur adapter Telegram", () => {
           taskAction: "save",
           memoryAction: null,
           controlAction: null,
+          riskHint: {
+            level: "possible",
+            category: "acute_distress",
+            confidence: 0.45,
+          },
           safetySensitive: false,
           needsStepByStep: false,
           sessionSignal: null,
@@ -278,17 +321,20 @@ describe("alur adapter Telegram", () => {
           },
           memories: [],
         }),
-        triageRisk: async () => null,
-        reply: async () => "Aku belum bisa menilai keadaanmu dengan pasti.",
+        triageRisk: async () => {
+          triageCalls += 1;
+          return null;
+        },
+        reply: async () => "Oke, aku catat tugasnya.",
         reviewReply: async () => {
           reviews += 1;
           return true;
         },
       } as unknown as Conversation,
       {
-        create: async () => {
+        create: async (input: NewTask) => {
           creates += 1;
-          throw new Error("mutasi tidak boleh terjadi");
+          return taskFrom(input);
         },
       } as unknown as TaskService,
     );
@@ -298,9 +344,237 @@ describe("alur adapter Telegram", () => {
     );
     await harness.bot.drainPending();
 
-    assert.equal(creates, 0);
-    assert.equal(reviews, 1);
-    assert.ok(harness.sent.some((text) => text.includes("belum bisa")));
+    assert.equal(triageCalls, 1);
+    assert.equal(creates, 1);
+    assert.equal(reviews, 0);
+    assert.ok(harness.sent.some((text) => text.includes("aku catat")));
+  });
+
+  it("memakai triage fallback bila compiler gagal tanpa mengarang krisis", async () => {
+    let triageCalls = 0;
+    let reviews = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => {
+          throw new Error("compiler unavailable");
+        },
+        triageRisk: async () => {
+          triageCalls += 1;
+          return null;
+        },
+        reviewReply: async () => {
+          reviews += 1;
+          return true;
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("tolong bantu susun tugas"));
+    await harness.bot.drainPending();
+
+    assert.equal(triageCalls, 1);
+    assert.equal(reviews, 0);
+    assert.ok(
+      harness.sent.some((text) => text.includes("sambungan ke otakku")),
+    );
+  });
+
+  it("support pasti tidak direview dan tetap mengizinkan task eksplisit", async () => {
+    let creates = 0;
+    let reviews = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "task",
+          taskAction: "save",
+          riskHint: {
+            level: "possible",
+            category: "acute_distress",
+            confidence: 0.7,
+          },
+          safetySensitive: true,
+          task: {
+            title: "Kumpulkan matematika",
+            dueAt: null,
+            remindAt: null,
+            importance: 2,
+          },
+        }),
+        triageRisk: async () => ({
+          level: "dukungan",
+          alone: false,
+          sensitive: false,
+          summary: "sedang kewalahan",
+          certain: true,
+        }),
+        reply: async () => "Kedengarannya lagi berat. Tugasnya tetap aku catat.",
+        reviewReply: async () => {
+          reviews += 1;
+          return true;
+        },
+      } as unknown as Conversation,
+      {
+        create: async (input: NewTask) => {
+          creates += 1;
+          return taskFrom(input);
+        },
+      } as unknown as TaskService,
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("aku kewalahan, tolong catat kumpulkan matematika"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(creates, 1);
+    assert.equal(reviews, 0);
+    assert.ok(harness.sent.some((text) => text.includes("lagi berat")));
+  });
+
+  it("support tidak menahan hak ekspor data yang diminta eksplisit", async () => {
+    let exports = 0;
+    let replies = 0;
+    let reviews = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "control",
+          controlAction: "export",
+          riskHint: {
+            level: "possible",
+            category: "acute_distress",
+            confidence: 0.7,
+          },
+        }),
+        triageRisk: async () => ({
+          level: "dukungan",
+          alone: false,
+          sensitive: false,
+          summary: "sedang kewalahan",
+          certain: true,
+        }),
+        reply: async () => {
+          replies += 1;
+          return "tidak boleh dipanggil";
+        },
+        reviewReply: async () => {
+          reviews += 1;
+          return true;
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        dataControls: {
+          export: async () => {
+            exports += 1;
+            return { ownerId: "123" };
+          },
+        } as unknown as DataControlService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("aku lagi kewalahan, ekspor dataku"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(exports, 1);
+    assert.equal(replies, 0);
+    assert.equal(reviews, 0);
+    assert.ok(harness.telegramCalls.some((call) => call.method === "sendDocument"));
+  });
+
+  it("ack dingin memakai fast path tanpa model umum", async () => {
+    let boundary = 0;
+    let understandingCalls = 0;
+    let triageCalls = 0;
+    let replies = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => {
+          boundary += 1;
+          return "complete";
+        },
+        understand: async () => {
+          understandingCalls += 1;
+          return understanding();
+        },
+        triageRisk: async () => {
+          triageCalls += 1;
+          return CALM_TRIAGE;
+        },
+        reply: async () => {
+          replies += 1;
+          return "balasan model";
+        },
+      } as unknown as Conversation,
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("makasih"));
+    await harness.bot.drainPending();
+
+    assert.equal(boundary, 0);
+    assert.equal(understandingCalls, 0);
+    assert.equal(triageCalls, 0);
+    assert.equal(replies, 0);
+    assert.ok(harness.sent.includes("Sama-sama."));
+  });
+
+  it("nilai waktu pending melewati understanding dan triase umum", async () => {
+    let understandingCalls = 0;
+    let triageCalls = 0;
+    let dueDateCalls = 0;
+    let dueUpdates = 0;
+    const dueAt = new Date("2026-08-09T19:00:00+07:00");
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => {
+          understandingCalls += 1;
+          return understanding();
+        },
+        triageRisk: async () => {
+          triageCalls += 1;
+          return CALM_TRIAGE;
+        },
+        understandDueDate: async () => {
+          dueDateCalls += 1;
+          return dueAt;
+        },
+      } as unknown as Conversation,
+      {
+        setDue: async (ownerId: string, taskId: string, date: Date) => {
+          dueUpdates += 1;
+          return {
+            ...taskFrom({
+              ownerId,
+              chatId: "123",
+              title: "Matematika",
+              dueAt: date,
+              remindAt: null,
+              importance: 2,
+            }),
+            id: taskId,
+            dueAt: date.toISOString(),
+          };
+        },
+      } as unknown as TaskService,
+    );
+
+    await harness.bot.handleUpdate(callbackUpdate("edit:task-1", 1));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(messageUpdate("besok jam 7", 2));
+    await harness.bot.drainPending();
+
+    assert.equal(understandingCalls, 0);
+    assert.equal(triageCalls, 0);
+    assert.equal(dueDateCalls, 1);
+    assert.equal(dueUpdates, 1);
+    assert.ok(harness.sent.some((text) => text.includes("udah aku ubah")));
   });
 
   it("mengikat izin memori sensitif ke proposal yang terlihat", async () => {
@@ -356,6 +630,92 @@ describe("alur adapter Telegram", () => {
           ).includes("udah nggak berlaku"),
       ),
     );
+  });
+
+  it("memisahkan privasi memori dari acute-safety routing", async () => {
+    let triageCalls = 0;
+    let privacyCalls = 0;
+    let saved = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memories: [{
+            kind: "preference",
+            content: "Kesulitan membaca soal panjang saat ujian",
+          }],
+        }),
+        triageRisk: async () => {
+          triageCalls += 1;
+          return CALM_TRIAGE;
+        },
+        assessMemoryPrivacy: async () => {
+          privacyCalls += 1;
+          return true;
+        },
+        reply: async () => "Aku paham maksudmu.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          markUsed: async () => undefined,
+          remember: async () => {
+            saved += 1;
+            return null;
+          },
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("aku kesulitan membaca soal panjang saat ujian"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(triageCalls, 0);
+    assert.equal(privacyCalls, 1);
+    assert.equal(saved, 0);
+    assert.ok(harness.sent.some((text) => text.includes("Boleh aku inget")));
+  });
+
+  it("tidak menulis memori bila turn dibatalkan saat classifier privasi berjalan", async () => {
+    const privacyStarted = deferredVoid();
+    const releasePrivacy = deferredVoid();
+    let remembers = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memories: [{ kind: "preference", content: "Suka warna biru" }],
+        }),
+        assessMemoryPrivacy: async () => {
+          privacyStarted.resolve();
+          await releasePrivacy.promise;
+          return false;
+        },
+        reply: async () => "Aku ingat.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          markUsed: async () => undefined,
+          remember: async () => {
+            remembers += 1;
+            return memoryItem("stale-memory", "Suka warna biru");
+          },
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("warna favoritku biru", 1));
+    await privacyStarted.promise;
+    await harness.bot.handleUpdate(commandUpdate("/bantuan", 2));
+    releasePrivacy.resolve();
+    await harness.bot.drainPending();
+
+    assert.equal(remembers, 0);
   });
 
   it("tidak kehilangan bubble yang datang ketika persetujuan sedang ditulis", async () => {
@@ -419,6 +779,7 @@ describe("alur adapter Telegram", () => {
     let reviewed = 0;
     let replySession: unknown = "belum diperiksa";
     let controlCalls = 0;
+    const signals: string[] = [];
     const harness = basicHarness(
       {
         classifyTurnBoundary: async () => "complete",
@@ -426,6 +787,11 @@ describe("alur adapter Telegram", () => {
           intent: "control",
           controlAction: "delete-all",
           sessionSignal: "continue",
+          riskHint: {
+            level: "strong",
+            category: "acute_distress",
+            confidence: 0.95,
+          },
         }),
         triageRisk: async () => ({
           level: "bahaya",
@@ -463,6 +829,19 @@ describe("alur adapter Telegram", () => {
             throw new Error("kontrol tidak boleh berjalan");
           },
         } as unknown as DataControlService,
+        telemetry: {
+          beginTurn: async () => undefined,
+          event: async () => undefined,
+          noteTurnSignal: async (
+            _ownerId: string,
+            _turnId: string | null,
+            signal: string,
+          ) => {
+            signals.push(signal);
+          },
+          recordTurn: async () => undefined,
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
       },
     );
 
@@ -474,11 +853,68 @@ describe("alur adapter Telegram", () => {
     assert.equal(controlCalls, 0);
     assert.equal(reviewed, 1);
     assert.equal(replySession, null);
+    assert.ok(signals.includes("safe-action-blocked"));
     assert.ok(harness.sent.some((text) => text.includes("Aku tetap di sini")));
+  });
+
+  it("mengirim fallback safety deterministik bila reply danger gagal", async () => {
+    const signals: string[] = [];
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "feeling",
+          riskHint: {
+            level: "strong",
+            category: "self_harm",
+            confidence: 0.95,
+          },
+        }),
+        triageRisk: async () => ({
+          level: "bahaya",
+          alone: false,
+          sensitive: false,
+          summary: "risiko dekat",
+          certain: true,
+        }),
+        reply: async () => {
+          throw new Error("provider reply unavailable");
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        telemetry: {
+          beginTurn: async () => undefined,
+          event: async () => undefined,
+          noteTurnSignal: async (
+            _ownerId: string,
+            _turnId: string | null,
+            signal: string,
+          ) => {
+            signals.push(signal);
+          },
+          discardUndelivered: async () => undefined,
+          recordTurn: async () => undefined,
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("aku takut akan menyakiti diri nanti"),
+    );
+    await harness.bot.drainPending();
+
+    assert.ok(signals.includes("safety-fallback"));
+    assert.equal(
+      harness.sent.join("\n\n"),
+      DANGER_FALLBACK_REPLY,
+    );
   });
 
   it("telemetry lambat tidak menahan ACK urgent lokal", async () => {
     let boundaryCalls = 0;
+    let understandingCalls = 0;
     let urgentSignalStarted = false;
     const harness = basicHarness(
       {
@@ -486,7 +922,10 @@ describe("alur adapter Telegram", () => {
           boundaryCalls += 1;
           return "complete";
         },
-        understand: async () => understanding(),
+        understand: async () => {
+          understandingCalls += 1;
+          return understanding();
+        },
         triageRisk: async () => ({
           level: "bahaya",
           alone: false,
@@ -526,6 +965,7 @@ describe("alur adapter Telegram", () => {
     await harness.bot.drainPending();
 
     assert.equal(boundaryCalls, 0);
+    assert.equal(understandingCalls, 0);
     assert.ok(harness.sent.includes(URGENT_ACKNOWLEDGEMENT));
   });
 
@@ -538,6 +978,7 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           memories: [{ kind: "preference", content: "suka warna biru" }],
         }),
+        assessMemoryPrivacy: async () => false,
         reply: async () => "Balasan yang gagal dikirim.",
       } as unknown as Conversation,
       {} as TaskService,
@@ -649,7 +1090,7 @@ describe("alur adapter Telegram", () => {
     assert.ok(harness.sent.includes("Aku masih menyimak."));
   });
 
-  it("menganggap sinyal keselamatan ekstraksi sebagai konflik meski triase berkata biasa", async () => {
+  it("mengarbiter hint kuat yang bertentangan dengan triase biasa", async () => {
     let controlCalls = 0;
     let reviewedTriage: unknown = null;
     const harness = basicHarness(
@@ -658,7 +1099,11 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           intent: "control",
           controlAction: "delete-all",
-          safetySensitive: true,
+          riskHint: {
+            level: "strong",
+            category: "acute_distress",
+            confidence: 0.9,
+          },
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () => "Aku tetap di sini dan membaca pesanmu.",
@@ -683,13 +1128,18 @@ describe("alur adapter Telegram", () => {
     await harness.bot.drainPending();
 
     assert.equal(controlCalls, 0);
-    assert.deepEqual(reviewedTriage, {
-      level: "dukungan",
-      alone: false,
-      sensitive: true,
-      summary: "(penilaian risiko tidak selesai)",
-      certain: false,
-    });
+    assert.equal(
+      (reviewedTriage as { level?: unknown }).level,
+      "dukungan",
+    );
+    assert.equal(
+      (reviewedTriage as { certain?: unknown }).certain,
+      false,
+    );
+    assert.equal(
+      (reviewedTriage as { disposition?: unknown }).disposition,
+      "support",
+    );
     assert.ok(harness.sent.includes("Aku tetap di sini dan membaca pesanmu."));
   });
 
@@ -1197,11 +1647,16 @@ describe("alur adapter Telegram", () => {
     );
 
     let resumed = 0;
+    let answerUnderstandingCalls = 0;
     const restartedRuns = new AgentRunService(new FileAgentRunRepository(file));
     const restarted = basicHarness(
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
+        understand: async () => {
+          answerUnderstandingCalls += 1;
+          return understanding({ intent: "smalltalk" });
+        },
         agent: async (
           request: string,
           mode: string,
@@ -1227,6 +1682,7 @@ describe("alur adapter Telegram", () => {
     await restarted.bot.drainPending();
 
     assert.equal(resumed, 1, JSON.stringify(restarted.sent));
+    assert.equal(answerUnderstandingCalls, 1);
     assert.ok(restarted.sent.some((text) => text.includes("kupakai 30 hari")));
     assert.equal(
       await restartedRuns.loadWaitingInput("telegram", "123"),
@@ -2087,6 +2543,7 @@ function understanding(
     taskAction: null,
     memoryAction: null,
     controlAction: null,
+    riskHint: { level: "none", confidence: 1 },
     safetySensitive: false,
     needsStepByStep: false,
     sessionSignal: null,

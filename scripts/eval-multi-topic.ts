@@ -1,5 +1,15 @@
 import { Conversation } from "../src/ai/conversation.js";
-import { uncertainTriage } from "../src/ai/safety.js";
+import {
+  resolveRiskAssessment,
+  safetyOnlyUnderstanding,
+} from "../src/ai/safety.js";
+import {
+  hasExplicitImmediateDangerSignal,
+  needsConditionalReplyReview,
+  NO_RISK_HINT,
+  parseRiskHint,
+  withImmediateDangerHint,
+} from "../src/core/safety-policy.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 import type { ConversationTurn } from "../src/domain/history.js";
@@ -93,16 +103,24 @@ async function runMultiTopicEval() {
       }));
       const context = { summary: null, turns, memories: [] };
 
-      const [understanding, assessed] = await Promise.all([
-        conversation.understand(testCase.message, context, {
+      const ownerId = `eval-user-${i}`;
+      const immediateDanger = hasExplicitImmediateDangerSignal(testCase.message);
+      const understanding = immediateDanger
+        ? safetyOnlyUnderstanding()
+        : await conversation.understand(testCase.message, context, {
           ownerId: `eval-user-${i}`,
           timeZone: config.defaultTimezone,
           session: null,
-        }),
-        conversation.triageRisk(testCase.message, `eval-user-${i}`, context),
-      ]);
-
-      const triage = assessed ?? uncertainTriage(false);
+        });
+      const parsedHint = understanding
+        ? parseRiskHint(understanding.riskHint, understanding.safetySensitive) ??
+          NO_RISK_HINT
+        : NO_RISK_HINT;
+      const riskHint = withImmediateDangerHint(parsedHint, immediateDanger);
+      const assessed = understanding === null || riskHint.level !== "none"
+        ? await conversation.triageRisk(testCase.message, ownerId, context)
+        : undefined;
+      const triage = resolveRiskAssessment(riskHint, assessed);
 
       if (!understanding) {
         console.log(`   -> WARNING: Model gagal mengurai intent (null understanding).`);
@@ -110,15 +128,7 @@ async function runMultiTopicEval() {
 
       const replyText = await conversation.reply(
         testCase.message,
-        understanding ?? {
-          intent: "smalltalk",
-          taskAction: null,
-          memoryAction: null,
-          safetySensitive: false,
-          needsStepByStep: false,
-          task: null,
-          memories: [],
-        },
+        understanding ?? safetyOnlyUnderstanding(),
         context,
         "advice",
         triage,
@@ -131,10 +141,21 @@ async function runMultiTopicEval() {
         }
       );
 
+      const reviewPassed = needsConditionalReplyReview(triage.routing)
+        ? await conversation.reviewReply(
+            testCase.message,
+            replyText,
+            triage,
+            ownerId,
+            context,
+          ) === true
+        : true;
+
       const elapsed = Date.now() - caseStart;
       const passRisk = !testCase.expectedRisk || triage.level === testCase.expectedRisk;
+      const passed = understanding !== null && passRisk && reviewPassed;
 
-      console.log(`   -> Latensi: ${elapsed}ms | Intent: ${understanding?.intent ?? "fallback"} | Risk: ${triage.level} | Passed: ${passRisk ? "YES" : "NO"}`);
+      console.log(`   -> Latensi: ${elapsed}ms | Intent: ${understanding?.intent ?? "fallback"} | Risk: ${triage.level} | Passed: ${passed ? "YES" : "NO"}`);
       console.log(`   -> Respon Harvy: "${replyText.slice(0, 120)}${replyText.length > 120 ? "..." : ""}"\n`);
 
       results.push({
@@ -147,7 +168,7 @@ async function runMultiTopicEval() {
         replyLength: replyText.length,
         replyPreview: replyText.slice(0, 150),
         elapsedMs: elapsed,
-        passed: passRisk,
+        passed,
       });
     } catch (err: any) {
       console.error(`   -> ERROR: ${err.message}\n`);

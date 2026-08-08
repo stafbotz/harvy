@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { AiClient } from "./ai/client.js";
 import { Conversation } from "./ai/conversation.js";
+import type { HarvyContext } from "./ai/context.js";
 import { GroupConversation } from "./ai/group-conversation.js";
 import { createModelAgentWorker } from "./ai/agent.js";
 import {
@@ -385,6 +386,26 @@ if (whatsapp && groupMemories) {
         currentUsageAttribution()?.turnId ?? null,
       ),
   };
+  const groupSafety = {
+    triageRisk: (
+      message: string,
+      ownerId?: string,
+      context?: HarvyContext,
+    ) => conversation.triageRisk(
+      message,
+      ownerId,
+      context,
+      undefined,
+      { includePrivacySensitivity: true },
+    ),
+    reviewReply: (
+      message: string,
+      reply: string,
+      triage?: Parameters<typeof conversation.reviewReply>[2],
+      ownerId?: string,
+      context?: HarvyContext,
+    ) => conversation.reviewReply(message, reply, triage, ownerId, context),
+  };
   groupTurns = new GroupTurnService(
     groupMemories,
     new GroupConversation(
@@ -393,7 +414,7 @@ if (whatsapp && groupMemories) {
       logger.child("ai.group-conversation"),
       agentHarness,
     ),
-    conversation,
+    groupSafety,
     whatsapp,
     GROUP_NOTICE_VERSION,
     () => new Date(),

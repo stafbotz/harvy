@@ -55,6 +55,7 @@ import {
 } from "./episode-summary.js";
 import {
   CALM_TRIAGE,
+  GROUP_RISK_AND_PRIVACY_TRIAGE_PROMPT,
   insightInput,
   INSIGHT_PROMPT,
   parseInsightDraft,
@@ -71,8 +72,14 @@ import {
 import {
   parseDueDate,
   parseUnderstanding,
+  type ExtractedMemory,
   type Understanding,
 } from "./understand.js";
+import {
+  MEMORY_PRIVACY_PROMPT,
+  memoryPrivacyInput,
+  parseMemoryPrivacy,
+} from "./memory-privacy.js";
 import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
@@ -153,14 +160,17 @@ export const TRIAGE_MAX_TOKENS = 256;
 /**
  * Lebih lapang daripada batas giliran, karena arah kegagalannya jauh lebih
  * mahal. Uji QA 27 Juli 2026 melihat batas 6 detik benar-benar terlampaui pada
- * model uji gratis. Ini berjalan paralel dengan ekstraksi yang batas bawaannya
- * 30 detik, jadi menaikkannya hampir tidak menambah waktu tunggu pengguna.
+ * model uji gratis. Pada jalur emergency lokal ia dapat berjalan tanpa
+ * compiler; pada jalur selektif lain ia dimulai setelah compiler menghasilkan
+ * RiskHint `possible` atau `strong`.
  */
 export const TRIAGE_TIMEOUT_MS = 12_000;
 
 /** Pemeriksaan balasan hanya menghasilkan satu boolean dan satu alasan. */
 const REVIEW_MAX_TOKENS = 256;
 const REVIEW_TIMEOUT_MS = 8_000;
+const MEMORY_PRIVACY_MAX_TOKENS = 128;
+const MEMORY_PRIVACY_TIMEOUT_MS = 8_000;
 const INSIGHT_MAX_TOKENS = 512;
 
 /**
@@ -339,14 +349,16 @@ export class Conversation {
   /**
    * Menilai risiko sebuah pesan tanpa menjawabnya.
    *
-   * Dipanggil paralel dengan `understand`, memakai model termurah yang sama.
-   * Latensinya menjadi yang terlama dari dua, bukan jumlahnya.
+   * Dipanggil hanya setelah RiskHint `possible`/`strong`, ketika compiler gagal,
+   * atau langsung pada emergency lokal. Port grup lama masih memanggilnya pada
+   * semua pesan demi screening konteks privat grup.
    */
   async triageRisk(
     message: string,
     ownerId?: string,
     context: HarvyContext = EMPTY_CONTEXT,
     signal?: AbortSignal,
+    options: { includePrivacySensitivity?: boolean } = {},
   ): Promise<RiskTriage | null> {
     const { context: boundedContext, manifest: contextManifest } =
       compileHarvyContext(
@@ -365,7 +377,12 @@ export class Conversation {
       contextManifest,
       usage: this.usage(ownerId, "cheap", "risk-triage", true),
       messages: [
-        { role: "system", content: RISK_TRIAGE_PROMPT },
+        {
+          role: "system",
+          content: options.includePrivacySensitivity
+            ? GROUP_RISK_AND_PRIVACY_TRIAGE_PROMPT
+            : RISK_TRIAGE_PROMPT,
+        },
         {
           role: "user",
           content: riskTriageInput(message, boundedContext.turns),
@@ -381,6 +398,41 @@ export class Conversation {
       );
     }
     return triage;
+  }
+
+  /**
+   * Menilai sensitivitas hanya ketika compiler sudah membuat kandidat memori.
+   * Kegagalan dikembalikan sebagai `null`; adapter memperlakukannya sensitif
+   * agar gangguan classifier tidak dapat menyimpan data pribadi diam-diam.
+   */
+  async assessMemoryPrivacy(
+    candidates: readonly ExtractedMemory[],
+    ownerId?: string,
+    signal?: AbortSignal,
+  ): Promise<boolean | null> {
+    if (candidates.length === 0) return false;
+    const raw = await this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: MEMORY_PRIVACY_MAX_TOKENS,
+      timeoutMs: MEMORY_PRIVACY_TIMEOUT_MS,
+      json: true,
+      validateResponse: (content) => parseMemoryPrivacy(content) !== null,
+      ...(signal ? { signal } : {}),
+      usage: this.usage(ownerId, "cheap", "memory-privacy"),
+      messages: [
+        { role: "system", content: MEMORY_PRIVACY_PROMPT },
+        { role: "user", content: memoryPrivacyInput(candidates) },
+      ],
+    });
+    const sensitive = parseMemoryPrivacy(raw);
+    if (sensitive === null) {
+      this.logger.warn(
+        "memory_privacy_parse_failed",
+        "Balasan model untuk sensitivitas memori tidak dapat dibaca.",
+      );
+    }
+    return sensitive;
   }
 
   /**
@@ -477,7 +529,6 @@ export class Conversation {
       intent: understanding.intent,
       messageLength: message.length,
       needsStepByStep: understanding.needsStepByStep,
-      safetySensitive: understanding.safetySensitive,
       risk: triage.level,
     });
     const tier =

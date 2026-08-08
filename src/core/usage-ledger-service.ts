@@ -750,6 +750,7 @@ function entitlementDisposition(
     context.purpose === "understanding" ||
     context.purpose === "due-date" ||
     context.purpose === "risk-triage" ||
+    context.purpose === "memory-privacy" ||
     context.purpose === "reply-review" ||
     context.purpose === "summary" ||
     context.purpose === "insight" ||

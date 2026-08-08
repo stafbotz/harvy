@@ -207,6 +207,11 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   untuk ambiguitas, serta emergency acknowledgment sebelum debounce. Pertanyaan
   waktu tanpa episode hangat juga tidak lagi membayar understanding/triage.
   Lihat [`ADR-021`](decisions/ADR-021-emergency-preflight-dan-boundary-local-first.md).
+- [x] Safety routing privat selektif melalui `RiskHint`, disposition
+  `unavailable`, privacy-memory classifier candidate-only, conditional review,
+  pending/ack fast path sempit, serta izin per efek yang mempertahankan kontrol
+  eksplisit atas data sendiri. Lihat
+  [`ADR-022`](decisions/ADR-022-selective-safety-routing-dan-privacy-memory.md).
 - [x] Tombol tindakan cepat untuk selesai, ingatkan, ubah tenggat, dan batalkan.
 - [x] Tombol adaptif menurut keadaan percakapan. Model hanya boleh mengusulkan
   ID tindakan dari daftar tertutup; kode memilih maksimum satu sebelum balasan
@@ -230,7 +235,9 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   environment lama hanya sebagai bootstrap. Sejak ADR-020, free-text Telegram
   juga mempunyai baseline per giliran: korelasi boundary→handler, waktu tunggu
   batch/FIFO/handler/total, model-call rate, safety fallback, serta ringkasan
-  p50/p95 tanpa menyimpan isi. Dashboard agregat dan TTFR terpisah belum ada.
+  p50/p95 tanpa menyimpan isi. ADR-022 menambah purpose privacy-memory sebagai
+  overhead dan `safeActionBlockedRate`. Dashboard agregat dan TTFR terpisah
+  belum ada.
 - [x] Log operasional produksi terpisah dari telemetry: NDJSON terstruktur,
   trace per giliran, allowlist scalar tanpa pesan error bebas, redaksi
   isi/identitas/kredensial, rotasi ukuran+hari, retensi dan batas disk,
@@ -252,12 +259,14 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   tugas, dan menyalakan mode JSON penyedia. Ketiganya sudah ditulis tetapi tidak
   pernah tersambung.
 - [x] Memindahkan penilaian keselamatan ke pemeriksaan tersendiri, sesuai alur
-  teknis di `ADR-003`. Sejak 27 Juli 2026 ia berjalan paralel dengan
-  klasifikasi, bukan di dalamnya.
+  teknis di `ADR-003`. Sejak ADR-022, chat privat hanya memanggil acute triage
+  untuk emergency lokal, RiskHint `possible|strong`, atau compiler failure;
+  port grup masih memakai screening gabungan lama sampai migrasi terpisah.
 - [x] Memberi tahu pengguna bahwa pesannya diproses penyedia model pihak ketiga,
   dan meminta persetujuannya. Dijamin Konstitusi Pasal 3.9. Masuk 26 Juli 2026
   bersama perkenalan kontak pertama. Pesan pertama boleh menjalani satu triase
-  keselamatan sebelum persetujuan, lalu ditahan; pemahaman, personalisasi,
+  keselamatan sebelum persetujuan, lalu ditahan; emergency closed-set memakai
+  copy lokal tanpa provider. Pemahaman, personalisasi,
   analitik, dan pesan berikutnya menunggu tombol persetujuan. Persetujuan kini
   dapat ditarik dari dalam chat tanpa menghapus data. Versi 5 juga menjelaskan
   fan-out 2–3 worker untuk permintaan kompleks yang aman; worker tidak mendapat

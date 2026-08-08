@@ -240,6 +240,7 @@ function normalizeTurnRecord(value: unknown, index: number): TurnTelemetryRecord
     deterministicFastPathCount: count(record.deterministicFastPathCount),
     riskTriageUnavailableCount: count(record.riskTriageUnavailableCount),
     safetyFallbackCount: count(record.safetyFallbackCount),
+    safeActionBlockedCount: count(record.safeActionBlockedCount),
     urgentAcknowledgementCount: count(record.urgentAcknowledgementCount),
   };
 }
@@ -260,7 +261,7 @@ function normalizeUsageRecord(value: unknown, index: number): AiUsageRecord {
   const purpose = oneOf(
     record.purpose,
     [
-      "turn-boundary", "understanding", "due-date", "risk-triage",
+      "turn-boundary", "understanding", "due-date", "risk-triage", "memory-privacy",
       "reply", "reply-review", "summary", "agent", "research", "insight", "session",
       "group-participation", "group-reply",
     ] as const,

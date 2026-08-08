@@ -37,8 +37,9 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   pemilihan memori untuk prompt), `memory-service.ts`, `history-policy.ts`
   (jendela dan ambang pemadatan), `history-service.ts`, `profile-service.ts`
   (`CONSENT_VERSION`, `needsOnboarding`, `shouldAskStyle`),
-  `safety-policy.ts` (`RiskLevel`, sinyal immediate-danger berpresisi tinggi,
-  `needsReplyReview`, `shouldRaiseProfessionalHelp`), `insight-service.ts`
+  `safety-policy.ts` (`RiskHint`, `RiskDisposition`, sinyal immediate-danger,
+  routing selektif, permission per efek, conditional reply review, dan
+  `shouldRaiseProfessionalHelp`), `insight-service.ts`
   (catatan tersembunyi dan
   riwayat giliran berisiko), `action-policy.ts` (allowlist tindakan adaptif),
   `session-policy.ts` (hubungan sesi lunak dan izin sinyal destruktif),
@@ -75,19 +76,23 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   `group-conversation.ts` (planner dan balasan grup), `episode-summary.ts`
   (prompt/parser compaction v2), `context.ts`
   (`HarvyContext`: ringkasan, giliran terakhir, dan
-  memori), `safety.ts` (triase risiko, arahan anti-penolakan, pemeriksaan
-  balasan, dan prompt pemahaman), dan `conversation.ts` (menyatukan pemahaman,
+  memori), `safety.ts` (acute-risk triage, disposition resolution, arahan
+  anti-penolakan, dan pemeriksaan balasan), `memory-privacy.ts` (classifier
+  sensitivitas candidate-only), dan `conversation.ts` (menyatukan pemahaman,
   balasan, peringkasan episode, dan Agent Runtime).
   Pada free-text Telegram privat pasca-consent, pure policy immediate-danger
   berjalan saat ingress sebelum debounce dan hanya dapat mempercepat ACK.
   Sesudah settle, closed set lokal memutus satu bubble yang jelas sebagai
   `complete`/`incomplete`; model `cheap` hanya menjadi fallback
   `complete|open|incomplete|urgent` untuk jalur boundary yang ambigu. Giliran
-  yang sudah utuh menjalankan ekstraksi dan triase risiko secara paralel, lalu
-  memilih tier balasan. Ekstraksi tidak pernah membayar harga model besar;
-  giliran `dukungan`/`bahaya` selalu memakai `efficient` dan diperiksa
-  fail-closed sebelum dikirim. Tutor memakai `ambitious` hanya pada giliran
-  tenang.
+  yang sudah utuh menjalankan compiler `cheap`; hanya RiskHint
+  `possible|strong` atau kegagalan compiler yang memanggil acute triage.
+  Emergency lokal langsung mentriase tanpa compiler. Privacy memory hanya
+  dinilai ketika ada kandidat, dan support pasti tidak rutin direview; danger
+  serta support belum pasti tetap fail-closed. Ekstraksi tidak pernah membayar
+  harga model besar, sementara tutor memakai `ambitious` hanya pada giliran
+  tenang. Port grup masih memakai screening risk+privacy gabungan sampai
+  migrasi terpisah.
 
 ## Harness
 
@@ -142,8 +147,10 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   adaptif bertoken; `phrasing.ts` menyimpan beberapa bentuk untuk tiap kalimat
   tetap Harvy; `messages.ts` memformat keluaran, memecah balasan menjadi bubble,
   serta menyusun keyboard; `understanding-route.ts` memeriksa pasangan
-  intent/action sebelum adapter mengubah data; `pending.ts` menyimpan satu
-  langkah sementara yang sedang menunggu jawaban. Sebagian besar pending tetap
+  intent/action sebelum adapter mengubah data; `fast-path-policy.ts` membatasi
+  acknowledgment dingin dan jawaban pending yang boleh melewati compiler;
+  `pending.ts` menyimpan satu langkah sementara yang sedang menunggu jawaban.
+  Sebagian besar pending tetap
   ephemeral; hanya `agent-input` yang menjadi mirror record durable dan
   dipulihkan di dalam chain owner.
 

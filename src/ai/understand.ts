@@ -5,6 +5,10 @@ import {
   isAdaptiveActionId,
   type AdaptiveActionId,
 } from "../core/action-policy.js";
+import {
+  parseRiskHint,
+  type RiskHint,
+} from "../core/safety-policy.js";
 import type { ConversationIntent } from "./model-policy.js";
 
 /**
@@ -47,6 +51,9 @@ export interface Understanding {
   taskAction: TaskAction | null;
   /** Tindakan eksplisit terhadap memori; fakta baru sendiri bukan tindakan list. */
   memoryAction: MemoryAction | null;
+  /** Sinyal routing compiler; triase tetap menjadi penilai khusus. */
+  riskHint: RiskHint;
+  /** @deprecated Kompatibilitas sementara untuk policy/model test lama. */
   safetySensitive: boolean;
   needsStepByStep: boolean;
   task: ExtractedTask | null;
@@ -164,12 +171,18 @@ export function parseUnderstanding(raw: string): Understanding | null {
     intent === "control" ? readControlAction(payload["controlAction"]) : null;
   const suggestedActions = readAdaptiveActions(payload["suggestedActions"]);
   const actionGoal = readShortText(payload["actionGoal"], 240);
+  const riskHint = parseRiskHint(
+    payload["riskHint"],
+    payload["safetySensitive"] === true,
+  );
+  if (!riskHint) return null;
 
   return {
     intent,
     taskAction,
     memoryAction,
-    safetySensitive: payload["safetySensitive"] === true,
+    riskHint,
+    safetySensitive: riskHint.level !== "none",
     needsStepByStep: payload["needsStepByStep"] === true,
     task,
     memories,

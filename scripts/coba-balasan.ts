@@ -20,9 +20,17 @@
 import { readFileSync } from "node:fs";
 import { Conversation } from "../src/ai/conversation.js";
 import {
-  uncertainTriage,
+  resolveRiskAssessment,
+  safetyOnlyUnderstanding,
   withEmergencyAvailability,
 } from "../src/ai/safety.js";
+import {
+  hasExplicitImmediateDangerSignal,
+  needsConditionalReplyReview,
+  NO_RISK_HINT,
+  parseRiskHint,
+  withImmediateDangerHint,
+} from "../src/core/safety-policy.js";
 import {
   normalizeTelegramText,
   splitReplyBubbles,
@@ -128,26 +136,36 @@ console.log(`Riwayat : ${context.turns.length} giliran contoh`);
 console.log(`Pesan   : ${message}`);
 console.log("");
 
-const [understanding, assessedRisk] = await Promise.all([
-  conversation.understand(message, context, { ownerId: "probe-private" }),
-  conversation.triageRisk(message, "probe-private", context),
-]);
+const immediateDanger = hasExplicitImmediateDangerSignal(message);
+let understanding = immediateDanger
+  ? safetyOnlyUnderstanding()
+  : await conversation.understand(message, context, {
+      ownerId: "probe-private",
+    });
+const parsedHint = understanding
+  ? parseRiskHint(understanding.riskHint, understanding.safetySensitive) ??
+    NO_RISK_HINT
+  : NO_RISK_HINT;
+const riskHint = withImmediateDangerHint(parsedHint, immediateDanger);
+const assessedRisk = understanding === null || riskHint.level !== "none"
+  ? await conversation.triageRisk(message, "probe-private", context)
+  : undefined;
+const triage = resolveRiskAssessment(riskHint, assessedRisk);
 
-if (!understanding) {
+if (!understanding && triage.level === "biasa") {
   console.error(
     "GAGAL DIBACA. Harvy akan minta pesannya ditulis ulang, tanpa membalas.",
   );
   process.exitCode = 1;
 } else {
+  understanding ??= safetyOnlyUnderstanding();
   console.log("--- hasil pembacaan ---");
   console.log(JSON.stringify(understanding, null, 2));
 
-  // Triase dijalankan persis seperti pada jalur sungguhan. Tanpa ini skrip
-  // memeriksa Harvy yang tidak pernah ada: seluruh arahan keselamatan hidup
-  // dari hasil triase, dan probe tanpa triase akan selalu terlihat baik.
-  const triage = assessedRisk ?? uncertainTriage(understanding.safetySensitive);
   console.log("");
-  console.log("--- triase risiko ---");
+  console.log(
+    `--- routing safety: ${assessedRisk === undefined ? "triage dilewati" : "triage dipanggil"} ---`,
+  );
   console.log(JSON.stringify(triage, null, 2));
 
   let reply = await conversation.reply(
@@ -172,7 +190,7 @@ if (!understanding) {
     console.log(`[bubble ${index + 1}] ${bubble}`);
   }
 
-  if (triage.level !== "biasa") {
+  if (needsConditionalReplyReview(triage.routing)) {
     const verdict = await conversation.reviewReply(
       message,
       reply,

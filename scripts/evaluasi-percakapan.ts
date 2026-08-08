@@ -5,7 +5,8 @@
 import { Conversation } from "../src/ai/conversation.js";
 import {
   EMERGENCY_AVAILABILITY_NOTE,
-  uncertainTriage,
+  resolveRiskAssessment,
+  safetyOnlyUnderstanding,
   withEmergencyAvailability,
 } from "../src/ai/safety.js";
 import {
@@ -16,6 +17,14 @@ import {
   authorizedSessionSignal,
   sessionAppliesToMessage,
 } from "../src/core/session-policy.js";
+import {
+  hasExplicitImmediateDangerSignal,
+  needsConditionalReplyReview,
+  NO_RISK_HINT,
+  parseRiskHint,
+  safetyEffectPermissions,
+  withImmediateDangerHint,
+} from "../src/core/safety-policy.js";
 import {
   adaptiveActionLabel,
   normalizeTelegramText,
@@ -84,39 +93,58 @@ async function evaluate(testCase: ConversationEvalCase) {
     sessionAppliesToMessage(testCase.session, testCase.message)
       ? testCase.session
       : null;
-  const [understanding, assessed] = await Promise.all([
-    conversation.understand(testCase.message, context, {
-      ownerId: "evaluation-private",
-      timeZone: config.defaultTimezone,
-      session: candidateSession,
-    }),
-    conversation.triageRisk(testCase.message, "evaluation-private", context),
-  ]);
-  let triage = assessed ?? uncertainTriage(false);
   const failures: string[] = [];
+  const immediateDanger = hasExplicitImmediateDangerSignal(testCase.message);
+  let understanding = immediateDanger
+    ? safetyOnlyUnderstanding()
+    : await conversation.understand(testCase.message, context, {
+        ownerId: "evaluation-private",
+        timeZone: config.defaultTimezone,
+        session: candidateSession,
+      });
+  const parsedHint = understanding
+    ? parseRiskHint(understanding.riskHint, understanding.safetySensitive) ??
+      NO_RISK_HINT
+    : NO_RISK_HINT;
+  const riskHint = withImmediateDangerHint(parsedHint, immediateDanger);
+  const triageRequired = understanding === null || riskHint.level !== "none";
+  const assessed = triageRequired
+    ? await conversation.triageRisk(
+        testCase.message,
+        "evaluation-private",
+        context,
+      )
+    : undefined;
+  const triage = resolveRiskAssessment(riskHint, assessed);
 
   if (!understanding) {
-    return {
-      id: testCase.id,
-      failures: ["understanding tidak sah"],
-      intent: null,
-      risk: triage.level,
-      route: null,
-      buttons: [],
-      reply: null,
-    };
+    failures.push("understanding tidak sah");
+    if (triage.level === "biasa") {
+      return {
+        id: testCase.id,
+        failures,
+        intent: null,
+        risk: triage.level,
+        route: null,
+        buttons: [],
+        reply: null,
+      };
+    }
+    understanding = safetyOnlyUnderstanding();
   }
 
-  if (understanding.safetySensitive && triage.level === "biasa") {
-    triage = uncertainTriage(true);
-  }
-  const mutationsAllowed = triage.certain && triage.level === "biasa";
-  const relevantSession = mutationsAllowed ? candidateSession : null;
+  const permissions = safetyEffectPermissions(triage.routing, immediateDanger);
+  const relevantSession = permissions.generalState ? candidateSession : null;
   const proposedRoute = immediateUnderstandingRoute(
     understanding,
     testCase.message,
   );
-  const route = mutationsAllowed
+  const proposedRouteAllowed = proposedRoute.kind === "save-task"
+    ? permissions.ordinaryTask
+    : proposedRoute.kind === "memory-control" || proposedRoute.kind === "control"
+      ? permissions.explicitControl
+      : permissions.generalState;
+  const route = proposedRouteAllowed
     ? proposedRoute
     : ({ kind: "conversation" } as const);
   if (testCase.expectedIntent && understanding.intent !== testCase.expectedIntent) {
@@ -138,8 +166,11 @@ async function evaluate(testCase: ConversationEvalCase) {
     failures.push("hubungan sesi tidak sesuai");
   }
 
-  const offeredTask = mutationsAllowed ? taskToOffer(understanding) : null;
+  const offeredTask = permissions.generalState
+    ? taskToOffer(understanding)
+    : null;
   const plannedButtons =
+    permissions.generalState &&
     !relevantSession &&
     route.kind === "conversation" &&
     understanding.memories.length === 0 &&
@@ -173,7 +204,7 @@ async function evaluate(testCase: ConversationEvalCase) {
   );
   reply = withEmergencyAvailability(normalizeTelegramText(reply), triage);
 
-  if (triage.level !== "biasa") {
+  if (needsConditionalReplyReview(triage.routing)) {
     const accepted = await conversation.reviewReply(
       testCase.message,
       reply,

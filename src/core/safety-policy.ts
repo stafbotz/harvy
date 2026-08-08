@@ -9,6 +9,223 @@ export type RiskLevel = "biasa" | "dukungan" | "bahaya";
 
 export const RISK_LEVELS: readonly RiskLevel[] = ["biasa", "dukungan", "bahaya"];
 
+/**
+ * Sinyal routing dari compiler percakapan, bukan putusan keselamatan.
+ *
+ * Bentuk ini sengaja tidak memuat sensitivitas memori/privasi. Sebuah cerita
+ * dapat sangat pribadi tanpa menjadi bahaya akut, dan mencampur keduanya
+ * membuat percakapan biasa menerima UX krisis yang tidak proporsional.
+ */
+export type RiskHintLevel = "none" | "possible" | "strong";
+
+export type RiskCategory =
+  | "self_harm"
+  | "violence"
+  | "abuse"
+  | "exploitation"
+  | "acute_distress";
+
+export interface RiskHint {
+  level: RiskHintLevel;
+  category?: RiskCategory;
+  confidence: number;
+}
+
+export const NO_RISK_HINT: RiskHint = Object.freeze({
+  level: "none",
+  confidence: 1,
+});
+
+const RISK_HINT_LEVELS: readonly RiskHintLevel[] = [
+  "none",
+  "possible",
+  "strong",
+];
+const RISK_CATEGORIES: readonly RiskCategory[] = [
+  "self_harm",
+  "violence",
+  "abuse",
+  "exploitation",
+  "acute_distress",
+];
+
+/** Membaca RiskHint model sebagai data tidak tepercaya. */
+export function parseRiskHint(
+  value: unknown,
+  legacySafetySensitive?: boolean,
+): RiskHint | null {
+  // Selama migrasi, checkpoint/test double lama masih dapat mengirim boolean.
+  // Runtime baru selalu diminta mengirim objek terstruktur di atas.
+  if (value === undefined) {
+    return legacySafetySensitive
+      ? { level: "possible", category: "acute_distress", confidence: 0.5 }
+      : NO_RISK_HINT;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const level = typeof record["level"] === "string"
+    ? RISK_HINT_LEVELS.find((candidate) => candidate === record["level"])
+    : undefined;
+  const confidence = record["confidence"];
+  if (
+    !level ||
+    typeof confidence !== "number" ||
+    !Number.isFinite(confidence) ||
+    confidence < 0 ||
+    confidence > 1
+  ) {
+    return null;
+  }
+
+  const rawCategory = record["category"];
+  const category = typeof rawCategory === "string"
+    ? RISK_CATEGORIES.find((candidate) => candidate === rawCategory)
+    : undefined;
+  if (rawCategory !== undefined && rawCategory !== null && !category) {
+    return null;
+  }
+
+  return level === "none" || !category
+    ? { level, confidence }
+    : { level, category, confidence };
+}
+
+/** Sinyal lokal hanya menaikkan routing; ia tidak menetapkan disposition. */
+export function withImmediateDangerHint(
+  hint: RiskHint,
+  immediateDanger: boolean,
+): RiskHint {
+  if (!immediateDanger || hint.level === "strong") return hint;
+  return {
+    level: "strong",
+    category: hint.category ?? "acute_distress",
+    confidence: 1,
+  };
+}
+
+export type RiskDisposition = "calm" | "support" | "danger" | "unavailable";
+
+export interface SafetyRoutingDecision {
+  disposition: RiskDisposition;
+  /** Level efektif untuk prompt/copy Harvy yang sudah ada. */
+  responseLevel: RiskLevel;
+  hintLevel: RiskHintLevel;
+  /** False berarti disagreement atau triage tidak tersedia. */
+  certain: boolean;
+}
+
+/**
+ * Menggabungkan hint compiler dan hasil triase tanpa aturan "satu suara positif
+ * selalu menang". `undefined` berarti triase memang dilewati; `null` berarti
+ * triase diperlukan tetapi tidak tersedia.
+ */
+export function decideSafetyRouting(
+  hint: RiskHint,
+  triageLevel: RiskLevel | null | undefined,
+): SafetyRoutingDecision {
+  if (triageLevel === undefined) {
+    if (hint.level === "none") {
+      return {
+        disposition: "calm",
+        responseLevel: "biasa",
+        hintLevel: hint.level,
+        certain: true,
+      };
+    }
+    // Guard defensif bila pemanggil keliru melewatkan triase yang dibutuhkan.
+    return {
+      disposition: "unavailable",
+      responseLevel: hint.level === "strong" ? "dukungan" : "biasa",
+      hintLevel: hint.level,
+      certain: false,
+    };
+  }
+
+  if (triageLevel === null) {
+    return {
+      disposition: "unavailable",
+      responseLevel: hint.level === "strong" ? "dukungan" : "biasa",
+      hintLevel: hint.level,
+      certain: false,
+    };
+  }
+
+  if (triageLevel === "bahaya") {
+    return {
+      disposition: "danger",
+      responseLevel: "bahaya",
+      hintLevel: hint.level,
+      certain: true,
+    };
+  }
+  if (triageLevel === "dukungan") {
+    return {
+      disposition: "support",
+      responseLevel: "dukungan",
+      hintLevel: hint.level,
+      // Bukti kuat + hasil yang berhenti di support adalah high-consequence
+      // disagreement. Balasan tetap support, tetapi reviewer dan effect guard
+      // harus tetap aktif.
+      certain: hint.level !== "strong",
+    };
+  }
+  if (hint.level === "strong") {
+    // Hint kuat dan triase tenang memerlukan penanganan konservatif; hasil
+    // tenang tidak boleh diam-diam menghapus bukti kuat dari compiler.
+    return {
+      disposition: "support",
+      responseLevel: "dukungan",
+      hintLevel: hint.level,
+      certain: false,
+    };
+  }
+  return {
+    disposition: "calm",
+    responseLevel: "biasa",
+    hintLevel: hint.level,
+    certain: true,
+  };
+}
+
+export interface SafetyEffectPermissions {
+  /** Task/reminder biasa yang diminta eksplisit oleh pengguna. */
+  ordinaryTask: boolean;
+  /** Kontrol eksplisit milik pengguna, termasuk hak akses/ekspor/hapus data. */
+  explicitControl: boolean;
+  /** Memori baru, pending, sesi, tawaran, dan mutasi percakapan implisit lain. */
+  generalState: boolean;
+}
+
+/** Otorisasi per efek; emosi berat tidak menjadi tombol mati global. */
+export function safetyEffectPermissions(
+  decision: SafetyRoutingDecision,
+  immediateDanger = false,
+): SafetyEffectPermissions {
+  const unresolvedStrongEvidence =
+    decision.hintLevel === "strong" && !decision.certain;
+  const explicitLowRiskEffect =
+    !immediateDanger &&
+    decision.responseLevel !== "bahaya" &&
+    !unresolvedStrongEvidence;
+  return {
+    ordinaryTask: explicitLowRiskEffect,
+    explicitControl: explicitLowRiskEffect,
+    generalState:
+      decision.disposition === "calm" && decision.certain,
+  };
+}
+
+/** Support yang pasti biasanya tidak membayar reviewer kedua. */
+export function needsConditionalReplyReview(
+  decision: SafetyRoutingDecision,
+): boolean {
+  if (decision.responseLevel === "bahaya") return true;
+  return decision.responseLevel === "dukungan" && !decision.certain;
+}
+
 export function isRiskLevel(value: unknown): value is RiskLevel {
   return typeof value === "string" && RISK_LEVELS.includes(value as RiskLevel);
 }

@@ -12,6 +12,7 @@ export type AiPurpose =
   | "understanding"
   | "due-date"
   | "risk-triage"
+  | "memory-privacy"
   | "reply"
   | "reply-review"
   | "summary"
@@ -105,6 +106,7 @@ export interface TurnTelemetryRecord {
   deterministicFastPathCount: number;
   riskTriageUnavailableCount: number;
   safetyFallbackCount: number;
+  safeActionBlockedCount: number;
   urgentAcknowledgementCount: number;
 }
 

@@ -20,6 +20,7 @@ const QUESTION: Understanding = {
   taskAction: null,
   memoryAction: null,
   controlAction: null,
+  riskHint: { level: "none", confidence: 1 },
   safetySensitive: false,
   needsStepByStep: false,
   sessionSignal: null,

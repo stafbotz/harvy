@@ -135,11 +135,14 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   tidak kosong. Memori dan ringkasan tetap di dalam `<konteks>`; keduanya memang
   catatan, dan tidak ada bentuk chat yang wajar untuk mereka.
 - **Memori yang dinilai sensitif tidak pernah disimpan tanpa jawaban
-  pengguna.** Jenis `personal` atau triase yang menandai isi sensitif selalu
-  lewat tombol izin bertoken. Karena pengenalan isi dilakukan model dan tidak
-  ada lagi daftar kata lokal, bila ekstraksi **dan** triase sama-sama salah
-  menilai isi sensitif sebagai biasa, jalur otomatis masih dapat terlewati.
-  Ini keterbatasan yang wajib disebut apa adanya, bukan diklaim sudah tertutup.
+  pengguna.** Jenis `personal` atau classifier `memory-privacy` yang menandai
+  kandidat sensitif selalu lewat tombol izin bertoken. Classifier itu hanya
+  dipanggil setelah compiler benar-benar menghasilkan kandidat; parse invalid,
+  timeout, atau error dianggap sensitif. Karena pengenalan isi dilakukan model
+  dan tidak ada daftar kata lokal, bila ekstraksi dan classifier sama-sama
+  salah menilai kandidat sensitif sebagai biasa, jalur otomatis masih dapat
+  terlewati. Ini keterbatasan yang wajib disebut apa adanya, bukan diklaim sudah
+  tertutup.
   Jenis biasa wajib diumumkan berikut jalan keluarnya di pesan yang sama; bila
   pemberitahuan itu gagal terkirim, catatan yang baru ditulis wajib dibatalkan.
 - **Pemberitahuan memori menempel di balasan, bukan menjadi bubble sendiri.**
@@ -158,25 +161,35 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 
 ## Keselamatan
 
-- **Keselamatan adalah pemeriksaan tersendiri, bukan satu field di antara
-  belasan field lain.** Pada pipeline generatif, `Conversation.triageRisk`
-  berjalan **paralel** dengan `understand`, bukan sesudahnya: keduanya memakai
-  model termurah, jadi giliran
-  menunggu yang terlama dari dua, bukan jumlahnya. Triase yang gagal tidak
-  boleh terlihat seperti percakapan yang baik-baik saja — `parseRiskTriage`
-  mengembalikan `null`, dan `understanding.safetySensitive` menjadi jaring
-  terakhirnya. Bila ekstraksi menandai sensitif sementara triase berkata biasa,
-  konflik itu juga naik ke `dukungan` belum pasti. Semua keadaan belum pasti
-  wajib direview dan tidak boleh memutasi tugas, memori, pending, atau sesi.
-  Giliran `dukungan` dan `bahaya` memakai tier `efficient` dan balasannya wajib
-  lewat `reviewReply` sebelum dikirim. Pemeriksa menerima konteks episode,
-  `alone`, dan `certain`; pada triase gagal ia dilarang mengarang bahwa orang
-  tua, guru, keluarga, atau teman pasti aman. Penolakan maupun kegagalan review
-  memakai fallback berbeda untuk `dukungan` dan `bahaya`, sehingga percakapan
-  dukungan tidak menerima copy darurat/112. Tidak ada jalur fail-open.
-  Keselamatan menang atas semua route kontrol dan sesi: pada triase non-biasa
-  atau belum pasti, hasil operasional ekstraksi dibuang dan sesi tidak masuk
-  prompt.
+- **Keselamatan adalah pemeriksaan tersendiri dan dipanggil secara selektif.**
+  Pada chat privat pasca-consent, compiler `cheap` menghasilkan `RiskHint`
+  `none|possible|strong`; hint adalah routing data, bukan disposition. Hint
+  `none` melewati acute triage, sedangkan `possible|strong` memanggil
+  `Conversation.triageRisk`. Emergency lokal langsung masuk lane triage tanpa
+  compiler umum setelah consent; pada pesan pertama pra-consent ia mengirim
+  copy safety lokal tanpa menunggu/provider call. Bila compiler gagal, triage
+  tetap dipanggil karena ketiadaan hint bukan bukti aman.
+- **Outage tidak sama dengan krisis.** Policy privat mempertahankan disposition
+  `calm|support|danger|unavailable`. `possible + calm` kembali normal;
+  `strong + calm` menjadi support belum pasti; triage unavailable tanpa bukti
+  kuat tetap memakai jalur biasa, sedangkan bukti kuat memakai jalur safety
+  konservatif. `strong + support` tetap high-consequence uncertainty. Support
+  pasti biasanya langsung; support belum pasti dan danger wajib lewat
+  `reviewReply`. Kegagalan generation atau review pada jalur safety memakai
+  fallback berbeda untuk support dan danger, sehingga support tidak menerima
+  copy darurat/112.
+- **Keselamatan memberi izin per efek, bukan global mutation switch.**
+  Task/reminder biasa yang diminta eksplisit boleh berjalan pada support pasti
+  atau unavailable tanpa bukti kuat. Kontrol eksplisit atas data pengguna
+  sendiri—list/edit/forget memory, export, delete, dan withdraw consent—memakai
+  izin low-risk yang sama; emotional support tidak boleh mencabut hak Pasal
+  2.5. Kandidat memori baru, pending implisit, sesi, tawaran, dan state
+  percakapan lain hanya boleh berubah pada calm yang pasti. Emergency lokal,
+  danger, dan bukti kuat yang belum terselesaikan tidak boleh memulai efek yang
+  bersaing dengan lane safety. Session context hanya masuk prompt ketika izin
+  general-state terbuka. Penolakan explicit route dicatat content-free sebagai
+  `safe-action-blocked`; tidak ada jalur fail-open untuk efek berbahaya atau
+  tidak relevan.
 - **Mengarahkan ke manusia tidak boleh menjadi cara menolak membantu.**
   Konstitusi v0.3 Pasal 3.7 dan Pasal 5 nomor 15. Ketika triase menandai
   `alone`, arahan wajib melarang pengulangan saran menghubungi orang terdekat
@@ -198,15 +211,17 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 
 - **Kontak pertama berkenalan dulu, dan gerbangnya sebelum `enqueue`.** Pengguna
   yang `consentVersion`-nya belum sama dengan `CONSENT_VERSION` hanya boleh
-  mengirim **pesan pertama** ke satu triase keselamatan; ekstraksi, klasifikasi
-  batas bubble, personalisasi, telemetry berbasis pemilik, dan bubble berikutnya
-  tidak boleh sampai ke model. Gerbang wajib berada di handler `message:text`
+  mengirim **pesan pertama** ke satu triase keselamatan bila emergency policy
+  lokal tidak sudah memilih copy deterministik; ekstraksi, klasifikasi batas
+  bubble, personalisasi, telemetry berbasis pemilik, dan bubble berikutnya tidak
+  boleh sampai ke model. Gerbang wajib berada di handler `message:text`
   sebelum `MessageBatcher.enqueue`, karena batcher memanggil
   `classifyTurnBoundary`. Pesan pertama ditahan `HeldMessageStore` di memori
   proses — tidak pernah ke berkas — lalu diproses sendiri setelah tombolnya
   ditekan; pengguna tidak diminta mengetik ulang. `/start` hanya salah satu
   pintu masuk, bukan syarat. Pengecualian triase pertama disahkan Konstitusi
-  v0.3 Pasal 3.9 dan naskah perkenalan mengatakannya apa adanya. Menghapus
+  v0.3 Pasal 3.9 dan naskah perkenalan mengatakannya apa adanya; emergency
+  lokal justru tidak mengirim teks ke provider. Menghapus
   seluruh memori tidak mereset persetujuan; menarik persetujuan memang
   mengembalikan pesan berikutnya ke gerbang ini tanpa menghapus tugas, memori,
   sesi, atau check-in. Ingress pesan, triase/intro, callback persetujuan, dan
@@ -529,6 +544,8 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   run secara fail-closed dan mengirim notice jujur. Delivery Telegram dan file
   commit belum atomik; crash-window serta block cleanup yang belum durable
   tetap batas eksplisit sampai outbox/receipt/reconciler tersedia.
-- Jawaban pending tidak menjalankan classifier/ekstraksi umum: burst pendek
-  langsung menuju triase lalu parser khusus; triase gagal/berisiko tidak
-  mengonsumsi pending.
+- Jawaban pending dari closed set tanggal/waktu/durasi/pilihan tidak menjalankan
+  compiler atau triase umum setelah emergency preflight negatif; ia langsung
+  menuju parser khusus. Edit memori, konfirmasi destruktif, `agent-input` tanpa
+  schema jawaban terikat, dan bentuk bebas tetap keluar dari fast path. Sinyal
+  emergency tidak pernah dikonsumsi sebagai nilai pending.

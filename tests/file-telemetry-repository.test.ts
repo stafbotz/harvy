@@ -91,6 +91,7 @@ describe("FileTelemetryRepository migration", () => {
         deterministicFastPathCount: 0,
         riskTriageUnavailableCount: 0,
         safetyFallbackCount: 0,
+        safeActionBlockedCount: 0,
         urgentAcknowledgementCount: 0,
       };
       await repository.appendTurn(record);

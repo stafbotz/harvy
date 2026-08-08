@@ -63,10 +63,11 @@ export function isSensitiveKind(kind: MemoryKind): boolean {
  * Satu daftar kata tidak pernah dapat mengejar semua cara orang menceritakan
  * hal yang sama.
  *
- * Sejak 27 Juli 2026 penilaiannya datang dari triase risiko — satu panggilan
- * model termurah yang sudah berjalan paralel dengan ekstraksi, jadi tidak ada
- * panggilan tambahan. `sensitiveByModel` adalah pendapat model itu; jenis
- * `personal` tetap sensitif tanpa perlu ditanya.
+ * Sejak ADR-022, chat privat menilainya lewat classifier privasi khusus hanya
+ * ketika compiler benar-benar menghasilkan kandidat memori. Port grup masih
+ * memperoleh flag kompatibilitas dari screening gabungannya. Dalam kedua
+ * jalur, `sensitiveByModel` adalah pendapat model dan jenis `personal` tetap
+ * sensitif tanpa perlu ditanya.
  */
 export function isSensitiveMemory(
   memory: Pick<MemoryItem, "kind">,

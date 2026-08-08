@@ -152,6 +152,7 @@ function sample(overrides: Partial<Understanding>): Understanding {
     intent: "smalltalk",
     taskAction: null,
     memoryAction: null,
+    riskHint: { level: "none", confidence: 1 },
     safetySensitive: false,
     needsStepByStep: false,
     task: null,

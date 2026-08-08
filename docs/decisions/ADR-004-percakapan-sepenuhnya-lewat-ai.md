@@ -11,6 +11,12 @@
 > model yang murni kini boleh deterministik. Percakapan generatif dan pemahaman
 > pesan yang tidak berada dalam closed set tetap memakai model.
 
+> **Supersesi parsial lanjutan 8 Agustus 2026.**
+> [`ADR-022`](ADR-022-selective-safety-routing-dan-privacy-memory.md) menambah
+> acknowledgment dingin serta jawaban pending closed-set sebagai pengecualian
+> deterministik. Pesan biasa di luar closed set tetap memakai compiler model;
+> acute triage dan privacy-memory classifier dipanggil selektif sesudahnya.
+
 > **Koreksi 26 Juli 2026.** Versi pertama ADR ini menyebut modul `intent.ts`,
 > `natural-language.ts`, dan `time.ts`. Ketiga nama itu tidak ditemukan pada
 > commit mana pun dalam riwayat Git repositori ini. Modul berbasis aturan yang

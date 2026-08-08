@@ -345,6 +345,23 @@ describe("TelemetryService", () => {
     assert.equal(repository.usage[0]?.billable, false);
   });
 
+  it("menganggap classifier privasi memori sebagai overhead", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const telemetry = new TelemetryService(repository, options());
+    const context = usageContext("student", { purpose: "memory-privacy" });
+    await telemetry.beforeRequest(context);
+    await telemetry.afterRequest(
+      context,
+      { inputTokens: 10, outputTokens: 5, totalTokens: 15, estimated: false },
+      { succeeded: true, latencyMs: 2 },
+    );
+
+    const summary = await telemetry.summary("student");
+    assert.equal(summary.totalTokens, 0);
+    assert.equal(summary.capacityUsedTokens, 0);
+    assert.equal(repository.usage[0]?.billable, false);
+  });
+
   it("tetap melewatkan dan mencatat panggilan keselamatan saat cap habis", async () => {
     const repository = new MemoryTelemetryRepository();
     const telemetry = new TelemetryService(repository, options(1));
@@ -567,6 +584,7 @@ describe("TelemetryService", () => {
     await observeModelCall(telemetry, "student", "turn-1", "reply-review", "review-1");
     await telemetry.noteTurnSignal("student", "turn-1", "risk-triage-unavailable");
     await telemetry.noteTurnSignal("student", "turn-1", "safety-fallback");
+    await telemetry.noteTurnSignal("student", "turn-1", "safe-action-blocked");
     await telemetry.recordTurn({
       ownerId: "student",
       turnId: "turn-1",
@@ -608,6 +626,7 @@ describe("TelemetryService", () => {
         deterministicFastPathCount: 0,
         riskTriageUnavailableCount: 1,
         safetyFallbackCount: 1,
+        safeActionBlockedCount: 1,
         urgentAcknowledgementCount: 0,
       },
     );
@@ -669,6 +688,7 @@ describe("TelemetryService", () => {
 
     await telemetry.beginTurn("student", "turn-b");
     await telemetry.noteTurnSignal("student", "turn-b", "deterministic-fast-path");
+    await telemetry.noteTurnSignal("student", "turn-b", "safe-action-blocked");
     for (const [turnId, outcome, totalLatencyMs] of [
       ["turn-b", "completed", 20],
       ["turn-c", "failed", 30],
@@ -700,6 +720,7 @@ describe("TelemetryService", () => {
     assert.equal(summary.riskTriageRate, 0.25);
     assert.equal(summary.replyReviewRate, 0.25);
     assert.equal(summary.deterministicFastPathRate, 0.25);
+    assert.equal(summary.safeActionBlockedRate, 0.25);
   });
 
   it("tidak mencampur accumulator dua turn concurrent milik owner yang sama", async () => {

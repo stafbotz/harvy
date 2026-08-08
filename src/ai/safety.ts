@@ -1,6 +1,14 @@
 import type { ConversationTurn } from "../domain/history.js";
 import { escapePromptText } from "./prompt-data.js";
-import { isRiskLevel, type RiskLevel } from "../core/safety-policy.js";
+import type { Understanding } from "./understand.js";
+import {
+  decideSafetyRouting,
+  isRiskLevel,
+  type RiskDisposition,
+  type RiskHint,
+  type RiskLevel,
+  type SafetyRoutingDecision,
+} from "../core/safety-policy.js";
 
 /**
  * Lapisan keselamatan Harvy: prompt dan pembacaannya.
@@ -10,21 +18,51 @@ import { isRiskLevel, type RiskLevel } from "../core/safety-policy.js";
  * tidak baik-baik saja". Keduanya sama-sama berada di lapisan Harvy, bukan
  * menempel pada satu model — Pasal 3.13.
  *
- * Yang membedakan lapisan ini dari sekadar tambahan prompt: ia berjalan sebagai
- * pemeriksaan tersendiri sebelum percakapan dinilai, dan sekali lagi setelah
- * balasannya disusun. `ADR-003` meminta urutan itu sejak awal.
+ * Yang membedakan lapisan ini dari sekadar tambahan prompt: ia mempunyai
+ * classifier dan reviewer tersendiri. Chat privat memanggil keduanya secara
+ * selektif; port grup masih mempertahankan pemeriksaan luasnya.
  */
 
 /**
- * Triase risiko: satu panggilan model termurah, dijalankan paralel dengan
- * ekstraksi.
- *
- * Paralel, bukan berurutan, supaya keselamatan tidak membuat setiap balasan
- * menunggu dua kali lebih lama. Ia sekaligus menilai kepekaan isi pesan,
- * menggantikan daftar kata yang dulu dipakai untuk itu — satu daftar kata tidak
- * pernah dapat mengejar semua cara orang menceritakan hal yang sama.
+ * Triase risiko: satu panggilan model termurah yang terpisah dari compiler
+ * maksud. Chat privat memanggilnya dari RiskHint, kegagalan compiler, atau
+ * langsung pada emergency lokal. Screening privasi memori berada di pipeline
+ * lain; hanya port grup lama yang masih meminta keduanya sekaligus.
  */
 export const RISK_TRIAGE_PROMPT = [
+  "Kamu menilai acute-safety risk satu pesan. Kamu TIDAK menjawab isinya.",
+  "Kamu juga TIDAK menilai apakah isinya sensitif untuk disimpan; privasi",
+  "memori dinilai oleh pipeline lain hanya ketika ada kandidat memori.",
+  "",
+  "Keluarkan JSON saja:",
+  "{",
+  '  "risiko": "biasa" | "dukungan" | "bahaya",',
+  '  "sendirian": boolean,',
+  '  "ringkasan": "satu kalimat pendek tentang keadaan berisiko"',
+  "}",
+  "",
+  "risiko:",
+  "- biasa: keluhan sehari-hari seperti lelah sekolah, malas, bingung, sedih",
+  "  ringan, kesal sesaat, atau cerita pribadi tanpa bukti bahaya akut.",
+  "- dukungan: tekanan yang jelas lebih berat—putus asa, merasa tidak",
+  "  berharga, tertekan berkepanjangan, diperlakukan buruk, kehilangan, atau",
+  "  kesepian dalam—tetapi belum ada ancaman langsung.",
+  "- bahaya: ancaman nyata dan dekat—niat menyakiti diri/mengakhiri hidup,",
+  "  kekerasan aktif, pelecehan, eksploitasi, atau permintaan tolong mendesak.",
+  "",
+  "sendirian true hanya bila ia menyatakan tidak punya orang aman, tidak",
+  "percaya siapa pun, takut/trauma pada orang, atau merasa benar-benar",
+  "sendirian. Ringkasan dikosongkan bila risikonya biasa.",
+  "",
+  "Contoh:",
+  '- "males banget besok senin" -> biasa',
+  '- "aku suka sama cowok temen gameku" -> biasa (privasi, bukan acute risk)',
+  '- "aku ngerasa nggak berguna dan capek hidup" -> dukungan',
+  '- "aku mau ngakhirin semuanya malam ini" -> bahaya',
+].join("\n");
+
+/** Port grup lama masih membutuhkan sinyal privasi untuk menahan raw context. */
+export const GROUP_RISK_AND_PRIVACY_TRIAGE_PROMPT = [
   "Kamu menilai risiko satu pesan. Kamu TIDAK menjawab isinya.",
   "",
   "Keluarkan JSON saja:",
@@ -118,6 +156,12 @@ export interface RiskTriage {
   certain: boolean;
 }
 
+/** Putusan policy privat setelah hint dan triase direkonsiliasi. */
+export interface RiskAssessment extends RiskTriage {
+  disposition: RiskDisposition;
+  routing: SafetyRoutingDecision;
+}
+
 export const CALM_TRIAGE: RiskTriage = {
   level: "biasa",
   alone: false,
@@ -126,13 +170,63 @@ export const CALM_TRIAGE: RiskTriage = {
   certain: true,
 };
 
+/** Compiler-neutral understanding untuk lane safety yang tidak boleh menunggu. */
+export function safetyOnlyUnderstanding(): Understanding {
+  return {
+    intent: "feeling",
+    taskAction: null,
+    memoryAction: null,
+    riskHint: {
+      level: "strong",
+      category: "acute_distress",
+      confidence: 1,
+    },
+    safetySensitive: true,
+    needsStepByStep: false,
+    task: null,
+    memories: [],
+    suggestedActions: [],
+    actionGoal: null,
+    controlAction: null,
+    sessionSignal: null,
+  };
+}
+
+export function resolveRiskAssessment(
+  hint: RiskHint,
+  triage: RiskTriage | null | undefined,
+): RiskAssessment {
+  const triageLevel = triage === null || triage === undefined
+    ? triage
+    : triage.level;
+  const decided = decideSafetyRouting(hint, triageLevel);
+  const routing = triage && !triage.certain
+    ? { ...decided, certain: false }
+    : decided;
+  const observed = triage ?? CALM_TRIAGE;
+  return {
+    level: routing.responseLevel,
+    alone: routing.responseLevel === "biasa" ? false : observed.alone,
+    // Acute-safety routing tidak lagi menjadi authority privasi pada chat
+    // privat. Field ini dipertahankan untuk port grup lama sampai migrasinya.
+    sensitive: observed.sensitive,
+    summary: triage?.summary ?? "",
+    certain: routing.certain,
+    disposition: routing.disposition,
+    routing,
+  };
+}
+
 export const EMERGENCY_AVAILABILITY_NOTE =
   "Di daerah yang sudah mengoperasikannya, 112 gratis dan tersedia 24 jam; kalau tidak tersambung, gunakan petugas atau jalur darurat setempat yang lain.";
 
 /**
- * Triase pengganti ketika pemeriksaannya sendiri gagal.
+ * Triase pengganti untuk port grup lama ketika pemeriksaannya sendiri gagal.
  *
- * Arahnya sengaja naik, bukan turun. Uji QA 27 Juli 2026 membuktikan
+ * Chat privat tidak memakai fungsi ini sejak ADR-022; ia mempertahankan
+ * disposition `unavailable` dan menimbang bukti sebelumnya. Port grup belum
+ * dimigrasikan karena classifier yang sama masih menjadi pagar retensi
+ * privasinya. Uji QA 27 Juli 2026 membuktikan
  * `triageRisk` benar-benar dapat kehabisan waktu, dan ketika itu terjadi
  * keadaan lama menjatuhkannya ke "biasa" — yang sekaligus mematikan arahan
  * anti-penolakan dan pemeriksaan balasan. Dua jaring pengaman lumpuh bersamaan,

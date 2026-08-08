@@ -4,9 +4,10 @@ import {
   CALM_TRIAGE,
   parseInsightDraft,
   replyReviewInput,
-  uncertainTriage,
+  resolveRiskAssessment,
   parseReplyVerdict,
   parseRiskTriage,
+  RISK_TRIAGE_PROMPT,
   riskTriageInput,
   safetyGuidance,
   DANGER_FALLBACK_REPLY,
@@ -16,8 +17,12 @@ import {
 } from "../src/ai/safety.js";
 import {
   FOLLOW_UP_COOLDOWN_MS,
+  decideSafetyRouting,
   hasExplicitImmediateDangerSignal,
+  needsConditionalReplyReview,
   needsReplyReview,
+  parseRiskHint,
+  safetyEffectPermissions,
   shouldRaiseProfessionalHelp,
   worthRecording,
 } from "../src/core/safety-policy.js";
@@ -83,6 +88,97 @@ describe("sinyal darurat lokal", () => {
 });
 
 describe("triase risiko", () => {
+  it("membaca RiskHint terstruktur tanpa mencampur sensitivitas privasi", () => {
+    assert.deepEqual(
+      parseRiskHint({
+        level: "possible",
+        category: "acute_distress",
+        confidence: 0.6,
+      }),
+      {
+        level: "possible",
+        category: "acute_distress",
+        confidence: 0.6,
+      },
+    );
+    assert.deepEqual(parseRiskHint(undefined, false), {
+      level: "none",
+      confidence: 1,
+    });
+    assert.equal(
+      parseRiskHint({ level: "strong", category: "privacy", confidence: 1 }),
+      null,
+    );
+  });
+
+  it("merutekan triase secara selektif dan proporsional saat unavailable", () => {
+    const none = { level: "none", confidence: 1 } as const;
+    const possible = { level: "possible", confidence: 0.5 } as const;
+    const strong = { level: "strong", confidence: 0.9 } as const;
+
+    assert.deepEqual(decideSafetyRouting(none, undefined), {
+      disposition: "calm",
+      responseLevel: "biasa",
+      hintLevel: "none",
+      certain: true,
+    });
+    assert.equal(decideSafetyRouting(possible, "biasa").disposition, "calm");
+    assert.deepEqual(decideSafetyRouting(possible, null), {
+      disposition: "unavailable",
+      responseLevel: "biasa",
+      hintLevel: "possible",
+      certain: false,
+    });
+    assert.deepEqual(decideSafetyRouting(strong, null), {
+      disposition: "unavailable",
+      responseLevel: "dukungan",
+      hintLevel: "strong",
+      certain: false,
+    });
+    assert.equal(decideSafetyRouting(strong, "biasa").responseLevel, "dukungan");
+    assert.deepEqual(decideSafetyRouting(strong, "dukungan"), {
+      disposition: "support",
+      responseLevel: "dukungan",
+      hintLevel: "strong",
+      certain: false,
+    });
+  });
+
+  it("mereview kondisional dan memberi izin per efek", () => {
+    const support = decideSafetyRouting(
+      { level: "possible", confidence: 0.7 },
+      "dukungan",
+    );
+    assert.equal(needsConditionalReplyReview(support), false);
+    assert.deepEqual(safetyEffectPermissions(support), {
+      ordinaryTask: true,
+      explicitControl: true,
+      generalState: false,
+    });
+
+    const uncertainSupport = resolveRiskAssessment(
+      { level: "possible", confidence: 0.7 },
+      triage({ level: "dukungan", certain: false }),
+    );
+    assert.equal(uncertainSupport.routing.certain, false);
+    assert.equal(needsConditionalReplyReview(uncertainSupport.routing), true);
+    assert.equal(
+      safetyEffectPermissions(uncertainSupport.routing).generalState,
+      false,
+    );
+
+    const danger = decideSafetyRouting(
+      { level: "strong", confidence: 1 },
+      "bahaya",
+    );
+    assert.equal(needsConditionalReplyReview(danger), true);
+    assert.deepEqual(safetyEffectPermissions(danger), {
+      ordinaryTask: false,
+      explicitControl: false,
+      generalState: false,
+    });
+  });
+
   it("membaca tiga tingkat beserta tanda pendampingnya", () => {
     const parsed = parseRiskTriage(
       '{"risiko":"bahaya","sendirian":true,"sensitif":true,"ringkasan":"ingin mengakhiri hidup"}',
@@ -95,6 +191,11 @@ describe("triase risiko", () => {
       summary: "ingin mengakhiri hidup",
       certain: true,
     });
+  });
+
+  it("prompt acute risk tidak lagi merangkap classifier privasi", () => {
+    assert.doesNotMatch(RISK_TRIAGE_PROMPT, /"sensitif"/u);
+    assert.match(RISK_TRIAGE_PROMPT, /pipeline lain/u);
   });
 
   it("menolak tingkat yang tidak dikenal, bukan menebaknya aman", () => {
@@ -160,15 +261,22 @@ describe("arahan keselamatan", () => {
     assert.match(guidance, /apa yang bisa ia lakukan sendirian/i);
   });
 
-  it("menaikkan tingkat ketika triasenya sendiri gagal, bukan menurunkan", () => {
-    const fallback = uncertainTriage(true);
+  it("membedakan outage tanpa bukti kuat dari outage dengan bukti kuat", () => {
+    const weak = resolveRiskAssessment(
+      { level: "possible", confidence: 0.5 },
+      null,
+    );
+    assert.equal(weak.disposition, "unavailable");
+    assert.equal(weak.level, "biasa");
+    assert.equal(needsConditionalReplyReview(weak.routing), false);
 
-    // Uji QA 27 Juli 2026 membuktikan triase benar-benar dapat kehabisan waktu.
-    // Keadaan lama menjatuhkannya ke "biasa", yang sekaligus mematikan arahan
-    // anti-penolakan dan pemeriksaan balasan — dua jaring pengaman lumpuh
-    // bersamaan, tepat pada giliran yang paling tidak boleh salah.
+    const fallback = resolveRiskAssessment(
+      { level: "strong", category: "acute_distress", confidence: 0.9 },
+      null,
+    );
+    assert.equal(fallback.disposition, "unavailable");
     assert.equal(fallback.level, "dukungan");
-    assert.equal(needsReplyReview(fallback.level), true);
+    assert.equal(needsConditionalReplyReview(fallback.routing), true);
 
     const guidance = safetyGuidance(fallback);
     assert.match(guidance, /tidak boleh menolak membantu/i);

@@ -1959,6 +1959,7 @@ function understanding(
     intent: "smalltalk",
     taskAction: null,
     memoryAction: "remember",
+    riskHint: { level: "none", confidence: 1 },
     safetySensitive: false,
     needsStepByStep: false,
     task: null,
