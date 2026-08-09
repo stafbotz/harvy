@@ -4,16 +4,16 @@ Ringkasan ini adalah peta, bukan bootstrap wajib. Buka hanya baris subsystem
 yang terkait task. Keadaan aktual tetap dibuktikan oleh kode dan tes yang
 benar-benar berjalan; jika detail status berbeda, laporkan perbedaannya.
 
-- Baseline kemampuan terakhir: working tree output policy Phase C di atas `7cc5abb`
+- Baseline kemampuan terakhir: working tree context-pressure Phase C di atas `fc6e799`
   (9 Agustus 2026).
 - Bukti baseline: `npm run check` dan `npm run context:check` PASS; `npm test`
-  PASS, 846 test dalam 108 suite, 0 gagal.
+  PASS, 860 test dalam 110 suite, 0 gagal.
 - Arti `Ada`: ada di kode dan lulus bukti yang disebut, bukan otomatis sudah
   terbukti pada kanal nyata.
 
 | Area | Status ringkas | Blocker utama | Diverifikasi | Detail |
 |---|---|---|---|---|
-| Agent Runtime | Planner native, output ceiling per role, reserve final RunBudget, tool/delegasi read-only, serta active AgentRun durable lokal ada | Provider belum live-smoke; compaction tekanan konteks dan RunStore produksi belum ada | 2026-08-09 | [`status/agent-runtime.md`](status/agent-runtime.md) |
+| Agent Runtime | Planner native, context-pressure compaction, typed truncation recovery, output ceiling/reserve final RunBudget, tool/delegasi read-only, serta active AgentRun durable lokal ada | Provider belum live-smoke; RunStore produksi dan kalibrasi estimator belum ada | 2026-08-09 | [`status/agent-runtime.md`](status/agent-runtime.md) |
 | Telegram privat | Percakapan, onboarding, adaptive batching, selective safety route, dan work lane planning ada | Work lane dan banyak perubahan terakhir baru teruji otomatis, belum E2E ulang | 2026-08-09 | [`status/telegram.md`](status/telegram.md) |
 | WhatsApp grup | Fondasi beta, adaptive batching, selective ingress, dan lifecycle guard ada | Perilaku lengkap dan dua nomor nyata belum diuji | 2026-08-09 | [`status/whatsapp.md`](status/whatsapp.md) |
 | Tasks & sessions | Tugas, pengingat, tutoring, sesi, check-in, dan waktu ada | Delivery worker masih punya jendela at-least-once; banyak jalur belum live | 2026-08-06 | [`status/tasks.md`](status/tasks.md) |

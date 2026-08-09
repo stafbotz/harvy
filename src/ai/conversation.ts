@@ -8,12 +8,13 @@ import type { StylePreference } from "../domain/profile.js";
 import type { ActiveSession } from "../domain/session.js";
 import type { AiPurpose } from "../domain/telemetry.js";
 import type { TurnBoundaryState } from "../core/turn-taking-policy.js";
-import type {
-  AiClient,
-  ChatAssistantToolMessage,
-  ChatMessage,
-  ChatRequest,
-  ChatToolChoice,
+import {
+  isTruncatedAiResponse,
+  type AiClient,
+  type ChatAssistantToolMessage,
+  type ChatMessage,
+  type ChatRequest,
+  type ChatToolChoice,
 } from "./client.js";
 import { currentUsageAttribution } from "./usage-attribution.js";
 import { jsonForPrompt } from "./prompt-data.js";
@@ -91,6 +92,7 @@ import {
   type OperationalLogger,
 } from "../observability/operational-logger.js";
 import {
+  AgentRunStaleError,
   DEFAULT_HARVY_AGENT_HARNESS,
   type AgentCapabilityExecutor,
   type AgentHarness,
@@ -124,6 +126,7 @@ import {
 } from "./model-profile.js";
 import type { RunBudgetAccount } from "../core/run-budget.js";
 import type { TierPrice } from "../core/telemetry-service.js";
+import { prepareAgentContext } from "./agent-context-pressure.js";
 
 export interface RoutingConfig {
   mode: "testing" | "production";
@@ -815,6 +818,7 @@ export class Conversation {
       planner: (input, signal, runBudget) =>
         this.planAgent(
           input,
+          context,
           compiled.context,
           compiled.manifest,
           mode,
@@ -841,6 +845,7 @@ export class Conversation {
 
   private async planAgent(
     input: AgentPlannerInput,
+    sourceContext: HarvyContext,
     context: HarvyContext,
     contextManifest: ReturnType<typeof compileHarvyContext>["manifest"],
     mode: AgentMode,
@@ -871,6 +876,10 @@ export class Conversation {
     // riwayat tersimpan ke instruksi worker. Konteks kembali untuk sintesis.
     const plannerContext =
       mode === "orchestrate" && input.step === 0 ? EMPTY_CONTEXT : context;
+    const plannerSourceContext =
+      mode === "orchestrate" && input.step === 0
+        ? EMPTY_CONTEXT
+        : sourceContext;
     let plannerInput: AgentPlannerInput = {
       ...input,
       callableCapabilities: input.callableCapabilities.filter(
@@ -901,12 +910,13 @@ export class Conversation {
       isContextFreeFanout
         ? compileHarvyContext(EMPTY_CONTEXT).manifest
         : contextManifest,
+      plannerSourceContext,
       mode,
       runtime,
       signal,
       isContextFreeFanout,
       isContextFreeFanout,
-      nativeThread.messages,
+      nativeThread,
       runBudget,
       input.step > 0 ? "synthesizer" : "planner",
       forcedToolChoice,
@@ -929,12 +939,13 @@ export class Conversation {
         plannerInput,
         context,
         contextManifest,
+        sourceContext,
         mode,
         runtime,
         signal,
         false,
         false,
-        nativeThread.messages,
+        nativeThread,
         runBudget,
         "synthesizer",
       );
@@ -976,30 +987,19 @@ export class Conversation {
     plannerInput: AgentPlannerInput,
     plannerContext: HarvyContext,
     contextManifest: ReturnType<typeof compileHarvyContext>["manifest"],
+    sourceContext: HarvyContext,
     mode: AgentMode,
     runtime: ConversationRuntime,
     signal: AbortSignal,
     contextFree: boolean,
     suppressFirstMessageClaim: boolean,
-    nativeMessages: readonly ChatMessage[],
+    nativeThread: AgentNativeThread,
     runBudget: RunBudgetAccount,
     role: Extract<ModelRole, "planner" | "synthesizer">,
     toolChoice: ChatToolChoice = "required",
   ): Promise<RequestedAgentDecision> {
     const tier: ModelTier = mode === "orchestrate" ? "ambitious" : "cheap";
-    // Prompt sistem membawa suara/waktu/gaya. Konteks tersimpan berada sekali:
-    // ringkasan/memori sebagai data terbungkus di system prompt, dan
-    // recent turns sebagai pesan chat sungguhan sesuai kontrak reply Harvy.
-    const persona = replyPrompt(runtime.intent ?? null, {
-      context: plannerContext,
-      style: contextFree ? null : runtime.style ?? null,
-      now: this.now(),
-      timeZone: contextFree
-        ? this.defaultTimeZone
-        : runtime.timeZone ?? this.defaultTimeZone,
-      suppressFirstMessageClaim,
-    });
-    const nativeTools = agentNativeTools(plannerInput.callableCapabilities);
+    const profile = resolveModelProfile(tier, this.routing);
     const execution = this.execution(
       tier,
       role,
@@ -1012,37 +1012,151 @@ export class Conversation {
         allowDelegation: mode === "orchestrate" && role === "planner",
       },
     );
-    const assistant = await this.client.completeToolTurn({
-      model: resolveModel(tier, this.routing),
-      temperature: 0.1,
-      maxTokens: execution.maxOutputTokens,
-      execution,
-      signal,
-      runBudget,
-      contextManifest,
-      tools: nativeTools,
-      toolChoice,
-      parallelToolCalls: false,
-      validateToolCalls: (calls) =>
-        parseAgentNativeDecision(
-          calls,
-          plannerInput.callableCapabilities,
-        ) !== null,
-      usage: this.usage(runtime.ownerId, tier, "agent"),
-      messages: [
+    const normalCompiled = {
+      context: plannerContext,
+      manifest: contextManifest,
+    };
+    const buildRequest = (
+      compiled: ReturnType<typeof compileHarvyContext>,
+      nativeMessages: readonly ChatMessage[],
+      plan: ExecutionPlan,
+      recovery: boolean,
+      effectivePlannerInput: AgentPlannerInput,
+    ): ChatRequest => {
+      // Prompt sistem membawa suara/waktu/gaya. Konteks tersimpan berada sekali:
+      // ringkasan/memori sebagai data terbungkus di system prompt, dan recent
+      // turns sebagai pesan chat sungguhan sesuai kontrak reply Harvy.
+      const persona = replyPrompt(runtime.intent ?? null, {
+        context: compiled.context,
+        style: contextFree ? null : runtime.style ?? null,
+        now: this.now(),
+        timeZone: contextFree
+          ? this.defaultTimeZone
+          : runtime.timeZone ?? this.defaultTimeZone,
+        suppressFirstMessageClaim,
+      });
+      const nativeTools = agentNativeTools(
+        effectivePlannerInput.callableCapabilities,
+      );
+      return {
+        model: resolveModel(tier, this.routing),
+        temperature: 0.1,
+        maxTokens: plan.maxOutputTokens,
+        execution: plan,
+        signal,
+        runBudget,
+        contextManifest: compiled.manifest,
+        tools: nativeTools,
+        toolChoice,
+        parallelToolCalls: false,
+        validateToolCalls: (calls) =>
+          parseAgentNativeDecision(
+            calls,
+            effectivePlannerInput.callableCapabilities,
+          ) !== null,
+        usage: this.usage(runtime.ownerId, tier, "agent"),
+        messages: [
+          {
+            role: "system",
+            content: [
+              persona,
+              agentPlannerPrompt(effectivePlannerInput.callableCapabilities),
+              ...(recovery
+                ? [
+                    "Attempt sebelumnya berhenti karena batas output dan fragmennya tidak dipakai. Pulihkan hanya dari state tepercaya di request ini; panggil tepat satu function dengan argumen sesingkat yang tetap lengkap.",
+                  ]
+                : []),
+              "Sisa RunBudget berikut dihitung kode dan hanya informatif; jangan mencoba mengubahnya:",
+              `<run-budget-json>${jsonForPrompt(effectivePlannerInput.budget)}</run-budget-json>`,
+            ].join("\n\n"),
+          },
+          ...recentTurnMessages(compiled.context.turns),
+          ...nativeMessages,
+        ],
+      };
+    };
+    const prepare = (
+      plan: ExecutionPlan,
+      recovery: boolean,
+    ): ChatRequest => {
+      const currentPlannerInput: AgentPlannerInput = {
+        ...plannerInput,
+        budget: runBudget.view(plannerInput.step),
+      };
+      const effectivePlannerInput = recovery
+        ? {
+            ...currentPlannerInput,
+            callableCapabilities:
+              currentPlannerInput.callableCapabilities.filter(
+                (capability) => capability.id !== "agent.delegate.parallel",
+              ),
+          }
+        : currentPlannerInput;
+      const normalRequest = buildRequest(
+        normalCompiled,
+        nativeThread.messages,
+        plan,
+        recovery,
+        effectivePlannerInput,
+      );
+      const prepared = prepareAgentContext({
+        normalRequest,
+        sourceContext,
+        plannerInput: effectivePlannerInput,
+        mode,
+        nativeMessages: nativeThread.messages,
+        profile,
+        compactAtContextRatio: plannerInput.budget.compactAtContextRatio,
+        recovery,
+        rebuild: (compiled, nativeMessages) =>
+          buildRequest(
+            compiled,
+            nativeMessages,
+            plan,
+            recovery,
+            effectivePlannerInput,
+          ),
+      });
+      if (prepared.resetNativeThread) {
+        if (nativeThread.pending) {
+          throw new Error("Transcript agent tidak dapat dipadatkan saat tool masih pending.");
+        }
+        nativeThread.messages = [...prepared.nativeMessages];
+      }
+      return prepared.request;
+    };
+    const completePrepared = (request: ChatRequest) => {
+      if (!request.tools) {
+        throw new Error("Agent request kehilangan native tool schema.");
+      }
+      return this.client.completeToolTurn({
+        ...request,
+        tools: request.tools,
+      });
+    };
+
+    let assistant: ChatAssistantToolMessage;
+    try {
+      assistant = await completePrepared(prepare(execution, false));
+    } catch (error) {
+      if (!isTruncatedAiResponse(error)) throw error;
+      await assertRecoveryFresh(runtime, signal);
+      const recoveryExecution = this.execution(
+        tier,
+        "recovery",
+        "agent",
+        null,
+        45_000,
         {
-          role: "system",
-          content: [
-            persona,
-            agentPlannerPrompt(plannerInput.callableCapabilities),
-            "Sisa RunBudget berikut dihitung kode dan hanya informatif; jangan mencoba mengubahnya:",
-            `<run-budget-json>${jsonForPrompt(plannerInput.budget)}</run-budget-json>`,
-          ].join("\n\n"),
+          maxSteps: 6,
+          allowTools: true,
+          allowDelegation: false,
+          allowEscalation: true,
+          escalationReason: "output_truncated",
         },
-        ...recentTurnMessages(plannerContext.turns),
-        ...nativeMessages,
-      ],
-    });
+      );
+      assistant = await completePrepared(prepare(recoveryExecution, true));
+    }
     const decision = parseAgentNativeDecision(
       assistant.tool_calls,
       plannerInput.callableCapabilities,
@@ -1134,6 +1248,8 @@ export class Conversation {
       maxSteps?: number;
       allowTools?: boolean;
       allowDelegation?: boolean;
+      allowEscalation?: boolean;
+      escalationReason?: string;
     } = {},
   ): ExecutionPlan {
     return this.executionPolicy.decide({
@@ -1149,6 +1265,12 @@ export class Conversation {
         : {}),
       ...(options.allowDelegation !== undefined
         ? { allowDelegation: options.allowDelegation }
+        : {}),
+      ...(options.allowEscalation !== undefined
+        ? { allowEscalation: options.allowEscalation }
+        : {}),
+      ...(options.escalationReason !== undefined
+        ? { escalationReason: options.escalationReason }
         : {}),
     });
   }
@@ -1299,6 +1421,47 @@ function recentTurnMessages(turns: ConversationTurn[]): ChatMessage[] {
       role: turn.role === "user" ? "user" : "assistant",
       content: turn.text,
     }));
+}
+
+async function assertRecoveryFresh(
+  runtime: ConversationRuntime,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) throw new Error("Lifecycle AgentRun sudah dibatalkan.");
+  if (!runtime.isCurrent) return;
+  try {
+    const current = await raceWithSignal(
+      Promise.resolve().then(() => runtime.isCurrent!()),
+      signal,
+    );
+    if (!current) throw new AgentRunStaleError();
+  } catch (error) {
+    if (signal.aborted) throw error;
+    if (error instanceof AgentRunStaleError) throw error;
+    throw new AgentRunStaleError();
+  }
+}
+
+function raceWithSignal<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error("Lifecycle dibatalkan."));
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => reject(new Error("Lifecycle dibatalkan."));
+    const cleanup = () => signal.removeEventListener("abort", aborted);
+    signal.addEventListener("abort", aborted, { once: true });
+    operation.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 export function parseWaitDecision(raw: string): boolean | null {

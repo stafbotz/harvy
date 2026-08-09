@@ -35,6 +35,33 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-09 — Context pressure dan recovery truncation Agent
+
+Scope: AI conversation/client, agent harness, context manifest, observation
+compaction, tes regresi, dan kontrak Agent Runtime.
+
+Changed: native Agent Runtime kini menjaga continuation lossless di bawah
+threshold profile exact, lalu membangun state provider-neutral dari kernel saat
+input plus output ceiling mendekati context window. Observation besar membawa
+head/tail, ukuran asli, dan artifact reference bila tersedia tanpa merusak JSON.
+Typed `finish_reason=length` boleh mendapat satu recovery tanpa delegasi,
+setelah freshness diperiksa ulang, dalam cumulative RunBudget yang sama;
+partial/incomplete lain tetap tidak dipublikasikan. ADR-029 mengikat keputusan
+dan batasnya.
+
+Verified: tes terarah 76/76 PASS sebelum freshness regression; suite akhir
+terkait recovery/pressure/harness 48/48 PASS; hardening profile/envelope 9/9
+dan audit independen 33/33 PASS. `npm run check` PASS; `npm test` PASS, 860
+test dalam 110 suite, 0 gagal; `npm run context:check` dan `git diff --check`
+PASS.
+
+Not verified: tokenizer/usage dan latency provider nyata, profile/model live,
+Telegram/WhatsApp live, artifact full retrieval, serta finalizer terminal.
+
+Next: perbaiki idempotency `sourceMessageId` dan agregasi update RunMailbox yang
+masih dapat memotong koreksi terbaru; setelah itu lanjutkan batas Phase C atau
+RunStore produksi sesuai urutan deployment.
+
 ## 2026-08-09 — Output policy dan reserve final synthesis
 
 Scope: execution policy, AI conversation/worker/client, RunBudget, agent

@@ -17,6 +17,7 @@ import {
   type RunBudgetPolicy,
   type RunBudgetView,
 } from "../core/run-budget.js";
+import { compactObservationSummary } from "./observation-compaction.js";
 
 export interface AgentRunLimits {
   maxSteps: number;
@@ -38,6 +39,8 @@ export const DEFAULT_AGENT_RUN_LIMITS: AgentRunLimits = Object.freeze({
 
 /** Ruang aman untuk envelope JSON executor di bawah budget observation runtime. */
 export const MAX_AGENT_EXECUTOR_SUMMARY_CHARACTERS = 3_600;
+/** Minimum agar envelope truncation tetap memuat marker, ukuran, dan head/tail. */
+export const MIN_AGENT_OBSERVATION_CHARACTERS = 96;
 export const MAX_AGENT_CHECKPOINT_HORIZON_MS = 10 * 60 * 1_000;
 
 export type AgentPlannerDecision =
@@ -99,6 +102,14 @@ export type AgentPlanner = (
   signal: AbortSignal,
   runBudget: RunBudgetAccount,
 ) => Promise<unknown>;
+
+/** Adapter planner boleh menghentikan work lanjutan saat revision berubah. */
+export class AgentRunStaleError extends Error {
+  constructor() {
+    super("AgentRun tidak lagi memakai revision terkini.");
+    this.name = "AgentRunStaleError";
+  }
+}
 
 export interface AgentExecutorValidationSuccess<T = unknown> {
   ok: true;
@@ -1412,6 +1423,11 @@ function resolvedLimits(overrides?: Partial<AgentRunLimits>): AgentRunLimits {
   if (limits.resumeWindowMs > MAX_AGENT_CHECKPOINT_HORIZON_MS) {
     throw new Error("Horizon resume agent maksimal sepuluh menit.");
   }
+  if (limits.maxObservationCharacters < MIN_AGENT_OBSERVATION_CHARACTERS) {
+    throw new Error(
+      `Batas observation agent minimal ${MIN_AGENT_OBSERVATION_CHARACTERS} karakter.`,
+    );
+  }
   return limits;
 }
 
@@ -1459,26 +1475,9 @@ function appendObservation(
  * pernah dipotong menjadi dokumen rusak; detailnya diganti envelope valid.
  */
 function boundedObservationSummary(value: string, maxCharacters: number): string {
-  const trimmed = value.trim();
-  if (trimmed.length <= maxCharacters) return trimmed;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    const kind = parsed && typeof parsed === "object" && !Array.isArray(parsed) &&
-        typeof (parsed as Record<string, unknown>).kind === "string"
-      ? (parsed as Record<string, unknown>).kind as string
-      : "agent.observation.result";
-    const envelope = JSON.stringify({
-      kind,
-      truncated: true,
-      reason: "executor_summary_exceeded_budget",
-      originalCharacters: trimmed.length,
-    });
-    return envelope.length <= maxCharacters
-      ? envelope
-      : boundedText(trimmed, maxCharacters);
-  } catch {
-    return boundedText(trimmed, maxCharacters);
-  }
+  return compactObservationSummary(value, maxCharacters, {
+    reason: "executor_summary_exceeded_budget",
+  });
 }
 
 function validExecutorResult(value: unknown): value is AgentExecutorResult {
@@ -1685,6 +1684,7 @@ function abortReason(
 ):
   | "cancelled"
   | "deadline"
+  | "stale"
   | "invalid_planner_output"
   | RunBudgetExhaustionReason {
   if (signal?.aborted) return "cancelled";
@@ -1693,6 +1693,7 @@ function abortReason(
   }
   const budgetReason = runBudgetReason(error);
   if (budgetReason) return budgetReason;
+  if (error instanceof AgentRunStaleError) return "stale";
   const overage = runBudget.workOverageReason();
   if (overage) return overage;
   if (runBudget.isTimeExhausted()) return "budget_deadline";

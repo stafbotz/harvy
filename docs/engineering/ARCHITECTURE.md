@@ -154,7 +154,16 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   49.152 token;
   checkpoint v2 menurunkannya kembali dari counter+policy saat resume tanpa
   menghitung jeda pengguna. Planner hanya menerima view angka informatif.
-  Context-pressure compaction belum ada.
+  `agent-context-pressure.ts` mengaktifkan compaction sebelum hard context
+  failure hanya bila profile exact menyediakan context window. Di bawah
+  threshold, continuation tetap lossless; di atasnya, transcript provider
+  diputus dan dibangun ulang sebagai state provider-neutral dari request,
+  context terpilih, observation, input pengguna yang diterima compiler, dan
+  RunBudget view terbaru. Observation besar memakai envelope JSON head/tail
+  dengan ukuran asli dan artifact reference bila tersedia. Respons typed
+  `finish_reason=length` boleh mendapat satu attempt recovery tanpa delegasi,
+  setelah freshness diperiksa ulang dan tetap pada akun RunBudget yang sama;
+  incomplete/content-filter lain berhenti fail-closed.
   Kernel dipakai Agent Runtime read-only; kernel tetap stateless. Checkpoint
   klarifikasi sinkron v1 tetap tersedia, sedangkan permintaan `orchestrate`
   eksplisit privat Telegram memakai active AgentRun v2 di work lane. Snapshot

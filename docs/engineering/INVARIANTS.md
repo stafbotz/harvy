@@ -422,6 +422,26 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   tetap primary-only sampai provider cadangan diuji dengan wire contract yang
   sama. Jangan menurunkannya diam-diam menjadi JSON/text atau mengirim schema
   tool ke fallback yang belum diverifikasi.
+- **Context pressure tidak boleh mengubah instruction menjadi state semu.**
+  Di bawah threshold profile exact, continuation native wajib tetap lossless.
+  Di atas threshold, compiler boleh memutus transcript hanya lewat boundary
+  provider-neutral yang benar-benar dikirim: stable system instructions,
+  request mentah, scope/callable set, seluruh `AgentPlannerInput.userInputs`,
+  observation kernel, dan RunBudget view terbaru tetap berasal dari authority
+  kode. Opaque reasoning tidak boleh diringkas atau dipersistenkan. Bila state
+  wajib masih melampaui hard context window, hentikan lokal sebelum network;
+  jangan memotong input pengguna diam-diam. Observation terpotong wajib
+  menyatakan ukuran asli dan head/tail, mempertahankan JSON valid untuk input
+  structured, serta hanya membawa artifact reference yang memang diberikan
+  executor. Limit runtime wajib cukup besar untuk memuat evidence envelope;
+  konfigurasi yang lebih kecil gagal lokal.
+- **Recovery truncation adalah escalation tertutup dan tetap fresh.** Hanya
+  typed `finish_reason=length` boleh memicu paling banyak satu attempt role
+  `recovery`, dengan fragmen parsial dibuang, delegasi dihapus, budget view
+  disegarkan, dan akun RunBudget yang sama. Freshness wajib diperiksa sebelum
+  recovery; revision basi berhenti sebagai `stale`. Content filter, finish
+  reason hilang/asing, schema invalid, dan incomplete lain tidak boleh diubah
+  menjadi recovery otomatis atau dipublikasikan sebagai final.
 - **RunBudget adalah authority kode per logical AgentRun.** Satu akun yang sama
   wajib dipakai root, physical retry/fallback, executor, dan semua worker;
   planner hanya menerima view angka informatif. Setiap fetch harus mereservasi

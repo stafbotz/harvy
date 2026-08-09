@@ -241,6 +241,28 @@ export class AiError extends Error {
   }
 }
 
+export type AiResponseFailureReason = "truncated" | "incomplete";
+
+/**
+ * Kegagalan terminal response yang sudah mencapai provider. Type terpisah
+ * mencegah lapisan orkestrasi menebak recovery dari copy error atau mencoba
+ * ulang content filter sebagai truncation biasa.
+ */
+export class AiResponseError extends AiError {
+  constructor(
+    readonly reason: AiResponseFailureReason,
+    readonly finishReason: string | null,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AiResponseError";
+  }
+}
+
+export function isTruncatedAiResponse(error: unknown): error is AiResponseError {
+  return error instanceof AiResponseError && error.reason === "truncated";
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_NATIVE_TOOLS = 32;
 const MAX_NATIVE_TOOL_SCHEMA_CHARACTERS = 64_000;
@@ -640,7 +662,7 @@ export class AiClient {
     const budgetReservation = request.runBudget?.reserveModelCall({
       tier: request.execution!.tier,
       budgetClass: request.execution!.budgetClass,
-      inputTokenEstimate: estimateRequestInputTokens(request),
+      inputTokenEstimate: estimateChatRequestInputTokens(request),
       maxOutputTokens: request.maxTokens ?? 800,
     });
     const apiKey = provider.keys.take();
@@ -857,7 +879,7 @@ export class AiClient {
       channel: request.usage.channel ?? inferChannel(request.usage.ownerId),
       model: request.model,
       maxTokens: request.maxTokens ?? 800,
-      inputTokenEstimate: estimateRequestInputTokens(request),
+      inputTokenEstimate: estimateChatRequestInputTokens(request),
     };
   }
 
@@ -888,7 +910,7 @@ export class AiClient {
       environment: this.options.environment ?? "development",
       costCenter: this.options.costCenter ?? "runtime",
       maxOutputTokens: request.maxTokens ?? 800,
-      inputTokenEstimate: estimateRequestInputTokens(request),
+      inputTokenEstimate: estimateChatRequestInputTokens(request),
       safetyCritical: request.usage.safetyCritical,
       startedAt: new Date(startedAt).toISOString(),
       ...(request.execution
@@ -923,7 +945,7 @@ export class AiClient {
             : "none",
       parallelToolCalls: request.parallelToolCalls ?? false,
       maxTokens: request.maxTokens ?? 800,
-      inputTokenEstimate: estimateRequestInputTokens(request),
+      inputTokenEstimate: estimateChatRequestInputTokens(request),
       modelRole: request.execution?.role,
       requestedEffort: request.execution?.requestedEffort,
       effectiveEffort: request.execution?.effectiveEffort,
@@ -1188,7 +1210,7 @@ function readTokenUsage(
 
   // Sebagian endpoint kompatibel OpenAI tidak mengembalikan `usage`. Angka
   // ini hanya untuk pagar biaya kasar dan ditandai sebagai estimasi.
-  const inputEstimate = estimateRequestInputTokens(request);
+  const inputEstimate = estimateChatRequestInputTokens(request);
   const message = (
     payload as {
       choices?: {
@@ -1237,7 +1259,8 @@ function normalizedFinishReason(value: unknown): string | null {
   }
 }
 
-function estimateRequestInputTokens(request: ChatRequest): number {
+/** Estimator provider-neutral yang juga dipakai preflight context pressure. */
+export function estimateChatRequestInputTokens(request: ChatRequest): number {
   const messageCharacters = request.messages.reduce(
     (sum, message) =>
       sum +
@@ -1303,7 +1326,7 @@ function inputTokenCalibrationFields(
   usage: ProviderTokenUsage,
 ): Record<string, number> {
   if (usage.estimated) return {};
-  const estimate = estimateRequestInputTokens(request);
+  const estimate = estimateChatRequestInputTokens(request);
   return {
     inputTokenEstimateErrorTokens: estimate - usage.inputTokens,
     ...(usage.inputTokens > 0
@@ -1363,8 +1386,7 @@ function responseOutcomeForError(
   error: unknown,
 ): ProviderAttemptFinish["responseOutcome"] {
   if (!(error instanceof AiError)) return "empty";
-  if (error.message.includes("terpotong")) return "truncated";
-  if (error.message.includes("tidak lengkap atau ditolak")) return "incomplete";
+  if (error instanceof AiResponseError) return error.reason;
   return "empty";
 }
 
@@ -1466,7 +1488,9 @@ function readCompletion(
   // penyebabnya tidak terlihat sama sekali. Model penalaran menghabiskan jatah
   // token untuk berpikir, lalu jawabannya terpenggal di tengah.
   if (finishReason === "length") {
-    throw new AiError(
+    throw new AiResponseError(
+      "truncated",
+      finishReason,
       "Balasan model terpotong karena batas token (finish_reason=length). " +
         "Naikkan maxTokens untuk permintaan ini.",
     );
@@ -1477,7 +1501,9 @@ function readCompletion(
     finishReason !== "tool_calls"
   ) {
     const reason = finishReason ?? "missing";
-    throw new AiError(
+    throw new AiResponseError(
+      "incomplete",
+      finishReason,
       `Balasan model tidak lengkap atau ditolak (finish_reason=${reason}).`,
     );
   }
@@ -1806,7 +1832,7 @@ function assertExecutionRequest(
   if (
     profile?.contextWindow !== null &&
     profile?.contextWindow !== undefined &&
-    estimateRequestInputTokens(request) + maxOutputTokens >
+    estimateChatRequestInputTokens(request) + maxOutputTokens >
       profile.contextWindow
   ) {
     throw new AiError("Request melampaui context window profile model.");

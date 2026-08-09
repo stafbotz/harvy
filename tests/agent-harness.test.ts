@@ -11,6 +11,19 @@ import { privateAgentScope } from "../src/harness/scope.js";
 const FIXED_NOW = () => new Date("2026-07-31T10:00:00.000Z");
 
 describe("agent harness", () => {
+  it("menolak budget observation yang tidak dapat memuat evidence envelope", async () => {
+    await assert.rejects(
+      harness().run({
+        scope: privateAgentScope("telegram", "1"),
+        request: "buat rencana",
+        planner: async () => ({ kind: "final", reply: "selesai" }),
+        limits: { maxObservationCharacters: 95 },
+        now: FIXED_NOW,
+      }),
+      /Batas observation agent minimal 96 karakter/u,
+    );
+  });
+
   it("menanam input code-owned ke checkpoint pertama", async () => {
     const seen: string[] = [];
     const result = await harness().run({

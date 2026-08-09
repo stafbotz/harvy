@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type {
-  AiClient,
-  ChatAssistantToolMessage,
-  ChatFunctionTool,
-  ChatRequest,
-  ChatToolCall,
+import {
+  AiResponseError,
+  type AiClient,
+  type ChatAssistantToolMessage,
+  type ChatFunctionTool,
+  type ChatRequest,
+  type ChatToolCall,
 } from "../src/ai/client.js";
 import { createModelAgentWorker } from "../src/ai/agent.js";
 import { Conversation, type RoutingConfig } from "../src/ai/conversation.js";
@@ -18,6 +19,7 @@ import {
 } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { RunBudgetAccount } from "../src/core/run-budget.js";
+import { ModelProfileRegistry } from "../src/ai/model-profile.js";
 
 const PRODUCTION_ROUTING = {
   mode: "production" as const,
@@ -819,6 +821,306 @@ describe("Conversation agent runtime", () => {
     assert.deepEqual(observedLimits, [1, 20]);
     if (result.status === "completed") assert.match(result.reply, /lengkap/u);
   });
+
+  it("memulihkan truncation sekali dari state padat dengan role recovery tertutup", async () => {
+    const requests: ChatRequest[] = [];
+    let call = 0;
+    const client = {
+      async completeToolTurn(
+        request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+      ): Promise<ChatAssistantToolMessage> {
+        requests.push(request);
+        call += 1;
+        if (call === 1) {
+          const reservation = request.runBudget!.reserveModelCall({
+            tier: request.execution!.tier,
+            budgetClass: request.execution!.budgetClass,
+            inputTokenEstimate: 100,
+            maxOutputTokens: request.maxTokens!,
+          });
+          reservation.settle({
+            inputTokens: 100,
+            outputTokens: 200,
+            totalTokens: 300,
+            estimated: false,
+          });
+          throw new AiResponseError(
+            "truncated",
+            "length",
+            "provider output truncated",
+          );
+        }
+        const decision: AgentPlannerDecision = {
+          kind: "final",
+          reply: call === 2
+            ? "Draft recovery yang belum dipublikasikan."
+            : "Hasil final terbaru.",
+        };
+        const calls = [nativeDecisionCall(decision, call)];
+        assert.equal(request.validateToolCalls?.(calls), true);
+        return { role: "assistant", content: null, tool_calls: calls };
+      },
+    } as unknown as AiClient;
+    const conversation = new Conversation(
+      client,
+      PRODUCTION_ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-08-04T05:00:00.000Z"),
+      undefined,
+      new AgentHarness(createHarvyCapabilityCatalog({
+        parallelDelegationInstalled: true,
+      })),
+      [executor("agent.delegate.parallel", {
+        kind: "agent.delegate.parallel.result",
+      })],
+    );
+
+    const result = await conversation.agent(
+      "buat rencana mendalam",
+      "orchestrate",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(result.status, "completed");
+    if (result.status === "completed") {
+      assert.equal(result.reply, "Hasil final terbaru.");
+    }
+    assert.deepEqual(
+      requests.map((request) => request.execution?.role),
+      ["planner", "recovery", "synthesizer"],
+    );
+    assert.equal(requests[1]?.execution?.allowEscalation, true);
+    assert.equal(
+      requests[1]?.execution?.escalationReason,
+      "output_truncated",
+    );
+    assert.equal(requests[1]?.execution?.allowDelegation, false);
+    assert.equal(requests[1]?.execution?.budgetClass, "final");
+    assert.ok(
+      requests[0]?.tools?.some(
+        (tool) => tool.function.name === "harvy_agent_delegate_parallel_v1",
+      ),
+    );
+    assert.equal(
+      requests[1]?.tools?.some(
+        (tool) => tool.function.name === "harvy_agent_delegate_parallel_v1",
+      ),
+      false,
+    );
+    assert.match(
+      requests[1]?.messages[0]?.content ?? "",
+      /fragmennya tidak dipakai/u,
+    );
+    assert.equal(requests[1]?.contextManifest?.pressure?.recovery, true);
+    assert.equal(requests[1]?.contextManifest?.pressure?.applied, true);
+    assert.equal(requests[1]?.messages.some((message) =>
+      message.role === "assistant" && "tool_calls" in message
+    ), false);
+
+    const firstBudget = runBudgetFromSystem(requests[0]);
+    const recoveryBudget = runBudgetFromSystem(requests[1]);
+    assert.equal(firstBudget["remainingModelCalls"], 12);
+    assert.equal(recoveryBudget["remainingModelCalls"], 11);
+    assert.ok(
+      Number(recoveryBudget["remainingTokens"]) <
+        Number(firstBudget["remainingTokens"]),
+    );
+  });
+
+  it("tidak memulai recovery bila revision menjadi stale selama attempt pertama", async () => {
+    const requests: ChatRequest[] = [];
+    let providerCalled = false;
+    const client = {
+      async completeToolTurn(
+        request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+      ): Promise<ChatAssistantToolMessage> {
+        requests.push(request);
+        const reservation = request.runBudget!.reserveModelCall({
+          tier: request.execution!.tier,
+          budgetClass: request.execution!.budgetClass,
+          inputTokenEstimate: 100,
+          maxOutputTokens: request.maxTokens!,
+        });
+        reservation.settle({
+          inputTokens: 100,
+          outputTokens: 200,
+          totalTokens: 300,
+          estimated: false,
+        });
+        providerCalled = true;
+        throw new AiResponseError(
+          "truncated",
+          "length",
+          "provider output truncated",
+        );
+      },
+    } as unknown as AiClient;
+    const conversation = new Conversation(
+      client,
+      PRODUCTION_ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-08-04T05:00:00.000Z"),
+    );
+
+    const result = await conversation.agent(
+      "jawab dengan agent",
+      "tools",
+      undefined,
+      {
+        ownerId: "student",
+        channel: "telegram",
+        isCurrent: () => !providerCalled,
+      },
+    );
+
+    assert.equal(result.status, "stopped");
+    if (result.status === "stopped") {
+      assert.equal(result.reason, "stale");
+      assert.equal(result.checkpoint.runBudget?.modelCalls, 1);
+      assert.equal(result.checkpoint.runBudget?.consumedTokens, 300);
+    }
+    assert.equal(requests.length, 1);
+  });
+
+  it("tidak mencoba recovery untuk content filter atau incomplete response", async () => {
+    const requests: ChatRequest[] = [];
+    const client = {
+      async completeToolTurn(
+        request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+      ): Promise<ChatAssistantToolMessage> {
+        requests.push(request);
+        throw new AiResponseError(
+          "incomplete",
+          "content_filter",
+          "provider rejected response",
+        );
+      },
+    } as unknown as AiClient;
+    const conversation = new Conversation(
+      client,
+      PRODUCTION_ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-08-04T05:00:00.000Z"),
+    );
+
+    const result = await conversation.agent(
+      "jawab ini",
+      "tools",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(result.status, "stopped");
+    if (result.status === "stopped") {
+      assert.equal(result.reason, "invalid_planner_output");
+    }
+    assert.equal(requests.length, 1);
+  });
+
+  it("memadatkan transcript provider otomatis saat profile mendekati context window", async () => {
+    const requests: ChatRequest[] = [];
+    let call = 0;
+    const reasoningCanary = `OPAQUE_PROVIDER_REASONING_${"r".repeat(60_000)}`;
+    const client = {
+      async completeToolTurn(
+        request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+      ): Promise<ChatAssistantToolMessage> {
+        requests.push(request);
+        call += 1;
+        const decision: AgentPlannerDecision = call === 1
+          ? {
+              kind: "action",
+              capabilityId: "settings.time.get",
+              capabilityVersion: "1",
+              input: {},
+            }
+          : { kind: "final", reply: "Selesai dari state terbaru." };
+        const calls = [nativeDecisionCall(decision, call)];
+        assert.equal(request.validateToolCalls?.(calls), true);
+        return {
+          role: "assistant",
+          content: null,
+          tool_calls: calls,
+          ...(call === 1
+            ? {
+                continuation: {
+                  providerId: "openrouter",
+                  modelId: request.model,
+                  reasoning: reasoningCanary,
+                },
+              }
+            : {}),
+        };
+      },
+    } as unknown as AiClient;
+    const routing: RoutingConfig = {
+      ...PRODUCTION_ROUTING,
+      providerId: "openrouter",
+      modelProfiles: new ModelProfileRegistry([{
+        id: "cheap-model",
+        provider: "openrouter",
+        verification: "explicit",
+        reasoning: {
+          mandatory: false,
+          defaultEffort: "low",
+          supportedEfforts: ["low"],
+          wireFormat: "openrouter-reasoning",
+        },
+        supports: {
+          tools: true,
+          toolChoice: true,
+          namedToolChoice: true,
+          structuredOutput: true,
+          temperature: true,
+        },
+        continuation: {
+          preserveReasoning: true,
+          preserveAssistantMessage: true,
+        },
+        contextWindow: 50_000,
+        maxOutputTokens: 32_768,
+      }]),
+    };
+    const conversation = new Conversation(
+      client,
+      routing,
+      "Asia/Jakarta",
+      () => new Date("2026-08-04T05:00:00.000Z"),
+      undefined,
+      new AgentHarness(createHarvyCapabilityCatalog({
+        internalToolsInstalled: true,
+      })),
+      [executor("settings.time.get", {
+        kind: "settings.time.get.result",
+        local: "12.00 WIB",
+      })],
+    );
+
+    const result = await conversation.agent(
+      "cek waktu lalu jawab",
+      "tools",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(result.status, "completed");
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0]?.contextManifest?.pressure?.applied, false);
+    assert.equal(requests[1]?.contextManifest?.pressure?.applied, true);
+    assert.equal(requests[1]?.contextManifest?.pressure?.recovery, false);
+    assert.equal(requests[1]?.messages.some((message) =>
+      message.role === "assistant" && "tool_calls" in message
+    ), false);
+    assert.doesNotMatch(
+      requests[1]?.messages.map((message) => message.content ?? "").join("\n") ?? "",
+      /OPAQUE_PROVIDER_REASONING/u,
+    );
+    assert.match(
+      requests[1]?.messages.map((message) => message.content ?? "").join("\n") ?? "",
+      /cek waktu lalu jawab/u,
+    );
+  });
 });
 
 describe("model agent worker envelope", () => {
@@ -976,6 +1278,17 @@ describe("model agent worker envelope", () => {
     }
   });
 });
+
+function runBudgetFromSystem(
+  request: ChatRequest | undefined,
+): Record<string, unknown> {
+  const content = request?.messages[0]?.content ?? "";
+  const encoded = content.match(
+    /<run-budget-json>(\{[^<]+\})<\/run-budget-json>/u,
+  )?.[1];
+  assert.ok(encoded, "run budget envelope tidak ditemukan");
+  return JSON.parse(encoded) as Record<string, unknown>;
+}
 
 function fixture(
   sink: ChatRequest[],

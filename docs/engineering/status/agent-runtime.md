@@ -1,7 +1,7 @@
 # Status — Agent Runtime
 
-Verified: 9 Agustus 2026 pada working tree output policy Phase C di atas
-`7cc5abb`; `npm run check` PASS dan `npm test` PASS, 846 test dalam 108 suite,
+Verified: 9 Agustus 2026 pada working tree context-pressure Phase C di atas
+`fc6e799`; `npm run check` PASS dan `npm test` PASS, 860 test dalam 110 suite,
 0 gagal.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
@@ -20,6 +20,15 @@ agent, scope/authority, atau executor internal.
   reasoning/reasoning details/content serta Gemini thought signature hanya
   melalui exact profile dan binding provider+model. Metadata ini tidak masuk
   checkpoint, memory, atau log.
+- Bila profile exact menyediakan context window, compiler memeriksa estimasi
+  input plus output ceiling sebelum call berikutnya. Di bawah threshold native
+  continuation tetap utuh; di atasnya transcript diganti state
+  provider-neutral dari kernel. Observation besar menyimpan head/tail, ukuran
+  asli, dan artifact reference bila tersedia; limit runtime di bawah 96
+  karakter ditolak agar envelope bukti tetap utuh. Typed truncation boleh
+  mendapat satu recovery tanpa delegasi setelah freshness diperiksa ulang,
+  tetap dalam RunBudget yang sama; incomplete/content filter lain tidak
+  di-retry.
 - Tool callable saat ini read-only: daftar/detail tugas, status sesi, waktu,
   agenda internal Harvy, terminal virtual in-memory, dan delegasi read-only.
 - Pertanyaan waktu sempit tetap dijawab dari clock deterministik. Ia melewati
@@ -66,20 +75,26 @@ agent, scope/authority, atau executor internal.
 - Profile compatibility tidak mengaktifkan reasoning. `AI_MODEL_PROFILES`
   exact belum di-smoke pada provider nyata; capability explicit fallback
   sengaja ditolak.
-- Context-pressure compaction, recovery truncation, visible verbosity control,
-  validator-driven escalation, finalizer terminal terpisah, dan K3/toughest
-  belum ada.
-- `compactAtContextRatio` baru data policy. Limit RunBudget belum bisa dituning
-  lewat Console dan belum punya telemetry outcome khusus. Guard biaya preflight
-  memerlukan harga tier nonnol atau reported provider cost; token/attempt tetap
-  terjaga bila harga belum lengkap. Actual provider usage satu attempt dapat
-  melewati reservation, lalu work non-final berikutnya dihentikan.
+- Visible verbosity control, validator-driven escalation, finalizer terminal
+  terpisah, dan K3/toughest belum ada. Context-pressure baru memakai estimator
+  karakter dan hanya aktif untuk context window profile exact; threshold belum
+  dikalibrasi pada tokenizer/usage provider nyata.
+- Limit RunBudget dan `compactAtContextRatio` belum bisa dituning lewat Console
+  dan belum punya telemetry outcome khusus. Guard biaya preflight memerlukan
+  harga tier nonnol atau reported provider cost; token/attempt tetap terjaga
+  bila harga belum lengkap. Actual provider usage satu attempt dapat melewati
+  reservation, lalu work non-final berikutnya dihentikan.
 - Active store/receipt/recovery di atas baru file lokal satu proses dan hanya
   untuk mode `orchestrate` privat Telegram. Belum ada RunStore produksi,
   lease/CAS multi-instance, dispatcher/outbox exactly-once, reconciler eksternal,
   job kedua, pin/archive anchor, atau workstream durable. Receipt hanya melacak
   pesan Telegram; crash sebelum checkpoint pertama dapat mengulang inference
   dan tool read. Query `tools` tetap sinkron.
+- Agregasi update active-run masih memotong gabungan input mailbox ke 4.000
+  karakter sambil dapat menandai revision lebih baru sudah diterapkan; koreksi
+  terbaru berisiko hilang. Routing update juga belum idempotent berdasarkan
+  `sourceMessageId`, sehingga retry ingress dapat menggandakan revision dan
+  batas 64 entry dapat mengeluarkan update yang belum diterapkan.
 - Agent root menerima konteks privat terpilih sebagai data tak tepercaya;
   worker tidak menerimanya. Memori tidak boleh menjadi authority permission,
   actor, credential, live schedule, atau outcome tool.
@@ -89,7 +104,8 @@ agent, scope/authority, atau executor internal.
 ## Bukti dan pointer
 
 - Kode: `src/agent/`, `src/agent/time-fast-path.ts`, `src/harness/`,
-  `src/ai/agent.ts`, `src/core/run-budget.ts`,
+  `src/harness/observation-compaction.ts`, `src/ai/agent.ts`,
+  `src/ai/agent-context-pressure.ts`, `src/core/run-budget.ts`,
   `src/core/agent-run-service.ts`, `src/core/run-mailbox-policy.ts`,
   `src/bot/run-anchor.ts`, dan `src/storage/file-agent-run-repository.ts`.
 - Tes: `tests/agent-runtime.test.ts`, `tests/agent-harness.test.ts`,
@@ -97,6 +113,7 @@ agent, scope/authority, atau executor internal.
   `tests/harness-scope-capabilities.test.ts`, `tests/model-profile.test.ts`,
   `tests/execution-policy.test.ts`, `tests/provider-adapter.test.ts`,
   `tests/run-budget.test.ts`, `tests/active-agent-run-service.test.ts`,
-  `tests/run-mailbox-anchor.test.ts`, dan `tests/client.test.ts`.
+  `tests/run-mailbox-anchor.test.ts`, `tests/agent-context-pressure.test.ts`,
+  `tests/observation-compaction.test.ts`, dan `tests/client.test.ts`.
 - Keputusan: ADR-012, ADR-016, ADR-017, ADR-018, ADR-021, ADR-025, ADR-026,
-  ADR-027, ADR-028.
+  ADR-027, ADR-028, ADR-029.

@@ -34,6 +34,23 @@ export interface ContextManifest {
   readonly summaryEligible: boolean;
   readonly summaryIncluded: boolean;
   readonly summaryClipped: boolean;
+  /** Metadata scalar context-pressure; tidak pernah memuat isi prompt. */
+  readonly pressure?: ContextPressureMetadata;
+}
+
+export interface ContextPressureMetadata {
+  readonly applied: boolean;
+  readonly recovery: boolean;
+  readonly contextWindowTokens: number | null;
+  readonly thresholdTokens: number | null;
+  readonly compactAtRatioPermille: number;
+  readonly maxOutputTokens: number;
+  readonly inputTokensBefore: number;
+  readonly inputTokensAfter: number;
+  readonly nativeMessagesBefore: number;
+  readonly nativeMessagesAfter: number;
+  readonly observationCount: number;
+  readonly clippedObservationCount: number;
 }
 
 export type ContextManifestInput = Omit<
@@ -43,6 +60,7 @@ export type ContextManifestInput = Omit<
   | "tokenEstimateMethod"
   | "estimatedTokens"
   | "utilizationPercent"
+  | "pressure"
 >;
 
 /** Estimator lama `/4`, sekarang diberi nama agar hasilnya tidak disangka pasti. */
@@ -88,6 +106,18 @@ export function createContextManifest(
   });
 }
 
+/** Menempelkan hasil compiler pressure tanpa mengubah manifest sumber. */
+export function withContextPressureMetadata(
+  manifest: ContextManifest,
+  pressure: ContextPressureMetadata,
+): ContextManifest {
+  validatePressureMetadata(pressure);
+  return Object.freeze({
+    ...manifest,
+    pressure: Object.freeze({ ...pressure }),
+  });
+}
+
 /**
  * Mengubah manifest ke scalar allowlist log. Prefix `context` membedakannya
  * dari usage seluruh prompt yang dicatat `AiClient`.
@@ -99,6 +129,9 @@ export function createContextManifest(
 export function contextManifestLogFields(
   manifest: ContextManifest,
 ): Record<string, string | number | boolean> {
+  const pressureFields = manifest.pressure
+    ? contextPressureLogFields(manifest.pressure)
+    : {};
   return {
     contextManifestVersion: manifest.version,
     contextBudgetBasis: manifest.budgetBasis,
@@ -112,5 +145,72 @@ export function contextManifestLogFields(
     contextIncludedCharacters: manifest.includedCharacters,
     contextEstimatedTokens: manifest.estimatedTokens,
     contextUtilizationPercent: manifest.utilizationPercent,
+    ...pressureFields,
   };
+}
+
+function contextPressureLogFields(
+  pressure: ContextPressureMetadata,
+): Record<string, string | number | boolean> {
+  validatePressureMetadata(pressure);
+  let windowFields: Record<string, number> = {};
+  if (pressure.contextWindowTokens !== null) {
+    if (pressure.thresholdTokens === null) {
+      throw new Error("Threshold context pressure tidak tersedia.");
+    }
+    windowFields = {
+      contextWindowTokens: pressure.contextWindowTokens,
+      contextCompactionThresholdTokens: pressure.thresholdTokens,
+    };
+  }
+  return {
+    contextCompactionApplied: pressure.applied,
+    contextRecovery: pressure.recovery,
+    ...windowFields,
+    contextCompactAtRatioPermille: pressure.compactAtRatioPermille,
+    contextPressureMaxOutputTokens: pressure.maxOutputTokens,
+    contextInputTokensBefore: pressure.inputTokensBefore,
+    contextInputTokensAfter: pressure.inputTokensAfter,
+    contextNativeMessagesBefore: pressure.nativeMessagesBefore,
+    contextNativeMessagesAfter: pressure.nativeMessagesAfter,
+    contextObservationCount: pressure.observationCount,
+    contextClippedObservationCount: pressure.clippedObservationCount,
+  };
+}
+
+function validatePressureMetadata(value: ContextPressureMetadata): void {
+  const counters = [
+    value.compactAtRatioPermille,
+    value.maxOutputTokens,
+    value.inputTokensBefore,
+    value.inputTokensAfter,
+    value.nativeMessagesBefore,
+    value.nativeMessagesAfter,
+    value.observationCount,
+    value.clippedObservationCount,
+  ];
+  if (
+    typeof value.applied !== "boolean" ||
+    typeof value.recovery !== "boolean" ||
+    counters.some((counter) =>
+      !Number.isSafeInteger(counter) || counter < 0
+    ) ||
+    value.compactAtRatioPermille < 1 ||
+    value.compactAtRatioPermille >= 1_000 ||
+    !validOptionalPositiveInteger(value.contextWindowTokens) ||
+    !validOptionalPositiveInteger(value.thresholdTokens) ||
+    ((value.contextWindowTokens === null) !==
+      (value.thresholdTokens === null)) ||
+    (value.contextWindowTokens !== null &&
+      value.thresholdTokens !== null &&
+      value.thresholdTokens > value.contextWindowTokens) ||
+    value.clippedObservationCount > value.observationCount
+  ) {
+    throw new Error("Metadata context pressure tidak sah.");
+  }
+}
+
+function validOptionalPositiveInteger(value: number | null): boolean {
+  return value === null ||
+    (Number.isSafeInteger(value) && value > 0);
 }

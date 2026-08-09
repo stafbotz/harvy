@@ -6,7 +6,10 @@ import {
   fitHarvyContext,
   TURNS_ONLY_CONTEXT_PROJECTION,
 } from "../src/harness/context-budget.js";
-import { contextManifestLogFields } from "../src/harness/context-manifest.js";
+import {
+  contextManifestLogFields,
+  withContextPressureMetadata,
+} from "../src/harness/context-manifest.js";
 
 describe("context budget harness", () => {
   it("mempertahankan giliran terbaru dan membuang yang lama saat anggaran habis", () => {
@@ -130,6 +133,38 @@ describe("context budget harness", () => {
     assert.equal(compiled.manifest.sourceMemoryCount, 1);
     assert.equal(compiled.manifest.eligibleMemoryCount, 0);
     assert.equal(compiled.manifest.includedMemoryCount, 0);
+  });
+
+  it("mencatat hasil context pressure sebagai scalar bebas isi", () => {
+    const compiled = compileHarvyContext({
+      summary: "CANARY_SUMMARY_SECRET",
+      turns: [],
+      memories: [],
+    });
+    const manifest = withContextPressureMetadata(compiled.manifest, {
+      applied: true,
+      recovery: false,
+      contextWindowTokens: 50_000,
+      thresholdTokens: 41_000,
+      compactAtRatioPermille: 820,
+      maxOutputTokens: 32_768,
+      inputTokensBefore: 12_000,
+      inputTokensAfter: 3_000,
+      nativeMessagesBefore: 5,
+      nativeMessagesAfter: 1,
+      observationCount: 2,
+      clippedObservationCount: 1,
+    });
+    const fields = contextManifestLogFields(manifest);
+
+    assert.equal(fields["contextCompactionApplied"], true);
+    assert.equal(fields["contextRecovery"], false);
+    assert.equal(fields["contextWindowTokens"], 50_000);
+    assert.equal(fields["contextCompactionThresholdTokens"], 41_000);
+    assert.equal(fields["contextInputTokensBefore"], 12_000);
+    assert.equal(fields["contextInputTokensAfter"], 3_000);
+    assert.equal(fields["contextClippedObservationCount"], 1);
+    assert.doesNotMatch(JSON.stringify({ manifest, fields }), /CANARY/u);
   });
 });
 

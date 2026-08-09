@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
   AiClient,
+  AiResponseError,
   type ChatFunctionTool,
   type ChatToolCall,
 } from "../src/ai/client.js";
@@ -60,7 +61,11 @@ describe("AiClient", () => {
           model: "model-uji",
           messages: [{ role: "user", content: "halo" }],
         }),
-      /terpotong karena batas token/,
+      (error: unknown) =>
+        error instanceof AiResponseError &&
+        error.reason === "truncated" &&
+        error.finishReason === "length" &&
+        /terpotong karena batas token/u.test(error.message),
     );
   });
 
