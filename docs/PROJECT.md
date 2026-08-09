@@ -399,10 +399,12 @@ provider+ID exact; tanpa `AI_MODEL_PROFILES`, model memakai kontrak
 compatibility dan reasoning control baru tetap mati. Execution policy kini
 memisahkan role, requested/effective effort, dan verbosity metadata dari tier,
 tetapi routing model masih tiga tier. RunBudget kumulatif sekarang menjadi
-prerequisite yang tersedia untuk Agent Runtime privat.
-Compaction tekanan konteks, output-ceiling overhaul, `toughest`/K3, dan wire
-visible verbosity tetap berada di change set Phase C lanjutan; lihat ADR-025
-dan ADR-026.
+prerequisite yang tersedia untuk Agent Runtime privat. Ceiling general sekarang
+berasal dari role lalu di-clamp profile exact; work call juga tidak dapat
+memakai separuh token/biaya yang dilindungi untuk final synthesis.
+Compaction tekanan konteks, recovery truncation, `toughest`/K3, dan wire visible
+verbosity tetap berada di change set Phase C lanjutan; lihat ADR-025, ADR-026,
+dan ADR-028.
 
 Fondasi Phase D untuk active run sekarang tersedia khusus orkestrasi eksplisit
 Telegram privat. Ia belum berarti coding sandbox, artifact pipeline, app

@@ -89,6 +89,7 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 | [`ADR-025`](decisions/ADR-025-provider-execution-policy-dan-continuation-live.md) | exact model profile, execution policy, provider adapter, continuation live |
 | [`ADR-026`](decisions/ADR-026-runbudget-kumulatif-agent.md) | cumulative RunBudget, physical-attempt accounting, checkpoint budget |
 | [`ADR-027`](decisions/ADR-027-active-agentrun-mailbox-dan-commit-barrier.md) | active AgentRun, RunMailbox, revision gate, Run Anchor, commit receipt |
+| [`ADR-028`](decisions/ADR-028-output-policy-dan-cadangan-final-synthesis.md) | ceiling general code-owned dan cadangan RunBudget untuk final synthesis |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.

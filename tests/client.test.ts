@@ -412,6 +412,42 @@ describe("AiClient", () => {
     assert.deepEqual(authorizations, ["Bearer satu"]);
   });
 
+  it("meneruskan kelas budget execution agar reserve final tetap tersedia", async () => {
+    let fetches = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return chatResponse("selesai");
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+    const budget = clientRunBudget({ maxTotalTokens: 90 });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 60,
+        execution: clientExecution(60, "planner"),
+        runBudget: budget,
+      }),
+      (error: unknown) =>
+        error instanceof RunBudgetExceededError &&
+        error.reason === "budget_tokens",
+    );
+    assert.equal(fetches, 0);
+
+    assert.equal(await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+      maxTokens: 60,
+      execution: clientExecution(60, "synthesizer"),
+      runBudget: budget,
+    }), "selesai");
+    assert.equal(fetches, 1);
+  });
+
   it("mengirim native tools dan membaca tool_calls tanpa mode JSON", async () => {
     let body: Record<string, unknown> | null = null;
     globalThis.fetch = async (_input, init) => {
@@ -1899,10 +1935,14 @@ function testFallback(
   };
 }
 
-function clientExecution(maxOutputTokens: number) {
+function clientExecution(
+  maxOutputTokens: number,
+  role: "conversationalist" | "planner" | "synthesizer" =
+    "conversationalist",
+) {
   return new ExecutionPolicy().decide({
     tier: "cheap",
-    role: "conversationalist",
+    role,
     workClass: "agent",
     profile: null,
     maxOutputTokens,

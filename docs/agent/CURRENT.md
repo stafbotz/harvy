@@ -4,23 +4,23 @@ Refreshed: 2026-08-09
 
 ## Verified baseline
 
-- Product capability baseline: working tree Active AgentRun Phase D di atas
-  `bbe7b9b`
+- Product capability baseline: working tree output policy Phase C di atas
+  `7cc5abb`
   (9 Agustus 2026).
-- Product gates: `npm run check` PASS; `npm test` PASS, 842 test dalam 108
+- Product gates: `npm run check` PASS; `npm test` PASS, 846 test dalam 108
   suite, 0 gagal.
-- Context system: `npm run context:check` PASS; output 3.846 byte dengan
+- Context system: `npm run context:check` PASS; output 3.847 byte dengan
   estimasi 962 token.
 
 ## Recent material changes
 
+- Ceiling reply/agent/worker general kini code-owned per role dan di-clamp exact
+  profile; RunBudget melindungi separuh token/biaya untuk final synthesis.
 - Planning eksplisit Telegram privat kini memakai active AgentRun durable lokal
   dengan Run Anchor, mailbox terikat, revision freshness, commit barrier, dan
   recovery konservatif tanpa memblokir chat biasa.
 - Snapshot/mailbox/receipt active run ikut consent v7, retensi maksimal tujuh
   hari, ekspor teredaksi, dan dihapus ketika sumber memory/history dicabut.
-- RunBudget kumulatif mengikat root, retry/fallback fisik, tool, dan delegasi;
-  checkpoint mempertahankan pemakaian tanpa menagih waktu tunggu manusia.
 
 ## Active cross-subsystem blockers
 

@@ -557,7 +557,7 @@ export class AgentHarness {
       // Balasan final sudah dibayar dan boleh tetap dikirim. Work lanjutan
       // (tool atau pertanyaan baru) tidak boleh dimulai setelah actual usage
       // provider membuat akun melampaui token/cost reservation semula.
-      const overage = runBudget.overageReason();
+      const overage = runBudget.workOverageReason();
       if (overage && decision.kind !== "final") {
         return stopped(overage, checkpoint, trace);
       }
@@ -1693,7 +1693,7 @@ function abortReason(
   }
   const budgetReason = runBudgetReason(error);
   if (budgetReason) return budgetReason;
-  const overage = runBudget.overageReason();
+  const overage = runBudget.workOverageReason();
   if (overage) return overage;
   if (runBudget.isTimeExhausted()) return "budget_deadline";
   return error instanceof Error && error.name === "AbortError"

@@ -180,18 +180,18 @@ export function createModelAgentWorker(
 ): AgentWorker {
   return async (task, context) => {
     const attribution = currentUsageAttribution();
+    const execution = executionPolicy.decide({
+      tier: task.tier,
+      role: "worker",
+      workClass: "delegated-worker",
+      profile: resolveModelProfile(task.tier, routing),
+      deadlineMs: 30_000,
+    });
     return client.complete({
       model: resolveModel(task.tier, routing),
       temperature: 0.2,
-      maxTokens: 1_536,
-      execution: executionPolicy.decide({
-        tier: task.tier,
-        role: "worker",
-        workClass: "delegated-worker",
-        profile: resolveModelProfile(task.tier, routing),
-        maxOutputTokens: 1_536,
-        deadlineMs: 30_000,
-      }),
+      maxTokens: execution.maxOutputTokens,
+      execution,
       signal: context.signal,
       runBudget: context.runBudget,
       usage: {

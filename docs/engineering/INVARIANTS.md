@@ -435,6 +435,17 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   policy/tool non-final berikutnya wajib berhenti fail-closed. Harga tier nol
   berarti cost preflight belum mempunyai coverage; jangan menyebutnya model
   gratis atau ceiling biaya universal.
+- **Output ceiling general berasal dari ExecutionPolicy.** Caller mekanis boleh
+  memasang ceiling sempit, tetapi reply/planner/worker/synthesizer general tidak
+  boleh kembali ke fallback tersebar 800/1.536/4.096. Default role wajib
+  di-clamp ke profile exact, dan request client harus sama persis dengan plan.
+- **Final synthesis mempunyai reserve code-owned.** Kelas `work|final` berasal
+  dari role tepercaya, bukan prompt/model. Work reservation tidak boleh memakai
+  separuh token/biaya cumulative budget yang dilindungi—48.000 token pada
+  budget default, maksimal 49.152.
+  Actual work overage menahan tool/work baru, sedangkan final lengkap tetap
+  boleh keluar. Reserve diturunkan dari limits+counter agar checkpoint/resume
+  tidak memperoleh atau kehilangan budget secara diam-diam.
 
 ## Active AgentRun, RunMailbox, dan commit
 

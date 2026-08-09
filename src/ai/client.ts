@@ -639,6 +639,7 @@ export class AiClient {
     });
     const budgetReservation = request.runBudget?.reserveModelCall({
       tier: request.execution!.tier,
+      budgetClass: request.execution!.budgetClass,
       inputTokenEstimate: estimateRequestInputTokens(request),
       maxOutputTokens: request.maxTokens ?? 800,
     });

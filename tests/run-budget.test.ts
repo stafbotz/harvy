@@ -52,7 +52,7 @@ describe("RunBudgetAccount", () => {
   });
 
   it("mereservasi atomik agar worker paralel tidak melampaui token", () => {
-    const budget = account({ maxTotalTokens: 50 });
+    const budget = account({ maxTotalTokens: 60 });
     const first = budget.reserveModelCall({
       tier: "cheap",
       inputTokenEstimate: 10,
@@ -84,6 +84,7 @@ describe("RunBudgetAccount", () => {
     const budget = account({ maxTotalTokens: 30 });
     budget.reserveModelCall({
       tier: "cheap",
+      budgetClass: "final",
       inputTokenEstimate: 10,
       maxOutputTokens: 20,
     }).consumeUnknown();
@@ -106,6 +107,7 @@ describe("RunBudgetAccount", () => {
     const budget = account({ maxTotalTokens: 30 });
     budget.reserveModelCall({
       tier: "cheap",
+      budgetClass: "final",
       inputTokenEstimate: 10,
       maxOutputTokens: 20,
     }).consumeUnknown("2");
@@ -119,6 +121,7 @@ describe("RunBudgetAccount", () => {
     const budget = account({ maxTotalTokens: 30 });
     budget.reserveModelCall({
       tier: "cheap",
+      budgetClass: "final",
       inputTokenEstimate: 10,
       maxOutputTokens: 20,
     }).settle({
@@ -136,6 +139,7 @@ describe("RunBudgetAccount", () => {
     const budget = account({ maxTotalTokens: 30 });
     budget.reserveModelCall({
       tier: "cheap",
+      budgetClass: "final",
       inputTokenEstimate: 10,
       maxOutputTokens: 20,
     });
@@ -165,6 +169,7 @@ describe("RunBudgetAccount", () => {
     const budget = account({ maxCostUsd: 0.00002 });
     budget.reserveModelCall({
       tier: "cheap",
+      budgetClass: "final",
       inputTokenEstimate: 0,
       maxOutputTokens: 10,
     }).settle(
@@ -230,6 +235,7 @@ describe("RunBudgetAccount", () => {
     }, () => 1_000);
     budget.reserveModelCall({
       tier: "cheap",
+      budgetClass: "final",
       inputTokenEstimate: 1,
       maxOutputTokens: 999_999,
     }).consumeUnknown();
@@ -241,6 +247,108 @@ describe("RunBudgetAccount", () => {
         limits: { maxCostUsd: 0.0000000001 },
       }),
       /Kebijakan RunBudget tidak sah/u,
+    );
+  });
+
+  it("melindungi token dan biaya untuk final synthesis", () => {
+    const tokens = account({ maxTotalTokens: 90 });
+    tokens.reserveModelCall({
+      tier: "cheap",
+      budgetClass: "work",
+      inputTokenEstimate: 0,
+      maxOutputTokens: 45,
+    }).consumeUnknown();
+
+    assert.equal(tokens.view(0).remainingWorkTokens, 0);
+    assert.equal(tokens.view(0).protectedFinalTokens, 45);
+    const resumedTokens = account({ maxTotalTokens: 90 });
+    resumedTokens.restore(tokens.checkpoint());
+    assert.equal(resumedTokens.view(0).remainingWorkTokens, 0);
+    assert.equal(resumedTokens.view(0).protectedFinalTokens, 45);
+    assert.throws(
+      () => tokens.reserveModelCall({
+        tier: "cheap",
+        budgetClass: "work",
+        inputTokenEstimate: 0,
+        maxOutputTokens: 1,
+      }),
+      (error: unknown) =>
+        error instanceof RunBudgetExceededError &&
+        error.reason === "budget_tokens",
+    );
+    assert.doesNotThrow(() =>
+      resumedTokens.reserveModelCall({
+        tier: "cheap",
+        budgetClass: "final",
+        inputTokenEstimate: 15,
+        maxOutputTokens: 30,
+      }).release()
+    );
+
+    const costs = new RunBudgetAccount({
+      limits: { ...BASE_LIMITS, maxCostUsd: 4 },
+      prices: {
+        cheap: { inputPerMillionUsd: 0, outputPerMillionUsd: 1_000_000 },
+      },
+    }, () => 1_000);
+    const work = costs.reserveModelCall({
+      tier: "cheap",
+      budgetClass: "work",
+      inputTokenEstimate: 0,
+      maxOutputTokens: 2,
+    });
+    assert.equal(costs.view(0).remainingWorkCostUsd, "0");
+    assert.equal(costs.view(0).protectedFinalCostUsd, "2");
+    assert.throws(
+      () => costs.reserveModelCall({
+        tier: "cheap",
+        budgetClass: "work",
+        inputTokenEstimate: 0,
+        maxOutputTokens: 1,
+      }),
+      (error: unknown) =>
+        error instanceof RunBudgetExceededError &&
+        error.reason === "budget_cost",
+    );
+    const final = costs.reserveModelCall({
+      tier: "cheap",
+      budgetClass: "final",
+      inputTokenEstimate: 0,
+      maxOutputTokens: 2,
+    });
+    final.release();
+    work.release();
+  });
+
+  it("mengunci headroom final pada budget default 96.000 token", () => {
+    const budget = new RunBudgetAccount({}, () => 1_000);
+    budget.reserveModelCall({
+      tier: "cheap",
+      budgetClass: "work",
+      inputTokenEstimate: 0,
+      maxOutputTokens: 48_000,
+    }).consumeUnknown();
+
+    assert.equal(budget.view(0).remainingWorkTokens, 0);
+    assert.equal(budget.view(0).protectedFinalTokens, 48_000);
+    assert.doesNotThrow(() =>
+      budget.reserveModelCall({
+        tier: "ambitious",
+        budgetClass: "final",
+        inputTokenEstimate: 15_232,
+        maxOutputTokens: 32_768,
+      }).release()
+    );
+    assert.throws(
+      () => budget.reserveModelCall({
+        tier: "ambitious",
+        budgetClass: "final",
+        inputTokenEstimate: 15_233,
+        maxOutputTokens: 32_768,
+      }),
+      (error: unknown) =>
+        error instanceof RunBudgetExceededError &&
+        error.reason === "budget_tokens",
     );
   });
 

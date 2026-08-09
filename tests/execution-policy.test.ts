@@ -30,8 +30,31 @@ describe("ExecutionPolicy", () => {
     assert.equal(planner.requestedEffort, "medium");
     assert.equal(planner.verbosity, "low");
     assert.equal(planner.allowDelegation, true);
+    assert.equal(planner.budgetClass, "work");
     assert.equal(synthesis.requestedEffort, "high");
     assert.equal(synthesis.verbosity, "high");
+    assert.equal(synthesis.budgetClass, "final");
+  });
+
+  it("memberi ceiling general yang tinggi dan meng-clamp ke profile exact", () => {
+    const planner = policy.decide({
+      tier: "ambitious",
+      role: "planner",
+      workClass: "agent",
+      profile: profile(),
+      deadlineMs: 45_000,
+    });
+    const worker = policy.decide({
+      tier: "efficient",
+      role: "worker",
+      workClass: "delegated-worker",
+      profile: profile({ maxOutputTokens: 6_000 }),
+      deadlineMs: 30_000,
+    });
+
+    assert.equal(planner.maxOutputTokens, 32_768);
+    assert.equal(worker.maxOutputTokens, 6_000);
+    assert.equal(worker.budgetClass, "work");
   });
 
   it("membolehkan reasoning tinggi dengan jawaban ringkas", () => {

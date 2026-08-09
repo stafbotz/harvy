@@ -176,7 +176,6 @@ export interface ConversationRuntime {
 // Skrip itu pernah tertinggal di 400 setelah angka di sini dinaikkan, sehingga
 // alat diagnostiknya sendiri mereproduksi cacat yang ia dibuat untuk mencari.
 export const UNDERSTANDING_MAX_TOKENS = 2048;
-const REPLY_MAX_TOKENS = 4096;
 export const TURN_BOUNDARY_MAX_TOKENS = 128;
 export const TURN_BOUNDARY_TIMEOUT_MS = 2_000;
 
@@ -210,7 +209,6 @@ const INSIGHT_MAX_TOKENS = 512;
  * menghapus alasan pemadatan itu sendiri.
  */
 const EPISODE_SUMMARY_MAX_TOKENS = 768;
-const AGENT_PLANNER_MAX_TOKENS = 4096;
 const GENERAL_MODEL_DEADLINE_MS = 30_000;
 
 interface AgentNativeThread {
@@ -704,18 +702,19 @@ export class Conversation {
     // `system_instruction` menggabungkan atau membuangnya. Yang pasti terbaca
     // model mana pun adalah giliran terakhir.
     const depth = depthDirective(message);
+    const execution = this.execution(
+      tier,
+      tier === "ambitious" ? "synthesizer" : "conversationalist",
+      triage.level === "biasa" ? "conversation" : "safety",
+      null,
+      GENERAL_MODEL_DEADLINE_MS,
+    );
 
     const reply = await this.client.complete({
       model: resolveModel(tier, this.routing),
       temperature: 0.7,
-      maxTokens: REPLY_MAX_TOKENS,
-      execution: this.execution(
-        tier,
-        tier === "ambitious" ? "synthesizer" : "conversationalist",
-        triage.level === "biasa" ? "conversation" : "safety",
-        REPLY_MAX_TOKENS,
-        GENERAL_MODEL_DEADLINE_MS,
-      ),
+      maxTokens: execution.maxOutputTokens,
+      execution,
       contextManifest,
       usage: this.usage(
         runtime.ownerId,
@@ -909,6 +908,7 @@ export class Conversation {
       isContextFreeFanout,
       nativeThread.messages,
       runBudget,
+      input.step > 0 ? "synthesizer" : "planner",
       forcedToolChoice,
     );
     let decision = planned.decision;
@@ -936,6 +936,7 @@ export class Conversation {
         false,
         nativeThread.messages,
         runBudget,
+        "synthesizer",
       );
       decision = planned.decision;
     }
@@ -982,6 +983,7 @@ export class Conversation {
     suppressFirstMessageClaim: boolean,
     nativeMessages: readonly ChatMessage[],
     runBudget: RunBudgetAccount,
+    role: Extract<ModelRole, "planner" | "synthesizer">,
     toolChoice: ChatToolChoice = "required",
   ): Promise<RequestedAgentDecision> {
     const tier: ModelTier = mode === "orchestrate" ? "ambitious" : "cheap";
@@ -998,22 +1000,23 @@ export class Conversation {
       suppressFirstMessageClaim,
     });
     const nativeTools = agentNativeTools(plannerInput.callableCapabilities);
+    const execution = this.execution(
+      tier,
+      role,
+      "agent",
+      null,
+      45_000,
+      {
+        maxSteps: 6,
+        allowTools: true,
+        allowDelegation: mode === "orchestrate" && role === "planner",
+      },
+    );
     const assistant = await this.client.completeToolTurn({
       model: resolveModel(tier, this.routing),
       temperature: 0.1,
-      maxTokens: AGENT_PLANNER_MAX_TOKENS,
-      execution: this.execution(
-        tier,
-        plannerInput.step > 0 ? "synthesizer" : "planner",
-        "agent",
-        AGENT_PLANNER_MAX_TOKENS,
-        45_000,
-        {
-          maxSteps: 6,
-          allowTools: true,
-          allowDelegation: mode === "orchestrate" && plannerInput.step === 0,
-        },
-      ),
+      maxTokens: execution.maxOutputTokens,
+      execution,
       signal,
       runBudget,
       contextManifest,
@@ -1074,18 +1077,19 @@ export class Conversation {
       insight,
       activeSession: session,
     })}\n\n${this.harness.capabilityContext(this.runtimeScope(runtime))}`;
+    const execution = this.execution(
+      tier,
+      tier === "ambitious" ? "synthesizer" : "conversationalist",
+      "conversation",
+      null,
+      GENERAL_MODEL_DEADLINE_MS,
+    );
 
     return this.client.complete({
       model: resolveModel(tier, this.routing),
       temperature: 0.6,
-      maxTokens: REPLY_MAX_TOKENS,
-      execution: this.execution(
-        tier,
-        tier === "ambitious" ? "synthesizer" : "conversationalist",
-        "conversation",
-        REPLY_MAX_TOKENS,
-        GENERAL_MODEL_DEADLINE_MS,
-      ),
+      maxTokens: execution.maxOutputTokens,
+      execution,
       contextManifest,
       usage: this.usage(runtime.ownerId, tier, "session"),
       messages: [
@@ -1124,7 +1128,7 @@ export class Conversation {
     tier: ModelTier,
     role: ModelRole,
     workClass: ExecutionWorkClass,
-    maxOutputTokens: number,
+    maxOutputTokens: number | null,
     deadlineMs: number,
     options: {
       maxSteps?: number;
@@ -1137,8 +1141,8 @@ export class Conversation {
       role,
       workClass,
       profile: resolveModelProfile(tier, this.routing),
-      maxOutputTokens,
       deadlineMs,
+      ...(maxOutputTokens !== null ? { maxOutputTokens } : {}),
       ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
       ...(options.allowTools !== undefined
         ? { allowTools: options.allowTools }

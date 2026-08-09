@@ -397,6 +397,14 @@ describe("Conversation agent runtime", () => {
       requests[1]?.messages[0]?.content ?? "",
       /agent\.delegate\.parallel/u,
     );
+    assert.deepEqual(
+      requests.map((request) => request.maxTokens),
+      [32_768, 32_768],
+    );
+    assert.deepEqual(
+      requests.map((request) => request.execution?.budgetClass),
+      ["work", "final"],
+    );
   });
 
   it("menambahkan pengungkapan deterministik ketika delegasi hanya berhasil sebagian", async () => {
@@ -843,6 +851,8 @@ describe("model agent worker envelope", () => {
     assert.match(content, /\\u003c\/subtask-json\\u003e/u);
     assert.equal((content.match(/<\/subtask-json>/gu) ?? []).length, 1);
     assert.equal(requests[0]?.runBudget, runBudget);
+    assert.equal(requests[0]?.maxTokens, 8_192);
+    assert.equal(requests[0]?.execution?.budgetClass, "work");
   });
 
   it("fan-out provider hanya menerima envelope subpekerjaan tanpa context root", async () => {
@@ -916,6 +926,27 @@ describe("model agent worker envelope", () => {
       /worker satu tugas/u.test(request.messages[0]?.content ?? "")
     );
     assert.equal(workerRequests.length, 2);
+    assert.equal(
+      workerRequests.every((request) => request.maxTokens === 8_192),
+      true,
+    );
+    assert.equal(
+      workerRequests.every((request) =>
+        request.execution?.budgetClass === "work"
+      ),
+      true,
+    );
+    const plannerRequests = requests.filter((request) =>
+      request.tools !== undefined
+    );
+    assert.deepEqual(
+      plannerRequests.map((request) => request.maxTokens),
+      [32_768, 32_768],
+    );
+    assert.deepEqual(
+      plannerRequests.map((request) => request.execution?.budgetClass),
+      ["work", "final"],
+    );
     assert.deepEqual(
       new Set(workerRequests.map((request) => request.model)),
       new Set(["cheap-model", "efficient-model"]),

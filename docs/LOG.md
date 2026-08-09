@@ -35,6 +35,31 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-09 — Output policy dan reserve final synthesis
+
+Scope: execution policy, AI conversation/worker/client, RunBudget, agent
+harness, tes regresi, serta kontrak Agent Runtime.
+
+Changed: call general kini memperoleh output ceiling code-owned per role dan
+di-clamp ke profile exact; ceiling mekanis tetap sempit. Planner/worker memakai
+kelas budget `work`, sedangkan conversationalist/synthesizer/recovery memakai
+`final`. Work tidak dapat mereservasi separuh total token/biaya yang dilindungi
+untuk final synthesis—48.000 pada budget default, maksimal 49.152 token. View
+numeric dan checkpoint/resume mempertahankan reserve tanpa schema baru.
+ADR-028 mengikat keputusan dan batasnya.
+
+Verified: tes terarah terkait PASS. `npm run check` PASS; `npm test` PASS,
+846 test dalam 108 suite, 0 gagal. `npm run context:check`
+PASS; `git diff --check` PASS.
+
+Not verified: provider/model nyata, Telegram/WhatsApp live, context-pressure
+compaction, recovery truncation, finalizer terminal terpisah, dan efek latency/
+biaya provider dari ceiling baru.
+
+Next: implementasikan context-pressure compaction dan recovery truncation
+sebagai slice Phase C terpisah. Production RunStore/dispatcher tetap wajib
+sebelum work lane diperluas ke surface atau job lain.
+
 ## 2026-08-09 — Active AgentRun dan work lane Telegram
 
 Scope: AgentRun domain/repository/service, agent harness, adapter Telegram,

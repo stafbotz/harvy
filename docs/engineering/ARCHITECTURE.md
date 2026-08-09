@@ -144,12 +144,17 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   `src/core/execution-policy.ts` memisahkan role, work class, requested/effective
   reasoning effort, verbosity metadata, deadline, output ceiling, serta izin
   tool/delegasi dari tier/model routing lama. Seluruh call production membawa
-  plan. Agent Runtime privat juga membawa satu `RunBudgetAccount` dari root ke
-  setiap physical retry/fallback, executor, dan worker. Model call mereservasi
+  plan. Call general yang tidak memasang ceiling sempit memperoleh emergency
+  ceiling per role lalu di-clamp profile exact; mekanis tetap eksplisit kecil.
+  Agent Runtime privat juga membawa satu `RunBudgetAccount` dari root ke setiap
+  physical retry/fallback, executor, dan worker. Model call mereservasi
   token+biaya sebelum key/fetch; actual usage menyelesaikannya dan failure
-  ambigu menahan reservation penuh. Checkpoint v2 menyimpan counter+policy
-  budget untuk resume tanpa menghitung jeda pengguna. Planner hanya menerima
-  view angka informatif. Context-pressure compaction belum ada.
+  ambigu menahan reservation penuh. Work call tidak dapat memakai separuh
+  budget yang dilindungi untuk final synthesis—48.000 pada default, maksimal
+  49.152 token;
+  checkpoint v2 menurunkannya kembali dari counter+policy saat resume tanpa
+  menghitung jeda pengguna. Planner hanya menerima view angka informatif.
+  Context-pressure compaction belum ada.
   Kernel dipakai Agent Runtime read-only; kernel tetap stateless. Checkpoint
   klarifikasi sinkron v1 tetap tersedia, sedangkan permintaan `orchestrate`
   eksplisit privat Telegram memakai active AgentRun v2 di work lane. Snapshot

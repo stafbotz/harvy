@@ -46,8 +46,13 @@ export interface RunBudgetCheckpoint {
 export interface RunBudgetView {
   maxTotalTokens: number;
   remainingTokens: number;
+  /** Work non-final tidak boleh memakai bagian yang dilindungi untuk sintesis. */
+  remainingWorkTokens: number;
+  protectedFinalTokens: number;
   maxCostUsd: number;
   remainingCostUsd: string;
+  remainingWorkCostUsd: string;
+  protectedFinalCostUsd: string;
   remainingSteps: number;
   remainingToolCalls: number;
   remainingModelCalls: number;
@@ -80,6 +85,8 @@ export interface RunBudgetModelReservation {
   /** Timeout/network/JSON rusak memakai reservation penuh karena usage tidak diketahui. */
   consumeUnknown(providerCostUsd?: string | null): void;
 }
+
+export type RunBudgetModelCallClass = "work" | "final";
 
 export const DEFAULT_AGENT_RUN_BUDGET: RunBudget = Object.freeze({
   maxTotalTokens: 96_000,
@@ -114,6 +121,10 @@ interface ActiveReservation {
   inputTokenEstimate: number;
   maxOutputTokens: number;
 }
+
+// Cap: 32.768 output + 16.384 input; budget default 96.000 mereservasi 48.000.
+const MAX_FINAL_SYNTHESIS_RESERVE_TOKENS = 49_152;
+const FINAL_SYNTHESIS_RESERVE_DIVISOR = 2;
 
 /**
  * Akun budget mutable satu run. Seluruh mutasi reservation sinkron sehingga
@@ -164,7 +175,7 @@ export class RunBudgetAccount {
 
   consumeToolCall(): void {
     this.assertTime();
-    this.assertNotOverdrawn();
+    this.assertWorkAvailable();
     if (this.counters.toolCalls >= this.limitsValue.maxToolCalls) {
       throw new RunBudgetExceededError("budget_tool_calls");
     }
@@ -188,13 +199,42 @@ export class RunBudgetAccount {
     return null;
   }
 
+  /** Overage ini menahan tool/work baru tetapi menyisakan final synthesis. */
+  workOverageReason(): Extract<
+    RunBudgetExhaustionReason,
+    "budget_tokens" | "budget_cost"
+  > | null {
+    const hardLimit = this.overageReason();
+    if (hardLimit) return hardLimit;
+    if (
+      this.counters.consumedTokens >
+        this.limitsValue.maxTotalTokens - finalTokenReserve(
+          this.limitsValue.maxTotalTokens,
+        )
+    ) {
+      return "budget_tokens";
+    }
+    const totalCostLimit = maxCostNanos(this.limitsValue.maxCostUsd);
+    if (
+      this.counters.consumedCostUsdNanos >
+        totalCostLimit - finalCostReserve(totalCostLimit)
+    ) {
+      return "budget_cost";
+    }
+    return null;
+  }
+
   reserveModelCall(input: {
     tier: UsageTier;
+    /** Default fail-closed adalah work; client production selalu eksplisit. */
+    budgetClass?: RunBudgetModelCallClass;
     inputTokenEstimate: number;
     maxOutputTokens: number;
   }): RunBudgetModelReservation {
     this.assertTime();
     validateTier(input.tier);
+    const budgetClass = input.budgetClass ?? "work";
+    validateModelCallClass(budgetClass);
     validateNonNegativeInteger(input.inputTokenEstimate, "inputTokenEstimate");
     validatePositiveInteger(input.maxOutputTokens, "maxOutputTokens");
     if (this.counters.modelCalls >= this.limitsValue.maxModelCalls) {
@@ -215,15 +255,23 @@ export class RunBudgetAccount {
       (sum, reservation) => sum + reservation.costUsdNanos,
       0n,
     );
+    const tokenLimit = budgetClass === "work"
+      ? this.limitsValue.maxTotalTokens - finalTokenReserve(
+          this.limitsValue.maxTotalTokens,
+        )
+      : this.limitsValue.maxTotalTokens;
     if (
-      safeAdd(this.counters.consumedTokens, reservedTokens, tokens) >
-        this.limitsValue.maxTotalTokens
+      safeAdd(this.counters.consumedTokens, reservedTokens, tokens) > tokenLimit
     ) {
       throw new RunBudgetExceededError("budget_tokens");
     }
+    const totalCostLimit = maxCostNanos(this.limitsValue.maxCostUsd);
+    const costLimit = budgetClass === "work"
+      ? totalCostLimit - finalCostReserve(totalCostLimit)
+      : totalCostLimit;
     if (
       this.counters.consumedCostUsdNanos + reservedCost + costUsdNanos >
-        maxCostNanos(this.limitsValue.maxCostUsd)
+        costLimit
     ) {
       throw new RunBudgetExceededError("budget_cost");
     }
@@ -398,20 +446,41 @@ export class RunBudgetAccount {
       (sum, reservation) => sum + reservation.costUsdNanos,
       0n,
     );
-    const remainingCost = maxCostNanos(this.limitsValue.maxCostUsd) -
+    const totalCostLimit = maxCostNanos(this.limitsValue.maxCostUsd);
+    const remainingCost = totalCostLimit -
       this.counters.consumedCostUsdNanos - reservedCost;
+    const remainingTokens = Math.max(
+      0,
+      this.limitsValue.maxTotalTokens -
+        this.counters.consumedTokens -
+        reservedTokens,
+    );
+    const protectedFinalTokens = Math.min(
+      remainingTokens,
+      finalTokenReserve(this.limitsValue.maxTotalTokens),
+    );
+    const remainingWorkTokens = Math.max(
+      0,
+      remainingTokens - protectedFinalTokens,
+    );
+    const protectedFinalCost = minBigInt(
+      remainingCost > 0n ? remainingCost : 0n,
+      finalCostReserve(totalCostLimit),
+    );
+    const remainingWorkCost = remainingCost - protectedFinalCost;
     return Object.freeze({
       maxTotalTokens: this.limitsValue.maxTotalTokens,
-      remainingTokens: Math.max(
-        0,
-        this.limitsValue.maxTotalTokens -
-          this.counters.consumedTokens -
-          reservedTokens,
-      ),
+      remainingTokens,
+      remainingWorkTokens,
+      protectedFinalTokens,
       maxCostUsd: this.limitsValue.maxCostUsd,
       remainingCostUsd: nanosToUsdDecimal(
         remainingCost > 0n ? remainingCost : 0n,
       ),
+      remainingWorkCostUsd: nanosToUsdDecimal(
+        remainingWorkCost > 0n ? remainingWorkCost : 0n,
+      ),
+      protectedFinalCostUsd: nanosToUsdDecimal(protectedFinalCost),
       remainingSteps: Math.max(0, this.limitsValue.maxSteps - currentStep),
       remainingToolCalls: Math.max(
         0,
@@ -446,6 +515,11 @@ export class RunBudgetAccount {
 
   private assertNotOverdrawn(): void {
     const reason = this.overageReason();
+    if (reason) throw new RunBudgetExceededError(reason);
+  }
+
+  private assertWorkAvailable(): void {
+    const reason = this.workOverageReason();
     if (reason) throw new RunBudgetExceededError(reason);
   }
 
@@ -656,6 +730,27 @@ function validateTier(value: UsageTier): void {
   if (value !== "cheap" && value !== "efficient" && value !== "ambitious") {
     throw new Error("Tier reservation RunBudget tidak sah.");
   }
+}
+
+function validateModelCallClass(value: RunBudgetModelCallClass): void {
+  if (value !== "work" && value !== "final") {
+    throw new Error("Kelas model call RunBudget tidak sah.");
+  }
+}
+
+function finalTokenReserve(maxTotalTokens: number): number {
+  return Math.min(
+    MAX_FINAL_SYNTHESIS_RESERVE_TOKENS,
+    Math.max(1, Math.floor(maxTotalTokens / FINAL_SYNTHESIS_RESERVE_DIVISOR)),
+  );
+}
+
+function finalCostReserve(maxCost: bigint): bigint {
+  return maxCost / BigInt(FINAL_SYNTHESIS_RESERVE_DIVISOR);
+}
+
+function minBigInt(left: bigint, right: bigint): bigint {
+  return left < right ? left : right;
 }
 
 function validatePositiveInteger(value: number, label: string): void {

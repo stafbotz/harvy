@@ -14,9 +14,13 @@ export type ExecutionWorkClass =
   | "delegated-worker"
   | "safety";
 
+/** Kelas reservasi cumulative budget; model/prompt tidak boleh memilihnya. */
+export type ExecutionBudgetClass = "work" | "final";
+
 export interface ExecutionPlan extends ModelExecutionMetadata {
   tier: ModelTier;
   workClass: ExecutionWorkClass;
+  budgetClass: ExecutionBudgetClass;
   maxOutputTokens: number;
   deadlineMs: number;
   maxSteps: number;
@@ -31,7 +35,8 @@ export interface ExecutionPolicyInput {
   role: ModelRole;
   workClass: ExecutionWorkClass;
   profile: ModelProfile | null;
-  maxOutputTokens: number;
+  /** Mechanical call biasanya memasang ceiling sempit secara eksplisit. */
+  maxOutputTokens?: number;
   deadlineMs: number;
   maxSteps?: number;
   allowTools?: boolean;
@@ -53,7 +58,7 @@ const EFFORT_ORDER: readonly ReasoningEffort[] = [
 /** Authority murni untuk effort/verbosity/batas tahap; tidak membaca prompt. */
 export class ExecutionPolicy {
   decide(input: ExecutionPolicyInput): ExecutionPlan {
-    validatePositiveInteger(input.maxOutputTokens, "maxOutputTokens");
+    const maxOutputTokens = outputCeiling(input);
     validatePositiveInteger(input.deadlineMs, "deadlineMs");
     const maxSteps = input.maxSteps ?? 1;
     validatePositiveInteger(maxSteps, "maxSteps");
@@ -76,6 +81,7 @@ export class ExecutionPolicy {
     if (
       input.profile?.maxOutputTokens !== null &&
       input.profile?.maxOutputTokens !== undefined &&
+      input.maxOutputTokens !== undefined &&
       input.maxOutputTokens > input.profile.maxOutputTokens
     ) {
       throw new Error("Ceiling output tahap melampaui profile model.");
@@ -94,10 +100,11 @@ export class ExecutionPolicy {
       tier: input.tier,
       role: input.role,
       workClass: input.workClass,
+      budgetClass: budgetClassFor(input.role),
       requestedEffort,
       effectiveEffort,
       verbosity,
-      maxOutputTokens: input.maxOutputTokens,
+      maxOutputTokens,
       deadlineMs: input.deadlineMs,
       maxSteps,
       allowTools,
@@ -111,6 +118,45 @@ export class ExecutionPolicy {
 }
 
 export const DEFAULT_EXECUTION_POLICY = new ExecutionPolicy();
+
+const GENERAL_OUTPUT_CEILINGS: Readonly<Record<ModelRole, number>> =
+  Object.freeze({
+    extractor: 2_048,
+    classifier: 2_048,
+    conversationalist: 8_192,
+    planner: 32_768,
+    worker: 8_192,
+    critic: 4_096,
+    synthesizer: 32_768,
+    recovery: 32_768,
+  });
+
+function outputCeiling(input: ExecutionPolicyInput): number {
+  if (input.maxOutputTokens !== undefined) {
+    validatePositiveInteger(input.maxOutputTokens, "maxOutputTokens");
+    return input.maxOutputTokens;
+  }
+  const emergencyCeiling = GENERAL_OUTPUT_CEILINGS[input.role];
+  const profileCeiling = input.profile?.maxOutputTokens;
+  return profileCeiling === null || profileCeiling === undefined
+    ? emergencyCeiling
+    : Math.min(emergencyCeiling, profileCeiling);
+}
+
+function budgetClassFor(role: ModelRole): ExecutionBudgetClass {
+  switch (role) {
+    case "conversationalist":
+    case "synthesizer":
+    case "recovery":
+      return "final";
+    case "extractor":
+    case "classifier":
+    case "planner":
+    case "worker":
+    case "critic":
+      return "work";
+  }
+}
 
 function requestedEffortFor(
   role: ModelRole,

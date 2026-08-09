@@ -4,8 +4,9 @@
 - **Tanggal:** 9 Agustus 2026
 - **Pemilik keputusan:** pemilik produk Harvy
 - **Terkait:** ADR-003, ADR-013, ADR-017, ADR-018, ADR-020
-- **Diamendemen oleh:** ADR-026 untuk cumulative RunBudget physical attempt;
-  batas historis change set ADR-025 di bawah tetap benar untuk change set itu
+- **Diamendemen oleh:** ADR-026 untuk cumulative RunBudget physical attempt dan
+  ADR-028 untuk output policy general; batas historis change set ADR-025 di
+  bawah tetap benar untuk change set itu
 
 ## Konteks
 

@@ -1,7 +1,7 @@
 # Status — Agent Runtime
 
-Verified: 9 Agustus 2026 pada working tree Active AgentRun Phase D di atas
-`bbe7b9b`; `npm run check` PASS dan `npm test` PASS, 842 test dalam 108 suite,
+Verified: 9 Agustus 2026 pada working tree output policy Phase C di atas
+`7cc5abb`; `npm run check` PASS dan `npm test` PASS, 846 test dalam 108 suite,
 0 gagal.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
@@ -30,7 +30,14 @@ agent, scope/authority, atau executor internal.
 - Satu `RunBudgetAccount` code-owned mengikat root, physical retry/fallback,
   tool, dan seluruh worker. Default: 96.000 token, USD 1, 6 langkah, 5 tool,
   12 model attempt, 45 detik aktif, dan 3 worker konkuren. Reservation dibuat
-  sebelum key/fetch; failure ambigu dibebankan penuh sebagai unknown.
+  sebelum key/fetch; failure ambigu dibebankan penuh sebagai unknown. Work call
+  tidak dapat memakai separuh token/biaya yang dilindungi untuk final
+  synthesis—48.000 token pada default, maksimal 49.152; view dan checkpoint
+  mempertahankan reserve.
+- Ceiling general kini dimiliki execution policy: conversationalist/worker
+  8.192 token, planner/synthesizer/recovery 32.768, critic 4.096, lalu di-clamp
+  profile exact. Classifier/extractor dan call product-bounded tetap memakai
+  ceiling eksplisit yang sempit.
 - Checkpoint `waiting_input` sinkron privat tetap tahan restart lewat record v1
   owner-scoped, CAS, horizon absolut sepuluh menit, dan hash capability/executor.
   Writer checkpoint memakai v2 dengan snapshot RunBudget; jeda manusia tidak
@@ -59,9 +66,9 @@ agent, scope/authority, atau executor internal.
 - Profile compatibility tidak mengaktifkan reasoning. `AI_MODEL_PROFILES`
   exact belum di-smoke pada provider nyata; capability explicit fallback
   sengaja ditolak.
-- Context-pressure compaction, output-ceiling overhaul, reserved final
-  synthesis, recovery truncation, visible verbosity control,
-  validator-driven escalation, dan K3/toughest belum ada.
+- Context-pressure compaction, recovery truncation, visible verbosity control,
+  validator-driven escalation, finalizer terminal terpisah, dan K3/toughest
+  belum ada.
 - `compactAtContextRatio` baru data policy. Limit RunBudget belum bisa dituning
   lewat Console dan belum punya telemetry outcome khusus. Guard biaya preflight
   memerlukan harga tier nonnol atau reported provider cost; token/attempt tetap
@@ -92,4 +99,4 @@ agent, scope/authority, atau executor internal.
   `tests/run-budget.test.ts`, `tests/active-agent-run-service.test.ts`,
   `tests/run-mailbox-anchor.test.ts`, dan `tests/client.test.ts`.
 - Keputusan: ADR-012, ADR-016, ADR-017, ADR-018, ADR-021, ADR-025, ADR-026,
-  ADR-027.
+  ADR-027, ADR-028.

@@ -4,8 +4,9 @@
 - **Tanggal:** 9 Agustus 2026
 - **Pemilik keputusan:** pemilik produk Harvy
 - **Terkait:** ADR-003, ADR-013, ADR-017, ADR-018, ADR-020, ADR-025
-- **Diamendemen oleh:** ADR-027 untuk work lane active v2; batas sinkron di
-  bawah tetap merupakan histori change set ADR-026
+- **Diamendemen oleh:** ADR-027 untuk work lane active v2 dan ADR-028 untuk
+  cadangan final synthesis; batas di bawah tetap merupakan histori change set
+  ADR-026
 
 ## Konteks
 
