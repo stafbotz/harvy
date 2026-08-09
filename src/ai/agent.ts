@@ -193,6 +193,7 @@ export function createModelAgentWorker(
         deadlineMs: 30_000,
       }),
       signal: context.signal,
+      runBudget: context.runBudget,
       usage: {
         ownerId: context.ownerId,
         tier: task.tier,
@@ -236,6 +237,7 @@ export function agentPlannerInput(
       callableCapabilities: input.callableCapabilities,
       observations: input.observations,
       userInputs: input.userInputs,
+      budget: input.budget,
       context: {
         summary: context.summary,
         recentTurns: context.turns,

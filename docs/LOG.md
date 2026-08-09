@@ -35,6 +35,31 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-09 — RunBudget kumulatif Agent Runtime
+
+Scope: Agent Runtime privat, AiClient retry/fallback, delegasi worker,
+checkpoint `waiting_input`, adapter Telegram, dan ekspor data AgentRun.
+
+Changed: satu akun RunBudget code-owned kini mengikat root, setiap physical
+attempt, tool, dan worker. Reservation token+biaya dibuat sebelum key/fetch;
+actual usage dan reported cost disettle, sedangkan transport/408/5xx/payload
+ambigu dibebankan konservatif. Checkpoint writer baru memakai v2 dengan budget
+kumulatif dan migrasi v1 konservatif tanpa menagih jeda pengguna. Stop budget
+memakai copy jujur, concurrency worker dibatasi per run, dan ekspor pengguna
+meredaksi capability hash, price snapshot, serta limit internal. ADR-026
+mengikat keputusan dan batasnya.
+
+Verified: `npm run check` PASS; suite terarah RunBudget+AiClient PASS, 55 test
+dalam 2 suite; `npm test` PASS, 819 test dalam 104 suite, 0 gagal; `npm run
+context:check` PASS; `git diff --check` bersih selain peringatan line-ending.
+
+Not verified: provider/Telegram/WhatsApp nyata, tuning limit produksi,
+kelengkapan harga tier, crash recovery run aktif, dan multi-process storage.
+
+Next: implementasikan context-pressure compaction, reserved final synthesis,
+output-ceiling overhaul, dan recovery truncation sebagai slice Phase C
+terpisah sebelum K3/toughest.
+
 ## 2026-08-09 — Fondasi Phase C provider-aware
 
 Scope: registry/config capability model, execution policy, adapter provider,

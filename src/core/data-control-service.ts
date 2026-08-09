@@ -14,7 +14,7 @@ import type { ConversationHistory } from "../domain/history.js";
 import type { MemoryItem } from "../domain/memory.js";
 import type { UserProfile } from "../domain/profile.js";
 import type { StudentTask } from "../domain/task.js";
-import type { DurableAgentRun } from "../domain/agent-run.js";
+import type { DurableAgentRunExport } from "../domain/agent-run.js";
 import type { AgentRunService } from "./agent-run-service.js";
 
 export interface UserDataExport {
@@ -27,7 +27,7 @@ export interface UserDataExport {
   history: ConversationHistory | null;
   activeSession: ActiveSession | null;
   /** Progress run yang sedang menunggu jawaban; null bila tidak ada/expired. */
-  activeAgentRun: DurableAgentRun | null;
+  activeAgentRun: DurableAgentRunExport | null;
   aiUsageLast24Hours: UsageSummary;
   aiTelemetryRetained: TelemetryExport;
   hiddenSafetyData: {

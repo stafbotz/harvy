@@ -4,6 +4,7 @@ import type {
   AgentExecutorResult,
   AgentNativeToolDefinition,
 } from "../harness/agent-harness.js";
+import type { RunBudgetAccount } from "../core/run-budget.js";
 
 export type AgentWorkerTier = "cheap" | "efficient";
 
@@ -20,6 +21,7 @@ export interface AgentWorkerContext {
   /** Berasal dari scope executor tepercaya, bukan input planner. */
   ownerId: string;
   signal: AbortSignal;
+  runBudget: RunBudgetAccount;
 }
 
 export type AgentWorker = (
@@ -168,32 +170,41 @@ implements AgentCapabilityExecutor<ParallelDelegationInput> {
       };
     }
     const ownerId = context.scope.userId;
+    const runGate = new ProviderSemaphore(
+      Math.min(context.runBudget.maxConcurrentWorkers, input.tasks.length),
+    );
 
     const settled = await Promise.allSettled(
       input.tasks.map(async (task) => {
-        const release = await this.gate.acquire(context.signal);
+        const releaseRun = await runGate.acquire(context.signal);
         try {
-          const output = await this.worker(task, {
-            runId: context.runId,
-            scopeKind: "private",
-            channel: "telegram",
-            ownerId,
-            signal: context.signal,
-          });
-          if (context.signal.aborted) {
-            throw new DOMException("Delegasi dibatalkan.", "AbortError");
+          const releaseProvider = await this.gate.acquire(context.signal);
+          try {
+            const output = await this.worker(task, {
+              runId: context.runId,
+              scopeKind: "private",
+              channel: "telegram",
+              ownerId,
+              signal: context.signal,
+              runBudget: context.runBudget,
+            });
+            if (context.signal.aborted) {
+              throw new DOMException("Delegasi dibatalkan.", "AbortError");
+            }
+            const clean = output.trim();
+            if (!clean) throw new Error("Worker mengembalikan keluaran kosong.");
+            return {
+              id: task.id,
+              tier: task.tier,
+              status: "ok" as const,
+              output: clean.slice(0, MAX_CHILD_OUTPUT_CHARACTERS),
+              truncated: clean.length > MAX_CHILD_OUTPUT_CHARACTERS,
+            };
+          } finally {
+            releaseProvider();
           }
-          const clean = output.trim();
-          if (!clean) throw new Error("Worker mengembalikan keluaran kosong.");
-          return {
-            id: task.id,
-            tier: task.tier,
-            status: "ok" as const,
-            output: clean.slice(0, MAX_CHILD_OUTPUT_CHARACTERS),
-            truncated: clean.length > MAX_CHILD_OUTPUT_CHARACTERS,
-          };
         } finally {
-          release();
+          releaseRun();
         }
       }),
     );

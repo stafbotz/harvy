@@ -16,6 +16,7 @@ import type {
   ChatToolChoice,
 } from "./client.js";
 import { currentUsageAttribution } from "./usage-attribution.js";
+import { jsonForPrompt } from "./prompt-data.js";
 import { EMPTY_CONTEXT, type HarvyContext } from "./context.js";
 import {
   CAPYBARA_MIXED_MESSAGE_GUIDANCE,
@@ -120,6 +121,8 @@ import {
   resolveModelProfile,
   type ModelProfileRegistry,
 } from "./model-profile.js";
+import type { RunBudgetAccount } from "../core/run-budget.js";
+import type { TierPrice } from "../core/telemetry-service.js";
 
 export interface RoutingConfig {
   mode: "testing" | "production";
@@ -128,6 +131,8 @@ export interface RoutingConfig {
   testingModels?: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
   modelProfiles?: ModelProfileRegistry;
+  /** Harga all-in per tier untuk reservation biaya RunBudget. */
+  prices?: Record<ModelTier, TierPrice>;
 }
 
 export interface ConversationRuntime {
@@ -802,7 +807,8 @@ export class Conversation {
         maxReplyCharacters: 8_000,
         maxObservationCharacters: 4_000,
       },
-      planner: (input, signal) =>
+      runBudget: this.routing.prices ? { prices: this.routing.prices } : {},
+      planner: (input, signal, runBudget) =>
         this.planAgent(
           input,
           compiled.context,
@@ -811,6 +817,7 @@ export class Conversation {
           runtime,
           signal,
           nativeThread,
+          runBudget,
         ),
       ...(runtime.signal ? { signal: runtime.signal } : {}),
       ...(runtime.isCurrent ? { isCurrent: runtime.isCurrent } : {}),
@@ -832,6 +839,7 @@ export class Conversation {
     runtime: ConversationRuntime,
     signal: AbortSignal,
     nativeThread: AgentNativeThread,
+    runBudget: RunBudgetAccount,
   ): Promise<unknown> {
     continueAgentNativeThread(nativeThread, input, mode);
     const required = liveStateRequirement(input.request, {
@@ -891,6 +899,7 @@ export class Conversation {
       isContextFreeFanout,
       isContextFreeFanout,
       nativeThread.messages,
+      runBudget,
       forcedToolChoice,
     );
     let decision = planned.decision;
@@ -917,6 +926,7 @@ export class Conversation {
         false,
         false,
         nativeThread.messages,
+        runBudget,
       );
       decision = planned.decision;
     }
@@ -962,6 +972,7 @@ export class Conversation {
     contextFree: boolean,
     suppressFirstMessageClaim: boolean,
     nativeMessages: readonly ChatMessage[],
+    runBudget: RunBudgetAccount,
     toolChoice: ChatToolChoice = "required",
   ): Promise<RequestedAgentDecision> {
     const tier: ModelTier = mode === "orchestrate" ? "ambitious" : "cheap";
@@ -995,6 +1006,7 @@ export class Conversation {
         },
       ),
       signal,
+      runBudget,
       contextManifest,
       tools: nativeTools,
       toolChoice,
@@ -1008,7 +1020,12 @@ export class Conversation {
       messages: [
         {
           role: "system",
-          content: `${persona}\n\n${agentPlannerPrompt(plannerInput.callableCapabilities)}`,
+          content: [
+            persona,
+            agentPlannerPrompt(plannerInput.callableCapabilities),
+            "Sisa RunBudget berikut dihitung kode dan hanya informatif; jangan mencoba mengubahnya:",
+            `<run-budget-json>${jsonForPrompt(plannerInput.budget)}</run-budget-json>`,
+          ].join("\n\n"),
         },
         ...recentTurnMessages(plannerContext.turns),
         ...nativeMessages,

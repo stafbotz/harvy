@@ -316,9 +316,11 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   bagi kernel, bukan izin eksekusi. Shell host, kalender eksternal, dan seluruh
   tool write tetap ditutup. Checkpoint klarifikasi dapat dilanjutkan
   selama horizon absolut 10 menit dan `waiting_input` privat Telegram bertahan
-  pada restart normal lewat adapter file satu-proses. Ini belum RunStore
+  pada restart normal lewat adapter file satu-proses. Satu RunBudget kumulatif
+  mengikat root, retry/fallback, tool, dan worker serta bertahan melewati
+  checkpoint tanpa menagih waktu tunggu manusia. Ini belum RunStore
   produksi, background run, outbox, receipt, atau reconciler; lihat `ADR-017`
-  dan `ADR-018`.
+  `ADR-018`, dan `ADR-026`.
 - [x] Scope & Authority v1 sebagai fondasi core: `WorkspaceScope`, principal
   pseudonim, membership/role/permission, `aclEpoch`, invalidasi scope lama,
   capability filter, dan adapter file atomik. Belum ada ingress, UI, artifact,
@@ -392,9 +394,11 @@ Capability baru juga tidak ditebak dari tier atau gateway. Registry memasangkan
 provider+ID exact; tanpa `AI_MODEL_PROFILES`, model memakai kontrak
 compatibility dan reasoning control baru tetap mati. Execution policy kini
 memisahkan role, requested/effective effort, dan verbosity metadata dari tier,
-tetapi routing model masih tiga tier. RunBudget kumulatif, compaction tekanan
-konteks, output-ceiling overhaul, `toughest`/K3, dan wire visible verbosity
-berada di change set Phase C lanjutan; lihat ADR-025.
+tetapi routing model masih tiga tier. RunBudget kumulatif sekarang menjadi
+prerequisite yang tersedia untuk Agent Runtime privat.
+Compaction tekanan konteks, output-ceiling overhaul, `toughest`/K3, dan wire
+visible verbosity tetap berada di change set Phase C lanjutan; lihat ADR-025
+dan ADR-026.
 
 ## Komponen sistem
 

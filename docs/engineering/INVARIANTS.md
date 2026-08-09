@@ -294,6 +294,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 
 - **Ekspor dan penghapusan penuh berbeda dari kontrol memori.** Ekspor memuat
   data yang dapat dilihat pengguna dan mengecualikan insight tersembunyi.
+  Ekspor AgentRun hanya membawa request, progress, observation, input, dan
+  counter usage; capability/scope hash, price snapshot, serta limit anti-abuse
+  internal tidak boleh keluar bersama checkpoint mentah.
   Penghapusan penuh memasang tombstone profil lebih dulu, menghapus seluruh
   store termasuk insight dan telemetry, lalu menghapus profil terakhir.
   Startup wajib meneruskan tombstone; pekerjaan latar memakai lock/generation
@@ -417,6 +420,19 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   tetap primary-only sampai provider cadangan diuji dengan wire contract yang
   sama. Jangan menurunkannya diam-diam menjadi JSON/text atau mengirim schema
   tool ke fallback yang belum diverifikasi.
+- **RunBudget adalah authority kode per logical AgentRun.** Satu akun yang sama
+  wajib dipakai root, physical retry/fallback, executor, dan semua worker;
+  planner hanya menerima view angka informatif. Setiap fetch harus mereservasi
+  token+biaya atomik sebelum API key/fetch. Usage aktual—termasuk respons
+  nonterminal—disettle; HTTP 408/5xx, timeout/network, payload/usage 2xx yang
+  ambigu, serta reservation live saat checkpoint menahan reservation penuh
+  sebagai unknown. Reported provider cost yang diketahui tetap menang bila
+  lebih tinggi. HTTP 4xx selain 408 boleh melepas token/biaya, tetapi physical
+  model-call tetap dihitung. Resume tidak boleh mereset atau memperluas akun.
+  Actual overage tidak dapat membatalkan attempt yang sudah terjadi, tetapi
+  policy/tool non-final berikutnya wajib berhenti fail-closed. Harga tier nol
+  berarti cost preflight belum mempunyai coverage; jangan menyebutnya model
+  gratis atau ceiling biaya universal.
 
 ## Isolasi data
 
@@ -609,6 +625,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   `AgentRunService`, hanya untuk status `waiting_input` privat Telegram. Record
   wajib terikat scope/owner/run/mode/intent, revision CAS, codec checkpoint,
   serta `expiresAt === deadlineAt` dengan horizon absolut maksimal 10 menit.
+  Writer baru wajib memakai checkpoint agent v2 dengan embedded RunBudget
+  checkpoint v1; v2 tanpa budget ditolak. Agent checkpoint v1 hanya boleh
+  masuk migrasi konservatif dan hasil migrasi harus menyelaraskan max step.
+  Jeda menunggu jawaban tidak mengurangi waktu aktif, tetapi tidak memperpanjang
+  horizon absolut.
   Ia baru disimpan setelah seluruh bubble prompt terkirim dan wajib masuk
   ekspor/penghapusan data. Startup, load, dan worker retensi berkala membuang
   expiry; `.tmp` yatim tidak boleh dipromosikan.

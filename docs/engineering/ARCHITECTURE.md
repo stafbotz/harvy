@@ -48,6 +48,8 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   antrean tulis latar, biaya, retensi, drain, dan generation guard),
   `agent-run-service.ts` (validasi/claim/CAS, block saat penghapusan, ekspor,
   expiry absolut, dan lifecycle checkpoint klarifikasi),
+  `run-budget.ts` (akun kumulatif root/retry/fallback/worker, reservation
+  token+biaya, waktu aktif, dan codec checkpoint),
   `data-control-service.ts` (ekspor,
   tombstone, dan penghapusan lintas store), serta
   `adaptive-debounce-policy.ts` (p90 gap content-free per subjek, TTL, dan LRU),
@@ -137,7 +139,12 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   `src/core/execution-policy.ts` memisahkan role, work class, requested/effective
   reasoning effort, verbosity metadata, deadline, output ceiling, serta izin
   tool/delegasi dari tier/model routing lama. Seluruh call production membawa
-  plan, tetapi cumulative RunBudget dan context-pressure compaction belum ada.
+  plan. Agent Runtime privat juga membawa satu `RunBudgetAccount` dari root ke
+  setiap physical retry/fallback, executor, dan worker. Model call mereservasi
+  token+biaya sebelum key/fetch; actual usage menyelesaikannya dan failure
+  ambigu menahan reservation penuh. Checkpoint v2 menyimpan counter+policy
+  budget untuk resume tanpa menghitung jeda pengguna. Planner hanya menerima
+  view angka informatif. Context-pressure compaction belum ada.
   Kernel
   dipakai Agent Runtime read-only; kernel tetap stateless,
   sedangkan adapter Telegram dapat mempersistenkan hanya status
@@ -153,6 +160,8 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   shell/host/network, serta delegasi satu tingkat maksimal tiga worker
   `cheap|efficient`. Worker tidak menerima tool, memori, atau hak delegasi;
   hanya root `ambitious` pada giliran kompleks yang dapat melakukan fan-out.
+  Semaphore per-run dari RunBudget bekerja di samping semaphore provider global
+  dan seluruh worker memakai object akun yang sama.
   `agent-run-retention-worker.ts` menghapus checkpoint kedaluwarsa berkala dan
   dapat dihentikan/drain saat shutdown.
 

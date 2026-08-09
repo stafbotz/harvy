@@ -22,6 +22,7 @@ import {
   type ContextManifest,
 } from "../harness/context-manifest.js";
 import type { ExecutionPlan } from "../core/execution-policy.js";
+import type { RunBudgetAccount } from "../core/run-budget.js";
 import type { ModelProfile, ModelProfileRegistry } from "./model-profile.js";
 import {
   bindProviderToolCall,
@@ -159,6 +160,8 @@ export interface ChatRequest {
   contextManifest?: ContextManifest;
   /** Keputusan kode; prompt dan model tidak dapat mengubah metadata ini. */
   execution?: ExecutionPlan;
+  /** Akun kumulatif logical run; object lokal ini tidak pernah masuk wire. */
+  runBudget?: RunBudgetAccount;
   /** Label route lokal untuk observability; tidak dikirim ke provider. */
   operation?: AiRequestOperation;
   /**
@@ -634,6 +637,11 @@ export class AiClient {
       execution: request.execution ?? null,
       temperature: request.temperature ?? 0.7,
     });
+    const budgetReservation = request.runBudget?.reserveModelCall({
+      tier: request.execution!.tier,
+      inputTokenEstimate: estimateRequestInputTokens(request),
+      maxOutputTokens: request.maxTokens ?? 800,
+    });
     const apiKey = provider.keys.take();
 
     // Validasi request/continuation harus selesai sebelum sebuah attempt
@@ -655,6 +663,8 @@ export class AiClient {
       );
     }
     let attemptFinished = false;
+    let budgetSettled = false;
+    let observedProviderCostUsd: string | null = null;
 
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -701,6 +711,15 @@ export class AiClient {
       );
 
       if (!response.ok) {
+        // 429/4xx lain adalah penolakan request yang teramati. Timeout HTTP
+        // dan 5xx dapat terjadi setelah provider mulai bekerja, jadi usage-nya
+        // tetap dianggap unknown secara konservatif.
+        if (response.status === 408 || response.status >= 500) {
+          budgetReservation?.consumeUnknown();
+        } else {
+          budgetReservation?.release();
+        }
+        budgetSettled = true;
         throw new AiError(
           `Model menolak permintaan (${response.status}).`,
           response.status,
@@ -708,8 +727,21 @@ export class AiClient {
       }
 
       const payload: unknown = await response.json();
-      const tokenUsage = readTokenUsage(payload, request);
       const finishReason = readFinishReason(payload);
+      observedProviderCostUsd = readProviderCost(payload);
+      const tokenUsage = readTokenUsage(payload, request);
+      // Tanpa usage provider, output yang berhenti karena batas/penolakan tidak
+      // boleh dinilai hanya dari fragmen teks yang terlihat. Status inference
+      // akhirnya ambigu, jadi tahan reservation penuh.
+      const estimatedTerminalUsage = tokenUsage.estimated &&
+        (finishReason === "stop" || finishReason === "tool_calls");
+      if (tokenUsage.estimated && !estimatedTerminalUsage) {
+        budgetReservation?.consumeUnknown(observedProviderCostUsd);
+        budgetSettled = true;
+      } else if (!tokenUsage.estimated) {
+        budgetReservation?.settle(tokenUsage, observedProviderCostUsd);
+        budgetSettled = true;
+      }
 
       try {
         const completion = readCompletion(
@@ -722,6 +754,10 @@ export class AiClient {
           request,
           completion,
         );
+        if (estimatedTerminalUsage) {
+          budgetReservation?.settle(tokenUsage, observedProviderCostUsd);
+          budgetSettled = true;
+        }
         if (attemptContext) {
           attemptFinished = true;
           await bestEffortAttemptFinish(
@@ -783,6 +819,13 @@ export class AiClient {
         throw error;
       }
     } catch (error) {
+      if (!budgetSettled) {
+        // Timeout/network/response 2xx yang tidak dapat dibaca dapat saja sudah
+        // memakai inference. Reservation penuh ditahan agar retry tidak
+        // melewati batas kumulatif secara optimistis.
+        budgetReservation?.consumeUnknown(observedProviderCostUsd);
+        budgetSettled = true;
+      }
       if (attemptContext && !attemptFinished) {
         attemptFinished = true;
         await bestEffortAttemptFinish(
@@ -1095,12 +1138,38 @@ function readTokenUsage(
   const input = nonNegativeInteger(usage?.prompt_tokens);
   const output = nonNegativeInteger(usage?.completion_tokens);
   const total = nonNegativeInteger(usage?.total_tokens);
+  const usageRecord = usage !== null && typeof usage === "object"
+    ? usage
+    : null;
+  const totalFieldPresent = usageRecord !== null &&
+    Object.hasOwn(usageRecord, "total_tokens");
+  const tokenFieldsPresent = usageRecord !== null &&
+    (
+      Object.hasOwn(usageRecord, "prompt_tokens") ||
+      Object.hasOwn(usageRecord, "completion_tokens") ||
+      totalFieldPresent
+    );
+
+  if (
+    tokenFieldsPresent &&
+    (
+      input === null ||
+      output === null ||
+      (totalFieldPresent && total === null)
+    )
+  ) {
+    throw new AiError("Usage token provider tidak sah.");
+  }
 
   if (input !== null && output !== null) {
+    const summedTokens = input + output;
+    if (!Number.isSafeInteger(summedTokens)) {
+      throw new AiError("Usage token provider tidak sah.");
+    }
     return {
       inputTokens: input,
       outputTokens: output,
-      totalTokens: Math.max(total ?? 0, input + output),
+      totalTokens: Math.max(total ?? 0, summedTokens),
       estimated: false,
       reasoningTokens: nonNegativeInteger(
         usage?.completion_tokens_details?.reasoning_tokens,
@@ -1111,9 +1180,7 @@ function readTokenUsage(
       cacheWriteTokens: nonNegativeInteger(
         usage?.prompt_tokens_details?.cache_write_tokens,
       ),
-      providerCostUsd:
-        decimalCost(usage?.cost) ??
-        decimalCost(usage?.cost_details?.upstream_inference_cost),
+      providerCostUsd: readProviderCost(payload),
       providerGenerationId: providerGenerationId(payload),
     };
   }
@@ -1144,9 +1211,7 @@ function readTokenUsage(
     reasoningTokens: null,
     cacheReadTokens: null,
     cacheWriteTokens: null,
-    providerCostUsd:
-      decimalCost(usage?.cost) ??
-      decimalCost(usage?.cost_details?.upstream_inference_cost),
+    providerCostUsd: readProviderCost(payload),
     providerGenerationId: providerGenerationId(payload),
   };
 }
@@ -1253,7 +1318,7 @@ function inputTokenCalibrationFields(
 
 function nonNegativeInteger(value: unknown): number | null {
   return typeof value === "number" &&
-    Number.isInteger(value) &&
+    Number.isSafeInteger(value) &&
     value >= 0
     ? value
     : null;
@@ -1273,6 +1338,19 @@ function decimalCost(value: unknown): string | null {
     .toFixed(12)
     .replace(/0+$/u, "")
     .replace(/\.$/u, "");
+}
+
+function readProviderCost(payload: unknown): string | null {
+  const usage = (
+    payload as {
+      usage?: {
+        cost?: unknown;
+        cost_details?: { upstream_inference_cost?: unknown };
+      };
+    }
+  )?.usage;
+  return decimalCost(usage?.cost) ??
+    decimalCost(usage?.cost_details?.upstream_inference_cost);
 }
 
 function providerGenerationId(payload: unknown): string | null {
@@ -1639,6 +1717,9 @@ function assertExecutionRequest(
   timeoutMs: number,
 ): void {
   const execution = request.execution;
+  if (request.runBudget && !execution) {
+    throw new AiError("RunBudget model memerlukan execution plan tepercaya.");
+  }
   if (
     profile?.verification === "explicit" &&
     profile.reasoning.mandatory &&
@@ -1845,10 +1926,10 @@ function isUnsupportedOption(error: unknown): boolean {
   );
 }
 
-/** Kuota habis, pembatasan laju, dan galat server layak dicoba dengan kunci lain. */
+/** Timeout, pembatasan laju, dan galat server layak dicoba dengan kunci lain. */
 function isRetryable(error: unknown): boolean {
   if (error instanceof AiError && error.status !== undefined) {
-    return error.status === 429 || error.status >= 500;
+    return error.status === 408 || error.status === 429 || error.status >= 500;
   }
 
   // Timeout dan gangguan jaringan. Galat kebijakan lokal (misalnya batas
@@ -1863,7 +1944,7 @@ function isProviderWideFailure(error: unknown): boolean {
   return (
     (error instanceof AiError &&
       error.status !== undefined &&
-      error.status >= 500) ||
+      (error.status === 408 || error.status >= 500)) ||
     (error instanceof Error &&
       (error.name === "AbortError" || error instanceof TypeError))
   );
@@ -1889,6 +1970,7 @@ function shouldOpenPrimaryCircuit(
 
 function retryReason(error: unknown): string {
   if (error instanceof AiError) {
+    if (error.status === 408) return "timeout";
     if (error.status === 429) return "rate_limit";
     if (error.status !== undefined && error.status >= 500) {
       return "provider_server";

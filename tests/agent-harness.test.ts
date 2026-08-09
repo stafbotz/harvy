@@ -647,6 +647,213 @@ describe("agent harness", () => {
     if (result.status === "stopped") assert.equal(result.reason, "stale");
   });
 
+  it("menghentikan tool sebelum executor ketika budget tool-call habis", async () => {
+    let executed = false;
+    const result = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "simpan",
+      planner: async () => ({
+        kind: "action",
+        capabilityId: "memory.scoped",
+        capabilityVersion: "1",
+        input: { content: "uji" },
+      }),
+      executors: [{
+        capabilityId: "memory.scoped",
+        capabilityVersion: "1",
+        validate: () => ({ ok: true, value: { content: "uji" } }),
+        execute: async () => {
+          executed = true;
+          return { status: "ok", summary: "tersimpan" };
+        },
+      }],
+      policy: () => ({ decision: "allow" }),
+      runBudget: { limits: { maxToolCalls: 0 } },
+      now: FIXED_NOW,
+    });
+
+    assert.equal(result.status, "stopped");
+    if (result.status === "stopped") {
+      assert.equal(result.reason, "budget_tool_calls");
+    }
+    assert.equal(executed, false);
+    assert.equal(result.checkpoint.runBudget?.toolCalls, 0);
+  });
+
+  it("tidak mengotorisasi atau menjalankan tool setelah usage aktual over budget", async () => {
+    let authorized = false;
+    let executed = false;
+    const result = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "simpan",
+      planner: async (_input, _signal, budget) => {
+        budget.reserveModelCall({
+          tier: "cheap",
+          inputTokenEstimate: 1,
+          maxOutputTokens: 1,
+        }).settle({
+          inputTokens: 10,
+          outputTokens: 1,
+          totalTokens: 11,
+          estimated: false,
+        });
+        return {
+          kind: "action",
+          capabilityId: "memory.scoped",
+          capabilityVersion: "1",
+          input: { content: "uji" },
+        };
+      },
+      executors: [{
+        capabilityId: "memory.scoped",
+        capabilityVersion: "1",
+        validate: () => ({ ok: true, value: { content: "uji" } }),
+        execute: async () => {
+          executed = true;
+          return { status: "ok", summary: "tersimpan" };
+        },
+      }],
+      policy: () => {
+        authorized = true;
+        return { decision: "allow" };
+      },
+      runBudget: { limits: { maxTotalTokens: 10 } },
+      now: FIXED_NOW,
+    });
+
+    assert.equal(result.status, "stopped");
+    if (result.status === "stopped") {
+      assert.equal(result.reason, "budget_tokens");
+    }
+    assert.equal(authorized, false);
+    assert.equal(executed, false);
+  });
+
+  it("membawa token kumulatif melewati checkpoint waiting-input", async () => {
+    const remaining: number[] = [];
+    const planner: AgentPlanner = async (input, _signal, budget) => {
+      remaining.push(input.budget.remainingTokens);
+      if (remaining.length === 1) {
+        budget.reserveModelCall({
+          tier: "cheap",
+          inputTokenEstimate: 5,
+          maxOutputTokens: 15,
+        }).settle({
+          inputTokens: 4,
+          outputTokens: 6,
+          totalTokens: 10,
+          estimated: false,
+        });
+        return { kind: "need_input", prompt: "Topik apa?" };
+      }
+      return { kind: "final", reply: "Selesai." };
+    };
+    const common = {
+      scope: privateAgentScope("telegram", "1"),
+      request: "buat rencana",
+      planner,
+      runBudget: {
+        limits: {
+          maxTotalTokens: 100,
+          maxModelCalls: 4,
+        },
+      },
+      now: FIXED_NOW,
+    } as const;
+
+    const paused = await harness().run(common);
+    assert.equal(paused.status, "needs_input");
+    if (paused.status !== "needs_input") return;
+    assert.equal(paused.checkpoint.runBudget?.consumedTokens, 10);
+    const resumed = await harness().run({
+      ...common,
+      checkpoint: paused.checkpoint,
+      answer: "Matematika",
+    });
+
+    assert.equal(resumed.status, "completed");
+    assert.deepEqual(remaining, [100, 90]);
+    assert.equal(resumed.checkpoint.runBudget?.consumedTokens, 10);
+  });
+
+  it("memigrasikan checkpoint lama dengan charge konservatif", async () => {
+    const paused = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "buat rencana",
+      planner: async () => ({ kind: "need_input", prompt: "Topik apa?" }),
+      now: FIXED_NOW,
+    });
+    assert.equal(paused.status, "needs_input");
+    if (paused.status !== "needs_input") return;
+    const missingBudget = structuredClone(paused.checkpoint);
+    delete missingBudget.runBudget;
+    const rejected = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "buat rencana",
+      planner: async () => ({ kind: "final", reply: "tidak boleh" }),
+      checkpoint: missingBudget,
+      answer: "Matematika",
+      now: FIXED_NOW,
+    });
+    assert.equal(rejected.status, "stopped");
+    if (rejected.status === "stopped") {
+      assert.equal(rejected.reason, "invalid_checkpoint");
+    }
+    const legacy = structuredClone(paused.checkpoint);
+    legacy.version = 1;
+    delete legacy.runBudget;
+
+    const resumed = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "buat rencana",
+      planner: async () => ({ kind: "need_input", prompt: "Jenjang apa?" }),
+      checkpoint: legacy,
+      answer: "Matematika",
+      limits: { maxSteps: 3 },
+      now: FIXED_NOW,
+    });
+
+    assert.equal(resumed.status, "needs_input");
+    assert.equal(resumed.checkpoint.runBudget?.modelCalls, 1);
+    assert.equal(resumed.checkpoint.maxSteps, 3);
+    assert.equal(resumed.checkpoint.runBudget?.limits.maxSteps, 3);
+    assert.equal(resumed.checkpoint.runBudget?.consumedTokens, 8_192);
+    assert.equal(resumed.checkpoint.runBudget?.unknownUsageAttempts, 1);
+    if (resumed.status !== "needs_input") return;
+
+    const completed = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "buat rencana",
+      planner: async () => ({ kind: "final", reply: "Selesai." }),
+      checkpoint: resumed.checkpoint,
+      answer: "SMA",
+      limits: { maxSteps: 3 },
+      now: FIXED_NOW,
+    });
+    assert.equal(completed.status, "completed");
+  });
+
+  it("mengatribusikan batas aktif yang lebih ketat ke RunBudget", async () => {
+    const base = Date.parse("2026-07-31T10:00:00.000Z");
+    let elapsed = 0;
+    const result = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "tes budget deadline",
+      planner: async () => {
+        elapsed = 11;
+        return { kind: "final", reply: "terlambat" };
+      },
+      limits: { deadlineMs: 1_000 },
+      runBudget: { limits: { deadlineMs: 10 } },
+      now: () => new Date(base + elapsed),
+    });
+
+    assert.equal(result.status, "stopped");
+    if (result.status === "stopped") {
+      assert.equal(result.reason, "budget_deadline");
+    }
+  });
+
   it("menghentikan planner yang melewati deadline run", async () => {
     const result = await harness().run({
       scope: privateAgentScope("telegram", "1"),

@@ -22,6 +22,11 @@ import {
   type ModelProfile,
 } from "../src/ai/model-profile.js";
 import { ExecutionPolicy } from "../src/core/execution-policy.js";
+import {
+  RunBudgetAccount,
+  RunBudgetExceededError,
+  type RunBudget,
+} from "../src/core/run-budget.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -57,6 +62,354 @@ describe("AiClient", () => {
         }),
       /terpotong karena batas token/,
     );
+  });
+
+  it("tetap menghitung usage respons terpotong ke RunBudget", async () => {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{
+            message: { content: "setengah" },
+            finish_reason: "length",
+          }],
+          usage: {
+            prompt_tokens: 8,
+            completion_tokens: 4,
+            total_tokens: 12,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const budget = clientRunBudget();
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100),
+        runBudget: budget,
+      }),
+      /terpotong/u,
+    );
+    assert.equal(budget.checkpoint().consumedTokens, 12);
+    assert.equal(budget.checkpoint().modelCalls, 1);
+    assert.equal(budget.checkpoint().unknownUsageAttempts, 0);
+  });
+
+  it("menahan reservation penuh untuk respons terpotong tanpa usage", async () => {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{
+            message: { content: "x" },
+            finish_reason: "length",
+          }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const budget = clientRunBudget();
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100),
+        runBudget: budget,
+      }),
+      /terpotong/u,
+    );
+    assert.equal(budget.checkpoint().consumedTokens, 101);
+    assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
+  });
+
+  it("mempertahankan reported cost pada truncation tanpa token counts", async () => {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{
+            message: { content: "x" },
+            finish_reason: "length",
+          }],
+          usage: { cost: "2" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const budget = clientRunBudget({ maxCostUsd: 1 });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100),
+        runBudget: budget,
+      }),
+      /terpotong/u,
+    );
+    assert.equal(
+      budget.checkpoint().consumedCostUsdNanos,
+      "2000000000",
+    );
+    assert.equal(budget.overageReason(), "budget_cost");
+  });
+
+  it("menahan reservation penuh untuk usage provider yang tidak aman", async () => {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{
+            message: { content: "selesai" },
+            finish_reason: "stop",
+          }],
+          usage: {
+            prompt_tokens: Number.MAX_SAFE_INTEGER,
+            completion_tokens: 1,
+            total_tokens: Number.MAX_SAFE_INTEGER,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const budget = clientRunBudget();
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100),
+        runBudget: budget,
+      }),
+      /Usage token provider tidak sah/u,
+    );
+    assert.equal(budget.checkpoint().consumedTokens, 101);
+    assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
+  });
+
+  it("menahan reservation penuh untuk respons 2xx tanpa usage yang malformed", async () => {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{
+            message: { content: null },
+            finish_reason: "stop",
+          }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const budget = clientRunBudget();
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100),
+        runBudget: budget,
+      }),
+      /Balasan model kosong/u,
+    );
+    assert.equal(budget.checkpoint().consumedTokens, 101);
+    assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
+  });
+
+  it("menghentikan retry ketika attempt unknown menghabiskan model-call budget", async () => {
+    let fetches = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      throw new TypeError("network down");
+    };
+    const budget = clientRunBudget({ maxModelCalls: 1 });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["satu", "dua"]),
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100),
+        runBudget: budget,
+      }),
+      (error: unknown) =>
+        error instanceof RunBudgetExceededError &&
+        error.reason === "budget_model_calls",
+    );
+    assert.equal(fetches, 1);
+    assert.equal(budget.checkpoint().modelCalls, 1);
+    assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
+  });
+
+  it("melepaskan reservation token HTTP error tetapi tetap menghitung attempt", async () => {
+    let fetches = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return fetches === 1
+        ? new Response("{}", { status: 429 })
+        : chatResponse("selesai");
+    };
+    const budget = clientRunBudget({
+      maxTotalTokens: 110,
+      maxModelCalls: 2,
+    });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["satu", "dua"]),
+    });
+
+    assert.equal(await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+      maxTokens: 100,
+      execution: clientExecution(100),
+      runBudget: budget,
+    }), "selesai");
+    assert.equal(fetches, 2);
+    assert.equal(budget.checkpoint().modelCalls, 2);
+    assert.equal(budget.checkpoint().consumedTokens, 6);
+  });
+
+  it("menahan reservation penuh untuk HTTP 5xx yang usage-nya tidak diketahui", async () => {
+    globalThis.fetch = async () => new Response("{}", { status: 503 });
+    const budget = clientRunBudget({
+      maxTotalTokens: 110,
+      maxModelCalls: 1,
+    });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["satu"]),
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100),
+        runBudget: budget,
+      }),
+      /503/u,
+    );
+    assert.equal(budget.checkpoint().consumedTokens, 101);
+    assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
+  });
+
+  it("menghitung HTTP 408 sebagai unknown lalu retry dalam budget yang sama", async () => {
+    let fetches = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return fetches === 1
+        ? new Response("{}", { status: 408 })
+        : chatResponse("selesai");
+    };
+    const budget = clientRunBudget({
+      maxTotalTokens: 250,
+      maxModelCalls: 2,
+    });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["satu", "dua"]),
+    });
+
+    assert.equal(await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+      maxTokens: 100,
+      execution: clientExecution(100),
+      runBudget: budget,
+    }), "selesai");
+    assert.equal(fetches, 2);
+    assert.equal(budget.checkpoint().consumedTokens, 107);
+    assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
+  });
+
+  it("memakai satu RunBudget untuk attempt primary dan fallback", async () => {
+    let primaryCalls = 0;
+    let fallbackCalls = 0;
+    globalThis.fetch = async (input) => {
+      if (String(input).startsWith("https://primary.invalid/")) {
+        primaryCalls += 1;
+        return new Response("{}", { status: 503 });
+      }
+      fallbackCalls += 1;
+      return chatResponse("fallback selesai");
+    };
+    const budget = clientRunBudget({
+      maxTotalTokens: 250,
+      maxModelCalls: 2,
+    });
+    const client = new AiClient({
+      baseUrl: "https://primary.invalid/v1",
+      keys: new ApiKeyPool(["utama"]),
+      fallback: testFallback(),
+    });
+
+    assert.equal(await client.complete({
+      model: "model-utama",
+      messages: [{ role: "user", content: "halo" }],
+      maxTokens: 100,
+      execution: clientExecution(100),
+      runBudget: budget,
+    }), "fallback selesai");
+    assert.equal(primaryCalls, 1);
+    assert.equal(fallbackCalls, 1);
+    assert.equal(budget.checkpoint().modelCalls, 2);
+    assert.equal(budget.checkpoint().consumedTokens, 107);
+    assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
+  });
+
+  it("penolakan budget lokal tidak memutar API key", async () => {
+    const authorizations: string[] = [];
+    globalThis.fetch = async (_input, init) => {
+      const headers = init?.headers as Record<string, string>;
+      authorizations.push(headers.authorization ?? "");
+      return chatResponse("selesai");
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["satu", "dua"]),
+    });
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100),
+        runBudget: clientRunBudget({ maxTotalTokens: 100 }),
+      }),
+      (error: unknown) =>
+        error instanceof RunBudgetExceededError &&
+        error.reason === "budget_tokens",
+    );
+
+    assert.equal(await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+    }), "selesai");
+    assert.deepEqual(authorizations, ["Bearer satu"]);
   });
 
   it("mengirim native tools dan membaca tool_calls tanpa mode JSON", async () => {
@@ -1544,6 +1897,35 @@ function testFallback(
     cooldownMs: 30_000,
     ...overrides,
   };
+}
+
+function clientExecution(maxOutputTokens: number) {
+  return new ExecutionPolicy().decide({
+    tier: "cheap",
+    role: "conversationalist",
+    workClass: "agent",
+    profile: null,
+    maxOutputTokens,
+    deadlineMs: 30_000,
+  });
+}
+
+function clientRunBudget(
+  limits: Partial<RunBudget> = {},
+): RunBudgetAccount {
+  return new RunBudgetAccount({
+    limits: {
+      maxTotalTokens: 10_000,
+      maxCostUsd: 1,
+      maxSteps: 6,
+      maxToolCalls: 5,
+      maxModelCalls: 6,
+      deadlineMs: 45_000,
+      compactAtContextRatio: 0.8,
+      maxConcurrentWorkers: 3,
+      ...limits,
+    },
+  });
 }
 
 function chatResponse(content: string): Response {

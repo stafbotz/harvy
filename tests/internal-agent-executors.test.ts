@@ -25,6 +25,7 @@ import {
   MAX_AGENT_EXECUTOR_SUMMARY_CHARACTERS,
   type AgentExecutionContext,
 } from "../src/harness/agent-harness.js";
+import { RunBudgetAccount } from "../src/core/run-budget.js";
 import { privateAgentScope } from "../src/harness/scope.js";
 
 const NOW = new Date("2026-08-04T05:00:00.000Z");
@@ -474,6 +475,7 @@ function context(ownerId: string): AgentExecutionContext {
     scope: privateAgentScope("telegram", ownerId),
     idempotencyKey: "key",
     signal: new AbortController().signal,
+    runBudget: new RunBudgetAccount(),
   };
 }
 

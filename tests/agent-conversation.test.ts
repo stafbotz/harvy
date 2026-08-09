@@ -17,6 +17,7 @@ import {
   type AgentRunCheckpoint,
 } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
+import { RunBudgetAccount } from "../src/core/run-budget.js";
 
 const PRODUCTION_ROUTING = {
   mode: "production" as const,
@@ -822,6 +823,7 @@ describe("model agent worker envelope", () => {
       },
     } as unknown as AiClient;
     const worker = createModelAgentWorker(client, PRODUCTION_ROUTING);
+    const runBudget = new RunBudgetAccount();
     await worker(
       {
         id: "uji",
@@ -834,11 +836,13 @@ describe("model agent worker envelope", () => {
         channel: "telegram",
         ownerId: "student",
         signal: new AbortController().signal,
+        runBudget,
       },
     );
     const content = requests[0]?.messages[1]?.content ?? "";
     assert.match(content, /\\u003c\/subtask-json\\u003e/u);
     assert.equal((content.match(/<\/subtask-json>/gu) ?? []).length, 1);
+    assert.equal(requests[0]?.runBudget, runBudget);
   });
 
   it("fan-out provider hanya menerima envelope subpekerjaan tanpa context root", async () => {

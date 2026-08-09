@@ -10,7 +10,7 @@ import type { SessionService } from "../src/core/session-service.js";
 import type { TaskService } from "../src/core/task-service.js";
 import type { TelemetryService } from "../src/core/telemetry-service.js";
 import type { AgentRunService } from "../src/core/agent-run-service.js";
-import type { DurableAgentRun } from "../src/domain/agent-run.js";
+import type { DurableAgentRunExport } from "../src/domain/agent-run.js";
 
 function cast<T>(value: object): T {
   return value as T;
@@ -196,7 +196,7 @@ describe("DataControlService", () => {
       () => new Date("2026-07-27T10:00:00.000Z"),
       cast<AgentRunService>({
         async export() {
-          return { runId: "run-export" } as DurableAgentRun;
+          return { runId: "run-export" } as DurableAgentRunExport;
         },
       }),
     );

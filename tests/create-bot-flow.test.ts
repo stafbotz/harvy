@@ -1524,6 +1524,45 @@ describe("alur adapter Telegram", () => {
     assert.ok((deliveredTurn?.length ?? 0) > 10);
   });
 
+  it("memberi copy jujur dan membuang debit saat run awal kehabisan budget", async () => {
+    let discarded = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async () => ({
+          status: "stopped",
+          reason: "budget_model_calls",
+          checkpoint: {} as AgentRunCheckpoint,
+          trace: [],
+        }),
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        telemetry: {
+          beginTurn: async () => undefined,
+          event: async () => undefined,
+          noteTurnSignal: async () => undefined,
+          recordTurn: async () => undefined,
+          discardUndelivered: async () => {
+            discarded += 1;
+          },
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis panjang"));
+    await harness.bot.drainPending();
+
+    assert.equal(discarded, 1);
+    assert.ok(harness.sent.some((text) =>
+      text.includes("batas kerja kumulatifnya tercapai") &&
+      text.includes("tidak akan mengarang")
+    ));
+  });
+
   it("tetap membaca state live ketika model salah menyebut query agenda sebagai history", async () => {
     let agentCalls = 0;
     let replyCalls = 0;
@@ -1683,6 +1722,67 @@ describe("alur adapter Telegram", () => {
     assert.equal(deliveredTurns.length, 2);
     assert.equal(deliveredTurns.every((turnId) => typeof turnId === "string"), true);
     assert.equal(discarded, 0);
+  });
+
+  it("membersihkan checkpoint dan memberi copy resume saat budget habis", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-bot-agent-budget-resume-"));
+    const runs = new AgentRunService(
+      new FileAgentRunRepository(join(root, "agent-runs.json")),
+    );
+    const checkpoint = durableCheckpoint("123", "run-budget-resume");
+    let calls = 0;
+    let discarded = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "question" }),
+        agent: async () => {
+          calls += 1;
+          return calls === 1
+            ? {
+                status: "needs_input",
+                prompt: "Rentang tanggal mana yang kamu maksud?",
+                checkpoint,
+              }
+            : {
+                status: "stopped",
+                reason: "budget_deadline",
+                checkpoint,
+                trace: [],
+              };
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        agentRuns: runs,
+        telemetry: {
+          beginTurn: async () => undefined,
+          event: async () => undefined,
+          noteTurnSignal: async () => undefined,
+          recordTurn: async () => undefined,
+          markDelivered: async () => undefined,
+          discardUndelivered: async () => {
+            discarded += 1;
+          },
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("buat analisis jadwal", 1));
+    await harness.bot.drainPending();
+    assert.ok(await runs.loadWaitingInput("telegram", "123"));
+    await harness.bot.handleUpdate(messageUpdate("30 hari", 2));
+    await harness.bot.drainPending();
+
+    assert.equal(calls, 2);
+    assert.equal(discarded, 1);
+    assert.equal(await runs.loadWaitingInput("telegram", "123"), null);
+    assert.ok(harness.sent.some((text) =>
+      text.includes("Batas kerja kumulatif run sebelumnya") &&
+      text.includes("hasil setengah jadi")
+    ));
   });
 
   it("tidak memakai pesan yang masuk sebelum prompt sebagai jawaban checkpoint", async () => {

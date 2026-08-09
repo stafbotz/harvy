@@ -1357,6 +1357,8 @@ export function createBot(
                   ? "Aku menghentikan run ini karena agent baca-saja meminta izin untuk perubahan yang tidak tersedia."
                   : agentResult.reason === "deadline"
                     ? "Aku belum menyelesaikan run ini sebelum batas waktunya. Aku tidak akan mengarang hasilnya."
+                    : agentResult.reason.startsWith("budget_")
+                      ? "Aku menghentikan run saat batas kerja kumulatifnya tercapai. Aku tidak akan mengarang atau meneruskan hasil setengah jadi."
                     : agentResult.reason === "cycle"
                       ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
                       : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
@@ -1888,6 +1890,8 @@ export function createBot(
       debitDeliveredReply = false;
       response = result.reason === "deadline"
         ? "Waktu run sebelumnya sudah habis, jadi aku tidak melanjutkannya seolah hasilnya masih segar. Coba minta lagi kalau kamu masih perlu."
+        : result.reason.startsWith("budget_")
+          ? "Batas kerja kumulatif run sebelumnya sudah tercapai, jadi aku tidak melanjutkan hasil setengah jadi. Coba minta lagi kalau kamu masih perlu."
         : result.reason === "cycle"
           ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
           : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";

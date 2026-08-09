@@ -198,7 +198,7 @@ Pengujian terarah tanpa jaringan:
 
 ```bash
 npm run build
-node --test dist/tests/client.test.js dist/tests/agent-conversation.test.js dist/tests/agent-runtime.test.js dist/tests/internal-agent-executors.test.js dist/tests/agent-harness.test.js dist/tests/file-agent-run-repository.test.js dist/tests/agent-run-retention-worker.test.js dist/tests/message-batcher.test.js dist/tests/create-bot-flow.test.js dist/tests/data-control-service.test.js dist/tests/usage-ledger-service.test.js
+node --test dist/tests/run-budget.test.js dist/tests/client.test.js dist/tests/agent-conversation.test.js dist/tests/agent-runtime.test.js dist/tests/internal-agent-executors.test.js dist/tests/agent-harness.test.js dist/tests/file-agent-run-repository.test.js dist/tests/agent-run-retention-worker.test.js dist/tests/message-batcher.test.js dist/tests/create-bot-flow.test.js dist/tests/data-control-service.test.js dist/tests/usage-ledger-service.test.js
 ```
 
 Fondasi provider/execution Phase C mempunyai gate tambahan:
@@ -258,6 +258,19 @@ serialisasi/restart, tanpa menyimpan transcript provider. Nama+schema executor
 harus ikut authority hash agar perubahan kontrak menghentikan checkpoint lama.
 Request native tidak boleh masuk fallback sebelum provider fallback itu
 diverifikasi.
+
+RunBudget wajib membuktikan reservasi atomik pada worker concurrent; satu akun
+untuk root, retry, fallback, dan worker; physical attempt tetap dihitung ketika
+4xx melepas reservation; serta 408/5xx/timeout/network/JSON rusak/usage tidak
+aman/truncation tanpa usage dibebankan unknown. Reported cost pada attempt
+unknown tidak boleh hilang. Actual overage wajib menghentikan policy+executor
+berikutnya, sedangkan final lengkap yang sudah dibayar boleh dikirim.
+Checkpoint v2 harus round-trip tanpa reset token/biaya/attempt/waktu aktif,
+menolak v2 tanpa budget, memigrasi v1 konservatif dengan max-step selaras, dan
+tidak menghitung jeda manusia. Delegasi harus menaati semaphore per-run di
+samping gate provider. Adapter wajib memberi copy `budget_*`, membuang debit
+undelivered, membersihkan checkpoint resume, dan ekspor tidak boleh membuka
+price/limit/capability hash internal.
 
 Checkpoint durable wajib diuji lintas instance repository dan restart bot,
 termasuk CAS claim, owner kanonis, horizon absolut, timestamp masa depan,

@@ -22,6 +22,7 @@ import {
 } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { privateAgentScope } from "../src/harness/scope.js";
+import { RunBudgetAccount } from "../src/core/run-budget.js";
 
 describe("agent routing dan planner contract", () => {
   it("memakai cheap tools untuk sederhana dan ambitious orchestrator untuk kompleks", () => {
@@ -486,6 +487,48 @@ describe("parallel delegation executor", () => {
     assert.equal(payload.succeeded, 3);
   });
 
+  it("mengikuti batas concurrency worker milik RunBudget", async () => {
+    let active = 0;
+    let maximum = 0;
+    const executor = new ParallelDelegationExecutor(async (task) => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return `hasil ${task.id}`;
+    }, 3);
+    const input = executor.validate({ tasks: [
+      { id: "satu", instruction: "satu", tier: "cheap" },
+      { id: "dua", instruction: "dua", tier: "efficient" },
+      { id: "tiga", instruction: "tiga", tier: "cheap" },
+    ] });
+    assert.equal(input.ok, true);
+    if (!input.ok) return;
+    const budget = new RunBudgetAccount({
+      limits: { maxConcurrentWorkers: 1 },
+    });
+
+    const result = await executor.execute(
+      input.value,
+      executionContext(0, budget),
+    );
+
+    assert.equal(result.status, "ok");
+    assert.equal(maximum, 1);
+
+    active = 0;
+    maximum = 0;
+    const wideBudget = new RunBudgetAccount({
+      limits: { maxConcurrentWorkers: 32 },
+    });
+    const wideResult = await executor.execute(
+      input.value,
+      executionContext(0, wideBudget),
+    );
+    assert.equal(wideResult.status, "ok");
+    assert.equal(maximum, 3);
+  });
+
   it("menjaga ringkasan tiga worker panjang tetap JSON valid dan adil", async () => {
     const executor = new ParallelDelegationExecutor(
       async (task) => `${task.id}:${"\\\n\u0000".repeat(1_000)}`,
@@ -604,13 +647,17 @@ function fakeNativeExecutor(
   };
 }
 
-function executionContext(step = 0): AgentExecutionContext {
+function executionContext(
+  step = 0,
+  runBudget = new RunBudgetAccount(),
+): AgentExecutionContext {
   return {
     runId: "run",
     step,
     scope: privateAgentScope("telegram", "student"),
     idempotencyKey: "idempotent",
     signal: new AbortController().signal,
+    runBudget,
   };
 }
 

@@ -3,6 +3,7 @@ import type {
   DurableAgentIntent,
   DurableAgentMode,
   DurableAgentRun,
+  DurableAgentRunExport,
   NewDurableAgentRun,
 } from "../domain/agent-run.js";
 import {
@@ -154,12 +155,44 @@ export class AgentRunService {
     return result === "removed";
   }
 
-  /** Bentuk lengkapnya masuk ekspor karena checkpoint memuat data pengguna. */
-  export(
+  /** Ekspor hanya membawa progress/usage pengguna, bukan policy authority. */
+  async export(
     channel: AgentChannel,
     ownerId: string,
-  ): Promise<DurableAgentRun | null> {
-    return this.loadWaitingInput(channel, ownerId);
+  ): Promise<DurableAgentRunExport | null> {
+    const run = await this.loadWaitingInput(channel, ownerId);
+    if (!run) return null;
+    const budget = run.checkpoint.runBudget;
+    return {
+      version: 1,
+      channel: run.channel,
+      ownerId: run.ownerId,
+      runId: run.runId,
+      request: run.request,
+      mode: run.mode,
+      intent: run.intent,
+      status: run.status,
+      revision: run.revision,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      expiresAt: run.expiresAt,
+      progress: {
+        step: run.checkpoint.step,
+        observations: structuredClone(run.checkpoint.observations),
+        userInputs: structuredClone(run.checkpoint.userInputs),
+        pendingInput: structuredClone(run.checkpoint.pendingInput),
+      },
+      budget: budget
+        ? {
+            consumedTokens: budget.consumedTokens,
+            consumedCostUsdNanos: budget.consumedCostUsdNanos,
+            modelCalls: budget.modelCalls,
+            toolCalls: budget.toolCalls,
+            unknownUsageAttempts: budget.unknownUsageAttempts,
+            activeElapsedMs: budget.activeElapsedMs,
+          }
+        : null,
+    };
   }
 
   forget(channel: AgentChannel, ownerId: string): Promise<number> {

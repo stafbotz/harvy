@@ -12,6 +12,8 @@
   calling; bentuk kanonik `final|need_input|action` tetap menjadi kontrak kernel
 - **Diamendemen oleh:** ADR-025 untuk assistant-turn continuation, exact model
   profile, dan provider serialization
+- **Diamendemen oleh:** ADR-026 untuk cumulative RunBudget, physical-attempt
+  accounting, checkpoint v2, dan semaphore per-run
 
 ## Konteks
 

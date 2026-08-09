@@ -338,7 +338,8 @@ describe("file agent run repository", () => {
     });
 
     const exported = await service.export("telegram", "alice");
-    assert.equal(exported?.checkpoint.pendingInput?.prompt, "Rentang mana?");
+    assert.equal(exported?.progress.pendingInput?.prompt, "Rentang mana?");
+    assert.equal("checkpoint" in (exported ?? {}), false);
     assert.equal(await service.forget("telegram", "alice"), 1);
     assert.equal(await service.export("telegram", "alice"), null);
     await assert.rejects(
@@ -423,6 +424,12 @@ describe("file agent run repository", () => {
     });
     assert.equal(saved.checkpoint.capabilityHash.length, 16);
     assert.equal(saved.checkpoint.callableHash.length, 64);
+    const userExport = await service.export("telegram", "alice");
+    assert.ok(userExport?.budget);
+    assert.doesNotMatch(
+      JSON.stringify(userExport),
+      /capabilityHash|callableHash|"prices"|"limits"/u,
+    );
 
     const restarted = new AgentRunService(
       new FileAgentRunRepository(file),

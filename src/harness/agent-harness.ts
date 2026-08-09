@@ -8,6 +8,15 @@ import {
 } from "./capabilities.js";
 import type { AgentScope, WorkspaceAgentScope } from "./scope.js";
 import { scopeKey } from "./scope.js";
+import {
+  isValidRunBudgetCheckpoint,
+  RunBudgetAccount,
+  runBudgetReason,
+  type RunBudgetCheckpoint,
+  type RunBudgetExhaustionReason,
+  type RunBudgetPolicy,
+  type RunBudgetView,
+} from "../core/run-budget.js";
 
 export interface AgentRunLimits {
   maxSteps: number;
@@ -74,6 +83,8 @@ export interface AgentPlannerInput {
   capabilities: CapabilitySnapshot;
   observations: readonly AgentObservation[];
   userInputs: readonly AgentUserInput[];
+  /** Sisa budget dari kode; data ini informatif dan bukan authority model. */
+  budget: RunBudgetView;
 }
 
 export interface AgentUserInput {
@@ -86,6 +97,7 @@ export interface AgentUserInput {
 export type AgentPlanner = (
   input: AgentPlannerInput,
   signal: AbortSignal,
+  runBudget: RunBudgetAccount,
 ) => Promise<unknown>;
 
 export interface AgentExecutorValidationSuccess<T = unknown> {
@@ -104,6 +116,8 @@ export interface AgentExecutionContext {
   scope: AgentScope;
   idempotencyKey: string;
   signal: AbortSignal;
+  /** Akun yang sama dengan root planner dan seluruh worker run ini. */
+  runBudget: RunBudgetAccount;
 }
 
 export interface AgentExecutorResult {
@@ -165,7 +179,8 @@ export interface AgentPendingInput {
 
 /** Bentuk ini sengaja serializable agar pause/resume tidak memulai run baru. */
 export interface AgentRunCheckpoint {
-  version: 1;
+  /** v1 adalah checkpoint legacy tanpa RunBudget; writer baru selalu v2. */
+  version: 1 | 2;
   runId: string;
   scopeKey: string;
   capabilityHash: string;
@@ -182,6 +197,8 @@ export interface AgentRunCheckpoint {
   seenActionDigests: string[];
   pending: AgentPendingAction | null;
   pendingInput: AgentPendingInput | null;
+  /** Wajib pada v2; optional pada type hanya untuk migrasi v1. */
+  runBudget?: RunBudgetCheckpoint;
 }
 
 export interface AgentTraceEvent {
@@ -220,7 +237,8 @@ export type AgentRunResult =
         | "invalid_planner_output"
         | "capability_changed"
         | "stale"
-        | "invalid_checkpoint";
+        | "invalid_checkpoint"
+        | RunBudgetExhaustionReason;
       checkpoint: AgentRunCheckpoint;
       trace: readonly AgentTraceEvent[];
     };
@@ -232,6 +250,8 @@ export interface AgentRunInput {
   executors?: readonly AgentCapabilityExecutor[];
   policy?: AgentAuthorizationPolicy;
   limits?: Partial<AgentRunLimits>;
+  /** Policy code-owned; model dan tool output tidak dapat mengubahnya. */
+  runBudget?: RunBudgetPolicy;
   signal?: AbortSignal;
   checkpoint?: AgentRunCheckpoint;
   approval?: AgentApprovalGrant;
@@ -251,7 +271,12 @@ export interface WorkspaceScopeAuthority {
   ): boolean | Promise<boolean>;
 }
 
-type FreshnessState = "current" | "stale" | "cancelled" | "deadline";
+type FreshnessState =
+  | "current"
+  | "stale"
+  | "cancelled"
+  | "deadline"
+  | "budget_deadline";
 
 /**
  * Kernel agent channel-neutral. Current Harvy workflows belum memberinya tool;
@@ -272,8 +297,25 @@ export class AgentHarness {
   }
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
+    const state: { runBudget?: RunBudgetAccount } = {};
+    const result = await this.runInternal(input, state);
+    if (state.runBudget) {
+      result.checkpoint.runBudget = state.runBudget.checkpoint();
+    }
+    return result;
+  }
+
+  private async runInternal(
+    input: AgentRunInput,
+    state: { runBudget?: RunBudgetAccount },
+  ): Promise<AgentRunResult> {
     const now = input.now ?? (() => new Date());
     const limits = resolvedLimits(input.limits);
+    const runBudget = new RunBudgetAccount(
+      budgetPolicyFor(input.runBudget, limits, input.checkpoint),
+      () => now().getTime(),
+    );
+    state.runBudget = runBudget;
     const snapshot = this.capabilities(input.scope);
     const executors = executorMap(input.executors ?? []);
     const callableHash = callableCapabilityHash(snapshot, executors);
@@ -285,12 +327,33 @@ export class AgentHarness {
       callableHash,
       now,
       limits,
+      runBudget,
     );
     if (!checkpointResult.ok) {
-      const fallback = emptyCheckpoint(input, snapshot, callableHash, now, limits);
+      const fallback = emptyCheckpoint(
+        input,
+        snapshot,
+        callableHash,
+        now,
+        limits,
+        runBudget,
+      );
       return stopped("invalid_checkpoint", fallback, trace);
     }
     const checkpoint = checkpointResult.value;
+    if (input.checkpoint) {
+      if (checkpoint.version === 2 && checkpoint.runBudget) {
+        runBudget.restore(checkpoint.runBudget);
+      } else {
+        runBudget.seedLegacy({
+          modelCalls: Math.min(Number.MAX_SAFE_INTEGER, checkpoint.step + 1),
+          toolCalls: checkpoint.observations.length,
+        });
+        checkpoint.version = 2;
+        checkpoint.maxSteps = runBudget.checkpoint().limits.maxSteps;
+      }
+      checkpoint.runBudget = runBudget.checkpoint();
+    }
     // Workspace scope membawa snapshot ACL. Tanpa resolver `isCurrent`, kernel
     // tidak mempunyai authority untuk memastikan membership/epoch masih sah.
     if (input.scope.kind === "workspace" && !input.isCurrent) {
@@ -306,12 +369,26 @@ export class AgentHarness {
     // Stored deadline menjaga resume tidak memperoleh waktu baru; batas call
     // sekarang tetap menjadi ceiling bila checkpoint rusak/berasal dari store
     // lama dengan horizon lebih longgar.
-    const deadlineAt = Math.min(
+    const deadlineNow = now().getTime();
+    const invocationDeadlineAt = Math.min(
       Date.parse(checkpoint.deadlineAt),
-      now().getTime() + limits.deadlineMs,
+      deadlineNow + limits.deadlineMs,
     );
+    const budgetDeadlineAt = deadlineNow + runBudget.remainingActiveMs();
+    // Tie tetap dianggap deadline invocation agar perilaku lama stabil. Budget
+    // hanya memiliki deadline ketika batas aktifnya memang lebih ketat.
+    const budgetOwnsDeadline = input.checkpoint
+      ? budgetDeadlineAt < invocationDeadlineAt
+      : runBudget.deadlineMs < invocationDeadlineAt - deadlineNow;
+    const deadlineAt = Math.min(invocationDeadlineAt, budgetDeadlineAt);
     const freshness = async (): Promise<FreshnessState> => {
-      const stop = stopReason(input.signal, deadlineAt, now);
+      const stop = stopReason(
+        input.signal,
+        deadlineAt,
+        budgetOwnsDeadline,
+        now,
+        runBudget,
+      );
       if (stop) return stop;
       try {
         const current = await boundedCall(
@@ -327,14 +404,29 @@ export class AgentHarness {
         );
         return current ? "current" : "stale";
       } catch (error) {
-        const reason = abortReason(error, input.signal, deadlineAt, now);
-        return reason === "cancelled" || reason === "deadline"
+        const reason = abortReason(
+          error,
+          input.signal,
+          deadlineAt,
+          budgetOwnsDeadline,
+          now,
+          runBudget,
+        );
+        return reason === "cancelled" ||
+            reason === "deadline" ||
+            reason === "budget_deadline"
           ? reason
           : "stale";
       }
     };
 
-    const resumeStop = stopReason(input.signal, deadlineAt, now);
+    const resumeStop = stopReason(
+      input.signal,
+      deadlineAt,
+      budgetOwnsDeadline,
+      now,
+      runBudget,
+    );
     if (resumeStop) return stopped(resumeStop, checkpoint, trace);
     const initialFreshness = await freshness();
     if (initialFreshness !== "current") {
@@ -372,15 +464,32 @@ export class AgentHarness {
         executors,
         limits,
         deadlineAt,
+        budgetOwnsDeadline,
         freshness,
         trace,
         now,
+        runBudget,
       });
       if (pendingResult) return pendingResult;
     }
 
     while (checkpoint.step < Math.min(limits.maxSteps, checkpoint.maxSteps)) {
-      const stop = stopReason(input.signal, deadlineAt, now);
+      try {
+        runBudget.assertStep(checkpoint.step);
+      } catch (error) {
+        return stopped(
+          runBudgetReason(error) ?? "budget_steps",
+          checkpoint,
+          trace,
+        );
+      }
+      const stop = stopReason(
+        input.signal,
+        deadlineAt,
+        budgetOwnsDeadline,
+        now,
+        runBudget,
+      );
       if (stop) return stopped(stop, checkpoint, trace);
       const planningFreshness = await freshness();
       if (planningFreshness !== "current") {
@@ -405,8 +514,10 @@ export class AgentHarness {
                 capabilities: snapshot,
                 observations: immutableObservations(checkpoint.observations),
                 userInputs: immutableUserInputs(checkpoint.userInputs),
+                budget: runBudget.view(checkpoint.step),
               },
               signal,
+              runBudget,
             ),
           input.signal,
           deadlineAt,
@@ -414,7 +525,14 @@ export class AgentHarness {
         );
       } catch (error) {
         return stopped(
-          abortReason(error, input.signal, deadlineAt, now),
+          abortReason(
+            error,
+            input.signal,
+            deadlineAt,
+            budgetOwnsDeadline,
+            now,
+            runBudget,
+          ),
           checkpoint,
           trace,
         );
@@ -430,6 +548,14 @@ export class AgentHarness {
         return stopped("invalid_planner_output", checkpoint, trace);
       }
       trace.push(event(checkpoint.step, "plan", decision.kind));
+
+      // Balasan final sudah dibayar dan boleh tetap dikirim. Work lanjutan
+      // (tool atau pertanyaan baru) tidak boleh dimulai setelah actual usage
+      // provider membuat akun melampaui token/cost reservation semula.
+      const overage = runBudget.overageReason();
+      if (overage && decision.kind !== "final") {
+        return stopped(overage, checkpoint, trace);
+      }
 
       if (decision.kind === "final") {
         const reply = boundedText(decision.reply, limits.maxReplyCharacters);
@@ -461,9 +587,11 @@ export class AgentHarness {
         policy,
         limits,
         deadlineAt,
+        budgetOwnsDeadline,
         freshness,
         trace,
         now,
+        runBudget,
       });
       if (actionResult) return actionResult;
     }
@@ -485,9 +613,11 @@ interface ActionDependencies {
   policy: AgentAuthorizationPolicy;
   limits: AgentRunLimits;
   deadlineAt: number;
+  budgetOwnsDeadline: boolean;
   freshness: () => Promise<FreshnessState>;
   trace: AgentTraceEvent[];
   now: () => Date;
+  runBudget: RunBudgetAccount;
 }
 
 async function handleAction(
@@ -502,9 +632,11 @@ async function handleAction(
     policy,
     limits,
     deadlineAt,
+    budgetOwnsDeadline,
     freshness,
     trace,
     now,
+    runBudget,
   } = dependencies;
   const capability = snapshot.entries.find(
     (entry) => entry.id === decision.capabilityId,
@@ -613,8 +745,15 @@ async function handleAction(
     }
     authorization = rawAuthorization;
   } catch (error) {
-    const reason = abortReason(error, input.signal, deadlineAt, now);
-    if (reason === "cancelled" || reason === "deadline") {
+    const reason = abortReason(
+      error,
+      input.signal,
+      deadlineAt,
+      budgetOwnsDeadline,
+      now,
+      runBudget,
+    );
+    if (reason !== "invalid_planner_output") {
       return stopped(reason, checkpoint, trace);
     }
     appendObservation(checkpoint, limits, {
@@ -668,9 +807,11 @@ async function handleAction(
     digest,
     limits,
     deadlineAt,
+    budgetOwnsDeadline,
     freshness,
     trace,
     now,
+    runBudget,
   });
 }
 
@@ -684,9 +825,11 @@ interface ExecuteDependencies {
   digest: string;
   limits: AgentRunLimits;
   deadlineAt: number;
+  budgetOwnsDeadline: boolean;
   freshness: () => Promise<FreshnessState>;
   trace: AgentTraceEvent[];
   now: () => Date;
+  runBudget: RunBudgetAccount;
 }
 
 async function executeAction(
@@ -701,19 +844,42 @@ async function executeAction(
     digest,
     limits,
     deadlineAt,
+    budgetOwnsDeadline,
     freshness,
     trace,
     now,
+    runBudget,
   } = dependencies;
-  const stop = stopReason(input.signal, deadlineAt, now);
+  const stop = stopReason(
+    input.signal,
+    deadlineAt,
+    budgetOwnsDeadline,
+    now,
+    runBudget,
+  );
   if (stop) return stopped(stop, checkpoint, trace);
   const preExecuteFreshness = await freshness();
   if (preExecuteFreshness !== "current") {
     return stopped(preExecuteFreshness, checkpoint, trace);
   }
-  const stopAfterFreshness = stopReason(input.signal, deadlineAt, now);
+  const stopAfterFreshness = stopReason(
+    input.signal,
+    deadlineAt,
+    budgetOwnsDeadline,
+    now,
+    runBudget,
+  );
   if (stopAfterFreshness) {
     return stopped(stopAfterFreshness, checkpoint, trace);
+  }
+  try {
+    runBudget.consumeToolCall();
+  } catch (error) {
+    return stopped(
+      runBudgetReason(error) ?? "budget_tool_calls",
+      checkpoint,
+      trace,
+    );
   }
   trace.push(event(checkpoint.step, "execute", "started", capability.id));
   let result: AgentExecutorResult;
@@ -726,14 +892,22 @@ async function executeAction(
           scope: input.scope,
           idempotencyKey: digest,
           signal,
+          runBudget,
         }),
       input.signal,
       deadlineAt,
       now,
     );
   } catch (error) {
-    const reason = abortReason(error, input.signal, deadlineAt, now);
-    if (reason === "cancelled" || reason === "deadline") {
+    const reason = abortReason(
+      error,
+      input.signal,
+      deadlineAt,
+      budgetOwnsDeadline,
+      now,
+      runBudget,
+    );
+    if (reason !== "invalid_planner_output") {
       return stopped(reason, checkpoint, trace);
     }
     result = { status: "error", summary: "Executor gagal tanpa hasil terverifikasi." };
@@ -775,9 +949,11 @@ async function resumePending(dependencies: {
   executors: ReadonlyMap<string, AgentCapabilityExecutor>;
   limits: AgentRunLimits;
   deadlineAt: number;
+  budgetOwnsDeadline: boolean;
   freshness: () => Promise<FreshnessState>;
   trace: AgentTraceEvent[];
   now: () => Date;
+  runBudget: RunBudgetAccount;
 }): Promise<AgentRunResult | null> {
   const {
     input,
@@ -786,9 +962,11 @@ async function resumePending(dependencies: {
     executors,
     limits,
     deadlineAt,
+    budgetOwnsDeadline,
     freshness,
     trace,
     now,
+    runBudget,
   } = dependencies;
   const pending = checkpoint.pending;
   if (!pending) return null;
@@ -828,7 +1006,13 @@ async function resumePending(dependencies: {
     checkpoint.step += 1;
     return null;
   }
-  const stop = stopReason(input.signal, deadlineAt, now);
+  const stop = stopReason(
+    input.signal,
+    deadlineAt,
+    budgetOwnsDeadline,
+    now,
+    runBudget,
+  );
   if (stop) return stopped(stop, checkpoint, trace);
   const pendingFreshness = await freshness();
   if (pendingFreshness !== "current") {
@@ -845,9 +1029,11 @@ async function resumePending(dependencies: {
     digest: pending.digest,
     limits,
     deadlineAt,
+    budgetOwnsDeadline,
     freshness,
     trace,
     now,
+    runBudget,
   });
 }
 
@@ -883,11 +1069,19 @@ function initialCheckpoint(
   callableHash: string,
   now: () => Date,
   limits: AgentRunLimits,
+  runBudget: RunBudgetAccount,
 ): { ok: true; value: AgentRunCheckpoint } | { ok: false } {
   if (!input.checkpoint) {
     return {
       ok: true,
-      value: emptyCheckpoint(input, snapshot, callableHash, now, limits),
+      value: emptyCheckpoint(
+        input,
+        snapshot,
+        callableHash,
+        now,
+        limits,
+        runBudget,
+      ),
     };
   }
   const checkpoint = structuredClone(input.checkpoint);
@@ -908,7 +1102,7 @@ export function isValidAgentRunCheckpoint(
   const startedAt = Date.parse(checkpoint.startedAt);
   const deadlineAt = Date.parse(checkpoint.deadlineAt);
   return (
-    checkpoint.version === 1 &&
+    (checkpoint.version === 1 || checkpoint.version === 2) &&
     checkpoint.scopeKey === scopeKey(scope) &&
     checkpoint.request === request &&
     typeof checkpoint.runId === "string" &&
@@ -938,6 +1132,7 @@ export function isValidAgentRunCheckpoint(
     ) &&
     validPendingCheckpoint(checkpoint, scope) &&
     validPendingInput(checkpoint) &&
+    validCheckpointRunBudget(checkpoint) &&
     !(checkpoint.pending !== null && checkpoint.pendingInput !== null)
   );
 }
@@ -967,6 +1162,13 @@ function validPendingInput(checkpoint: AgentRunCheckpoint): boolean {
     typeof record.prompt === "string" &&
     record.prompt.trim().length > 0
   );
+}
+
+function validCheckpointRunBudget(checkpoint: AgentRunCheckpoint): boolean {
+  if (checkpoint.version === 1) return checkpoint.runBudget === undefined;
+  return checkpoint.runBudget !== undefined &&
+    isValidRunBudgetCheckpoint(checkpoint.runBudget) &&
+    checkpoint.runBudget.limits.maxSteps === checkpoint.maxSteps;
 }
 
 function validCheckpointObservation(value: unknown): value is AgentObservation {
@@ -1037,10 +1239,11 @@ function emptyCheckpoint(
   callableHash: string,
   now: () => Date,
   limits: AgentRunLimits,
+  runBudget: RunBudgetAccount,
 ): AgentRunCheckpoint {
   const started = now();
   return {
-    version: 1,
+    version: 2,
     runId: input.makeRunId?.() ?? randomUUID(),
     scopeKey: scopeKey(input.scope),
     capabilityHash: snapshot.hash,
@@ -1048,13 +1251,14 @@ function emptyCheckpoint(
     request: input.request,
     startedAt: started.toISOString(),
     deadlineAt: new Date(started.getTime() + limits.resumeWindowMs).toISOString(),
-    maxSteps: limits.maxSteps,
+    maxSteps: Math.min(limits.maxSteps, runBudget.view(0).remainingSteps),
     step: 0,
     observations: [],
     userInputs: [],
     seenActionDigests: [],
     pending: null,
     pendingInput: null,
+    runBudget: runBudget.checkpoint(),
   };
 }
 
@@ -1171,6 +1375,31 @@ function resolvedLimits(overrides?: Partial<AgentRunLimits>): AgentRunLimits {
     throw new Error("Horizon resume agent maksimal sepuluh menit.");
   }
   return limits;
+}
+
+function budgetPolicyFor(
+  policy: RunBudgetPolicy | undefined,
+  limits: AgentRunLimits,
+  checkpoint: AgentRunCheckpoint | undefined,
+): RunBudgetPolicy {
+  const legacyMaxSteps = checkpoint?.version === 1
+    ? checkpoint.maxSteps
+    : Number.POSITIVE_INFINITY;
+  return {
+    ...policy,
+    limits: {
+      ...policy?.limits,
+      maxSteps: Math.min(
+        limits.maxSteps,
+        policy?.limits?.maxSteps ?? limits.maxSteps,
+        legacyMaxSteps,
+      ),
+      deadlineMs: Math.min(
+        limits.deadlineMs,
+        policy?.limits?.deadlineMs ?? limits.deadlineMs,
+      ),
+    },
+  };
 }
 
 function appendObservation(
@@ -1397,20 +1626,38 @@ function stopped(
 function stopReason(
   signal: AbortSignal | undefined,
   deadlineAt: number,
+  budgetOwnsDeadline: boolean,
   now: () => Date,
-): "cancelled" | "deadline" | null {
+  runBudget: RunBudgetAccount,
+): "cancelled" | "deadline" | "budget_deadline" | null {
   if (signal?.aborted) return "cancelled";
-  return now().getTime() >= deadlineAt ? "deadline" : null;
+  if (now().getTime() >= deadlineAt) {
+    return budgetOwnsDeadline ? "budget_deadline" : "deadline";
+  }
+  return runBudget.isTimeExhausted() ? "budget_deadline" : null;
 }
 
 function abortReason(
   error: unknown,
   signal: AbortSignal | undefined,
   deadlineAt: number,
+  budgetOwnsDeadline: boolean,
   now: () => Date,
-): "cancelled" | "deadline" | "invalid_planner_output" {
+  runBudget: RunBudgetAccount,
+):
+  | "cancelled"
+  | "deadline"
+  | "invalid_planner_output"
+  | RunBudgetExhaustionReason {
   if (signal?.aborted) return "cancelled";
-  if (now().getTime() >= deadlineAt) return "deadline";
+  if (now().getTime() >= deadlineAt) {
+    return budgetOwnsDeadline ? "budget_deadline" : "deadline";
+  }
+  const budgetReason = runBudgetReason(error);
+  if (budgetReason) return budgetReason;
+  const overage = runBudget.overageReason();
+  if (overage) return overage;
+  if (runBudget.isTimeExhausted()) return "budget_deadline";
   return error instanceof Error && error.name === "AbortError"
     ? "deadline"
     : "invalid_planner_output";
