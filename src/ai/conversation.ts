@@ -99,6 +99,7 @@ import {
   type AgentPlannerInput,
   type AgentRunCheckpoint,
   type AgentRunResult,
+  type AgentUserInput,
 } from "../harness/agent-harness.js";
 import {
   compileHarvyContext,
@@ -145,6 +146,10 @@ export interface ConversationRuntime {
   /** Kontrak suara/intent untuk jawaban final Agent Runtime. */
   style?: StylePreference | null;
   intent?: ConversationIntent;
+  /** ID durable code-owned; model/provider tidak boleh memilihnya. */
+  runId?: string;
+  /** RunMailbox yang tiba sebelum checkpoint pertama, sudah dibatasi core. */
+  initialAgentInputs?: readonly AgentUserInput[];
   /** Cancellation dan generation guard dari adapter untuk run agent panjang. */
   signal?: AbortSignal;
   isCurrent?: () => boolean | Promise<boolean>;
@@ -821,6 +826,10 @@ export class Conversation {
         ),
       ...(runtime.signal ? { signal: runtime.signal } : {}),
       ...(runtime.isCurrent ? { isCurrent: runtime.isCurrent } : {}),
+      ...(runtime.runId ? { makeRunId: () => runtime.runId! } : {}),
+      ...(runtime.initialAgentInputs
+        ? { initialUserInputs: runtime.initialAgentInputs }
+        : {}),
       ...(checkpoint ? { checkpoint } : {}),
       ...(answer ? { answer } : {}),
     });

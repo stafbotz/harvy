@@ -1,8 +1,8 @@
 # Status — Telegram Privat
 
-Verified: 9 Agustus 2026 pada working tree Phase B di atas `b5e54c6`; `npm test`
-PASS 755 test / 100 suite, 0 gagal; `npm run check` dan `npm run context:check`
-PASS. Baca untuk task `src/bot/` dan surface Telegram.
+Verified: 9 Agustus 2026 pada working tree Active AgentRun Phase D di atas
+`bbe7b9b`; `npm test` PASS 842 test / 108 suite, 0 gagal; `npm run check` dan
+`npm run context:check` PASS. Baca untuk task `src/bot/` dan surface Telegram.
 
 ## Keadaan saat ini
 
@@ -29,6 +29,12 @@ PASS. Baca untuk task `src/bot/` dan surface Telegram.
 - Route privat mencakup percakapan, action offer, task, session, data control,
   memory, safety, serta Agent Runtime. Waktu berdiri sendiri tanpa episode
   hangat memakai fast path tanpa boundary/understanding/triage model.
+- Permintaan planning eksplisit memakai tiga lane: chat tetap diproses
+  `MessageBatcher`, quote/target run masuk RunMailbox, dan work lane active
+  AgentRun berjalan di latar. Satu Run Anchor editable menampilkan state nyata.
+  Correction menaikkan revision dan menahan hasil lama; jawaban wajib terikat
+  ke anchor/question+watermark. Shutdown mem-pause, startup melanjutkan, dan
+  delivery ambigu tidak di-retry otomatis.
 - Model mengusulkan action dari allowlist; kode tetap menguasai callback,
   ownership, expiry, dan batas pilihan.
 - Free-text memakai satu `turnId` dari boundary sampai handler terminal.
@@ -41,7 +47,8 @@ PASS. Baca untuk task `src/bot/` dan surface Telegram.
   Agent Runtime terbaru belum diuji ulang end-to-end lewat Telegram.
 - Runtime hanya chat pribadi; Telegram grup belum menjadi surface produk.
 - Antrean percakapan dan pesan pra-consent masih in-memory. Crash atau force
-  stop dapat kehilangan giliran yang belum selesai.
+  stop dapat kehilangan giliran chat yang belum selesai. Active work
+  `orchestrate` tahan restart lokal, tetapi query agent `tools` masih sinkron.
 - Request model biasa yang aktif belum mempunyai cancellation kooperatif penuh.
 - Emergency preflight closed-set Telegram belum mencakup command/callback dan
   bukan pengganti triase; false negative tetap mungkin. WhatsApp grup memakai
@@ -50,6 +57,9 @@ PASS. Baca untuk task `src/bot/` dan surface Telegram.
   aktual belum diuji end-to-end lewat Telegram.
 - Metrik turn belum mengukur TTFR terpisah dan belum mencakup command, callback,
   grup, atau durable AgentRun. Belum ada dashboard agregat.
+- Work lane baru satu foreground dan belum mempunyai job queue kedua,
+  replacement policy, pin/archive Anchor, storage multi-instance, atau receipt
+  selain outbound Telegram.
 - Ada bukti live lama untuk onboarding/task/tombol dasar, tetapi bukti lama
   tidak membuktikan build terbaru.
 
@@ -59,4 +69,4 @@ PASS. Baca untuk task `src/bot/` dan surface Telegram.
 - Tes: `tests/create-bot.test.ts`, `tests/conversation.test.ts`,
   `tests/message-batcher.test.ts`, `tests/create-bot-flow.test.ts`,
   `tests/onboarding.test.ts`.
-- Keputusan: ADR-002, ADR-004, ADR-007, ADR-008, ADR-021, ADR-023.
+- Keputusan: ADR-002, ADR-004, ADR-007, ADR-008, ADR-021, ADR-023, ADR-027.

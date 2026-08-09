@@ -35,6 +35,32 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-09 — Active AgentRun dan work lane Telegram
+
+Scope: AgentRun domain/repository/service, agent harness, adapter Telegram,
+Run Anchor, mailbox policy, consent/data control, dan dokumentasi arsitektur.
+
+Changed: permintaan planning eksplisit Telegram privat kini memperoleh satu
+foreground active AgentRun v2 yang durable lokal dan tidak memblokir chat.
+RunMailbox dan ChangeSet mengikat koreksi/jawaban secara eksplisit; instruction
+revision menahan hasil basi; commit barrier mencatat receipt outbound dan
+menutup delivery ambigu sebagai `partial|unknown` tanpa retry. Startup/shutdown,
+expiry, ekspor teredaksi, retensi tujuh hari, serta penghapusan snapshot saat
+memory/history dicabut kini mempunyai lifecycle tepercaya. Consent dinaikkan ke
+versi 7. ADR-027 mengikat keputusan dan batasnya.
+
+Verified: `npm run check` PASS; `npm test` PASS, 842 test dalam 108 suite, 0
+gagal; `npm run context:check` PASS; `git diff --check` bersih selain peringatan
+line-ending.
+
+Not verified: provider/model nyata, Telegram live, storage/lease multi-instance,
+dispatcher/outbox/reconciler eksternal, job queue kedua, pin/archive Anchor,
+coding sandbox, dan efek tool write.
+
+Next: buktikan profile/provider dan Telegram lewat smoke test, lalu pisahkan
+RunStore/dispatcher produksi sebelum memperluas work lane ke job atau surface
+lain.
+
 ## 2026-08-09 — RunBudget kumulatif Agent Runtime
 
 Scope: Agent Runtime privat, AiClient retry/fallback, delegasi worker,

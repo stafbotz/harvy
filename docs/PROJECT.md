@@ -318,9 +318,13 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   selama horizon absolut 10 menit dan `waiting_input` privat Telegram bertahan
   pada restart normal lewat adapter file satu-proses. Satu RunBudget kumulatif
   mengikat root, retry/fallback, tool, dan worker serta bertahan melewati
-  checkpoint tanpa menagih waktu tunggu manusia. Ini belum RunStore
-  produksi, background run, outbox, receipt, atau reconciler; lihat `ADR-017`
-  `ADR-018`, dan `ADR-026`.
+  checkpoint tanpa menagih waktu tunggu manusia. Planning `orchestrate`
+  eksplisit privat Telegram kini berjalan sebagai active AgentRun durable di
+  work lane, dengan Run Anchor, RunMailbox/ChangeSet, stale-result gate,
+  checkpoint recovery, dan receipt delivery lokal. Query `tools` masih sinkron;
+  adapter ini belum RunStore produksi, multi-instance outbox/reconciler,
+  job queue kedua, atau authority tool write. Lihat `ADR-017`, `ADR-018`,
+  `ADR-026`, dan `ADR-027`.
 - [x] Scope & Authority v1 sebagai fondasi core: `WorkspaceScope`, principal
   pseudonim, membership/role/permission, `aclEpoch`, invalidasi scope lama,
   capability filter, dan adapter file atomik. Belum ada ingress, UI, artifact,
@@ -399,6 +403,11 @@ prerequisite yang tersedia untuk Agent Runtime privat.
 Compaction tekanan konteks, output-ceiling overhaul, `toughest`/K3, dan wire
 visible verbosity tetap berada di change set Phase C lanjutan; lihat ADR-025
 dan ADR-026.
+
+Fondasi Phase D untuk active run sekarang tersedia khusus orkestrasi eksplisit
+Telegram privat. Ia belum berarti coding sandbox, artifact pipeline, app
+connectors, atau orkestrasi lintas kanal sudah aktif; batas detailnya ada pada
+ADR-027.
 
 ## Komponen sistem
 

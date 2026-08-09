@@ -294,9 +294,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 
 - **Ekspor dan penghapusan penuh berbeda dari kontrol memori.** Ekspor memuat
   data yang dapat dilihat pengguna dan mengecualikan insight tersembunyi.
-  Ekspor AgentRun hanya membawa request, progress, observation, input, dan
-  counter usage; capability/scope hash, price snapshot, serta limit anti-abuse
-  internal tidak boleh keluar bersama checkpoint mentah.
+  Ekspor AgentRun hanya membawa request, status/revision, progress, observation,
+  input, isi mailbox, ChangeSet/work unit, receipt yang sudah membuang effect
+  ID, hasil, dan counter usage. Snapshot konteks, capability/scope hash, price
+  snapshot, serta limit anti-abuse internal tidak boleh keluar bersama
+  checkpoint mentah.
   Penghapusan penuh memasang tombstone profil lebih dulu, menghapus seluruh
   store termasuk insight dan telemetry, lalu menghapus profil terakhir.
   Startup wajib meneruskan tombstone; pekerjaan latar memakai lock/generation
@@ -433,6 +435,52 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   policy/tool non-final berikutnya wajib berhenti fail-closed. Harga tier nol
   berarti cost preflight belum mempunyai coverage; jangan menyebutnya model
   gratis atau ceiling biaya universal.
+
+## Active AgentRun, RunMailbox, dan commit
+
+- **Active run memakai snapshot transaksi, bukan live chat tail.** Hanya
+  konteks terpilih saat start dan pesan yang dirutekan eksplisit ke RunMailbox
+  boleh memengaruhi planner. Transcript/reasoning provider, credential, dan
+  chat lain tidak boleh masuk record. Snapshot tetap data privat: ia wajib
+  owner-scoped, berbatas, ikut penghapusan, dan diredaksi dari ekspor.
+- **Satu scope hanya mempunyai satu foreground nonterminal.** Work lane v2 saat
+  ini hanya untuk mode `orchestrate` privat Telegram. Foreground tidak boleh
+  menahan chat lane; job kedua tidak boleh diam-diam mengganti run pertama.
+  Store hanya mempertahankan record v1 atau v2 terbaru per scope; memulai run
+  baru boleh mengganti terminal lama agar tidak ada data tertahan di luar
+  bentuk ekspor tunggal.
+- **Tidak ada semantik “pesan berikutnya adalah jawaban”.** Answer/update/cancel
+  harus terikat ke Run Anchor, pesan pertanyaan, atau target run closed-set yang
+  eksplisit. Answer juga wajib cocok dengan `runId`, `questionId`, dan watermark
+  ingress setelah delivery. Ambiguitas kembali menjadi chat biasa.
+- **Revision kode mengalahkan hasil model.** Setiap mailbox update membentuk
+  ChangeSet dan menaikkan instruction revision. Freshness diperiksa tepat
+  sebelum delivery; hasil revision lama tidak boleh mencapai efek eksternal.
+  Observation tepercaya boleh dipakai ulang, tetapi work unit terdampak wajib
+  stale dan action digest lama tidak boleh menjadi authority.
+- **Efek run melewati commit barrier.** Intent efek disimpan sebagai
+  `pendingEffect`, kemudian adapter mengirim, baru receipt `committed` ditulis.
+  Effect in-flight saat crash atau kegagalan setelah boundary delivery menjadi
+  receipt `unknown` dan status `partial`; recovery tidak boleh mengirim ulang
+  otomatis. Kontrak ini baru mencakup outbound Telegram dan adapter file satu
+  proses, bukan exactly-once multi-instance atau izin membuka tool write.
+- **Run Anchor hanya merender fakta runtime.** Status/fase/work summary berasal
+  dari record/event code-owned; nama model/tool/worker, persentase, dan ETA
+  rekaan dilarang. Waiting input tidak boleh tampak sebagai spinner. Anchor
+  dikirim sebagai satu pesan editable dan harus disegarkan saat recovery atau
+  transisi expiry yang teramati.
+- **Lifecycle hak data menang atas work lane.** Shutdown meng-abort dan mem-pause
+  checkpoint sebelum drain. Startup merekonsiliasi running/paused/queued,
+  pertanyaan kedaluwarsa, dan delivery ambigu. Penarikan consent/penghapusan
+  memblokir scope serta meng-abort worker sebelum record dihapus; hasil lambat
+  tidak boleh menghidupkan data atau delivery baru. Edit/hapus memori dan
+  penghapusan history harus membatalkan worker serta menghapus record yang
+  menyalin konteks lama sebelum mutasi sumber dinyatakan berhasil.
+- **Retensi active run adalah bagian consent.** Pertanyaan mempunyai batas
+  jawaban 10 menit. Record aktif mempunyai horizon maksimal tujuh hari sejak
+  dibuat dan terminal maksimal tujuh hari sejak berhenti; record terbaru saja
+  diretensi, dengan penarikan consent/penghapusan sebagai jalur hapus lebih
+  cepat. Perubahan jenis serta horizon data ini terikat `CONSENT_VERSION` 7.
 
 ## Isolasi data
 
@@ -621,8 +669,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   proposal baru atau menghapus data baru. Pending baru hanya bertahan bila
   promptnya berhasil dikirim. Sesi aktif tidak memakai `PendingStore` dan tetap
   ada setelah restart.
-- `agent-input` adalah satu-satunya pengecualian: authority-nya berada pada
-  `AgentRunService`, hanya untuk status `waiting_input` privat Telegram. Record
+- `agent-input` adalah pengecualian legacy untuk flow sinkron: authority-nya
+  berada pada `AgentRunService`, hanya untuk status `waiting_input` privat
+  Telegram v1. Record
   wajib terikat scope/owner/run/mode/intent, revision CAS, codec checkpoint,
   serta `expiresAt === deadlineAt` dengan horizon absolut maksimal 10 menit.
   Writer baru wajib memakai checkpoint agent v2 dengan embedded RunBudget
@@ -633,6 +682,10 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   Ia baru disimpan setelah seluruh bubble prompt terkirim dan wajib masuk
   ekspor/penghapusan data. Startup, load, dan worker retensi berkala membuang
   expiry; `.tmp` yatim tidak boleh dipromosikan.
+- Active AgentRun v2 tidak memakai `PendingStore`; binding pertanyaan, mailbox,
+  revision, checkpoint, dan receipt berada di record durable sesuai bagian
+  Active AgentRun di atas. Checkpoint v1 dan record v2 tidak boleh sama-sama
+  menjadi foreground pada scope yang sama.
 - Classifier batas giliran tidak boleh memulihkan `PendingStore`, karena ia
   berjalan di luar chain owner. Pemulihan durable hanya terjadi di handler
   owner. Sebuah batch hanya boleh menjawab checkpoint agent bila sequence
@@ -640,9 +693,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   boleh ikut terseret oleh carrier bubble yang lebih baru.
 - Resume wajib claim dengan `runId + revision` sebelum model dipanggil. Prompt
   lanjutan/final yang sudah terlihat tetapi gagal di-commit harus membatalkan
-  run secara fail-closed dan mengirim notice jujur. Delivery Telegram dan file
-  commit belum atomik; crash-window serta block cleanup yang belum durable
-  tetap batas eksplisit sampai outbox/receipt/reconciler tersedia.
+  run secara fail-closed dan mengirim notice jujur. Gap delivery→save ini tetap
+  berlaku untuk flow v1. Active v2 mempersistenkan intent dan receipt lokal,
+  tetapi boundary Telegram/file belum atomik serta block cleanup belum durable
+  lintas proses; status `unknown` wajib dipertahankan sampai RunStore dan
+  reconciler produksi tersedia.
 - Jawaban pending dari closed set tanggal/waktu/durasi/pilihan tidak menjalankan
   compiler atau triase umum setelah emergency preflight negatif; ia langsung
   menuju parser khusus. Edit memori, konfirmasi destruktif, `agent-input` tanpa

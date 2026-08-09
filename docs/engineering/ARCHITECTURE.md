@@ -14,7 +14,8 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
 - `src/app.ts` — satu-satunya composition root. Merangkai `loadConfig` →
   repository tugas/memori/riwayat/profil/insight/sesi/telemetry/agent-run →
   layanan inti dan `DataControlService` → `createBot` → worker pengingat,
-  check-in, dan retensi checkpoint agent,
+  check-in, dan retensi record agent, memulai recovery active AgentRun sesudah
+  polling siap,
   meneruskan tombstone penghapusan sebelum bot menerima update, mendaftarkan
   command Telegram, dan menangani shutdown.
 
@@ -26,7 +27,8 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   `HistoryRepository`), `profile.ts` (`UserProfile`, `ProfileRepository` —
   status kenalan, versi persetujuan, preferensi gaya/waktu, dan tombstone),
   `insight.ts` (satu-satunya catatan tersembunyi), `session.ts` (sesi aktif dan
-  check-in), `agent-run.ts` (record `waiting_input` dan port CAS), serta
+  check-in), `agent-run.ts` (checkpoint `waiting_input` v1, active run v2,
+  snapshot konteks, mailbox/ChangeSet/work unit/event/receipt, dan port CAS), serta
   `telemetry.ts` (schema event tertutup tanpa isi percakapan).
   Inti bergantung pada antarmuka ini, bukan pada penyimpanan.
 
@@ -47,7 +49,10 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   persisten dan check-in satu kali), `telemetry-service.ts` (reservasi kuota,
   antrean tulis latar, biaya, retensi, drain, dan generation guard),
   `agent-run-service.ts` (validasi/claim/CAS, block saat penghapusan, ekspor,
-  expiry absolut, dan lifecycle checkpoint klarifikasi),
+  expiry absolut, active revision/freshness gate, commit barrier, receipt,
+  recovery, dan lifecycle checkpoint klarifikasi),
+  `run-mailbox-policy.ts` (routing lokal konservatif berdasarkan quote atau
+  target eksplisit),
   `run-budget.ts` (akun kumulatif root/retry/fallback/worker, reservation
   token+biaya, waktu aktif, dan codec checkpoint),
   `data-control-service.ts` (ekspor,
@@ -145,11 +150,12 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   ambigu menahan reservation penuh. Checkpoint v2 menyimpan counter+policy
   budget untuk resume tanpa menghitung jeda pengguna. Planner hanya menerima
   view angka informatif. Context-pressure compaction belum ada.
-  Kernel
-  dipakai Agent Runtime read-only; kernel tetap stateless,
-  sedangkan adapter Telegram dapat mempersistenkan hanya status
-  `waiting_input`. Run aktif masih sinkron dan workflow mutasi tugas/memori/
-  sesi tetap deterministik.
+  Kernel dipakai Agent Runtime read-only; kernel tetap stateless. Checkpoint
+  klarifikasi sinkron v1 tetap tersedia, sedangkan permintaan `orchestrate`
+  eksplisit privat Telegram memakai active AgentRun v2 di work lane. Snapshot
+  konteksnya tetap provider-neutral dan mailbox baru hanya masuk lewat routing
+  eksplisit. Query mode `tools` dan workflow mutasi tugas/memori/sesi tetap
+  sinkron/deterministik.
   Workspace surface belum dipasang.
 
 ## Agent
@@ -162,7 +168,7 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   hanya root `ambitious` pada giliran kompleks yang dapat melakukan fan-out.
   Semaphore per-run dari RunBudget bekerja di samping semaphore provider global
   dan seluruh worker memakai object akun yang sama.
-  `agent-run-retention-worker.ts` menghapus checkpoint kedaluwarsa berkala dan
+  `agent-run-retention-worker.ts` menghapus record kedaluwarsa berkala dan
   dapat dihentikan/drain saat shutdown.
 
 ## Bot (Telegram)
@@ -177,10 +183,14 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   serta menyusun keyboard; `understanding-route.ts` memeriksa pasangan
   intent/action sebelum adapter mengubah data; `fast-path-policy.ts` membatasi
   acknowledgment dingin dan jawaban pending yang boleh melewati compiler;
-  `pending.ts` menyimpan satu langkah sementara yang sedang menunggu jawaban.
-  Sebagian besar pending tetap
-  ephemeral; hanya `agent-input` yang menjadi mirror record durable dan
-  dipulihkan di dalam chain owner.
+  `pending.ts` menyimpan satu langkah sementara yang sedang menunggu jawaban;
+  `run-anchor.ts` merender status/event durable tanpa progres rekaan.
+  Sebagian besar pending tetap ephemeral; `agent-input` adalah mirror
+  checkpoint v1. Untuk orkestrasi eksplisit, adapter memisahkan tiga lane:
+  `MessageBatcher` tetap menangani chat, ingress terikat masuk RunMailbox, dan
+  work lane berjalan di luar chain owner. Run Anchor dikirim sebagai satu pesan
+  editable. Hanya quote anchor/question atau target run yang sempit boleh
+  merevisi work; chat lain tetap bebas berjalan.
 
 ## Storage
 
@@ -196,10 +206,12 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   member-local memory, dan shared room memory yang terpisah per scope; reset
   state bersama tersedia atomik. `file-workspace-repository.ts` menyimpan
   authority state Workspace dengan CAS `aclEpoch`. Keduanya aman hanya untuk
-  satu proses saja. `file-agent-run-repository.ts` menyimpan satu
-  `waiting_input` per scope dengan revision CAS, validasi codec checkpoint,
-  queue statik per path, expiry, dan pembuangan `.tmp` yatim; ia juga hanya
-  menjamin restart lokal satu proses, bukan durability multi-instance.
+  satu proses saja. `file-agent-run-repository.ts` menyimpan checkpoint
+  `waiting_input` v1 atau satu active/terminal v2 terbaru per scope. Read/write
+  diserialkan dalam queue statik per path, revision CAS
+  menjaga identity scope, codec/record divalidasi, expiry diterapkan, dan `.tmp`
+  yatim dibuang. Adapter ini hanya menjamin restart lokal satu proses, bukan
+  durability atau koordinasi multi-instance.
 
 ## WhatsApp
 

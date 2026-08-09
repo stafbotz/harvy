@@ -11,6 +11,33 @@ import { privateAgentScope } from "../src/harness/scope.js";
 const FIXED_NOW = () => new Date("2026-07-31T10:00:00.000Z");
 
 describe("agent harness", () => {
+  it("menanam input code-owned ke checkpoint pertama", async () => {
+    const seen: string[] = [];
+    const result = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "buat rencana belajar",
+      initialUserInputs: [{
+        step: 0,
+        prompt: "Perubahan instruksi sampai revision 2",
+        text: "constraint: Jumat sore ada basket.",
+      }],
+      planner: async ({ userInputs }) => {
+        seen.push(...userInputs.map((input) => input.text));
+        return { kind: "final", reply: "Rencana sudah disesuaikan." };
+      },
+      now: FIXED_NOW,
+      makeRunId: () => "run-seeded-input",
+    });
+
+    assert.equal(result.status, "completed");
+    assert.deepEqual(seen, ["constraint: Jumat sore ada basket."]);
+    assert.deepEqual(result.checkpoint.userInputs, [{
+      step: 0,
+      prompt: "Perubahan instruksi sampai revision 2",
+      text: "constraint: Jumat sore ada basket.",
+    }]);
+  });
+
   it("menolak capability yang tidak tersedia lalu memberi model satu observasi", async () => {
     let executed = false;
     const planner: AgentPlanner = async ({ observations }) =>

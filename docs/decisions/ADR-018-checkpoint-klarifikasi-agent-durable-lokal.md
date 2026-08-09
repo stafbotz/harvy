@@ -6,7 +6,7 @@
 - **Terkait:** Konstitusi v0.5, ADR-006, ADR-008, ADR-012, ADR-014, ADR-017,
   ADR-026
 - **Diamendemen oleh:** ADR-026 untuk checkpoint writer v2 dengan embedded
-  RunBudget dan bentuk ekspor user-facing yang meredaksi policy internal
+  RunBudget dan ADR-027 untuk work lane active v2 dengan commit barrier lokal
 
 ## Konteks
 

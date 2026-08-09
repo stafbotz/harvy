@@ -4,30 +4,32 @@ Refreshed: 2026-08-09
 
 ## Verified baseline
 
-- Product capability baseline: working tree Phase B di atas `b5e54c6`
+- Product capability baseline: working tree Active AgentRun Phase D di atas
+  `bbe7b9b`
   (9 Agustus 2026).
-- Product gates: `npm run check` PASS; `npm test` PASS, 755 test dalam 100
+- Product gates: `npm run check` PASS; `npm test` PASS, 842 test dalam 108
   suite, 0 gagal.
-- Context system: `npm run context:check` PASS; output 3.742 byte dengan
-  estimasi 936 token.
+- Context system: `npm run context:check` PASS; output 3.846 byte dengan
+  estimasi 962 token.
 
 ## Recent material changes
 
-- Adaptive debounce content-free kini belajar ritme bubble per pemilik atau
-  anggota+scope grup tanpa memendekkan jendela semantik open/incomplete.
-- Safety privat dan grup memakai selective triage, privacy memory/raw-context
-  terpisah, conditional review, dan metadata emergency per bubble.
-- Observation grup diserialkan setelah authority; alias dihidrasi sebelum
-  admission dan mode runtime dibaca ulang sebelum pending model, ACK, atau
-  delivery.
+- Planning eksplisit Telegram privat kini memakai active AgentRun durable lokal
+  dengan Run Anchor, mailbox terikat, revision freshness, commit barrier, dan
+  recovery konservatif tanpa memblokir chat biasa.
+- Snapshot/mailbox/receipt active run ikut consent v7, retensi maksimal tujuh
+  hari, ekspor teredaksi, dan dihapus ketika sumber memory/history dicabut.
+- RunBudget kumulatif mengikat root, retry/fallback fisik, tool, dan delegasi;
+  checkpoint mempertahankan pemakaian tanpa menagih waktu tunggu manusia.
 
 ## Active cross-subsystem blockers
 
 - Agent Runtime after the latest continuation fix has not been smoke-tested
   again against the primary provider or Telegram.
 - Storage/checkpoints, operational logs, entitlement, and authority durability
-  remain single-process/file based. Active runs are not durable or recoverable;
-  production RunStore/outbox/reconciliation do not exist.
+  remain single-process/file based. Active runs are durable and recoverable
+  locally, but production RunStore, leases, outbox, and reconciliation do not
+  exist.
 - Dual model misclassification can still miss pre-save consent for sensitive
   memory. Do not claim this privacy gap is closed.
 - False-positive/false-negative safety pada corpus model aktual belum diukur;

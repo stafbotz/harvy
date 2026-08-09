@@ -26,7 +26,7 @@ export interface UserDataExport {
   memories: MemoryItem[];
   history: ConversationHistory | null;
   activeSession: ActiveSession | null;
-  /** Progress run yang sedang menunggu jawaban; null bila tidak ada/expired. */
+  /** Record run terbaru yang masih diretensi; null bila tidak ada/expired. */
   activeAgentRun: DurableAgentRunExport | null;
   aiUsageLast24Hours: UsageSummary;
   aiTelemetryRetained: TelemetryExport;

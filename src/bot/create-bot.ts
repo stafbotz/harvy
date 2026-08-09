@@ -42,9 +42,15 @@ import type { MemoryService } from "../core/memory-service.js";
 import { ProfileService, shouldAskStyle } from "../core/profile-service.js";
 import type { DataControlService } from "../core/data-control-service.js";
 import {
+  ActiveAgentRunStaleError,
   AgentRunConflictError,
   type AgentRunService,
 } from "../core/agent-run-service.js";
+import type { ActiveAgentRun, AgentRunContextSnapshot } from "../domain/agent-run.js";
+import {
+  classifyRunMailboxLocally,
+  mailboxKindForRelation,
+} from "../core/run-mailbox-policy.js";
 import {
   hasExplicitImmediateDangerSignal,
   needsConditionalReplyReview,
@@ -159,6 +165,11 @@ import {
   taskSavedHeading,
 } from "./phrasing.js";
 import {
+  renderRunAnchor,
+  runCancellationAcknowledgement,
+  runUpdateAcknowledgement,
+} from "./run-anchor.js";
+import {
   immediateUnderstandingRoute,
   taskToOffer,
 } from "./understanding-route.js";
@@ -186,6 +197,7 @@ const SESSION_KIND_OF: Partial<Record<string, SessionKind>> = {
 
 export type HarvyBot = Bot & {
   drainPending: () => Promise<void>;
+  resumeAgentRuns: () => Promise<void>;
   sendCheckIn: (candidate: ActiveSession) => Promise<boolean>;
   sendReminder: (candidate: StudentTask) => Promise<boolean>;
 };
@@ -270,6 +282,11 @@ export function createBot(
   const held = new HeldMessageStore();
   const actionOffers = new ActionOfferStore();
   let latestTelegramUpdateId = -1;
+  const activeAgentWork = new Map<
+    string,
+    { runId: string; controller: AbortController; promise: Promise<void> }
+  >();
+  let stoppingActiveAgentWork = false;
 
   async function restoreAgentPending(ownerId: string): Promise<Pending | null> {
     const cached = pending.peek(ownerId);
@@ -697,10 +714,12 @@ export function createBot(
   });
 
   return Object.assign(bot, {
+    resumeAgentRuns: () => resumeActiveAgentRuns(),
     drainPending: async () => {
       await drainIngress();
       await drainOnboarding();
       await messageBatcher.drainAll();
+      await stopActiveAgentWork();
       await history.drain?.();
       await telemetry.drain();
     },
@@ -955,6 +974,14 @@ export function createBot(
     explicitImmediateDanger = false,
     urgentBoundary = false,
   ): Promise<void> {
+    if (
+      !explicitImmediateDanger &&
+      !urgentBoundary &&
+      !hasExplicitImmediateDangerSignal(text) &&
+      await handleLocalActiveRunControl(ctx, ownerId, text)
+    ) {
+      return;
+    }
     // Indikator muncul ketika Harvy benar-benar mulai menangani satu giliran,
     // bukan pada setiap bubble saat ia masih menyimak.
     actionOffers.clear(ownerId);
@@ -1060,6 +1087,9 @@ export function createBot(
     let understanding: Understanding | null;
     let triage: RiskAssessment;
     let userAlreadyAppended = false;
+    let activeRunLaunch: ActiveAgentRun | null = null;
+    let activeRunLaunched = false;
+    let activeRunSurfaceReply = false;
     const requestRiskTriage = (): Promise<RiskTriage | null> =>
       conversation
         .triageRisk(text, ownerId, context, runtime.signal)
@@ -1170,6 +1200,14 @@ export function createBot(
         immediateDanger,
       );
 
+      if (
+        effectPermissions.generalState &&
+        await handleActiveRunMailboxAfterSafety(ctx, ownerId, text)
+      ) {
+        await telemetry.markDelivered?.(ownerId, currentTurnId());
+        return;
+      }
+
       // Jawaban bebas untuk pending tetap memakai compiler + routing safety.
       // Hanya closed-set yang sudah keluar lewat fast path di atas.
       const pendingNow = pending.peek(ownerId);
@@ -1258,6 +1296,7 @@ export function createBot(
         (proposedActions[0] === "listen" ? "Menyimak cerita ini" : "");
       const plannedActions = actionGoal ? proposedActions : [];
       const memoryCandidates = effectPermissions.generalState
+          && !requiresAgentPlanning
         ? understanding.memories
         : [];
       // Berjalan bersama generasi balasan; hanya kandidat memori yang membayar
@@ -1303,65 +1342,94 @@ export function createBot(
             !isModelIdentityQuestion(text) &&
             shouldUseAgentRuntime(text, planningMode)
           ) {
-            const agentResult = await conversation.agent(
-              text,
-              planningMode,
-              context,
-              {
-                ...runtime,
-                ownerId,
-                channel: "telegram",
-                timeZone,
-                style: profile.stylePreference,
-                intent: agentIntent,
-              },
-            );
-            if (agentResult.status === "stopped") {
-              logger.warn(
-                "agent_run_stopped",
-                "Run agent dihentikan oleh guard runtime.",
-                {
-                  status: agentResult.status,
-                  reason: agentResult.reason,
-                  outcome: agentResult.trace.at(-1)?.outcome,
-                  count: agentResult.trace.length,
-                },
-              );
-            }
-            // `needs_input` adalah prompt model yang benar-benar dikirim, jadi
-            // usage-nya diselesaikan setelah delivery seperti jawaban final.
-            // Status lain di bawah diganti copy deterministik adapter.
             if (
-              agentResult.status === "stopped" ||
-              agentResult.status === "needs_approval"
+              agentRuns &&
+              requiresAgentPlanning &&
+              planningMode === "orchestrate"
             ) {
-              debitDeliveredReply = false;
-              await telemetry.discardUndelivered?.(ownerId, currentTurnId());
-            }
-            if (agentResult.status === "needs_input") {
-              agentPending = {
-                kind: "agent-input",
+              const started = await agentRuns.startActive({
+                channel: "telegram",
+                ownerId,
                 request: text,
                 mode: planningMode,
                 intent: agentIntent,
-                checkpoint: agentResult.checkpoint,
-                revision: null,
-                acceptAnswersAfterUpdateId: latestTelegramUpdateId,
-              };
+                timeZone,
+                style: profile.stylePreference,
+                context: contextSnapshotForActiveRun(context),
+                chatId: String(ctx.chat?.id ?? ownerId),
+                turnId: randomUUID(),
+              });
+              if (started.status === "started") {
+                activeRunLaunch = started.run;
+                reply = renderRunAnchor(started.run);
+              } else {
+                reply = [
+                  "Aku masih mengerjakan pekerjaan foreground yang tadi; permintaan baru ini belum kumulai.",
+                  "",
+                  renderRunAnchor(started.run),
+                ].join("\n");
+              }
+              activeRunSurfaceReply = true;
+            } else {
+              const agentResult = await conversation.agent(
+                text,
+                planningMode,
+                context,
+                {
+                  ...runtime,
+                  ownerId,
+                  channel: "telegram",
+                  timeZone,
+                  style: profile.stylePreference,
+                  intent: agentIntent,
+                },
+              );
+              if (agentResult.status === "stopped") {
+                logger.warn(
+                  "agent_run_stopped",
+                  "Run agent dihentikan oleh guard runtime.",
+                  {
+                    status: agentResult.status,
+                    reason: agentResult.reason,
+                    outcome: agentResult.trace.at(-1)?.outcome,
+                    count: agentResult.trace.length,
+                  },
+                );
+              }
+              // `needs_input` adalah prompt model yang benar-benar dikirim,
+              // jadi usage-nya diselesaikan setelah delivery seperti final.
+              if (
+                agentResult.status === "stopped" ||
+                agentResult.status === "needs_approval"
+              ) {
+                debitDeliveredReply = false;
+                await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+              }
+              if (agentResult.status === "needs_input") {
+                agentPending = {
+                  kind: "agent-input",
+                  request: text,
+                  mode: planningMode,
+                  intent: agentIntent,
+                  checkpoint: agentResult.checkpoint,
+                  revision: null,
+                  acceptAnswersAfterUpdateId: latestTelegramUpdateId,
+                };
+              }
+              reply = agentResult.status === "completed"
+                ? agentResult.reply
+                : agentResult.status === "needs_input"
+                  ? agentResult.prompt
+                  : agentResult.status === "needs_approval"
+                    ? "Aku menghentikan run ini karena agent baca-saja meminta izin untuk perubahan yang tidak tersedia."
+                    : agentResult.reason === "deadline"
+                      ? "Aku belum menyelesaikan run ini sebelum batas waktunya. Aku tidak akan mengarang hasilnya."
+                      : agentResult.reason.startsWith("budget_")
+                        ? "Aku menghentikan run saat batas kerja kumulatifnya tercapai. Aku tidak akan mengarang atau meneruskan hasil setengah jadi."
+                      : agentResult.reason === "cycle"
+                        ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
+                        : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
             }
-            reply = agentResult.status === "completed"
-              ? agentResult.reply
-              : agentResult.status === "needs_input"
-                ? agentResult.prompt
-                : agentResult.status === "needs_approval"
-                  ? "Aku menghentikan run ini karena agent baca-saja meminta izin untuk perubahan yang tidak tersedia."
-                  : agentResult.reason === "deadline"
-                    ? "Aku belum menyelesaikan run ini sebelum batas waktunya. Aku tidak akan mengarang hasilnya."
-                    : agentResult.reason.startsWith("budget_")
-                      ? "Aku menghentikan run saat batas kerja kumulatifnya tercapai. Aku tidak akan mengarang atau meneruskan hasil setengah jadi."
-                    : agentResult.reason === "cycle"
-                      ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
-                      : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
           } else {
             reply = await conversation.reply(
               text,
@@ -1512,17 +1580,32 @@ export function createBot(
               await telemetry.discardUndelivered?.(ownerId, currentTurnId());
               return;
             }
-            await sendReply(
-              ctx,
-              reply,
-              remembered.saved,
-              adaptiveKeyboard,
-              () => {
-                replyDelivered = true;
-              },
-            );
+            const sent = activeRunLaunch
+              ? await sendRunAnchor(ctx, reply)
+              : await sendReply(
+                ctx,
+                reply,
+                remembered.saved,
+                adaptiveKeyboard,
+                () => {
+                  replyDelivered = true;
+                },
+              );
             replyDelivered = true;
             memoryNoticeDelivered = true;
+            if (activeRunLaunch) {
+              if (!sent) {
+                throw new Error("Run Anchor tidak menghasilkan message ID.");
+              }
+              activeRunLaunch = await agentRuns!.attachActiveAnchor(
+                "telegram",
+                ownerId,
+                activeRunLaunch.runId,
+                String(sent.messageId),
+              );
+              launchActiveAgentWork(activeRunLaunch);
+              activeRunLaunched = true;
+            }
             if (agentPending) {
               try {
                 await saveAgentPending(ownerId, agentPending);
@@ -1540,6 +1623,22 @@ export function createBot(
             }
           }
         } catch (error) {
+          if (activeRunLaunch && !activeRunLaunched) {
+            try {
+              await agentRuns?.failActive(
+                "telegram",
+                ownerId,
+                activeRunLaunch.runId,
+                "anchor_delivery_failed",
+              );
+            } catch (cleanupError) {
+              logger.error(
+                "active_run_anchor_cleanup_failed",
+                "Run aktif gagal ditandai setelah Run Anchor tidak terkirim.",
+                cleanupError,
+              );
+            }
+          }
           if (
             error instanceof PartialReplyDeliveryError &&
             error.deliveredText &&
@@ -1592,6 +1691,7 @@ export function createBot(
 
       // Satu pending saja per pemilik. Klarifikasi agent yang sudah terlihat
       // menang atas tawaran tugas/memori/gaya agar checkpoint tidak tertimpa.
+      if (activeRunSurfaceReply) return;
       if (agentPending) return;
 
       if (route.kind === "save-task") {
@@ -1660,6 +1760,9 @@ export function createBot(
         styleEligible && !adaptiveKeyboard,
       );
     } finally {
+      if (activeRunLaunch && !activeRunLaunched) {
+        await failUnlaunchedActiveRun(activeRunLaunch);
+      }
       // Model peringkas berjalan setelah balasan utama selesai. Tidak di-await:
       // kegagalan atau timeout-nya tidak boleh membuat pengguna menunggu.
       void history.compact(ownerId);
@@ -1728,6 +1831,570 @@ export function createBot(
       turns: conversationContext.turns,
       memories: relevant,
     };
+  }
+
+  async function handleLocalActiveRunControl(
+    ctx: Context,
+    ownerId: string,
+    text: string,
+  ): Promise<boolean> {
+    if (!agentRuns) return false;
+    const run = await activeRunForIngress(ownerId);
+    if (!run) return false;
+    const relation = classifyRunMailboxLocally({
+      text,
+      run,
+      quotedMessageId: quotedMessageId(ctx),
+    });
+    if (relation !== "status_query" && relation !== "cancel") return false;
+    if (isTerminalActiveRun(run)) {
+      if (relation !== "status_query") return false;
+      await noteTurnSignal(ownerId, "deterministic-fast-path");
+      await history.append(ownerId, "user", text);
+      const response = renderRunAnchor(run);
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
+      return true;
+    }
+
+    await noteTurnSignal(ownerId, "deterministic-fast-path");
+    await history.append(ownerId, "user", text);
+    if (relation === "status_query") {
+      const response = renderRunAnchor(run);
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
+      return true;
+    }
+
+    const routed = await agentRuns.routeActiveMessage({
+      channel: "telegram",
+      ownerId,
+      runId: run.runId,
+      kind: "cancel",
+      content: text,
+      sourceMessageId: sourceMessageId(ctx),
+      ingressUpdateId: ctx.update.update_id,
+    });
+    if (routed.status !== "accepted") return false;
+    abortActiveAgentWork(ownerId, run.runId);
+    await updateActiveRunAnchor(routed.run);
+    const response = runCancellationAcknowledgement(routed.committedEffects);
+    await ctx.reply(response);
+    await history.append(ownerId, "harvy", response);
+    return true;
+  }
+
+  async function handleActiveRunMailboxAfterSafety(
+    ctx: Context,
+    ownerId: string,
+    text: string,
+  ): Promise<boolean> {
+    if (!agentRuns) return false;
+    const run = await activeRunForIngress(ownerId);
+    if (!run || isTerminalActiveRun(run)) return false;
+    const relation = classifyRunMailboxLocally({
+      text,
+      run,
+      quotedMessageId: quotedMessageId(ctx),
+    });
+    if (
+      relation === "independent_chat" ||
+      relation === "status_query" ||
+      relation === "cancel"
+    ) {
+      return false;
+    }
+    const kind = mailboxKindForRelation(relation);
+    if (!kind) return false;
+    const routed = await agentRuns.routeActiveMessage({
+      channel: "telegram",
+      ownerId,
+      runId: run.runId,
+      kind,
+      content: text,
+      sourceMessageId: sourceMessageId(ctx),
+      ...(relation === "answer_to_run" && run.pendingQuestion
+        ? { questionId: run.pendingQuestion.questionId }
+        : {}),
+      ingressUpdateId: ctx.update.update_id,
+    });
+    if (routed.status !== "accepted") return false;
+    const response = runUpdateAcknowledgement(relation);
+    await ctx.reply(response);
+    await history.append(ownerId, "harvy", response);
+    await updateActiveRunAnchor(routed.run);
+    if (routed.run.status === "queued") launchActiveAgentWork(routed.run);
+    return true;
+  }
+
+  async function activeRunForIngress(
+    ownerId: string,
+  ): Promise<ActiveAgentRun | null> {
+    if (!agentRuns) return null;
+    const expired = await agentRuns.expireWaitingActive("telegram", ownerId);
+    if (expired) {
+      await updateActiveRunAnchor(expired);
+      return expired;
+    }
+    return agentRuns.loadForegroundActive("telegram", ownerId);
+  }
+
+  async function discardAgentRunForMemoryChange(
+    ownerId: string,
+  ): Promise<boolean> {
+    if (!agentRuns) return false;
+    const current = await agentRuns.loadActive("telegram", ownerId);
+    let stopped = false;
+    let terminal = current;
+    if (current && !isTerminalActiveRun(current)) {
+      const routed = await agentRuns.routeActiveMessage({
+        channel: "telegram",
+        ownerId,
+        runId: current.runId,
+        kind: "cancel",
+        content: "Data konteks yang dipakai run dicabut oleh pengguna.",
+        sourceMessageId: `data-control:${randomUUID()}`,
+      });
+      if (routed.status === "accepted") {
+        terminal = routed.run;
+        stopped = true;
+      }
+      const work = activeAgentWork.get(ownerId);
+      if (work?.runId === current.runId) {
+        work.controller.abort();
+        await work.promise;
+      }
+      if (stopped && terminal) await updateActiveRunAnchor(terminal);
+    }
+
+    await agentRuns.discardContextData("telegram", ownerId);
+    return stopped;
+  }
+
+  function isTerminalActiveRun(run: ActiveAgentRun): boolean {
+    return run.status === "completed" ||
+      run.status === "partial" ||
+      run.status === "failed" ||
+      run.status === "cancelled";
+  }
+
+  function launchActiveAgentWork(run: ActiveAgentRun): void {
+    if (!agentRuns || stoppingActiveAgentWork) return;
+    const existing = activeAgentWork.get(run.ownerId);
+    if (existing?.runId === run.runId) return;
+    if (existing) {
+      logger.warn(
+        "active_run_foreground_conflict",
+        "Work lane menolak foreground kedua untuk pemilik yang sama.",
+      );
+      return;
+    }
+    const controller = new AbortController();
+    const promise = Promise.resolve()
+      .then(() => withUsageAttribution(
+        {
+          turnId: run.turnId,
+          subjectKind: "private",
+          channel: "telegram",
+          actorAliases: [],
+        },
+        async () => {
+          await executeActiveAgentWork(run.ownerId, run.runId, controller);
+        },
+      ))
+      .catch(async (error: unknown) => {
+        logger.error(
+          "active_run_work_failed",
+          "Work lane active AgentRun gagal.",
+          error,
+        );
+        try {
+          await telemetry.discardUndelivered?.(run.ownerId, run.turnId);
+        } catch (telemetryError) {
+          logger.warn(
+            "active_run_usage_discard_failed",
+            "Kandidat usage work lane yang gagal belum dapat dibatalkan.",
+            { telemetryError },
+          );
+        }
+        try {
+          const failed = await agentRuns.failActive(
+            "telegram",
+            run.ownerId,
+            run.runId,
+            "work_lane_failed",
+          );
+          if (failed) await updateActiveRunAnchor(failed);
+        } catch (stateError) {
+          logger.error(
+            "active_run_failure_state_failed",
+            "Kegagalan work lane tidak dapat dipersistenkan.",
+            stateError,
+          );
+        }
+      })
+      .finally(async () => {
+        const current = activeAgentWork.get(run.ownerId);
+        if (current?.promise !== promise) return;
+        activeAgentWork.delete(run.ownerId);
+        if (stoppingActiveAgentWork || !agentRuns) return;
+        try {
+          const latest = await agentRuns.loadForegroundActive(
+            "telegram",
+            run.ownerId,
+          );
+          // Jawaban dapat tiba tepat ketika worker waiting_input sedang keluar.
+          // Kalau launch pada jalur ingress melihat worker lama, finally inilah
+          // yang mengambil ulang queued work agar wake-up tidak hilang.
+          if (latest?.runId === run.runId && latest.status === "queued") {
+            launchActiveAgentWork(latest);
+          }
+        } catch (error) {
+          logger.error(
+            "active_run_wakeup_check_failed",
+            "Status queued active AgentRun tidak dapat diperiksa setelah worker selesai.",
+            error,
+          );
+        }
+      });
+    activeAgentWork.set(run.ownerId, {
+      runId: run.runId,
+      controller,
+      promise,
+    });
+  }
+
+  async function executeActiveAgentWork(
+    ownerId: string,
+    runId: string,
+    controller: AbortController,
+  ): Promise<void> {
+    if (!agentRuns) return;
+    for (let revisionPass = 0; revisionPass < 8; revisionPass += 1) {
+      const attempt = await agentRuns.beginActiveAttempt(
+        "telegram",
+        ownerId,
+        runId,
+      );
+      if (!attempt) return;
+      await updateActiveRunAnchor(attempt.run);
+      const result = await conversation.agent(
+        attempt.run.initialRequest,
+        attempt.run.mode,
+        contextFromActiveRun(attempt.run),
+        {
+          ownerId,
+          channel: "telegram",
+          timeZone: attempt.run.timeZone,
+          style: attempt.run.style,
+          intent: attempt.run.intent,
+          runId,
+          signal: controller.signal,
+          isCurrent: () => agentRuns.isActiveAttemptCurrent(
+            "telegram",
+            ownerId,
+            runId,
+            attempt.inputRevision,
+          ),
+          ...(attempt.initialUserInputs
+            ? { initialAgentInputs: attempt.initialUserInputs }
+            : {}),
+        },
+        attempt.checkpoint,
+        attempt.answer,
+      );
+
+      if (result.status === "completed") {
+        try {
+          const completed = await agentRuns.commitActiveFinal(
+            {
+              channel: "telegram",
+              ownerId,
+              runId,
+              inputRevision: attempt.inputRevision,
+              checkpoint: result.checkpoint,
+              reply: result.reply,
+            },
+            () => sendActiveRunMessage(attempt.run, result.reply),
+          );
+          await updateActiveRunAnchor(completed);
+          await history.append(ownerId, "harvy", result.reply);
+          await telemetry.markDelivered?.(ownerId, attempt.run.turnId);
+          return;
+        } catch (error) {
+          if (error instanceof ActiveAgentRunStaleError) {
+            const queued = await agentRuns.requeueStaleActive(
+              "telegram",
+              ownerId,
+              runId,
+              attempt.inputRevision,
+              result.checkpoint,
+            );
+            if (queued?.status === "queued") continue;
+          }
+          await telemetry.discardUndelivered?.(ownerId, attempt.run.turnId);
+          const latest = await agentRuns.loadActive("telegram", ownerId);
+          if (latest) await updateActiveRunAnchor(latest);
+          throw error;
+        }
+      }
+
+      if (result.status === "needs_input") {
+        try {
+          const waiting = await agentRuns.commitActiveQuestion(
+            {
+              channel: "telegram",
+              ownerId,
+              runId,
+              inputRevision: attempt.inputRevision,
+              checkpoint: result.checkpoint,
+              prompt: result.prompt,
+              acceptAnswersAfterUpdateId: latestTelegramUpdateId,
+            },
+            () => sendActiveRunMessage(attempt.run, result.prompt),
+          );
+          await updateActiveRunAnchor(waiting);
+          await history.append(ownerId, "harvy", result.prompt);
+          await telemetry.markDelivered?.(ownerId, attempt.run.turnId);
+          return;
+        } catch (error) {
+          if (error instanceof ActiveAgentRunStaleError) {
+            const queued = await agentRuns.requeueStaleActive(
+              "telegram",
+              ownerId,
+              runId,
+              attempt.inputRevision,
+              result.checkpoint,
+            );
+            if (queued?.status === "queued") continue;
+          }
+          await telemetry.discardUndelivered?.(ownerId, attempt.run.turnId);
+          const latest = await agentRuns.loadActive("telegram", ownerId);
+          if (latest) await updateActiveRunAnchor(latest);
+          throw error;
+        }
+      }
+
+      if (result.status === "needs_approval") {
+        const failed = await agentRuns.failActive(
+          "telegram",
+          ownerId,
+          runId,
+          "write_approval_unavailable",
+        );
+        await telemetry.discardUndelivered?.(ownerId, attempt.run.turnId);
+        if (failed) await updateActiveRunAnchor(failed);
+        return;
+      }
+
+      const settled = await agentRuns.settleActiveStopped(
+        "telegram",
+        ownerId,
+        runId,
+        attempt.inputRevision,
+        result,
+        stoppingActiveAgentWork && controller.signal.aborted,
+      );
+      if (settled?.status === "queued" && !controller.signal.aborted) {
+        await updateActiveRunAnchor(settled);
+        continue;
+      }
+      await telemetry.discardUndelivered?.(ownerId, attempt.run.turnId);
+      if (settled) await updateActiveRunAnchor(settled);
+      return;
+    }
+
+    const exhausted = await agentRuns.loadActive("telegram", ownerId);
+    await telemetry.discardUndelivered?.(
+      ownerId,
+      exhausted?.runId === runId ? exhausted.turnId : null,
+    );
+    const failed = await agentRuns.failActive(
+      "telegram",
+      ownerId,
+      runId,
+      "revision_limit",
+    );
+    if (failed) await updateActiveRunAnchor(failed);
+  }
+
+  async function failUnlaunchedActiveRun(run: ActiveAgentRun): Promise<void> {
+    try {
+      await agentRuns?.failActive(
+        "telegram",
+        run.ownerId,
+        run.runId,
+        "surface_not_delivered",
+      );
+    } catch (error) {
+      logger.error(
+        "active_run_surface_cleanup_failed",
+        "Run aktif tanpa Run Anchor belum dapat ditandai gagal.",
+        error,
+      );
+    }
+  }
+
+  async function sendActiveRunMessage(
+    run: ActiveAgentRun,
+    text: string,
+  ): Promise<{ externalId: string; bindingExternalId: string }> {
+    const messageIds: string[] = [];
+    for (const bubble of splitReplyBubbles(text)) {
+      const sent = await bot.api.sendMessage(telegramChatId(run.anchor.chatId), bubble);
+      messageIds.push(String(sent.message_id));
+    }
+    if (messageIds.length === 0) {
+      throw new Error("Active AgentRun tidak menghasilkan bubble delivery.");
+    }
+    return {
+      externalId: messageIds.join(","),
+      bindingExternalId: messageIds.at(-1)!,
+    };
+  }
+
+  async function updateActiveRunAnchor(run: ActiveAgentRun): Promise<void> {
+    const text = renderRunAnchor(run);
+    const messageId = numericMessageId(run.anchor.messageId);
+    if (messageId !== null) {
+      try {
+        await bot.api.editMessageText(
+          telegramChatId(run.anchor.chatId),
+          messageId,
+          text,
+        );
+        return;
+      } catch (error) {
+        if (isTelegramMessageNotModified(error)) return;
+        logger.warn(
+          "active_run_anchor_edit_failed",
+          "Run Anchor gagal diedit; adapter mengirim anchor pengganti.",
+          { error },
+        );
+      }
+    }
+    try {
+      const sent = await bot.api.sendMessage(
+        telegramChatId(run.anchor.chatId),
+        text,
+      );
+      await agentRuns?.attachActiveAnchor(
+        "telegram",
+        run.ownerId,
+        run.runId,
+        String(sent.message_id),
+      );
+    } catch (error) {
+      logger.warn(
+        "active_run_anchor_fallback_failed",
+        "Run Anchor pengganti gagal dikirim.",
+        { error },
+      );
+    }
+  }
+
+  async function resumeActiveAgentRuns(): Promise<void> {
+    if (!agentRuns || stoppingActiveAgentWork) return;
+    const runs = await agentRuns.recoverInterruptedActiveRuns("telegram");
+    for (let run of runs) {
+      if (run.anchor.messageId === null) {
+        const sent = await bot.api.sendMessage(
+          telegramChatId(run.anchor.chatId),
+          renderRunAnchor(run),
+        );
+        run = await agentRuns.attachActiveAnchor(
+          "telegram",
+          run.ownerId,
+          run.runId,
+          String(sent.message_id),
+        );
+      } else {
+        await updateActiveRunAnchor(run);
+      }
+      if (
+        run.status === "queued" ||
+        (run.status === "waiting_input" && run.resumeAnswer)
+      ) {
+        launchActiveAgentWork(run);
+      }
+    }
+  }
+
+  function abortActiveAgentWork(ownerId: string, runId?: string): void {
+    const active = activeAgentWork.get(ownerId);
+    if (active && (runId === undefined || active.runId === runId)) {
+      active.controller.abort();
+    }
+  }
+
+  async function stopActiveAgentWork(): Promise<void> {
+    stoppingActiveAgentWork = true;
+    const work = [...activeAgentWork.values()];
+    for (const active of work) active.controller.abort();
+    await Promise.allSettled(work.map((active) => active.promise));
+  }
+
+  function contextSnapshotForActiveRun(
+    context: HarvyContext,
+  ): AgentRunContextSnapshot {
+    return {
+      summary: context.summary,
+      turns: context.turns.map((turn) => ({ ...turn })),
+      memories: context.memories.map((memory) => ({
+        id: memory.id,
+        kind: memory.kind,
+        content: memory.content,
+      })),
+    };
+  }
+
+  function contextFromActiveRun(run: ActiveAgentRun): HarvyContext {
+    return {
+      summary: run.context.summary,
+      turns: run.context.turns.map((turn) => ({ ...turn })),
+      memories: run.context.memories.map((memory) => ({
+        ...memory,
+        ownerId: run.ownerId,
+        createdAt: run.createdAt,
+        lastUsedAt: null,
+        expiresAt: null,
+      })),
+    };
+  }
+
+  function quotedMessageId(ctx: Context): string | null {
+    return ctx.message?.reply_to_message?.message_id === undefined
+      ? null
+      : String(ctx.message.reply_to_message.message_id);
+  }
+
+  function sourceMessageId(ctx: Context): string {
+    const messageId = ctx.message?.message_id ?? ctx.update.update_id;
+    return `telegram:${messageId}`;
+  }
+
+  function telegramChatId(value: string): number | string {
+    const numeric = Number(value);
+    return Number.isSafeInteger(numeric) ? numeric : value;
+  }
+
+  function numericMessageId(value: string | null): number | null {
+    if (value === null) return null;
+    const numeric = Number(value);
+    return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : null;
+  }
+
+  function isTelegramMessageNotModified(error: unknown): boolean {
+    if (
+      error instanceof Error &&
+      /message is not modified/iu.test(error.message)
+    ) {
+      return true;
+    }
+    if (!error || typeof error !== "object") return false;
+    const description = (error as { description?: unknown }).description;
+    return typeof description === "string" &&
+      /message is not modified/iu.test(description);
   }
 
   async function handlePendingText(
@@ -1971,7 +2638,23 @@ export function createBot(
       return;
     }
 
-    const updated = await memories.edit(ownerId, memoryId, text);
+    const clean = text.trim().replaceAll(/\s+/g, " ");
+    const currentMemories = await memories.list(ownerId);
+    const current = currentMemories.find((memory) => memory.id === memoryId);
+    const duplicate = currentMemories.some(
+      (memory) =>
+        memory.id !== memoryId &&
+        memory.content.toLowerCase() === clean.toLowerCase(),
+    );
+    if (!current || duplicate) {
+      await ctx.reply(
+        "Aku nggak bisa mengubahnya—catatannya mungkin sudah hilang atau isinya sama dengan catatan lain.",
+      );
+      return;
+    }
+
+    const stoppedRun = await discardAgentRunForMemoryChange(ownerId);
+    const updated = await memories.edit(ownerId, memoryId, clean);
     if (!updated) {
       await ctx.reply(
         "Aku nggak bisa mengubahnya—catatannya mungkin sudah hilang atau isinya sama dengan catatan lain.",
@@ -1981,7 +2664,12 @@ export function createBot(
 
     await clearPending(ownerId);
     await recordEvent(ownerId, "memory_edited");
-    const response = `Udah aku ubah jadi: ${updated.content}`;
+    const response = [
+      `Udah aku ubah jadi: ${updated.content}`,
+      ...(stoppedRun
+        ? ["Pekerjaan planning yang memakai catatan lama juga kuhentikan supaya versi lama itu tidak dipakai lagi."]
+        : []),
+    ].join("\n\n");
     await ctx.reply(response);
     await history.append(ownerId, "harvy", response);
   }
@@ -2325,6 +3013,15 @@ export function createBot(
       }
     }
     return lastMessage;
+  }
+
+  /** Run Anchor harus satu pesan yang dapat diedit, bukan rangkaian bubble. */
+  async function sendRunAnchor(
+    ctx: Context,
+    text: string,
+  ): Promise<SentMessageRef> {
+    const sent = await ctx.reply(text);
+    return { chatId: sent.chat.id, messageId: sent.message_id };
   }
 
   /** Jalur mundur ketika tidak ada balasan yang bisa ditempeli catatan. */
@@ -2771,6 +3468,7 @@ export function createBot(
       // sungguhan, jadi yang dibuang cukup barisnya — bukan seluruh pesannya,
       // dan bukan diganti daftar memori.
       case "memdrop": {
+        const stoppedRun = await discardAgentRunForMemoryChange(ownerId);
         const forgotten = await memories.forget(ownerId, target);
         await safeEdit(
           ctx,
@@ -2779,10 +3477,16 @@ export function createBot(
             forgotten?.content ?? null,
           ),
         );
+        if (stoppedRun) {
+          await ctx.reply(
+            "Pekerjaan planning yang memakai catatan itu juga kuhentikan supaya salinan lamanya tidak dipakai lagi.",
+          );
+        }
         return;
       }
 
       case "memforget": {
+        const stoppedRun = await discardAgentRunForMemoryChange(ownerId);
         const forgotten = await memories.forget(ownerId, target);
         await refreshMemories(
           ctx,
@@ -2790,6 +3494,11 @@ export function createBot(
           forgotten?.content,
           forgotten === null,
         );
+        if (stoppedRun) {
+          await ctx.reply(
+            "Pekerjaan planning yang memakai catatan itu juga kuhentikan supaya salinan lamanya tidak dipakai lagi.",
+          );
+        }
         return;
       }
 
@@ -2836,6 +3545,7 @@ export function createBot(
           await safeEdit(ctx, "Tombol ini udah nggak berlaku.");
           return;
         }
+        const stoppedRun = await discardAgentRunForMemoryChange(ownerId);
         // Pasal 4 nomor 6: catatan tersembunyi ikut terhapus bersama sisanya.
         await insights.forget(ownerId);
         // Insight dihapus lebih dulu agar adapter memori dapat membuang folder
@@ -2854,6 +3564,12 @@ export function createBot(
           ctx,
           [
             `Udah aku lupain semuanya — ${removed} catatan dan seluruh riwayat obrolan kita.`,
+            ...(stoppedRun
+              ? [
+                  "",
+                  "Pekerjaan planning yang memakai konteks lama juga sudah kuhentikan dan record-nya dihapus.",
+                ]
+              : []),
             "",
             "Tugasmu nggak ikut kehapus. Kalau mau itu juga hilang, batalin satu per satu lewat daftarnya.",
           ].join("\n"),
@@ -3372,6 +4088,7 @@ export function createBot(
     // Hak menarik izin tidak boleh bergantung pada kesehatan file checkpoint.
     // Tutup ingress/model lebih dulu, lalu persist keputusan pengguna.
     consentChecks.set(ownerId, Promise.resolve(false));
+    abortActiveAgentWork(ownerId);
     pending.clear(ownerId);
     actionOffers.clear(ownerId);
     held.clear(ownerId);
@@ -3420,6 +4137,7 @@ export function createBot(
     if (selected.operation !== "yes") return;
 
     consentChecks.set(ownerId, Promise.resolve(false));
+    abortActiveAgentWork(ownerId);
     // DataControlService memasang tombstone sebelum menyentuh store lain.
     // Jangan biarkan pre-clear checkpoint menggagalkan hak penghapusan sebelum
     // tombstone itu sempat ditulis.

@@ -254,6 +254,11 @@ export interface AgentRunInput {
   runBudget?: RunBudgetPolicy;
   signal?: AbortSignal;
   checkpoint?: AgentRunCheckpoint;
+  /**
+   * Input code-owned yang sudah diterima sebelum checkpoint pertama dibuat.
+   * Hanya sah pada run baru; setelah itu checkpoint menjadi sumber durable.
+   */
+  initialUserInputs?: readonly AgentUserInput[];
   approval?: AgentApprovalGrant;
   /** Jawaban untuk `needs_input`; request awal tetap tidak berubah. */
   answer?: string;
@@ -1072,23 +1077,56 @@ function initialCheckpoint(
   runBudget: RunBudgetAccount,
 ): { ok: true; value: AgentRunCheckpoint } | { ok: false } {
   if (!input.checkpoint) {
+    const initialUserInputs = normalizeInitialUserInputs(
+      input.initialUserInputs,
+      limits.maxObservationCharacters,
+    );
+    if (initialUserInputs === null) return { ok: false };
+    const checkpoint = emptyCheckpoint(
+      input,
+      snapshot,
+      callableHash,
+      now,
+      limits,
+      runBudget,
+    );
+    checkpoint.userInputs = initialUserInputs;
     return {
       ok: true,
-      value: emptyCheckpoint(
-        input,
-        snapshot,
-        callableHash,
-        now,
-        limits,
-        runBudget,
-      ),
+      value: checkpoint,
     };
   }
+  if ((input.initialUserInputs?.length ?? 0) > 0) return { ok: false };
   const checkpoint = structuredClone(input.checkpoint);
   if (!isValidAgentRunCheckpoint(checkpoint, input.scope, input.request)) {
     return { ok: false };
   }
   return { ok: true, value: checkpoint };
+}
+
+function normalizeInitialUserInputs(
+  inputs: readonly AgentUserInput[] | undefined,
+  maxCharacters: number,
+): AgentUserInput[] | null {
+  if (inputs === undefined) return [];
+  if (!Array.isArray(inputs) || inputs.length > 16) return null;
+  const normalized: AgentUserInput[] = [];
+  for (const input of inputs) {
+    if (!input || input.step !== 0 || typeof input.text !== "string") {
+      return null;
+    }
+    const text = boundedText(input.text, maxCharacters);
+    if (!text) return null;
+    if (input.prompt !== undefined) {
+      if (typeof input.prompt !== "string") return null;
+      const prompt = boundedText(input.prompt, 500);
+      if (!prompt) return null;
+      normalized.push({ step: 0, prompt, text });
+    } else {
+      normalized.push({ step: 0, text });
+    }
+  }
+  return normalized;
 }
 
 /** Codec tunggal untuk checkpoint dari proses maupun penyimpanan durable. */

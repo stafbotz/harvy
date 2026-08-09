@@ -669,6 +669,13 @@ try {
     allowed_updates: ["message", "callback_query"],
     onStart: () => {
       consoleServer?.markReady();
+      void bot.resumeAgentRuns().catch((error: unknown) => {
+        logger.error(
+          "active_agent_run_recovery_failed",
+          "Pemulihan active AgentRun setelah restart gagal.",
+          error,
+        );
+      });
       logger.info(
         "application_ready",
         "Harvy mulai berjalan dan polling Telegram aktif.",

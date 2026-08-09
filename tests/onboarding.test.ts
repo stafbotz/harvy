@@ -49,7 +49,9 @@ describe("naskah perkenalan", () => {
     assert.match(CONSENT_DETAIL, /model utama.*memori dan riwayat tersimpan/i);
     assert.match(CONSENT_DETAIL, /dikirim ulang ke layanan cadangan/i);
     assert.match(CONSENT_DETAIL, /bisa keliru/i);
-    assert.match(CONSENT_DETAIL, /checkpoint.*ekspor\/penghapusan data/i);
+    assert.match(CONSENT_DETAIL, /record.*ekspor\/penghapusan data/i);
+    assert.match(CONSENT_DETAIL, /potongan konteks, memori, dan riwayat/i);
+    assert.match(CONSENT_DETAIL, /paling lama 7 hari/i);
   });
 
   it("tidak menjanjikan penilai AI selalu mengenali catatan pribadi", () => {

@@ -1,7 +1,8 @@
 # Status — Agent Runtime
 
-Verified: 9 Agustus 2026 pada working tree RunBudget Phase C di atas `8e34410`;
-`npm run check` PASS dan `npm test` PASS, 819 test dalam 104 suite, 0 gagal.
+Verified: 9 Agustus 2026 pada working tree Active AgentRun Phase D di atas
+`bbe7b9b`; `npm run check` PASS dan `npm test` PASS, 842 test dalam 108 suite,
+0 gagal.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
 
@@ -30,11 +31,20 @@ agent, scope/authority, atau executor internal.
   tool, dan seluruh worker. Default: 96.000 token, USD 1, 6 langkah, 5 tool,
   12 model attempt, 45 detik aktif, dan 3 worker konkuren. Reservation dibuat
   sebelum key/fetch; failure ambigu dibebankan penuh sebagai unknown.
-- Checkpoint `waiting_input` privat tahan restart normal lewat file repository
-  satu proses, owner-scoped, CAS, horizon absolut sepuluh menit, dan hash
-  capability/executor. Writer baru memakai checkpoint v2 dengan snapshot
-  RunBudget; jeda menunggu manusia tidak memakai waktu aktif. Run aktif belum
-  durable. Ekspor pengguna membawa progress+counter, bukan policy/harga/hash.
+- Checkpoint `waiting_input` sinkron privat tetap tahan restart lewat record v1
+  owner-scoped, CAS, horizon absolut sepuluh menit, dan hash capability/executor.
+  Writer checkpoint memakai v2 dengan snapshot RunBudget; jeda manusia tidak
+  memakai waktu aktif.
+- Permintaan `orchestrate` eksplisit privat Telegram sekarang memakai active
+  AgentRun v2 di work lane durable: snapshot konteks transaksi, satu foreground,
+  RunMailbox/ChangeSet, instruction revision, work unit/event, Run Anchor,
+  checkpoint, commit barrier, dan receipt outbound Telegram. Chat tak terkait
+  tetap berjalan; quote/target eksplisit diperlukan untuk update atau answer.
+  Startup melanjutkan queued/paused work, menutup expiry, dan mengubah delivery
+  ambigu menjadi `partial|unknown` tanpa retry otomatis. Ekspor membawa isi
+  mailbox, progress/perubahan, dan receipt teredaksi, bukan snapshot/policy/
+  harga/hash. Hanya record terbaru per scope yang diretensi; edit/hapus memori
+  atau wipe history membatalkan dan menghapus snapshot run terlebih dahulu.
 - `AgentScope` dan Workspace authority v1 ada di core dengan membership, role,
   permission tertutup, `aclEpoch`, dan stale-authority rejection. Workspace
   belum terhubung ke composition root atau surface pengguna.
@@ -57,8 +67,12 @@ agent, scope/authority, atau executor internal.
   memerlukan harga tier nonnol atau reported provider cost; token/attempt tetap
   terjaga bila harga belum lengkap. Actual provider usage satu attempt dapat
   melewati reservation, lalu work non-final berikutnya dihentikan.
-- Belum ada RunStore production, outbox, receipt, reconciliation, atau recovery
-  run aktif. Delivery prompt dan commit checkpoint tidak atomik.
+- Active store/receipt/recovery di atas baru file lokal satu proses dan hanya
+  untuk mode `orchestrate` privat Telegram. Belum ada RunStore produksi,
+  lease/CAS multi-instance, dispatcher/outbox exactly-once, reconciler eksternal,
+  job kedua, pin/archive anchor, atau workstream durable. Receipt hanya melacak
+  pesan Telegram; crash sebelum checkpoint pertama dapat mengulang inference
+  dan tool read. Query `tools` tetap sinkron.
 - Agent root menerima konteks privat terpilih sebagai data tak tepercaya;
   worker tidak menerimanya. Memori tidak boleh menjadi authority permission,
   actor, credential, live schedule, atau outcome tool.
@@ -69,10 +83,13 @@ agent, scope/authority, atau executor internal.
 
 - Kode: `src/agent/`, `src/agent/time-fast-path.ts`, `src/harness/`,
   `src/ai/agent.ts`, `src/core/run-budget.ts`,
-  `src/core/agent-run-service.ts`.
+  `src/core/agent-run-service.ts`, `src/core/run-mailbox-policy.ts`,
+  `src/bot/run-anchor.ts`, dan `src/storage/file-agent-run-repository.ts`.
 - Tes: `tests/agent-runtime.test.ts`, `tests/agent-harness.test.ts`,
   `tests/create-bot-flow.test.ts`, `tests/harness-context-budget.test.ts`,
   `tests/harness-scope-capabilities.test.ts`, `tests/model-profile.test.ts`,
   `tests/execution-policy.test.ts`, `tests/provider-adapter.test.ts`,
-  `tests/run-budget.test.ts`, dan `tests/client.test.ts`.
-- Keputusan: ADR-012, ADR-016, ADR-017, ADR-018, ADR-021, ADR-025, ADR-026.
+  `tests/run-budget.test.ts`, `tests/active-agent-run-service.test.ts`,
+  `tests/run-mailbox-anchor.test.ts`, dan `tests/client.test.ts`.
+- Keputusan: ADR-012, ADR-016, ADR-017, ADR-018, ADR-021, ADR-025, ADR-026,
+  ADR-027.
