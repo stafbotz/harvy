@@ -2641,11 +2641,23 @@ describe("work lane active AgentRun Telegram", () => {
       const anchorId = harness.sent.findIndex((text) => text.startsWith("📌 ")) + 1;
       assert.ok(anchorId > 0);
 
-      await harness.bot.handleUpdate(
-        replyMessageUpdate("Jangan buat reminder dulu", 2, anchorId),
+      const correction = replyMessageUpdate(
+        "Jangan buat reminder dulu",
+        2,
+        anchorId,
       );
+      await harness.bot.handleUpdate(correction);
       await waitFor(() =>
         harness.sent.some((text) => text.includes("koreksinya masuk"))
+      );
+      await harness.bot.handleUpdate(correction);
+      assert.equal(
+        harness.sent.filter((text) => text.includes("koreksinya masuk")).length,
+        1,
+      );
+      assert.equal(
+        (await runs.loadActive("telegram", "123"))?.mailbox.length,
+        1,
       );
       releaseFirst.resolve();
       await secondStarted.promise;

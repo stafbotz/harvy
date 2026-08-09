@@ -75,6 +75,10 @@ export function runCancellationAcknowledgement(committedEffects: number): string
     : "Pekerjaannya kubatalkan sebelum hasil baru dikirim.";
 }
 
+export function runMailboxCapacityNotice(): string {
+  return "Perubahan ini belum masuk karena terlalu banyak update run yang belum diproses. Tunggu status pekerjaan bergerak, lalu kirim lagi perubahan ini.";
+}
+
 export function runFailureCopy(run: ActiveAgentRun): string {
   if (run.status === "partial") {
     return "Sebagian pekerjaan sempat berjalan, tetapi hasil pengiriman terakhir tidak dapat dipastikan. Aku tidak akan mengirim ulang otomatis karena itu bisa menduplikasi hasil.";

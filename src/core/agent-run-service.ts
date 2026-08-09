@@ -14,7 +14,9 @@ import type {
   DurableAgentRunExport,
   NewDurableAgentRun,
   NewActiveAgentRun,
+  RunChangeSet,
   RunChangeSetKind,
+  RunMailboxMessage,
   RunMailboxMessageKind,
 } from "../domain/agent-run.js";
 import type { StylePreference } from "../domain/profile.js";
@@ -34,6 +36,9 @@ const MAX_DURABLE_CHECKPOINT_CHARACTERS = 100_000;
 const ACTIVE_RUN_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_ACTIVE_REQUEST_CHARACTERS = 8_000;
 const MAX_MAILBOX_CONTENT_CHARACTERS = 4_000;
+const MAX_MAILBOX_MESSAGES = 64;
+const MAX_PENDING_INSTRUCTION_INPUTS = 16;
+const MAX_PENDING_INSTRUCTION_CHECKPOINT_CHARACTERS = 70_000;
 const MAX_ACTIVE_RESULT_CHARACTERS = 8_000;
 
 export interface StartActiveAgentRunInput {
@@ -79,6 +84,9 @@ export type RouteActiveAgentRunMessageResult =
       run: ActiveAgentRun;
       committedEffects: number;
     }
+  | { status: "duplicate"; run: ActiveAgentRun }
+  | { status: "conflict"; run: ActiveAgentRun }
+  | { status: "capacity_exceeded"; run: ActiveAgentRun }
   | { status: "not_applicable"; run: ActiveAgentRun | null };
 
 export interface ActiveAgentRunDelivery {
@@ -546,7 +554,7 @@ export class AgentRunService {
       const current = await this.activeRepository().loadActiveByRunId!(
         input.runId,
       );
-      if (!current || current.scopeKey !== key || isTerminalActiveRun(current)) {
+      if (!current || current.scopeKey !== key) {
         return { status: "not_applicable", run: current ?? null };
       }
       const content = boundedRequiredText(
@@ -559,6 +567,24 @@ export class AgentRunService {
         200,
         "Source message RunMailbox tidak sah.",
       );
+      const questionId = input.questionId ?? null;
+      const priorMessages = current.mailbox.filter(
+        (message) => message.sourceMessageId === sourceMessageId,
+      );
+      if (priorMessages.length > 0) {
+        const replayMatches = priorMessages.every((message) =>
+          message.kind === input.kind &&
+          message.content === content &&
+          message.questionId === questionId
+        );
+        return {
+          status: replayMatches ? "duplicate" : "conflict",
+          run: structuredClone(current),
+        };
+      }
+      if (isTerminalActiveRun(current)) {
+        return { status: "not_applicable", run: structuredClone(current) };
+      }
       const moment = input.receivedAt ?? this.now();
       const at = moment.toISOString();
       if (!Number.isFinite(moment.getTime())) {
@@ -589,22 +615,46 @@ export class AgentRunService {
             unit.status === "completed"
           )
           .map((unit) => unit.id);
-      const mailbox = appendBounded(current.mailbox, {
+      const message: RunMailboxMessage = {
         id: this.makeId(),
         runId: current.runId,
         kind: input.kind,
         content,
         sourceMessageId,
         receivedAt: at,
-        questionId: input.questionId ?? null,
-      }, 64);
-      const changeSets = appendBounded(current.changeSets, {
+        questionId,
+      };
+      const changeSet: RunChangeSet = {
         revision: instructionRevision,
         kind: changeKind,
         sourceMessageId,
         affectedWorkUnits,
         receivedAt: at,
-      }, 64);
+      };
+      const appended = appendMailboxChange(current, message, changeSet);
+      if (!appended) {
+        return {
+          status: "capacity_exceeded",
+          run: structuredClone(current),
+        };
+      }
+      const { mailbox, changeSets } = appended;
+      const candidateRun: ActiveAgentRun = {
+        ...current,
+        instructionRevision,
+        mailbox,
+        changeSets,
+      };
+      if (
+        input.kind !== "answer" &&
+        input.kind !== "cancel" &&
+        !pendingInstructionsFitCheckpoint(candidateRun)
+      ) {
+        return {
+          status: "capacity_exceeded",
+          run: structuredClone(current),
+        };
+      }
 
       let next: NewActiveAgentRun;
       if (input.kind === "cancel") {
@@ -1773,6 +1823,35 @@ function appendBounded<T>(items: T[], item: T, maximum: number): T[] {
   return next.length <= maximum ? next : next.slice(next.length - maximum);
 }
 
+function appendMailboxChange(
+  run: ActiveAgentRun,
+  message: RunMailboxMessage,
+  changeSet: RunChangeSet,
+): { mailbox: RunMailboxMessage[]; changeSets: RunChangeSet[] } | null {
+  if (run.mailbox.length !== run.changeSets.length) return null;
+  const capacity = message.kind === "answer" || message.kind === "cancel"
+    ? MAX_MAILBOX_MESSAGES
+    : MAX_MAILBOX_MESSAGES - 1;
+  if (
+    run.mailbox.length < capacity &&
+    run.changeSets.length < capacity
+  ) {
+    return {
+      mailbox: [...run.mailbox, message],
+      changeSets: [...run.changeSets, changeSet],
+    };
+  }
+  if (message.kind !== "cancel") return null;
+
+  // Pembatalan harus selalu dapat menutup run. Bila ledger sudah penuh,
+  // pasangan tertua diganti hanya setelah run menjadi terminal; update yang
+  // belum diterapkan tidak pernah dikeluarkan dari run yang masih bekerja.
+  return {
+    mailbox: [...run.mailbox.slice(1), message],
+    changeSets: [...run.changeSets.slice(1), changeSet],
+  };
+}
+
 function markPlannerUnits(
   workUnits: AgentRunWorkUnit[],
   inputRevision: number,
@@ -1850,27 +1929,122 @@ function instructionInputsAfter(
   appliedRevision: number,
   step: number,
 ): AgentUserInput[] {
-  const changes = run.mailbox.filter((message) => {
-    const change = run.changeSets.find(
-      (entry) => entry.sourceMessageId === message.sourceMessageId,
-    );
-    return Boolean(
-      change &&
-      change.revision > appliedRevision &&
-      message.kind !== "cancel" &&
-      message.kind !== "answer",
-    );
-  });
-  if (changes.length === 0) return [];
-  const text = changes
-    .map((message) => `${message.kind}: ${message.content}`)
-    .join("\n")
-    .slice(0, MAX_MAILBOX_CONTENT_CHARACTERS);
-  return [{
-    step,
-    prompt: `Perubahan instruksi sampai revision ${run.instructionRevision}`,
-    text,
-  }];
+  const messagesBySource = new Map(
+    run.mailbox.map((message) => [message.sourceMessageId, message] as const),
+  );
+  const pendingBySource = new Map<string, PendingInstructionChange>();
+  for (const change of run.changeSets) {
+    const message = messagesBySource.get(change.sourceMessageId);
+    if (
+      change.revision <= appliedRevision ||
+      !message ||
+      message.kind === "cancel" ||
+      message.kind === "answer"
+    ) {
+      continue;
+    }
+    pendingBySource.set(change.sourceMessageId, {
+      revision: change.revision,
+      kind: message.kind,
+      content: message.content,
+    });
+  }
+  const pending = [...pendingBySource.values()].sort(
+    (left, right) => left.revision - right.revision,
+  );
+  return compileInstructionInputs(pending, step);
+}
+
+function pendingInstructionsFitCheckpoint(run: ActiveAgentRun): boolean {
+  const inputs = instructionInputsAfter(
+    run,
+    run.appliedInstructionRevision,
+    run.checkpoint?.step ?? 0,
+  );
+  if (
+    inputs.length > MAX_PENDING_INSTRUCTION_INPUTS ||
+    JSON.stringify(inputs).length >
+      MAX_PENDING_INSTRUCTION_CHECKPOINT_CHARACTERS
+  ) {
+    return false;
+  }
+  if (!run.checkpoint) return true;
+  const checkpoint = structuredClone(run.checkpoint);
+  checkpoint.pending = null;
+  checkpoint.pendingInput = null;
+  checkpoint.seenActionDigests = [];
+  checkpoint.userInputs.push(...inputs);
+  return JSON.stringify(checkpoint).length <= MAX_DURABLE_CHECKPOINT_CHARACTERS;
+}
+
+interface PendingInstructionChange {
+  revision: number;
+  kind: Exclude<RunMailboxMessageKind, "answer" | "cancel">;
+  content: string;
+}
+
+function compileInstructionInputs(
+  pending: readonly PendingInstructionChange[],
+  step: number,
+): AgentUserInput[] {
+  const inputs: AgentUserInput[] = [];
+  let chunk = "";
+  let firstRevision = 0;
+  let lastRevision = 0;
+  let count = 0;
+
+  const flush = (): void => {
+    if (!chunk) return;
+    inputs.push({
+      step,
+      prompt: instructionPrompt(firstRevision, lastRevision, count),
+      text: chunk,
+    });
+    chunk = "";
+    firstRevision = 0;
+    lastRevision = 0;
+    count = 0;
+  };
+
+  for (const change of pending) {
+    const framed = [
+      `[revision ${change.revision}; ${change.kind}]`,
+      change.content,
+    ].join("\n");
+    if (framed.length > MAX_MAILBOX_CONTENT_CHARACTERS) {
+      flush();
+      inputs.push({
+        step,
+        prompt: instructionPrompt(change.revision, change.revision, 1, change.kind),
+        text: change.content,
+      });
+      continue;
+    }
+    const candidate = chunk ? `${chunk}\n\n${framed}` : framed;
+    if (candidate.length > MAX_MAILBOX_CONTENT_CHARACTERS) {
+      flush();
+    }
+    if (!chunk) firstRevision = change.revision;
+    chunk = chunk ? `${chunk}\n\n${framed}` : framed;
+    lastRevision = change.revision;
+    count += 1;
+  }
+  flush();
+  return inputs;
+}
+
+function instructionPrompt(
+  firstRevision: number,
+  lastRevision: number,
+  count: number,
+  kind?: PendingInstructionChange["kind"],
+): string {
+  if (firstRevision === lastRevision) {
+    return kind
+      ? `Perubahan instruksi revision ${firstRevision} (${kind})`
+      : `Perubahan instruksi revision ${firstRevision}`;
+  }
+  return `Perubahan instruksi revision ${firstRevision}-${lastRevision} (${count} update RunMailbox; urutan kronologis)`;
 }
 
 function activeRunExport(run: ActiveAgentRun): ActiveAgentRunExport {

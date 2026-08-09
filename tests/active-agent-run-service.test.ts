@@ -186,6 +186,222 @@ describe("active AgentRun Phase D", () => {
     assert.equal(revised?.checkpoint?.pendingInput, null);
   });
 
+  it("menjadikan replay sourceMessageId no-op dan menolak collision tanpa mutasi", async () => {
+    const file = await temporaryFile();
+    const service = serviceAt(file);
+    const started = await service.startActive(startInput());
+    assert.equal(started.status, "started");
+    if (started.status !== "started") return;
+    const first = await service.routeActiveMessage({
+      channel: "telegram",
+      ownerId: "alice",
+      runId: started.run.runId,
+      kind: "constraint",
+      content: "Jumat sore ada basket.",
+      sourceMessageId: "telegram:idempotent-1",
+    });
+    assert.equal(first.status, "accepted");
+    if (first.status !== "accepted") return;
+
+    const restarted = serviceAt(file);
+    const duplicate = await restarted.routeActiveMessage({
+      channel: "telegram",
+      ownerId: "alice",
+      runId: started.run.runId,
+      kind: "constraint",
+      content: "Jumat sore ada basket.",
+      sourceMessageId: "telegram:idempotent-1",
+    });
+    assert.equal(duplicate.status, "duplicate");
+    assert.equal(duplicate.run.revision, first.run.revision);
+    assert.equal(duplicate.run.instructionRevision, 2);
+    assert.equal(duplicate.run.mailbox.length, 1);
+    assert.equal(duplicate.run.changeSets.length, 1);
+
+    const collision = await restarted.routeActiveMessage({
+      channel: "telegram",
+      ownerId: "alice",
+      runId: started.run.runId,
+      kind: "correction",
+      content: "Jumat sore ternyata kosong.",
+      sourceMessageId: "telegram:idempotent-1",
+    });
+    assert.equal(collision.status, "conflict");
+    assert.equal(collision.run.revision, first.run.revision);
+    assert.equal(collision.run.instructionRevision, 2);
+    assert.equal(collision.run.mailbox[0]?.content, "Jumat sore ada basket.");
+  });
+
+  it("membawa setiap update panjang secara utuh dan kronologis saat rebase", async () => {
+    const file = await temporaryFile();
+    const service = serviceAt(file);
+    const started = await service.startActive(startInput());
+    assert.equal(started.status, "started");
+    if (started.status !== "started") return;
+    await service.beginActiveAttempt("telegram", "alice", started.run.runId);
+    const earlier = `BATAS-AWAL-${"a".repeat(2_600)}-AKHIR-AWAL`;
+    const latest = `KOREKSI-TERBARU-${"b".repeat(2_600)}-AKHIR-TERBARU`;
+    for (const [index, content] of [earlier, latest].entries()) {
+      const routed = await service.routeActiveMessage({
+        channel: "telegram",
+        ownerId: "alice",
+        runId: started.run.runId,
+        kind: index === 0 ? "constraint" : "correction",
+        content,
+        sourceMessageId: `telegram:long-${index + 1}`,
+      });
+      assert.equal(routed.status, "accepted");
+    }
+    await service.requeueStaleActive(
+      "telegram",
+      "alice",
+      started.run.runId,
+      1,
+      makeCheckpoint(started.run.runId),
+    );
+
+    const revised = await service.beginActiveAttempt(
+      "telegram",
+      "alice",
+      started.run.runId,
+    );
+    const inputs = revised?.checkpoint?.userInputs ?? [];
+    const compiled = inputs.map((input) => input.text).join("\n");
+    assert.equal(inputs.length, 2);
+    assert.ok(compiled.includes(earlier));
+    assert.ok(compiled.includes(latest));
+    assert.ok(compiled.indexOf(earlier) < compiled.indexOf(latest));
+    assert.equal(revised?.run.appliedInstructionRevision, 3);
+  });
+
+  it("membawa update panjang lossless sebelum checkpoint pertama", async () => {
+    const file = await temporaryFile();
+    const service = serviceAt(file);
+    const started = await service.startActive(startInput());
+    assert.equal(started.status, "started");
+    if (started.status !== "started") return;
+    const contents = [
+      `BATAS-PERTAMA-${"a".repeat(2_300)}-SELESAI`,
+      `KOREKSI-KEDUA-${"b".repeat(2_300)}-SELESAI`,
+    ];
+    for (const [index, content] of contents.entries()) {
+      const routed = await service.routeActiveMessage({
+        channel: "telegram",
+        ownerId: "alice",
+        runId: started.run.runId,
+        kind: index === 0 ? "constraint" : "correction",
+        content,
+        sourceMessageId: `telegram:initial-long-${index}`,
+      });
+      assert.equal(routed.status, "accepted");
+    }
+
+    const attempt = await service.beginActiveAttempt(
+      "telegram",
+      "alice",
+      started.run.runId,
+    );
+    const compiled = (attempt?.initialUserInputs ?? [])
+      .map((input) => input.text)
+      .join("\n");
+    assert.equal(attempt?.initialUserInputs?.length, 2);
+    assert.ok(compiled.includes(contents[0]!));
+    assert.ok(compiled.includes(contents[1]!));
+  });
+
+  it("menolak update sebelum revision naik bila envelope lossless sudah penuh", async () => {
+    const file = await temporaryFile();
+    const service = serviceAt(file);
+    const started = await service.startActive(startInput());
+    assert.equal(started.status, "started");
+    if (started.status !== "started") return;
+    for (let index = 0; index < 16; index += 1) {
+      const marker = `UPDATE-${String(index).padStart(2, "0")}-`;
+      const routed = await service.routeActiveMessage({
+        channel: "telegram",
+        ownerId: "alice",
+        runId: started.run.runId,
+        kind: "constraint",
+        content: `${marker}${"x".repeat(3_950 - marker.length)}`,
+        sourceMessageId: `telegram:capacity-${index}`,
+      });
+      assert.equal(routed.status, "accepted");
+    }
+    const before = await service.loadActive("telegram", "alice");
+    const rejected = await service.routeActiveMessage({
+      channel: "telegram",
+      ownerId: "alice",
+      runId: started.run.runId,
+      kind: "correction",
+      content: `${"y".repeat(3_930)}-KOREKSI-YANG-HARUS-DIKIRIM-ULANG`,
+      sourceMessageId: "telegram:capacity-rejected",
+    });
+    assert.equal(rejected.status, "capacity_exceeded");
+    const after = await service.loadActive("telegram", "alice");
+    assert.equal(after?.revision, before?.revision);
+    assert.equal(after?.instructionRevision, before?.instructionRevision);
+    assert.equal(after?.mailbox.length, 16);
+    assert.equal(after?.changeSets.length, 16);
+    assert.equal(
+      after?.mailbox.some((message) =>
+        message.sourceMessageId === "telegram:capacity-rejected"
+      ),
+      false,
+    );
+  });
+
+  it("tidak mengeluarkan mailbox pending saat ledger mencapai batas", async () => {
+    const file = await temporaryFile();
+    const service = serviceAt(file);
+    const started = await service.startActive(startInput());
+    assert.equal(started.status, "started");
+    if (started.status !== "started") return;
+    for (let index = 0; index < 63; index += 1) {
+      const routed = await service.routeActiveMessage({
+        channel: "telegram",
+        ownerId: "alice",
+        runId: started.run.runId,
+        kind: "constraint",
+        content: `update ${index}`,
+        sourceMessageId: `telegram:ledger-${index}`,
+      });
+      assert.equal(routed.status, "accepted");
+    }
+    const rejected = await service.routeActiveMessage({
+      channel: "telegram",
+      ownerId: "alice",
+      runId: started.run.runId,
+      kind: "correction",
+      content: "update ke-64",
+      sourceMessageId: "telegram:ledger-63",
+    });
+    assert.equal(rejected.status, "capacity_exceeded");
+    assert.equal(rejected.run.instructionRevision, 64);
+    assert.equal(rejected.run.mailbox.length, 63);
+    assert.equal(
+      rejected.run.mailbox[0]?.sourceMessageId,
+      "telegram:ledger-0",
+    );
+
+    const cancelled = await service.routeActiveMessage({
+      channel: "telegram",
+      ownerId: "alice",
+      runId: started.run.runId,
+      kind: "cancel",
+      content: "batal",
+      sourceMessageId: "telegram:ledger-cancel",
+    });
+    assert.equal(cancelled.status, "accepted");
+    if (cancelled.status === "accepted") {
+      assert.equal(cancelled.run.status, "cancelled");
+      assert.equal(cancelled.run.mailbox.length, 64);
+      assert.equal(
+        cancelled.run.mailbox[0]?.sourceMessageId,
+        "telegram:ledger-0",
+      );
+    }
+  });
+
   it("mempertahankan koreksi sebelum attempt pertama tanpa menduplikasinya saat resume", async () => {
     const file = await temporaryFile();
     const service = serviceAt(file);
@@ -366,6 +582,19 @@ describe("active AgentRun Phase D", () => {
       ingressUpdateId: 31,
     });
     assert.equal(accepted.status, "accepted");
+    const duplicate = await serviceAt(file).routeActiveMessage({
+      channel: "telegram",
+      ownerId: "alice",
+      runId: started.run.runId,
+      kind: "answer",
+      content: "bisa",
+      sourceMessageId: "telegram:31",
+      questionId,
+      ingressUpdateId: 31,
+    });
+    assert.equal(duplicate.status, "duplicate");
+    assert.equal(duplicate.run.instructionRevision, 2);
+    assert.equal(duplicate.run.mailbox.length, 1);
     const resumed = await service.beginActiveAttempt(
       "telegram",
       "alice",

@@ -489,6 +489,13 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   sebelum delivery; hasil revision lama tidak boleh mencapai efek eksternal.
   Observation tepercaya boleh dipakai ulang, tetapi work unit terdampak wajib
   stale dan action digest lama tidak boleh menjadi authority.
+- **Mailbox update harus idempotent dan representable sebelum diterima.** Dalam
+  satu run, replay envelope identik dengan `sourceMessageId` yang sama adalah
+  no-op; pemakaian ID yang sama untuk kind/content/question berbeda gagal
+  tertutup. Mailbox dan ChangeSet disimpan sebagai pasangan. Revision tidak
+  boleh naik bila seluruh update pending tidak dapat dibawa utuh dan kronologis
+  ke checkpoint berbatas; capacity exhaustion harus diberitahukan sebagai
+  penolakan, bukan acceptance palsu atau eviction update nonterminal.
 - **Efek run melewati commit barrier.** Intent efek disimpan sebagai
   `pendingEffect`, kemudian adapter mengirim, baru receipt `committed` ditulis.
   Effect in-flight saat crash atau kegagalan setelah boundary delivery menjadi

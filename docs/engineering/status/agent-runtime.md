@@ -1,7 +1,7 @@
 # Status — Agent Runtime
 
-Verified: 9 Agustus 2026 pada working tree context-pressure Phase C di atas
-`fc6e799`; `npm run check` PASS dan `npm test` PASS, 860 test dalam 110 suite,
+Verified: 9 Agustus 2026 pada working tree hardening RunMailbox Phase D di atas
+`843cffd`; `npm run check` PASS dan `npm test` PASS, 866 test dalam 110 suite,
 0 gagal.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
@@ -61,6 +61,12 @@ agent, scope/authority, atau executor internal.
   mailbox, progress/perubahan, dan receipt teredaksi, bukan snapshot/policy/
   harga/hash. Hanya record terbaru per scope yang diretensi; edit/hapus memori
   atau wipe history membatalkan dan menghapus snapshot run terlebih dahulu.
+  Replay envelope yang sama pada `sourceMessageId` menjadi no-op, collision
+  ditolak, dan mailbox/ChangeSet dipersistenkan berpasangan. Update pending
+  dikompilasi utuh serta kronologis ke beberapa input berbatas; bila envelope
+  atau checkpoint tidak muat, adapter memberi backpressure sebelum revision
+  naik. Ledger menyisakan kapasitas pembatalan sehingga update nonterminal
+  tidak dikeluarkan diam-diam.
 - `AgentScope` dan Workspace authority v1 ada di core dengan membership, role,
   permission tertutup, `aclEpoch`, dan stale-authority rejection. Workspace
   belum terhubung ke composition root atau surface pengguna.
@@ -89,12 +95,9 @@ agent, scope/authority, atau executor internal.
   lease/CAS multi-instance, dispatcher/outbox exactly-once, reconciler eksternal,
   job kedua, pin/archive anchor, atau workstream durable. Receipt hanya melacak
   pesan Telegram; crash sebelum checkpoint pertama dapat mengulang inference
-  dan tool read. Query `tools` tetap sinkron.
-- Agregasi update active-run masih memotong gabungan input mailbox ke 4.000
-  karakter sambil dapat menandai revision lebih baru sudah diterapkan; koreksi
-  terbaru berisiko hilang. Routing update juga belum idempotent berdasarkan
-  `sourceMessageId`, sehingga retry ingress dapat menggandakan revision dan
-  batas 64 entry dapat mengeluarkan update yang belum diterapkan.
+  dan tool read. Idempotency ingress hanya terikat record lokal yang diretensi,
+  bukan exactly-once lintas instance; ledger berbatas menolak update baru
+  secara eksplisit ketika penuh. Query `tools` tetap sinkron.
 - Agent root menerima konteks privat terpilih sebagai data tak tepercaya;
   worker tidak menerimanya. Memori tidak boleh menjadi authority permission,
   actor, credential, live schedule, atau outcome tool.

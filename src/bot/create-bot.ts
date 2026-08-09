@@ -167,6 +167,7 @@ import {
 import {
   renderRunAnchor,
   runCancellationAcknowledgement,
+  runMailboxCapacityNotice,
   runUpdateAcknowledgement,
 } from "./run-anchor.js";
 import {
@@ -1875,6 +1876,15 @@ export function createBot(
       sourceMessageId: sourceMessageId(ctx),
       ingressUpdateId: ctx.update.update_id,
     });
+    if (routed.status === "duplicate" || routed.status === "conflict") {
+      return true;
+    }
+    if (routed.status === "capacity_exceeded") {
+      const response = runMailboxCapacityNotice();
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
+      return true;
+    }
     if (routed.status !== "accepted") return false;
     abortActiveAgentWork(ownerId, run.runId);
     await updateActiveRunAnchor(routed.run);
@@ -1918,6 +1928,15 @@ export function createBot(
         : {}),
       ingressUpdateId: ctx.update.update_id,
     });
+    if (routed.status === "duplicate" || routed.status === "conflict") {
+      return true;
+    }
+    if (routed.status === "capacity_exceeded") {
+      const response = runMailboxCapacityNotice();
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
+      return true;
+    }
     if (routed.status !== "accepted") return false;
     const response = runUpdateAcknowledgement(relation);
     await ctx.reply(response);

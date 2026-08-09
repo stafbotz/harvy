@@ -168,8 +168,10 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   klarifikasi sinkron v1 tetap tersedia, sedangkan permintaan `orchestrate`
   eksplisit privat Telegram memakai active AgentRun v2 di work lane. Snapshot
   konteksnya tetap provider-neutral dan mailbox baru hanya masuk lewat routing
-  eksplisit. Query mode `tools` dan workflow mutasi tugas/memori/sesi tetap
-  sinkron/deterministik.
+  eksplisit. `sourceMessageId` mengikat replay idempotent; update pending dibawa
+  utuh melalui input checkpoint kronologis atau ditolak sebelum revision naik
+  bila envelope berbatas tidak cukup. Query mode `tools` dan workflow mutasi
+  tugas/memori/sesi tetap sinkron/deterministik.
   Workspace surface belum dipasang.
 
 ## Agent

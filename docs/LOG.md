@@ -35,6 +35,32 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-09 — RunMailbox idempotent dan lossless
+
+Scope: active AgentRun service/repository, adapter Telegram, checkpoint input,
+tes regresi, dan kontrak Agent Runtime.
+
+Changed: `sourceMessageId` kini mengikat envelope mailbox per run. Replay
+identik lintas restart lokal menjadi no-op tanpa acknowledgment kedua;
+kind/content/question yang bertabrakan gagal tertutup. Mailbox dan ChangeSet
+ditulis berpasangan. Update pending dibawa utuh dan kronologis melalui beberapa
+input checkpoint; capacity envelope/ledger menghasilkan backpressure sebelum
+revision naik, sementara slot pembatalan tetap tersedia. Record lama dengan
+replay identik tetap dapat dibaca, tetapi collision ditolak.
+
+Verified: tes terarah service/repository/mailbox 35/35 PASS; flow Telegram
+duplicate ikut PASS dalam suite penuh. `npm run check` PASS; `npm test` PASS,
+866 test dalam 110 suite, 0 gagal; `npm run context:check` PASS;
+`git diff --check` PASS selain peringatan line-ending.
+
+Not verified: provider/model nyata, Telegram live, storage/lease multi-instance,
+dispatcher/outbox/reconciler eksternal, dan throughput ledger pada filesystem
+produksi.
+
+Next: lakukan smoke provider+Telegram yang masih tertunda atau lanjutkan
+RunStore/dispatcher produksi sesuai urutan deployment; jangan mengklaim
+exactly-once lintas instance.
+
 ## 2026-08-09 — Context pressure dan recovery truncation Agent
 
 Scope: AI conversation/client, agent harness, context manifest, observation
@@ -333,26 +359,3 @@ diimplementasikan.
 
 Next: Phase B harus merekonsiliasi ADR/invariant safety lama sebelum mengubah
 boundary, triage unavailable, review, atau izin mutasi.
-
-## 2026-08-06 — Bootstrap agent menjadi code-first dan berbatas
-
-Scope: `AGENTS.md`, bootstrap Claude/Antigravity, context tooling, workflow,
-STATUS, LOG, hook, dan tes kontrak agent.
-
-Changed: satu kontrak utama kini memakai klasifikasi task dan Level 0–3; docs
-dibaca on-demand dengan budget sekitar 15%. SessionStart hanya mencetak kontrak
-ringkas plus `CURRENT.md`. STATUS menjadi indeks delapan subsystem dan snapshot
-monolit dipindah ke arsip. LOG lama—termasuk perubahan working tree yang sudah
-ada—diarsipkan dengan urutan dan fakta tetap utuh; satu credential-like value
-serta kutipan pengguna sensitif direduksi tanpa mengulang nilainya. Hook tidak
-lagi memaksa LOG dan hanya memvalidasi snapshot staged ketika sumber konteks
-berubah. ADR-019 mencatat keputusan durable ini.
-
-Verified: `npm run context:check` PASS dengan output bootstrap 3.627 byte
-(estimasi 907 token; sebelumnya 16.434 byte). `npm run check` PASS. `npm test`
-PASS, 654 test dalam 94 suite, 0 gagal. Smoke test index sementara menerima
-snapshot staged lengkap serta menolak penghapusan `AGENTS.md` dan hilangnya
-mode executable hook.
-
-Not verified: runtime produk, provider/model live, Telegram, WhatsApp, dan
-perilaku UI tidak dijalankan karena kode produk tidak berubah.

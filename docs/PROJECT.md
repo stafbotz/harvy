@@ -321,7 +321,9 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   checkpoint tanpa menagih waktu tunggu manusia. Planning `orchestrate`
   eksplisit privat Telegram kini berjalan sebagai active AgentRun durable di
   work lane, dengan Run Anchor, RunMailbox/ChangeSet, stale-result gate,
-  checkpoint recovery, dan receipt delivery lokal. Query `tools` masih sinkron;
+  checkpoint recovery, receipt delivery lokal, replay ingress idempotent, dan
+  backpressure sebelum koreksi terpotong atau revision palsu. Query `tools`
+  masih sinkron;
   adapter ini belum RunStore produksi, multi-instance outbox/reconciler,
   job queue kedua, atau authority tool write. Lihat `ADR-017`, `ADR-018`,
   `ADR-026`, dan `ADR-027`.

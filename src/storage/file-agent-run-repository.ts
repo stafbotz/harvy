@@ -549,6 +549,7 @@ function validateActiveCollections(run: ActiveAgentRun): void {
     run.mailbox.length > 64 ||
     !Array.isArray(run.changeSets) ||
     run.changeSets.length > 64 ||
+    run.mailbox.length !== run.changeSets.length ||
     !Array.isArray(run.workUnits) ||
     run.workUnits.length > 24 ||
     !Array.isArray(run.events) ||
@@ -559,7 +560,16 @@ function validateActiveCollections(run: ActiveAgentRun): void {
     throw new Error("Koleksi run aktif tidak sah.");
   }
   const messageIds = new Set<string>();
+  const sourceEnvelopes = new Map<string, string>();
   for (const message of run.mailbox) {
+    const sourceEnvelope = JSON.stringify([
+      message?.kind,
+      message?.content,
+      message?.questionId,
+    ]);
+    const priorEnvelope = message && typeof message.sourceMessageId === "string"
+      ? sourceEnvelopes.get(message.sourceMessageId)
+      : undefined;
     if (
       !message ||
       typeof message.id !== "string" ||
@@ -571,23 +581,32 @@ function validateActiveCollections(run: ActiveAgentRun): void {
       message.content.length === 0 ||
       message.content.length > 4_000 ||
       typeof message.sourceMessageId !== "string" ||
+      message.sourceMessageId.length === 0 ||
+      message.sourceMessageId.length > 200 ||
+      (priorEnvelope !== undefined && priorEnvelope !== sourceEnvelope) ||
       !validDate(message.receivedAt) ||
       (message.questionId !== null && typeof message.questionId !== "string")
     ) {
       throw new Error("Mailbox run aktif tidak sah.");
     }
     messageIds.add(message.id);
+    sourceEnvelopes.set(message.sourceMessageId, sourceEnvelope);
   }
   let previousRevision = 0;
-  for (const change of run.changeSets) {
+  for (const [index, change] of run.changeSets.entries()) {
+    const message = run.mailbox[index];
     if (
       !change ||
+      !message ||
       !Number.isInteger(change.revision) ||
       change.revision <= previousRevision ||
       change.revision > run.instructionRevision ||
       !["constraint", "correction", "answer", "scope_addition", "cancel"]
         .includes(change.kind) ||
       typeof change.sourceMessageId !== "string" ||
+      change.sourceMessageId !== message.sourceMessageId ||
+      change.kind !== mailboxChangeKind(message.kind) ||
+      change.receivedAt !== message.receivedAt ||
       !Array.isArray(change.affectedWorkUnits) ||
       change.affectedWorkUnits.some((id) => typeof id !== "string") ||
       !validDate(change.receivedAt)
@@ -682,6 +701,23 @@ function validateActiveCollections(run: ActiveAgentRun): void {
     throw new Error("Anchor run aktif tidak sah.");
   }
   validateActiveQuestionAndEffect(run);
+}
+
+function mailboxChangeKind(
+  kind: ActiveAgentRun["mailbox"][number]["kind"],
+): ActiveAgentRun["changeSets"][number]["kind"] {
+  switch (kind) {
+    case "constraint":
+      return "constraint";
+    case "correction":
+      return "correction";
+    case "scope_change":
+      return "scope_addition";
+    case "answer":
+      return "answer";
+    case "cancel":
+      return "cancel";
+  }
 }
 
 function validateActiveQuestionAndEffect(run: ActiveAgentRun): void {

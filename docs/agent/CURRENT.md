@@ -4,32 +4,29 @@ Refreshed: 2026-08-09
 
 ## Verified baseline
 
-- Product capability baseline: working tree context-pressure Phase C di atas
-  `fc6e799`
+- Product capability baseline: working tree hardening RunMailbox Phase D di
+  atas `843cffd`
   (9 Agustus 2026).
-- Product gates: `npm run check` PASS; `npm test` PASS, 860 test dalam 110
+- Product gates: `npm run check` PASS; `npm test` PASS, 866 test dalam 110
   suite, 0 gagal.
-- Context system: `npm run context:check` PASS; output 4.150 byte dengan
-  estimasi 1.038 token.
+- Context system: `npm run context:check` PASS; output 3.924 byte dengan
+  estimasi 981 token.
 
 ## Recent material changes
 
-- Agent Runtime kini memadatkan transcript secara provider-neutral saat profile
+- RunMailbox active-run kini idempotent terhadap replay `sourceMessageId`,
+  gagal tertutup pada collision, serta hanya menaikkan revision bila seluruh
+  update pending dapat dibawa lossless ke checkpoint berbatas.
+- Agent Runtime memadatkan transcript secara provider-neutral saat profile
   exact mendekati context window; typed truncation mendapat paling banyak satu
   recovery fresh tanpa delegasi dalam RunBudget yang sama.
 - Ceiling reply/agent/worker general kini code-owned per role dan di-clamp exact
   profile; RunBudget melindungi separuh token/biaya untuk final synthesis.
-- Planning eksplisit Telegram privat kini memakai active AgentRun durable lokal
-  dengan Run Anchor, mailbox terikat, revision freshness, commit barrier, dan
-  recovery konservatif tanpa memblokir chat biasa.
 
 ## Active cross-subsystem blockers
 
 - Agent Runtime setelah perubahan continuation/context-pressure belum
   di-smoke-test ulang terhadap provider utama atau Telegram.
-- Active-run mailbox belum dedupe `sourceMessageId`; agregasi 4.000 karakter
-  juga dapat menandai revision diterapkan setelah koreksi terbaru terpotong.
-  Jangan mengklaim rebase instruction lossless sampai keduanya diperbaiki.
 - Storage/checkpoints, operational logs, entitlement, and authority durability
   remain single-process/file based. Active runs are durable and recoverable
   locally, but production RunStore, leases, outbox, and reconciliation do not

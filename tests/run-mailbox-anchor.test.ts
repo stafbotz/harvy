@@ -7,6 +7,7 @@ import {
 import {
   renderRunAnchor,
   runCancellationAcknowledgement,
+  runMailboxCapacityNotice,
 } from "../src/bot/run-anchor.js";
 import type { ActiveAgentRun } from "../src/domain/agent-run.js";
 
@@ -116,6 +117,7 @@ describe("Run Anchor", () => {
     assert.match(rendered, /Sabtu pagi bisa/iu);
     assert.doesNotMatch(rendered, /Sedang dikerjakan/iu);
     assert.match(runCancellationAcknowledgement(1), /tidak.*terurungkan/iu);
+    assert.match(runMailboxCapacityNotice(), /belum masuk.*kirim lagi/iu);
   });
 
   it("membatasi pertanyaan panjang agar satu Anchor tetap muat di Telegram", () => {

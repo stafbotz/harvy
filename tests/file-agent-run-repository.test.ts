@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { AgentRunService } from "../src/core/agent-run-service.js";
 import type {
+  ActiveAgentRun,
   AgentRunRepository,
   DurableAgentRun,
   NewDurableAgentRun,
@@ -234,6 +235,76 @@ describe("file agent run repository", () => {
     await assert.rejects(
       repository.load(run.scopeKey),
       /record run agent tidak sah/iu,
+    );
+  });
+
+  it("membaca replay legacy identik tetapi menolak collision sourceMessageId", async () => {
+    const file = await temporaryFile();
+    let sequence = 0;
+    const service = new AgentRunService(
+      new FileAgentRunRepository(file),
+      () => new Date("2026-08-09T05:00:00.000Z"),
+      () => `legacy-source-id-${++sequence}`,
+    );
+    const started = await service.startActive({
+      channel: "telegram",
+      ownerId: "alice",
+      request: "Buat rencana belajar.",
+      mode: "orchestrate",
+      intent: "request",
+      timeZone: "Asia/Jakarta",
+      style: "advice",
+      context: { summary: null, turns: [], memories: [] },
+      chatId: "alice",
+      turnId: "turn-legacy-source",
+    });
+    assert.equal(started.status, "started");
+    if (started.status !== "started") return;
+    await service.routeActiveMessage({
+      channel: "telegram",
+      ownerId: "alice",
+      runId: started.run.runId,
+      kind: "constraint",
+      content: "Jumat ada basket.",
+      sourceMessageId: "telegram:legacy-replay",
+    });
+    const database = JSON.parse(await readFile(file, "utf8")) as {
+      version: 1;
+      runs: DurableAgentRun[];
+      activeRuns: ActiveAgentRun[];
+    };
+    const active = database.activeRuns[0]!;
+    active.mailbox.push({
+      ...structuredClone(active.mailbox[0]!),
+      id: "legacy-duplicate-message",
+    });
+    active.changeSets.push({
+      ...structuredClone(active.changeSets[0]!),
+      revision: 3,
+    });
+    active.instructionRevision = 3;
+    await writeFile(file, `${JSON.stringify(database, null, 2)}\n`, "utf8");
+
+    const repository = new FileAgentRunRepository(file);
+    assert.equal(
+      (await repository.loadActive(active.scopeKey))?.mailbox.length,
+      2,
+    );
+    const replay = await new AgentRunService(repository).routeActiveMessage({
+      channel: "telegram",
+      ownerId: "alice",
+      runId: active.runId,
+      kind: "constraint",
+      content: "Jumat ada basket.",
+      sourceMessageId: "telegram:legacy-replay",
+    });
+    assert.equal(replay.status, "duplicate");
+
+    active.mailbox[1]!.content = "Jumat ternyata kosong.";
+    await writeFile(file, `${JSON.stringify(database, null, 2)}\n`, "utf8");
+    await assert.rejects(
+      repository.loadActive(active.scopeKey),
+      /mailbox run aktif tidak sah/iu,
     );
   });
 

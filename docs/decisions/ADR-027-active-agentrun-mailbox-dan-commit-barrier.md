@@ -42,7 +42,14 @@ eksternal baru yang perlu dipertanggungjawabkan hanya pesan Telegram hasil run.
    membentuk ChangeSet baru dan menaikkan revision instruksi. Hasil dari revision
    lama tidak boleh mencapai callback delivery. Observation checkpoint yang
    sudah sah dipertahankan saat rebase, sementara action digest dan input yang
-   terdampak dibentuk ulang; work unit lama ditandai stale.
+   terdampak dibentuk ulang; work unit lama ditandai stale. Dalam satu run,
+   `sourceMessageId` mengikat envelope kind/content/question: replay identik
+   adalah no-op lintas restart lokal, sedangkan collision gagal tertutup.
+   Mailbox dan ChangeSet disimpan berpasangan. Compiler membawa update pending
+   utuh dan kronologis ke beberapa input berbatas; bila seluruhnya tidak dapat
+   direpresentasikan di checkpoint, ingress ditolak sebelum revision naik dan
+   pengguna diminta mengirim ulang sesudah work bergerak. Update nonterminal
+   tidak boleh di-evict untuk terlihat berhasil; ledger menyisakan slot cancel.
 5. **Delivery memakai commit barrier lokal.** Service memvalidasi revision dan
    checkpoint, mempersistenkan `pendingEffect`, baru memanggil Telegram, lalu
    menulis receipt `committed`. Bila proses mati atau hasil delivery tidak dapat
@@ -118,5 +125,8 @@ Tes deterministik mencakup CAS/restart, foreground tunggal, ChangeSet dan rebase
 tanpa membuang observation, stale-result gate, commit receipt, outcome delivery
 unknown, redaksi ekspor, expiry pertanyaan, binding quote+question+watermark,
 chat lane konkuren, correction replan, wake-up tanpa race, pause shutdown, serta
-resume proses baru. `npm run check` PASS dan `npm test` PASS, 842 test dalam 108
-suite, 0 gagal. Uji provider dan Telegram nyata belum dilakukan.
+resume proses baru. Hardening berikutnya menambah replay/collision lintas
+restart, duplicate answer, update panjang lossless sebelum/sesudah checkpoint,
+backpressure envelope/ledger, kompatibilitas replay record lama, serta dedupe
+ack Telegram. `npm run check` PASS dan `npm test` PASS, 866 test dalam 110 suite,
+0 gagal. Uji provider dan Telegram nyata belum dilakukan.
