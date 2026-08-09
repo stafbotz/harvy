@@ -14,6 +14,11 @@ import type {
   AgentPlannerDecision,
   AgentPlannerInput,
 } from "../harness/agent-harness.js";
+import {
+  DEFAULT_EXECUTION_POLICY,
+  type ExecutionPolicy,
+} from "../core/execution-policy.js";
+import { resolveModelProfile } from "./model-profile.js";
 
 export type AgentMode = "tools" | "orchestrate";
 
@@ -171,6 +176,7 @@ export const AGENT_WORKER_PROMPT = [
 export function createModelAgentWorker(
   client: Pick<AiClient, "complete">,
   routing: RoutingConfig,
+  executionPolicy: ExecutionPolicy = DEFAULT_EXECUTION_POLICY,
 ): AgentWorker {
   return async (task, context) => {
     const attribution = currentUsageAttribution();
@@ -178,6 +184,14 @@ export function createModelAgentWorker(
       model: resolveModel(task.tier, routing),
       temperature: 0.2,
       maxTokens: 1_536,
+      execution: executionPolicy.decide({
+        tier: task.tier,
+        role: "worker",
+        workClass: "delegated-worker",
+        profile: resolveModelProfile(task.tier, routing),
+        maxOutputTokens: 1_536,
+        deadlineMs: 30_000,
+      }),
       signal: context.signal,
       usage: {
         ownerId: context.ownerId,

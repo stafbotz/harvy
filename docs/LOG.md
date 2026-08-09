@@ -35,6 +35,35 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-09 — Fondasi Phase C provider-aware
+
+Scope: registry/config capability model, execution policy, adapter provider,
+AiClient, live native-tool continuation, provider-attempt ledger, dan call
+production conversation/group/worker.
+
+Changed: capability kini terikat pasangan provider+model exact dan hanya
+reasoning profile explicit yang boleh mengaktifkan wire baru. Seluruh call
+production membawa execution plan code-owned; adapter mengallowlist payload
+serta memetakan effort Google/OpenRouter/DeepSeek sesuai profile. Planner
+memutar assistant turn Chat Completions utuh selama invocation dengan binding
+provider+model dan batas reasoning, tanpa mempersistenkan atau mencatat isinya.
+Respons nonterminal gagal tertutup, attempt lokal invalid tidak memutar key,
+dan ledger membedakan incomplete/truncated/schema-rejected sambil merekam
+metadata role/effort/verbosity content-free. Profile explicit fallback testing
+sengaja ditolak sampai execution plan fallback dapat dihitung ulang aman.
+ADR-025 mengikat keputusan dan batasnya.
+
+Verified: `npm run check` PASS; suite terarah provider/config/client PASS, 66
+test dalam 6 suite; `npm test` PASS, 789 test dalam 103 suite, 0 gagal; `npm run
+context:check` PASS.
+
+Not verified: Google AI Studio/OpenRouter/DeepSeek live, Telegram live, WhatsApp
+live, serta kualitas/biaya reasoning pada model produksi exact.
+
+Next: tambahkan cumulative RunBudget sebelum melonggarkan output ceiling, lalu
+context-pressure compaction, recovery truncation, visible verbosity,
+validator-driven escalation, dan K3/toughest sebagai change set terpisah.
+
 ## 2026-08-09 — Sinyal safety privat bertahan melewati batching
 
 Scope: MessageBatcher Telegram, onboarding/held messages, adapter private,

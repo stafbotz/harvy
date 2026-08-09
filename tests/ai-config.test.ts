@@ -22,6 +22,7 @@ const AI_ENV_KEYS = [
   "AI_MODEL_CHEAP",
   "AI_MODEL_EFFICIENT",
   "AI_MODEL_AMBITIOUS",
+  "AI_MODEL_PROFILES",
 ] as const;
 
 describe("konfigurasi fallback AI testing", () => {
@@ -46,6 +47,27 @@ describe("konfigurasi fallback AI testing", () => {
       assert.equal(
         aiClientOptions(config, { fallback: false }).fallback,
         null,
+      );
+      assert.equal(
+        config.modelProfiles.require(
+          "google-ai-studio",
+          "model-testing",
+        ).reasoning.wireFormat,
+        "none",
+      );
+      assert.equal(
+        config.modelProfiles.require(
+          "google-ai-studio",
+          "model-testing",
+        ).verification,
+        "compatibility",
+      );
+      assert.equal(
+        config.modelProfiles.require(
+          "testing-fallback",
+          "model-cadangan",
+        ).reasoning.wireFormat,
+        "none",
       );
     });
   });
@@ -197,10 +219,156 @@ describe("konfigurasi fallback AI testing", () => {
       AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
       AI_TESTING_FALLBACK_MODEL: "model-cadangan",
     }, () => {
-      assert.equal(loadAiConfig().fallback, null);
+      const config = loadAiConfig();
+      assert.equal(config.fallback, null);
+      assert.equal(
+        config.modelProfiles.require(
+          "openrouter",
+          "ambitious",
+        ).reasoning.wireFormat,
+        "none",
+      );
+    });
+  });
+
+  it("tidak menebak reasoning wire pada base URL kustom", () => {
+    withAiEnvironment(validTestingEnvironment({
+      AI_BASE_URL: "https://gateway.example/v1",
+    }), () => {
+      const profile = loadAiConfig().modelProfiles.require(
+        "google-ai-studio",
+        "model-testing",
+      );
+      assert.equal(profile.reasoning.wireFormat, "none");
+      assert.deepEqual(profile.reasoning.supportedEfforts, []);
+    });
+  });
+
+  it("mengaktifkan capability hanya untuk deklarasi exact provider + model", () => {
+    withAiEnvironment(validTestingEnvironment({
+      AI_MODEL_CHEAP: "model-production-cheap",
+      AI_MODEL_PROFILES: JSON.stringify([
+        explicitProfile("google-ai-studio", "model-testing"),
+        explicitProfile("openrouter", "model-production-cheap"),
+      ]),
+    }), () => {
+      const profile = loadAiConfig().modelProfiles.require(
+        "google-ai-studio",
+        "model-testing",
+      );
+      assert.equal(profile.verification, "explicit");
+      assert.equal(profile.reasoning.wireFormat, "openai-reasoning-effort");
+      assert.deepEqual(profile.reasoning.supportedEfforts, [
+        "low",
+        "medium",
+        "high",
+      ]);
+      assert.equal(
+        loadAiConfig().modelProfiles.require(
+          "openrouter",
+          "model-production-cheap",
+        ).reasoning.wireFormat,
+        "openrouter-reasoning",
+      );
+    });
+  });
+
+  it("menolak profile model asing, duplikat, dan schema yang tidak sah", () => {
+    withAiEnvironment(validTestingEnvironment({
+      AI_MODEL_PROFILES: JSON.stringify([
+        explicitProfile("google-ai-studio", "model-asing"),
+      ]),
+    }), () => {
+      assert.throws(
+        () => loadAiConfig(),
+        hasCode("CONFIG_AI_MODEL_PROFILES_UNKNOWN"),
+      );
+    });
+
+    const duplicate = explicitProfile("google-ai-studio", "model-testing");
+    for (const value of [
+      "bukan-json",
+      JSON.stringify([duplicate, duplicate]),
+      JSON.stringify([{ ...duplicate, fieldBerlebih: true }]),
+      JSON.stringify([{
+        ...duplicate,
+        reasoning: { ...duplicate.reasoning, wireFormat: "bogus" },
+      }]),
+      JSON.stringify(Array.from({ length: 33 }, () => duplicate)),
+      "x".repeat(64_001),
+    ]) {
+      withAiEnvironment(validTestingEnvironment({
+        AI_MODEL_PROFILES: value,
+      }), () => {
+        assert.throws(
+          () => loadAiConfig(),
+          hasCode("CONFIG_AI_MODEL_PROFILES_INVALID"),
+        );
+      });
+    }
+  });
+
+  it("menolak capability explicit pada provider fallback testing", () => {
+    withAiEnvironment(validTestingEnvironment({
+      AI_TESTING_FALLBACK_BASE_URL: "https://fallback.example/api/v3",
+      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
+      AI_TESTING_FALLBACK_MODEL: "model-cadangan",
+      AI_MODEL_PROFILES: JSON.stringify([
+        explicitProfile("testing-fallback", "model-cadangan"),
+      ]),
+    }), () => {
+      assert.throws(
+        () => loadAiConfig(),
+        hasCode("CONFIG_AI_MODEL_PROFILES_FALLBACK_UNSUPPORTED"),
+      );
+    });
+  });
+
+  it("menolak capability explicit bila model primary juga dipakai fallback aktif", () => {
+    withAiEnvironment(validTestingEnvironment({
+      AI_TESTING_FALLBACK_BASE_URL: "https://fallback.example/api/v3",
+      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
+      AI_TESTING_FALLBACK_MODEL: "model-testing",
+      AI_TESTING_FALLBACK_PROVIDER_ID: "google-ai-studio",
+      AI_MODEL_PROFILES: JSON.stringify([
+        explicitProfile("google-ai-studio", "model-testing"),
+      ]),
+    }), () => {
+      assert.throws(
+        () => loadAiConfig(),
+        hasCode("CONFIG_AI_MODEL_PROFILES_FALLBACK_UNSUPPORTED"),
+      );
     });
   });
 });
+
+function explicitProfile(provider: string, id: string) {
+  return {
+    provider,
+    id,
+    reasoning: {
+      mandatory: false,
+      defaultEffort: "medium",
+      supportedEfforts: ["low", "medium", "high"],
+      wireFormat: provider === "openrouter"
+        ? "openrouter-reasoning"
+        : "openai-reasoning-effort",
+    },
+    supports: {
+      tools: true,
+      toolChoice: true,
+      namedToolChoice: true,
+      structuredOutput: true,
+      temperature: true,
+    },
+    continuation: {
+      preserveReasoning: true,
+      preserveAssistantMessage: true,
+    },
+    contextWindow: null,
+    maxOutputTokens: null,
+  };
+}
 
 function validTestingEnvironment(
   overrides: Partial<

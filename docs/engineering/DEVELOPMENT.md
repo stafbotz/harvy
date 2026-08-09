@@ -148,6 +148,57 @@ tingkatan kecuali yang diberi model sendiri lewat `AI_MODEL_TESTING_CHEAP`,
 kosong, routing tetap dihitung tetapi tidak dapat diamati — jangan mengklaim
 routing sudah terbukti setelah menguji dalam keadaan itu.
 
+### Profile capability model
+
+`AI_MODEL_PROFILES` adalah array JSON opsional untuk capability yang telah
+diverifikasi operator bagi pasangan provider+ID model exact. Tanpa variabel
+ini, setiap slot memakai profile `compatibility`: routing/tool behavior lama
+tetap ada, tetapi Harvy tidak mengirim reasoning control atau replay reasoning
+assistant-level baru. Base URL dan substring nama model tidak pernah dipakai
+untuk menebak capability.
+
+Setiap entry wajib mempunyai schema penuh berikut; ID harus sudah berada di
+salah satu slot model environment (aktif maupun tidak aktif):
+
+```json
+[
+  {
+    "provider": "openrouter",
+    "id": "vendor/model-id-exact",
+    "reasoning": {
+      "mandatory": false,
+      "defaultEffort": "medium",
+      "supportedEfforts": ["low", "medium", "high"],
+      "wireFormat": "openrouter-reasoning"
+    },
+    "supports": {
+      "tools": true,
+      "toolChoice": true,
+      "namedToolChoice": true,
+      "structuredOutput": true,
+      "temperature": true
+    },
+    "continuation": {
+      "preserveReasoning": true,
+      "preserveAssistantMessage": true
+    },
+    "contextWindow": null,
+    "maxOutputTokens": null
+  }
+]
+```
+
+Minify array tersebut menjadi satu nilai `.env`. `null` berarti batas belum
+diverifikasi dan tidak boleh diperlakukan sebagai tak terbatas. Wire yang
+tersedia saat ini: `openai-reasoning-effort` untuk Google AI Studio,
+`openrouter-reasoning`, `deepseek-thinking`, atau `none`. DeepSeek baru
+mempunyai primitive adapter sintetis dan belum menjadi provider production di
+composition root. Verifikasi ulang dokumentasi resmi dan jalankan smoke data
+sintetis setiap kali model/capability berubah; startup gagal tertutup pada
+profile asing, duplikat, rusak, atau kontradiktif.
+Provider fallback testing belum menerima profile explicit; runtime menolaknya
+agar mandatory reasoning/effort tidak diturunkan diam-diam saat failover.
+
 Percakapan yang menyentuh keselamatan memakai tingkatan `efficient`, bukan
 `ambitious`. Keputusan pemilik produk 27 Juli 2026: di produksi tingkatan itu
 adalah GPT 5.6 Luna dan dinilai cukup.

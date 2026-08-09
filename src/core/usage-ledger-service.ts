@@ -173,6 +173,7 @@ export class UsageLedgerService implements ProviderAttemptObserver {
       maxOutputTokens: nonNegativeInteger(context.maxOutputTokens),
       inputTokenEstimate: nonNegativeInteger(context.inputTokenEstimate),
       safetyCritical: context.safetyCritical,
+      ...providerExecutionMetadata(context),
       status: "started",
       httpStatus: null,
       responseOutcome: "not_checked",
@@ -975,6 +976,60 @@ function emptyUsage(): ProviderAttemptRecord["usage"] {
     cacheReadTokens: null,
     cacheWriteTokens: null,
     source: "none",
+  };
+}
+
+function providerExecutionMetadata(
+  context: ProviderAttemptStart,
+): Partial<Pick<
+  ProviderAttemptRecord,
+  "modelRole" | "requestedEffort" | "effectiveEffort" | "verbosity"
+>> {
+  const supplied = [
+    context.modelRole,
+    context.requestedEffort,
+    context.effectiveEffort,
+    context.verbosity,
+  ].some((value) => value !== undefined);
+  if (!supplied) return {};
+  const roles = [
+    "extractor",
+    "classifier",
+    "conversationalist",
+    "planner",
+    "worker",
+    "critic",
+    "synthesizer",
+    "recovery",
+  ] as const;
+  const efforts = [
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ] as const;
+  const verbosities = ["low", "medium", "high"] as const;
+  if (
+    context.modelRole === undefined ||
+    !roles.includes(context.modelRole) ||
+    context.requestedEffort === undefined ||
+    !efforts.includes(context.requestedEffort) ||
+    context.effectiveEffort === undefined ||
+    (context.effectiveEffort !== null &&
+      !efforts.includes(context.effectiveEffort)) ||
+    context.verbosity === undefined ||
+    !verbosities.includes(context.verbosity)
+  ) {
+    throw new Error("Metadata execution provider tidak sah atau tidak lengkap.");
+  }
+  return {
+    modelRole: context.modelRole,
+    requestedEffort: context.requestedEffort,
+    effectiveEffort: context.effectiveEffort,
+    verbosity: context.verbosity,
   };
 }
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type {
   AiClient,
+  ChatAssistantToolMessage,
   ChatFunctionTool,
   ChatRequest,
   ChatToolCall,
@@ -99,6 +100,10 @@ describe("Conversation agent runtime", () => {
       assistantCall.tool_calls[0]?.extra_content?.google.thought_signature,
       "signature-0",
     );
+    assert.deepEqual(assistantCall.continuation?.reasoningDetails, [{
+      type: "reasoning.encrypted",
+      data: "continuation-0",
+    }]);
     assert.equal(toolResult.tool_call_id, assistantCall.tool_calls[0]?.id);
     assert.equal(toolResult.name, "harvy_settings_time_get_v1");
     assert.match(toolResult.content, /settings\.time\.get\.result/u);
@@ -844,12 +849,12 @@ describe("model agent worker envelope", () => {
         requests.push(request);
         return "hasil worker";
       },
-      completeToolCalls: async (
+      completeToolTurn: async (
         request: ChatRequest & { tools: readonly ChatFunctionTool[] },
       ) => {
         requests.push(request);
         plannerCalls += 1;
-        return [nativeDecisionCall(plannerCalls === 1
+        const calls = [nativeDecisionCall(plannerCalls === 1
           ? {
               kind: "action",
               capabilityId: "agent.delegate.parallel",
@@ -862,6 +867,7 @@ describe("model agent worker envelope", () => {
               },
             }
           : { kind: "final", reply: "Sintesis selesai." })];
+        return { role: "assistant" as const, content: null, tool_calls: calls };
       },
     } as unknown as AiClient;
     const conversation = new Conversation(
@@ -944,15 +950,31 @@ function fixture(
 ): Conversation {
   let index = 0;
   const client = {
-    async completeToolCalls(
+    async completeToolTurn(
       request: ChatRequest & { tools: readonly ChatFunctionTool[] },
-    ): Promise<readonly ChatToolCall[]> {
+    ): Promise<ChatAssistantToolMessage> {
       sink.push(request);
       const decision = decisions[index] ?? { kind: "final", reply: "selesai" };
       const calls = [nativeDecisionCall(decision, index)];
       index += 1;
       assert.equal(request.validateToolCalls?.(calls), true);
-      return calls;
+      return {
+        role: "assistant",
+        content: null,
+        tool_calls: calls,
+        ...(decision.kind === "action"
+          ? {
+              continuation: {
+                providerId: "openrouter",
+                modelId: request.model,
+                reasoningDetails: [{
+                  type: "reasoning.encrypted",
+                  data: `continuation-${index - 1}`,
+                }],
+              },
+            }
+          : {}),
+      };
     },
   } as unknown as AiClient;
   return new Conversation(

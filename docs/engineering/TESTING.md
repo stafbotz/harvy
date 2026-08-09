@@ -201,6 +201,22 @@ npm run build
 node --test dist/tests/client.test.js dist/tests/agent-conversation.test.js dist/tests/agent-runtime.test.js dist/tests/internal-agent-executors.test.js dist/tests/agent-harness.test.js dist/tests/file-agent-run-repository.test.js dist/tests/agent-run-retention-worker.test.js dist/tests/message-batcher.test.js dist/tests/create-bot-flow.test.js dist/tests/data-control-service.test.js dist/tests/usage-ledger-service.test.js
 ```
 
+Fondasi provider/execution Phase C mempunyai gate tambahan:
+
+```bash
+npm run build
+node --test dist/tests/model-profile.test.js dist/tests/execution-policy.test.js dist/tests/provider-adapter.test.js dist/tests/client.test.js dist/tests/client-ledger.test.js dist/tests/ai-config.test.js dist/tests/usage-ledger-service.test.js
+```
+
+Gate ini wajib membuktikan profile exact/fail-closed dan schema
+`AI_MODEL_PROFILES`, custom base tanpa tebakan capability, effort hanya turun,
+wire Google/OpenRouter/DeepSeek sintetis, omission tool choice yang tidak
+didukung, message allowlist, binding provider+model, batas reasoning details,
+no-log reasoning, penolakan response nonterminal, key tidak berputar pada
+penolakan lokal, serta metadata ledger content-free. Tes adapter DeepSeek bukan
+bukti provider production. Live smoke harus memakai data sintetis dan mencatat
+model/profile exact serta tanggal dokumentasi capability yang diverifikasi.
+
 Tes wajib membuktikan root sederhana memakai `cheap`, pekerjaan kompleks
 memakai root `ambitious`, dan mode testing dapat memetakan keduanya ke satu
 model. Planner hanya boleh melihat capability yang mempunyai executor run;
@@ -225,9 +241,13 @@ harus menolak definisi schema rusak, plain text, nama function asing, serta
 multi-call pada langkah serial. Parser wajib menolak argumen rusak, field
 control tambahan, dan balasan final/prompt klarifikasi kosong, sedangkan harness
 tetap memvalidasi input capability. Continuation satu invocation wajib memutar
-ulang exact assistant `tool_calls`, lalu pesan `tool` dengan `tool_call_id` yang
-cocok; thought signature Gemini harus dipertahankan secara exact, tidak masuk
-log/checkpoint, dan estimator harus menerima `content:null`. Live-state wajib
+ulang exact assistant turn, lalu pesan `tool` dengan `tool_call_id` yang cocok.
+Bila profile explicit mengizinkan, `reasoning`, `reasoning_content`, dan
+`reasoning_details` harus dipertahankan exact dalam batas schema/ukuran;
+thought signature Gemini juga harus exact. Metadata itu wajib terikat
+provider+model, tidak masuk log/checkpoint/memory, dan estimator harus menerima
+`content:null`. Wrapper `completeToolCalls()` hanya boleh dipakai one-shot;
+loop wajib memakai `completeToolTurn()`. Live-state wajib
 memilih action sebelum inference. Sesudah observation, `tool_choice` kembali
 membolehkan final maupun action lain: tes multi-tool wajib membuktikan pembacaan
 live pertama tidak memotong tool kedua, sementara proposal identik tetap

@@ -5,6 +5,10 @@ import type {
 } from "./ai/client.js";
 import { ApiKeyPool } from "./ai/key-pool.js";
 import type { ModelTier } from "./ai/model-policy.js";
+import {
+  ModelProfileRegistry,
+  type ModelProfile,
+} from "./ai/model-profile.js";
 import type { TierPrice } from "./core/telemetry-service.js";
 import { isValidTimeZone } from "./core/time-policy.js";
 import type {
@@ -46,6 +50,8 @@ export interface AiConfig {
    */
   testingModels: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
+  /** Capability provider+model; key tidak pernah diturunkan dari prompt. */
+  modelProfiles: ModelProfileRegistry;
   /** Model dari seluruh slot `.env`, tanpa key, base URL, atau credential. */
   configuredModels: ConfiguredModel[];
   rollingTokenLimit: number;
@@ -107,6 +113,7 @@ export function aiClientOptions(
     keys: config.keys,
     fallback: options.fallback === false ? null : config.fallback,
     providerId: config.providerId,
+    modelProfiles: config.modelProfiles,
   };
 }
 
@@ -368,22 +375,30 @@ export function loadAiConfig(): AiConfig {
     }
 
     const fallback = loadTestingFallback();
+    const baseUrl = process.env.AI_BASE_URL?.trim() || GOOGLE_BASE_URL;
+    const configuredModels = configuredModelCatalog({
+      mode,
+      testingModel,
+      testingModels,
+      models,
+      activeFallback: fallback,
+    });
+    const explicitProfiles = loadExplicitModelProfiles();
+    const modelProfiles = configuredModelProfiles({
+      configuredModels,
+      explicitProfiles,
+    });
     return {
       mode,
       providerId: "google-ai-studio",
       keys: new ApiKeyPool(keys),
-      baseUrl: process.env.AI_BASE_URL?.trim() || GOOGLE_BASE_URL,
+      baseUrl,
       fallback,
       testingModel,
       testingModels,
       models,
-      configuredModels: configuredModelCatalog({
-        mode,
-        testingModel,
-        testingModels,
-        models,
-        activeFallback: fallback,
-      }),
+      modelProfiles,
+      configuredModels,
       rollingTokenLimit,
       prices,
     };
@@ -407,25 +422,240 @@ export function loadAiConfig(): AiConfig {
     );
   }
 
+  const baseUrl = process.env.AI_BASE_URL?.trim() || OPENROUTER_BASE_URL;
+  const configuredModels = configuredModelCatalog({
+    mode,
+    testingModel,
+    testingModels,
+    models,
+    activeFallback: null,
+  });
+  const explicitProfiles = loadExplicitModelProfiles();
+  const modelProfiles = configuredModelProfiles({
+    configuredModels,
+    explicitProfiles,
+  });
   return {
     mode,
     providerId: "openrouter",
     keys: new ApiKeyPool([apiKey]),
-    baseUrl: process.env.AI_BASE_URL?.trim() || OPENROUTER_BASE_URL,
+    baseUrl,
     fallback: null,
     testingModel,
     testingModels,
     models,
-    configuredModels: configuredModelCatalog({
-      mode,
-      testingModel,
-      testingModels,
-      models,
-      activeFallback: null,
-    }),
+    modelProfiles,
+    configuredModels,
     rollingTokenLimit,
     prices,
   };
+}
+
+const MAX_AI_MODEL_PROFILES_CHARACTERS = 64_000;
+const MAX_AI_MODEL_PROFILES = 32;
+
+/**
+ * Capability baru hanya aktif lewat deklarasi exact provider+model. Endpoint
+ * resmi tidak cukup untuk membuktikan capability setiap model di dalamnya.
+ */
+function loadExplicitModelProfiles(): readonly ModelProfile[] {
+  const raw = process.env.AI_MODEL_PROFILES?.trim() ?? "";
+  if (!raw) return [];
+  if (raw.length > MAX_AI_MODEL_PROFILES_CHARACTERS) {
+    throw configurationError(
+      "CONFIG_AI_MODEL_PROFILES_INVALID",
+      "AI_MODEL_PROFILES terlalu besar.",
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw configurationError(
+      "CONFIG_AI_MODEL_PROFILES_INVALID",
+      "AI_MODEL_PROFILES harus berupa array JSON yang sah.",
+    );
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_AI_MODEL_PROFILES) {
+    throw configurationError(
+      "CONFIG_AI_MODEL_PROFILES_INVALID",
+      `AI_MODEL_PROFILES harus berupa array maksimal ${MAX_AI_MODEL_PROFILES} profile.`,
+    );
+  }
+
+  try {
+    return new ModelProfileRegistry(parsed.map(parseExplicitModelProfile)).list();
+  } catch {
+    throw configurationError(
+      "CONFIG_AI_MODEL_PROFILES_INVALID",
+      "AI_MODEL_PROFILES memuat capability yang tidak lengkap atau tidak sah.",
+    );
+  }
+}
+
+function parseExplicitModelProfile(value: unknown): ModelProfile {
+  const profile = exactRecord(value, [
+    "provider",
+    "id",
+    "reasoning",
+    "supports",
+    "continuation",
+    "contextWindow",
+    "maxOutputTokens",
+  ]);
+  const reasoning = exactRecord(profile["reasoning"], [
+    "mandatory",
+    "defaultEffort",
+    "supportedEfforts",
+    "wireFormat",
+  ]);
+  const supports = exactRecord(profile["supports"], [
+    "tools",
+    "toolChoice",
+    "namedToolChoice",
+    "structuredOutput",
+    "temperature",
+  ]);
+  const continuation = exactRecord(profile["continuation"], [
+    "preserveReasoning",
+    "preserveAssistantMessage",
+  ]);
+
+  return {
+    provider: requiredString(profile["provider"]),
+    id: requiredString(profile["id"]),
+    verification: "explicit",
+    reasoning: {
+      mandatory: requiredBoolean(reasoning["mandatory"]),
+      defaultEffort: requiredString(reasoning["defaultEffort"]) as
+        ModelProfile["reasoning"]["defaultEffort"],
+      supportedEfforts: requiredStringArray(reasoning["supportedEfforts"]) as
+        ModelProfile["reasoning"]["supportedEfforts"],
+      wireFormat: requiredString(reasoning["wireFormat"]) as
+        ModelProfile["reasoning"]["wireFormat"],
+    },
+    supports: {
+      tools: requiredBoolean(supports["tools"]),
+      toolChoice: requiredBoolean(supports["toolChoice"]),
+      namedToolChoice: requiredBoolean(supports["namedToolChoice"]),
+      structuredOutput: requiredBoolean(supports["structuredOutput"]),
+      temperature: requiredBoolean(supports["temperature"]),
+    },
+    continuation: {
+      preserveReasoning: requiredBoolean(continuation["preserveReasoning"]),
+      preserveAssistantMessage: requiredBoolean(
+        continuation["preserveAssistantMessage"],
+      ),
+    },
+    contextWindow: optionalPositiveInteger(profile["contextWindow"]),
+    maxOutputTokens: optionalPositiveInteger(profile["maxOutputTokens"]),
+  };
+}
+
+function exactRecord(
+  value: unknown,
+  keys: readonly string[],
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Object profile tidak sah.");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== keys.length ||
+    keys.some((key) => !Object.hasOwn(record, key))
+  ) {
+    throw new Error("Field profile tidak lengkap atau berlebih.");
+  }
+  return record;
+}
+
+function requiredString(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("String profile tidak sah.");
+  }
+  return value;
+}
+
+function requiredBoolean(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new Error("Boolean profile tidak sah.");
+  return value;
+}
+
+function requiredStringArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error("Array profile tidak sah.");
+  }
+  return value;
+}
+
+function optionalPositiveInteger(value: unknown): number | null {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("Limit profile tidak sah.");
+  }
+  return value;
+}
+
+function configuredModelProfiles(input: {
+  configuredModels: readonly ConfiguredModel[];
+  explicitProfiles: readonly ModelProfile[];
+}): ModelProfileRegistry {
+  const profiles = new Map<string, ModelProfile>();
+  const add = (profile: ModelProfile): void => {
+    profiles.set(`${profile.provider}\u0000${profile.id}`, profile);
+  };
+  for (const model of input.configuredModels) {
+    const primary = model.sources.some((source) => source.origin === "primary");
+    add({
+      id: model.modelId,
+      provider: model.providerId,
+      verification: "compatibility",
+      reasoning: {
+        mandatory: false,
+        defaultEffort: "none",
+        supportedEfforts: [],
+        wireFormat: "none",
+      },
+      supports: {
+        tools: primary,
+        toolChoice: primary,
+        namedToolChoice: primary,
+        structuredOutput: primary,
+        temperature: true,
+      },
+      continuation: {
+        preserveReasoning: false,
+        preserveAssistantMessage: primary,
+      },
+      contextWindow: null,
+      maxOutputTokens: null,
+    });
+  }
+  for (const profile of input.explicitProfiles) {
+    const key = `${profile.provider}\u0000${profile.id}`;
+    if (!profiles.has(key)) {
+      throw configurationError(
+        "CONFIG_AI_MODEL_PROFILES_UNKNOWN",
+        `AI_MODEL_PROFILES memuat model yang tidak dikonfigurasi: ${profile.provider}/${profile.id}.`,
+      );
+    }
+    const configured = input.configuredModels.find(
+      (model) => model.providerId === profile.provider && model.modelId === profile.id,
+    );
+    if (
+      configured?.sources.some(
+        (source) => source.origin === "fallback" && source.active,
+      )
+    ) {
+      throw configurationError(
+        "CONFIG_AI_MODEL_PROFILES_FALLBACK_UNSUPPORTED",
+        "AI_MODEL_PROFILES belum boleh mengaktifkan capability provider fallback.",
+      );
+    }
+    profiles.set(key, profile);
+  }
+  return new ModelProfileRegistry([...profiles.values()]);
 }
 
 function configuredModelCatalog(input: {

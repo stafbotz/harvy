@@ -10,6 +10,8 @@
   mengikuti batas ADR ini
 - **Amendemen 6 Agustus 2026:** planner Agent Runtime memakai native function
   calling; bentuk kanonik `final|need_input|action` tetap menjadi kontrak kernel
+- **Diamendemen oleh:** ADR-025 untuk assistant-turn continuation, exact model
+  profile, dan provider serialization
 
 ## Konteks
 
@@ -130,6 +132,22 @@ diklaim selesai dengan menyamarkan kekurangannya.
     agent. Sebelum dibuka, masing-masing memerlukan revision/CAS, preview
     approval persis, durable RunStore, idempotent outbox, receipt, status
     `unknown`, reconciliation, export/deletion, dan uji crash recovery.
+
+## Amendemen 9 Agustus 2026 — continuation provider
+
+Planner production memakai `completeToolTurn()` dan memutar ulang assistant
+turn utuh sebelum hasil tool. Selain `tool_calls` dan Gemini
+`thought_signature`, field Chat Completions yang dideklarasikan profile—
+`reasoning`, `reasoning_content`, dan `reasoning_details`—dipertahankan exact,
+dibatasi, serta terikat provider+model. Transcript itu tetap live-only dan
+tidak masuk checkpoint/memory/log; resume selalu memulai transcript provider
+baru. Wrapper `completeToolCalls()` hanya kompatibilitas one-shot dan dilarang
+untuk loop yang melanjutkan reasoning.
+
+`tool_choice` bukan lagi asumsi universal: adapter menghilangkannya bila exact
+profile menyatakan provider tidak mendukung field tersebut, sementara client
+tetap menolak plain text ketika caller meminta tool turn. Detail dan batas
+Phase C berada di ADR-025.
 
 ## Konsekuensi
 

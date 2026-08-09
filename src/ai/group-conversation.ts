@@ -41,6 +41,14 @@ import {
   type ContextManifest,
 } from "../harness/context-manifest.js";
 import { groupAgentScope } from "../harness/scope.js";
+import {
+  DEFAULT_EXECUTION_POLICY,
+  type ExecutionPlan,
+  type ExecutionPolicy,
+  type ExecutionWorkClass,
+} from "../core/execution-policy.js";
+import type { ModelRole } from "../domain/model-execution.js";
+import { resolveModelProfile } from "./model-profile.js";
 
 /**
  * Naikkan bila prompt, formatter konteks, pemilihan giliran, atau kontrak
@@ -234,6 +242,7 @@ export class GroupConversation implements GroupConversationPort {
     private readonly logger: OperationalLogger =
       NOOP_OPERATIONAL_LOGGER.child("ai.group-conversation"),
     private readonly harness: AgentHarness = DEFAULT_HARVY_AGENT_HARNESS,
+    private readonly executionPolicy: ExecutionPolicy = DEFAULT_EXECUTION_POLICY,
   ) {}
 
   async planAmbient(
@@ -264,6 +273,13 @@ export class GroupConversation implements GroupConversationPort {
       model: resolveModel("cheap", this.routing),
       temperature: 0.35,
       maxTokens: GROUP_PARTICIPATION_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "classifier",
+        "mechanical",
+        GROUP_PARTICIPATION_MAX_TOKENS,
+        GROUP_PARTICIPATION_TIMEOUT_MS,
+      ),
       timeoutMs: GROUP_PARTICIPATION_TIMEOUT_MS,
       maxAttempts: 1,
       json: true,
@@ -318,6 +334,13 @@ export class GroupConversation implements GroupConversationPort {
       model: resolveModel("cheap", this.routing),
       temperature: 0.2,
       maxTokens: GROUP_PARTICIPATION_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "classifier",
+        "mechanical",
+        GROUP_PARTICIPATION_MAX_TOKENS,
+        GROUP_REVALIDATION_TIMEOUT_MS,
+      ),
       timeoutMs: GROUP_REVALIDATION_TIMEOUT_MS,
       maxAttempts: 1,
       json: true,
@@ -394,6 +417,13 @@ export class GroupConversation implements GroupConversationPort {
       model: resolveModel(tier, this.routing),
       temperature: 0.7,
       maxTokens: 1_024,
+      execution: this.execution(
+        tier,
+        tier === "ambitious" ? "synthesizer" : "conversationalist",
+        triage.level === "biasa" ? "conversation" : "safety",
+        1_024,
+        GROUP_REPLY_TIMEOUT_MS,
+      ),
       timeoutMs: GROUP_REPLY_TIMEOUT_MS,
       maxAttempts: 1,
       contextManifest: compiled.manifest,
@@ -428,6 +458,23 @@ export class GroupConversation implements GroupConversationPort {
       safetyCritical,
       ...(currentUsageAttribution() ?? {}),
     };
+  }
+
+  private execution(
+    tier: ModelTier,
+    role: ModelRole,
+    workClass: ExecutionWorkClass,
+    maxOutputTokens: number,
+    deadlineMs: number,
+  ): ExecutionPlan {
+    return this.executionPolicy.decide({
+      tier,
+      role,
+      workClass,
+      profile: resolveModelProfile(tier, this.routing),
+      maxOutputTokens,
+      deadlineMs,
+    });
   }
 }
 

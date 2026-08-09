@@ -86,6 +86,7 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 | [`ADR-022`](decisions/ADR-022-selective-safety-routing-dan-privacy-memory.md) | selective safety routing, unavailable, privacy memory, izin per efek |
 | [`ADR-023`](decisions/ADR-023-adaptive-debounce-per-subjek.md) | adaptive debounce content-free per pemilik/anggota grup |
 | [`ADR-024`](decisions/ADR-024-selective-safety-dan-privacy-ingress-grup.md) | selective group safety, raw-context privacy, authority-first preflight |
+| [`ADR-025`](decisions/ADR-025-provider-execution-policy-dan-continuation-live.md) | exact model profile, execution policy, provider adapter, continuation live |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.

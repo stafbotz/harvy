@@ -313,8 +313,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   `drain` wajib menunggu antrean eksklusif per pemilik beserta flush
   lanjutannya; kegagalan penulis tidak boleh dilaporkan seolah sudah terkuras.
   Provider-attempt ledger tetap mencatat setiap fetch termasuk fallback,
-  kegagalan, dan `schema_rejected`; harga tak diketahui tidak boleh disebut
-  nol. Ledger entitlement adalah authority kapasitas: `reply`, `session`, dan
+  kegagalan, `schema_rejected`, `truncated`, dan `incomplete`; harga tak
+  diketahui tidak boleh disebut nol. Role, requested/effective effort, dan
+  verbosity boleh dicatat sebagai metadata tertutup, tetapi raw reasoning dan
+  assistant turn provider tetap dilarang. Ledger entitlement adalah authority
+  kapasitas: `reply`, `session`, dan
   `group-reply` baru mendebit setelah adapter memastikan delivery. Due-date,
   boundary, understanding, triase, review, ringkasan, insight,
   group-participation, kegagalan parser/delivery, serta keselamatan tidak boleh
@@ -350,6 +353,17 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   snapshot itu; ID environment yang tidak sah menggagalkan startup, bukan
   diam-diam hilang. Katalog tidak dipersistenkan, sedangkan histori harga tetap
   append-only walau model kemudian dihapus atau diganti di `.env`.
+- **Capability model harus exact dan explicit.** Registry memakai
+  `provider + modelId`, bukan base URL, tier, atau substring nama. Model tanpa
+  deklarasi `AI_MODEL_PROFILES` hanya mendapat profile compatibility dan tidak
+  boleh mengaktifkan reasoning wire/replay baru. Profile asing, duplikat,
+  kontradiktif, atau limit/enum rusak menggagalkan startup. Tier, model role,
+  reasoning effort, dan visible verbosity adalah keputusan berbeda; prompt,
+  model, serta tool output tidak dapat menaikkan authority atau effort.
+- **Respons provider harus terminal dan cocok bentuknya.** Teks hanya sah pada
+  `finish_reason=stop`; native calls hanya sah pada
+  `finish_reason=tool_calls`. Length, content filter, reason asing/hilang, dan
+  pasangan bentuk/reason yang tidak cocok tidak boleh menjadi final sukses.
 
 ## Log operasional
 
@@ -384,11 +398,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   yang sah baru dinormalisasi menjadi `AgentPlannerDecision` dan tetap masuk
   seluruh validasi kernel sebelum executor dipanggil.
 - **Continuation native adalah transcript sementara, bukan authority.** Dalam
-  satu invocation, setiap observation harus mengikuti exact assistant
-  `tool_calls` dengan pesan `tool` dan `tool_call_id` yang cocok; thought
-  signature provider yang dikenal diputar ulang exact. Call ID dan signature
-  hanya untuk kontinuitas provider, tidak boleh menjadi approval, idempotency,
-  scope, checkpoint durable, atau isi log. Kebutuhan live-state harus memilih
+  satu invocation, setiap observation harus mengikuti exact assistant turn
+  dengan pesan `tool` dan `tool_call_id` yang cocok. Field yang diketahui—
+  `reasoning`, `reasoning_content`, `reasoning_details`, dan Gemini thought
+  signature—hanya boleh diputar ulang bila schema/size/binding provider+model
+  sah dan profile exact mengizinkannya. Adapter mengirim allowlist wire, bukan
+  object internal mentah. Call ID dan metadata continuation hanya untuk
+  kontinuitas provider, tidak boleh menjadi approval, idempotency, scope,
+  checkpoint durable, memory, telemetry content, atau isi log. Loop reasoning
+  wajib memakai `completeToolTurn()`; wrapper call-only hanya one-shot.
+  Kebutuhan live-state harus memilih
   named function sebelum inference, bukan mengganti keputusan model sesudah
   raw call terbentuk. Setelah observation, planner tetap boleh memilih tool
   berbeda; cycle guard fingerprint, bukan terminasi paksa, yang menahan proposal

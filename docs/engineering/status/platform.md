@@ -1,7 +1,8 @@
 # Status — Platform dan Operasi Runtime
 
-Verified: 7 Agustus 2026 pada working tree Phase A di atas `8be00be`;
-unit/integration lokal dan smoke provider lama yang terbatas tersedia.
+Verified: 9 Agustus 2026 pada working tree fondasi Phase C di atas `3b13bdc`;
+`npm run check` PASS dan `npm test` PASS, 789 test dalam 103 suite, 0 gagal;
+smoke provider baru belum dijalankan.
 
 ## Keadaan saat ini
 
@@ -18,6 +19,14 @@ unit/integration lokal dan smoke provider lama yang terbatas tersedia.
   meminta shutdown child lewat IPC dan menunggu lock dilepas sebelum restart.
 - Context manifest dan token estimate tersedia sebagai metadata lokal; usage
   provider dipakai bila ada.
+- Registry capability mengikat exact provider+model. Default compatibility
+  mempertahankan wire lama tanpa reasoning; deklarasi `AI_MODEL_PROFILES`
+  schema-valid diperlukan untuk effort/reasoning continuation baru. Adapter
+  mengirim allowlist message dan field Google/OpenRouter/DeepSeek yang sesuai
+  profile, termasuk omission temperature/tool choice yang tidak didukung.
+- Respons tanpa terminal finish reason, content filter, reason asing, dan
+  pasangan text/tool reason yang salah ditolak. Ledger menormalkan reason asing
+  ke `other` dan membedakan `incomplete` dari `truncated` tanpa menyimpan isi.
 - Repository telemetry v3 menambah turn record content-free yang ikut retensi,
   export, full deletion, flush, dan shutdown drain. Service menyediakan
   nearest-rank p50/p95 serta rate boundary/triage/review/fast-path per owner;
@@ -32,6 +41,8 @@ unit/integration lokal dan smoke provider lama yang terbatas tersedia.
 - Startup pernah melanjutkan sampai ready setelah menerima `dev-restart`, lalu
   meninggalkan lock stale. Race startup-cancel itu belum diperbaiki.
 - Native tool calling masih primary-only; compatibility fallback belum terbukti.
+- Capability explicit provider fallback sengaja ditolak sampai execution plan
+  dapat dihitung ulang secara aman untuk provider/model fallback.
 - Kebijakan privacy/retention provider cadangan belum diverifikasi.
 - Token selection masih character/count-based; belum ada tokenizer atau
   adaptive calibration per route/model.
@@ -45,4 +56,5 @@ unit/integration lokal dan smoke provider lama yang terbatas tersedia.
 - Tes: `tests/client.test.ts`, `tests/key-pool.test.ts`,
   `tests/local-runtime-lock.test.ts`, `tests/operational-logger.test.ts`,
   `tests/dev-runner.test.ts`.
-- Keputusan: ADR-003, ADR-010. Setup: `docs/engineering/DEVELOPMENT.md`.
+- Keputusan: ADR-003, ADR-010, ADR-025. Setup:
+  `docs/engineering/DEVELOPMENT.md`.

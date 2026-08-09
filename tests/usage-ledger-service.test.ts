@@ -186,6 +186,40 @@ function start(
 }
 
 describe("UsageLedgerService", () => {
+  it("menyimpan metadata execution content-free dan menolak bentuk parsial", async () => {
+    const { ledger, ledgerRepository } = runtime();
+    const context: ProviderAttemptStart = {
+      ...start("attempt-1", "request-1"),
+      modelRole: "planner",
+      requestedEffort: "medium",
+      effectiveEffort: "low",
+      verbosity: "low",
+    };
+    await ledger.startAttempt(context);
+    assert.deepEqual(
+      {
+        modelRole: ledgerRepository.records[0]?.modelRole,
+        requestedEffort: ledgerRepository.records[0]?.requestedEffort,
+        effectiveEffort: ledgerRepository.records[0]?.effectiveEffort,
+        verbosity: ledgerRepository.records[0]?.verbosity,
+      },
+      {
+        modelRole: "planner",
+        requestedEffort: "medium",
+        effectiveEffort: "low",
+        verbosity: "low",
+      },
+    );
+
+    await assert.rejects(
+      () => ledger.startAttempt({
+        ...start("attempt-2", "request-2"),
+        modelRole: "planner",
+      }),
+      /tidak sah atau tidak lengkap/u,
+    );
+  });
+
   it("menyimpan reported dan katalog berdampingan dengan hitungan nano-USD", async () => {
     const { ledger, ledgerRepository } = runtime();
     const context = start("attempt-1", "request-1");

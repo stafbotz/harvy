@@ -10,9 +10,9 @@ import type { AiPurpose } from "../domain/telemetry.js";
 import type { TurnBoundaryState } from "../core/turn-taking-policy.js";
 import type {
   AiClient,
+  ChatAssistantToolMessage,
   ChatMessage,
   ChatRequest,
-  ChatToolCall,
   ChatToolChoice,
 } from "./client.js";
 import { currentUsageAttribution } from "./usage-attribution.js";
@@ -109,12 +109,25 @@ import {
   type AgentScope,
 } from "../harness/scope.js";
 import { deterministicTimeReply } from "../agent/time-fast-path.js";
+import {
+  DEFAULT_EXECUTION_POLICY,
+  type ExecutionPlan,
+  type ExecutionPolicy,
+  type ExecutionWorkClass,
+} from "../core/execution-policy.js";
+import type { ModelRole } from "../domain/model-execution.js";
+import {
+  resolveModelProfile,
+  type ModelProfileRegistry,
+} from "./model-profile.js";
 
 export interface RoutingConfig {
   mode: "testing" | "production";
+  providerId?: string;
   testingModel: string;
   testingModels?: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
+  modelProfiles?: ModelProfileRegistry;
 }
 
 export interface ConversationRuntime {
@@ -188,19 +201,20 @@ const INSIGHT_MAX_TOKENS = 512;
  */
 const EPISODE_SUMMARY_MAX_TOKENS = 768;
 const AGENT_PLANNER_MAX_TOKENS = 4096;
+const GENERAL_MODEL_DEADLINE_MS = 30_000;
 
 interface AgentNativeThread {
   messages: ChatMessage[];
   pending: {
     step: number;
     capabilityId: string;
-    call: ChatToolCall;
+    assistant: ChatAssistantToolMessage;
   } | null;
 }
 
 interface RequestedAgentDecision {
   decision: AgentPlannerDecision;
-  call: ChatToolCall;
+  assistant: ChatAssistantToolMessage;
 }
 
 /**
@@ -226,6 +240,7 @@ export class Conversation {
       NOOP_OPERATIONAL_LOGGER.child("ai.conversation"),
     private readonly harness: AgentHarness = DEFAULT_HARVY_AGENT_HARNESS,
     private readonly agentExecutors: readonly AgentCapabilityExecutor[] = [],
+    private readonly executionPolicy: ExecutionPolicy = DEFAULT_EXECUTION_POLICY,
   ) {}
 
   /** Mengembalikan `null` bila model gagal menghasilkan bentuk yang sah. */
@@ -241,6 +256,13 @@ export class Conversation {
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: UNDERSTANDING_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "extractor",
+        "mechanical",
+        UNDERSTANDING_MAX_TOKENS,
+        GENERAL_MODEL_DEADLINE_MS,
+      ),
       json: true,
       validateResponse: (content) => parseUnderstanding(content) !== null,
       ...(runtime.signal ? { signal: runtime.signal } : {}),
@@ -290,6 +312,13 @@ export class Conversation {
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: UNDERSTANDING_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "extractor",
+        "mechanical",
+        UNDERSTANDING_MAX_TOKENS,
+        GENERAL_MODEL_DEADLINE_MS,
+      ),
       json: true,
       validateResponse: (content) => parseDueDate(content) !== null,
       usage: this.usage(runtime.ownerId, "cheap", "due-date"),
@@ -321,6 +350,13 @@ export class Conversation {
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: TURN_BOUNDARY_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "classifier",
+        "mechanical",
+        TURN_BOUNDARY_MAX_TOKENS,
+        TURN_BOUNDARY_TIMEOUT_MS,
+      ),
       timeoutMs: TURN_BOUNDARY_TIMEOUT_MS,
       maxAttempts: 1,
       json: true,
@@ -375,6 +411,13 @@ export class Conversation {
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: TRIAGE_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "classifier",
+        "safety",
+        TRIAGE_MAX_TOKENS,
+        TRIAGE_TIMEOUT_MS,
+      ),
       timeoutMs: TRIAGE_TIMEOUT_MS,
       json: true,
       validateResponse: (content) => parseRiskTriage(content) !== null,
@@ -424,6 +467,13 @@ export class Conversation {
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: GROUP_INGRESS_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "classifier",
+        "safety",
+        GROUP_INGRESS_MAX_TOKENS,
+        GROUP_INGRESS_TIMEOUT_MS,
+      ),
       timeoutMs: GROUP_INGRESS_TIMEOUT_MS,
       maxAttempts: 1,
       json: true,
@@ -466,6 +516,13 @@ export class Conversation {
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: MEMORY_PRIVACY_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "classifier",
+        "safety",
+        MEMORY_PRIVACY_MAX_TOKENS,
+        MEMORY_PRIVACY_TIMEOUT_MS,
+      ),
       timeoutMs: MEMORY_PRIVACY_TIMEOUT_MS,
       json: true,
       validateResponse: (content) => parseMemoryPrivacy(content) !== null,
@@ -515,6 +572,13 @@ export class Conversation {
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: REVIEW_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "critic",
+        "safety",
+        REVIEW_MAX_TOKENS,
+        REVIEW_TIMEOUT_MS,
+      ),
       timeoutMs: REVIEW_TIMEOUT_MS,
       json: true,
       validateResponse: (content) => parseReplyVerdict(content) !== null,
@@ -548,6 +612,13 @@ export class Conversation {
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: INSIGHT_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "extractor",
+        "mechanical",
+        INSIGHT_MAX_TOKENS,
+        GENERAL_MODEL_DEADLINE_MS,
+      ),
       json: true,
       validateResponse: (content) => parseInsightDraft(content) !== null,
       usage: this.usage(ownerId, "cheap", "insight"),
@@ -628,6 +699,13 @@ export class Conversation {
       model: resolveModel(tier, this.routing),
       temperature: 0.7,
       maxTokens: REPLY_MAX_TOKENS,
+      execution: this.execution(
+        tier,
+        tier === "ambitious" ? "synthesizer" : "conversationalist",
+        triage.level === "biasa" ? "conversation" : "safety",
+        REPLY_MAX_TOKENS,
+        GENERAL_MODEL_DEADLINE_MS,
+      ),
       contextManifest,
       usage: this.usage(
         runtime.ownerId,
@@ -659,6 +737,13 @@ export class Conversation {
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: EPISODE_SUMMARY_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "extractor",
+        "mechanical",
+        EPISODE_SUMMARY_MAX_TOKENS,
+        GENERAL_MODEL_DEADLINE_MS,
+      ),
       json: true,
       validateResponse: (content) =>
         parseEpisodeSummary(content, turns) !== null,
@@ -861,7 +946,7 @@ export class Conversation {
       nativeThread.pending = {
         step: input.step,
         capabilityId: decision.capabilityId,
-        call: planned.call,
+        assistant: planned.assistant,
       };
     }
     return decision;
@@ -893,10 +978,22 @@ export class Conversation {
       suppressFirstMessageClaim,
     });
     const nativeTools = agentNativeTools(plannerInput.callableCapabilities);
-    const toolCalls = await this.client.completeToolCalls({
+    const assistant = await this.client.completeToolTurn({
       model: resolveModel(tier, this.routing),
       temperature: 0.1,
       maxTokens: AGENT_PLANNER_MAX_TOKENS,
+      execution: this.execution(
+        tier,
+        plannerInput.step > 0 ? "synthesizer" : "planner",
+        "agent",
+        AGENT_PLANNER_MAX_TOKENS,
+        45_000,
+        {
+          maxSteps: 6,
+          allowTools: true,
+          allowDelegation: mode === "orchestrate" && plannerInput.step === 0,
+        },
+      ),
       signal,
       contextManifest,
       tools: nativeTools,
@@ -918,13 +1015,13 @@ export class Conversation {
       ],
     });
     const decision = parseAgentNativeDecision(
-      toolCalls,
+      assistant.tool_calls,
       plannerInput.callableCapabilities,
     );
-    if (!decision || !toolCalls[0]) {
+    if (!decision || !assistant.tool_calls[0]) {
       throw new Error("Planner agent mengembalikan keputusan tidak sah.");
     }
-    return { decision, call: toolCalls[0] };
+    return { decision, assistant };
   }
 
   /**
@@ -956,6 +1053,13 @@ export class Conversation {
       model: resolveModel(tier, this.routing),
       temperature: 0.6,
       maxTokens: REPLY_MAX_TOKENS,
+      execution: this.execution(
+        tier,
+        tier === "ambitious" ? "synthesizer" : "conversationalist",
+        "conversation",
+        REPLY_MAX_TOKENS,
+        GENERAL_MODEL_DEADLINE_MS,
+      ),
       contextManifest,
       usage: this.usage(runtime.ownerId, tier, "session"),
       messages: [
@@ -988,6 +1092,35 @@ export class Conversation {
       safetyCritical,
       ...(attribution ?? {}),
     };
+  }
+
+  private execution(
+    tier: ModelTier,
+    role: ModelRole,
+    workClass: ExecutionWorkClass,
+    maxOutputTokens: number,
+    deadlineMs: number,
+    options: {
+      maxSteps?: number;
+      allowTools?: boolean;
+      allowDelegation?: boolean;
+    } = {},
+  ): ExecutionPlan {
+    return this.executionPolicy.decide({
+      tier,
+      role,
+      workClass,
+      profile: resolveModelProfile(tier, this.routing),
+      maxOutputTokens,
+      deadlineMs,
+      ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
+      ...(options.allowTools !== undefined
+        ? { allowTools: options.allowTools }
+        : {}),
+      ...(options.allowDelegation !== undefined
+        ? { allowDelegation: options.allowDelegation }
+        : {}),
+    });
   }
 
   private runtimeScope(runtime: ConversationRuntime): AgentScope {
@@ -1101,15 +1234,11 @@ function continueAgentNativeThread(
       throw new Error("Hasil native tool belum tersedia untuk continuation.");
     }
     thread.messages.push(
-      {
-        role: "assistant",
-        content: null,
-        tool_calls: [pending.call],
-      },
+      pending.assistant,
       {
         role: "tool",
-        tool_call_id: pending.call.id,
-        name: pending.call.function.name,
+        tool_call_id: pending.assistant.tool_calls[0]!.id,
+        name: pending.assistant.tool_calls[0]!.function.name,
         content: JSON.stringify({
           capabilityId: observation.capabilityId,
           status: observation.status,

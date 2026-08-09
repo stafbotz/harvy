@@ -21,6 +21,13 @@ import {
   contextManifestLogFields,
   type ContextManifest,
 } from "../harness/context-manifest.js";
+import type { ExecutionPlan } from "../core/execution-policy.js";
+import type { ModelProfile, ModelProfileRegistry } from "./model-profile.js";
+import {
+  bindProviderToolCall,
+  serializeProviderMessages,
+  serializeProviderOptions,
+} from "./provider-adapter.js";
 
 /**
  * Klien chat completion yang netral penyedia.
@@ -40,8 +47,22 @@ export interface ChatTextMessage {
 /** Respons assistant yang harus diputar ulang sebelum hasil tool. */
 export interface ChatAssistantToolMessage {
   role: "assistant";
-  content: null;
+  content: string | null;
   tool_calls: readonly ChatToolCall[];
+  /** Binding + reasoning provider hanya hidup pada transcript invocation aktif. */
+  continuation?: AssistantContinuation;
+}
+
+export interface ProviderModelBinding {
+  providerId: string;
+  modelId: string;
+}
+
+export interface AssistantContinuation extends ProviderModelBinding {
+  /** Binding mencegah metadata reasoning diputar pada provider/model lain. */
+  reasoning?: string;
+  reasoningContent?: string;
+  reasoningDetails?: readonly unknown[];
 }
 
 /** Hasil executor lokal pada continuation native chat-completions. */
@@ -94,7 +115,12 @@ export interface ChatToolCall {
 
 export type ChatCompletion =
   | { kind: "text"; content: string }
-  | { kind: "tool_calls"; toolCalls: readonly ChatToolCall[] };
+  | {
+      kind: "tool_calls";
+      /** Alias lama dipertahankan untuk consumer yang hanya perlu call. */
+      toolCalls: readonly ChatToolCall[];
+      assistant: ChatAssistantToolMessage;
+    };
 
 export type AiRequestOperation =
   | "group-ingress"
@@ -131,6 +157,8 @@ export interface ChatRequest {
   validateToolCalls?: (toolCalls: readonly ChatToolCall[]) => boolean;
   /** Metadata bebas isi dari context compiler; tidak dikirim ke provider. */
   contextManifest?: ContextManifest;
+  /** Keputusan kode; prompt dan model tidak dapat mengubah metadata ini. */
+  execution?: ExecutionPlan;
   /** Label route lokal untuk observability; tidak dikirim ke provider. */
   operation?: AiRequestOperation;
   /**
@@ -163,6 +191,8 @@ export interface AiClientOptions {
   environment?: RuntimeEnvironment;
   costCenter?: UsageCostCenter;
   logger?: OperationalLogger;
+  /** Registry capability provider+model yang diverifikasi composition root. */
+  modelProfiles?: ModelProfileRegistry;
   now?: () => number;
 }
 
@@ -214,6 +244,10 @@ const MAX_NATIVE_TOOL_SCHEMA_CHARACTERS = 64_000;
 const MAX_NATIVE_TOOL_CALLS = 8;
 const MAX_NATIVE_TOOL_ARGUMENT_CHARACTERS = 32_000;
 const MAX_NATIVE_THOUGHT_SIGNATURE_CHARACTERS = 64_000;
+const MAX_REASONING_CONTINUATION_CHARACTERS = 256_000;
+const MAX_REASONING_DETAILS_CHARACTERS = 512_000;
+const MAX_REASONING_DETAILS_DEPTH = 32;
+const MAX_REASONING_DETAILS_NODES = 8_192;
 
 export class AiClient {
   private readonly logger: OperationalLogger;
@@ -250,10 +284,24 @@ export class AiClient {
    * Mengirim native function tools dan hanya menerima satu atau lebih
    * `tool_calls`. Pemilihan capability tetap divalidasi harness; klien ini
    * hanya menjaga kontrak wire provider.
+   *
+   * Hanya untuk konsumsi one-shot/kompatibilitas. Loop yang akan mengirim hasil
+   * tool kembali ke model wajib memakai `completeToolTurn()` agar metadata
+   * assistant-level tidak dibuang.
    */
   async completeToolCalls(
     request: ChatRequest & { tools: readonly ChatFunctionTool[] },
   ): Promise<readonly ChatToolCall[]> {
+    return (await this.completeToolTurn(request)).tool_calls;
+  }
+
+  /**
+   * Mengembalikan assistant turn utuh agar reasoning continuation tidak hilang
+   * sebelum hasil tool diputar ulang. Wrapper lama tetap tersedia di atas.
+   */
+  async completeToolTurn(
+    request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+  ): Promise<ChatAssistantToolMessage> {
     const normalizedRequest = {
       ...request,
       toolChoice: request.toolChoice ?? "required",
@@ -266,7 +314,8 @@ export class AiClient {
         "Model tidak menghasilkan native tool call yang diwajibkan.",
       );
     }
-    const calls = result.completion.toolCalls;
+    const assistant = result.completion.assistant;
+    const calls = assistant.tool_calls;
     const availableNames = new Set(
       normalizedRequest.tools.map((tool) => tool.function.name),
     );
@@ -285,7 +334,7 @@ export class AiClient {
     ) {
       throw new AiError("Model mengabaikan native tool_choice yang ditetapkan.");
     }
-    return calls;
+    return assistant;
   }
 
   private async perform(request: ChatRequest): Promise<CompletionResult> {
@@ -410,7 +459,29 @@ export class AiClient {
       keys: fallback.keys,
       modelInQuery: fallback.modelInQuery ?? false,
     };
-    const fallbackRequest = { ...request, model: fallback.model };
+    const fallbackProfile = this.options.modelProfiles?.get(
+      fallbackTarget.providerId,
+      fallback.model,
+    ) ?? null;
+    if (fallbackProfile?.verification === "explicit") {
+      throw new AiError(
+        "Capability explicit provider fallback belum didukung.",
+      );
+    }
+    const fallbackRequest: ChatRequest = {
+      ...request,
+      model: fallback.model,
+      // Capability reasoning fallback belum diprofilkan. Pertahankan request
+      // pengguna, tetapi jangan menebak field wire provider cadangan.
+      ...(request.execution
+        ? {
+            execution: {
+              ...request.execution,
+              effectiveEffort: null,
+            },
+          }
+        : {}),
+    };
     this.logger.warn(
       "ai_fallback_activated",
       "Provider utama gagal sementara; permintaan dialihkan ke provider cadangan mode uji.",
@@ -498,7 +569,6 @@ export class AiClient {
         return await this.send(
           provider,
           request,
-          provider.keys.take(),
           state,
         );
       } catch (error) {
@@ -538,9 +608,37 @@ export class AiClient {
   private async send(
     provider: AiProviderTarget,
     request: ChatRequest,
-    apiKey: string,
     state: LogicalRequestState,
   ): Promise<CompletionResult> {
+    const registry = this.options.modelProfiles;
+    const profile = registry?.get(
+      provider.providerId,
+      request.model,
+    ) ?? null;
+    if (registry && !profile) {
+      throw new AiError(
+        `Profile model tidak terdaftar: ${provider.providerId}/${request.model}.`,
+      );
+    }
+    const timeoutMs = this.requestTimeoutMs(request);
+    assertExecutionRequest(request, profile, timeoutMs);
+    const providerMessages = serializeProviderMessages(request.messages, {
+      providerId: provider.providerId,
+      modelId: request.model,
+      profile,
+    });
+    const providerOptions = serializeProviderOptions({
+      providerId: provider.providerId,
+      modelId: request.model,
+      profile,
+      execution: request.execution ?? null,
+      temperature: request.temperature ?? 0.7,
+    });
+    const apiKey = provider.keys.take();
+
+    // Validasi request/continuation harus selesai sebelum sebuah attempt
+    // dicatat. Request lokal yang ditolak tidak boleh meninggalkan record
+    // `started` yang seolah-olah pernah mencapai provider.
     const startedAt = Date.now();
     const attemptContext = this.attemptContext(
       provider,
@@ -561,7 +659,7 @@ export class AiClient {
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
-      request.timeoutMs ?? this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      timeoutMs,
     );
 
     try {
@@ -577,17 +675,22 @@ export class AiClient {
           headers,
           body: JSON.stringify({
             model: request.model,
-            messages: request.messages,
-            temperature: request.temperature ?? 0.7,
+            messages: providerMessages,
+            ...providerOptions,
             max_tokens: request.maxTokens ?? 800,
-            ...(request.json
+            ...(request.json && profile?.supports.structuredOutput !== false
               ? { response_format: { type: "json_object" } }
               : {}),
             ...(request.tools
               ? {
                   tools: request.tools,
-                  tool_choice: request.toolChoice ?? "auto",
-                  parallel_tool_calls: request.parallelToolCalls ?? false,
+                  ...(profile?.supports.toolChoice === false
+                    ? {}
+                    : {
+                        tool_choice: request.toolChoice ?? "auto",
+                        parallel_tool_calls:
+                          request.parallelToolCalls ?? false,
+                      }),
                 }
               : {}),
           }),
@@ -609,7 +712,12 @@ export class AiClient {
       const finishReason = readFinishReason(payload);
 
       try {
-        const completion = readCompletion(payload);
+        const completion = readCompletion(
+          payload,
+          provider.providerId,
+          request.model,
+          profile,
+        );
         const responseAccepted = validateProviderCompletion(
           request,
           completion,
@@ -739,6 +847,14 @@ export class AiClient {
       inputTokenEstimate: estimateRequestInputTokens(request),
       safetyCritical: request.usage.safetyCritical,
       startedAt: new Date(startedAt).toISOString(),
+      ...(request.execution
+        ? {
+            modelRole: request.execution.role,
+            requestedEffort: request.execution.requestedEffort,
+            effectiveEffort: request.execution.effectiveEffort,
+            verbosity: request.execution.verbosity,
+          }
+        : {}),
     };
   }
 
@@ -764,13 +880,14 @@ export class AiClient {
       parallelToolCalls: request.parallelToolCalls ?? false,
       maxTokens: request.maxTokens ?? 800,
       inputTokenEstimate: estimateRequestInputTokens(request),
+      modelRole: request.execution?.role,
+      requestedEffort: request.execution?.requestedEffort,
+      effectiveEffort: request.execution?.effectiveEffort,
+      verbosity: request.execution?.verbosity,
       ...(request.contextManifest
         ? contextManifestLogFields(request.contextManifest)
         : {}),
-      timeoutMs:
-        request.timeoutMs ??
-        this.options.timeoutMs ??
-        DEFAULT_TIMEOUT_MS,
+      timeoutMs: this.requestTimeoutMs(request),
     };
   }
 
@@ -800,6 +917,14 @@ export class AiClient {
 
   private now(): number {
     return this.options.now?.() ?? Date.now();
+  }
+
+  private requestTimeoutMs(request: ChatRequest): number {
+    if (request.timeoutMs !== undefined) return request.timeoutMs;
+    const configured = this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    return request.execution
+      ? Math.min(configured, request.execution.deadlineMs)
+      : configured;
   }
 }
 
@@ -1007,7 +1132,8 @@ function readTokenUsage(
     (typeof message?.content === "string" ? message.content.length : 0) +
     (message?.tool_calls === undefined
       ? 0
-      : safeSerializedLength(message.tool_calls));
+      : safeSerializedLength(message.tool_calls)) +
+    rawContinuationCharacters(message);
   const outputEstimate = Math.ceil(outputCharacters / 4);
 
   return {
@@ -1029,7 +1155,20 @@ function readFinishReason(payload: unknown): string | null {
   const value = (
     payload as { choices?: { finish_reason?: unknown }[] }
   )?.choices?.[0]?.finish_reason;
-  return typeof value === "string" ? value : null;
+  return normalizedFinishReason(value);
+}
+
+function normalizedFinishReason(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  switch (value) {
+    case "stop":
+    case "tool_calls":
+    case "length":
+    case "content_filter":
+      return value;
+    default:
+      return "other";
+  }
 }
 
 function estimateRequestInputTokens(request: ChatRequest): number {
@@ -1038,7 +1177,8 @@ function estimateRequestInputTokens(request: ChatRequest): number {
       sum +
       (typeof message.content === "string" ? message.content.length : 0) +
       (message.role === "assistant" && "tool_calls" in message
-        ? safeSerializedLength(message.tool_calls)
+        ? toolCallsWireCharacters(message.tool_calls) +
+          assistantContinuationCharacters(message.continuation)
         : 0) +
       (message.role === "tool"
         ? message.tool_call_id.length + (message.name?.length ?? 0)
@@ -1049,6 +1189,47 @@ function estimateRequestInputTokens(request: ChatRequest): number {
     ? safeSerializedLength(request.tools)
     : 0;
   return Math.ceil((messageCharacters + toolCharacters) / 4);
+}
+
+function toolCallsWireCharacters(toolCalls: readonly ChatToolCall[]): number {
+  return safeSerializedLength(toolCalls.map((call) => ({
+    id: call.id,
+    type: "function",
+    function: {
+      name: call.function.name,
+      arguments: call.function.arguments,
+    },
+    ...(call.extra_content ? { extra_content: call.extra_content } : {}),
+  })));
+}
+
+function rawContinuationCharacters(value: unknown): number {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+  const record = value as Record<string, unknown>;
+  return (
+    (typeof record["reasoning"] === "string"
+      ? record["reasoning"].length
+      : 0) +
+    (typeof record["reasoning_content"] === "string"
+      ? record["reasoning_content"].length
+      : 0) +
+    (record["reasoning_details"] === undefined
+      ? 0
+      : safeSerializedLength(record["reasoning_details"]))
+  );
+}
+
+function assistantContinuationCharacters(
+  continuation: AssistantContinuation | undefined,
+): number {
+  if (!continuation) return 0;
+  return (
+    (continuation.reasoning?.length ?? 0) +
+    (continuation.reasoningContent?.length ?? 0) +
+    (continuation.reasoningDetails === undefined
+      ? 0
+      : safeSerializedLength(continuation.reasoningDetails))
+  );
 }
 
 function inputTokenCalibrationFields(
@@ -1102,9 +1283,10 @@ function providerGenerationId(payload: unknown): string | null {
 function responseOutcomeForError(
   error: unknown,
 ): ProviderAttemptFinish["responseOutcome"] {
-  return error instanceof AiError && error.message.includes("terpotong")
-    ? "truncated"
-    : "empty";
+  if (!(error instanceof AiError)) return "empty";
+  if (error.message.includes("terpotong")) return "truncated";
+  if (error.message.includes("tidak lengkap atau ditolak")) return "incomplete";
+  return "empty";
 }
 
 function validateProviderCompletion(
@@ -1113,9 +1295,27 @@ function validateProviderCompletion(
 ): boolean {
   if (completion.kind === "tool_calls") {
     if (!request.tools || request.tools.length === 0) return false;
+    const calls = completion.assistant.tool_calls;
+    const availableNames = new Set(
+      request.tools.map((tool) => tool.function.name),
+    );
+    if (calls.some((call) => !availableNames.has(call.function.name))) {
+      return false;
+    }
+    if (!request.parallelToolCalls && calls.length !== 1) return false;
+    if (request.toolChoice === "none") return false;
+    const selectedToolName = typeof request.toolChoice === "object"
+      ? request.toolChoice.function.name
+      : null;
+    if (
+      selectedToolName !== null &&
+      calls.some((call) => call.function.name !== selectedToolName)
+    ) {
+      return false;
+    }
     if (!request.validateToolCalls) return true;
     try {
-      return request.validateToolCalls(completion.toolCalls) === true;
+      return request.validateToolCalls(calls) === true;
     } catch {
       return false;
     }
@@ -1167,7 +1367,12 @@ function inferChannel(
   return ownerId.startsWith("whatsapp:") ? "whatsapp" : "telegram";
 }
 
-function readCompletion(payload: unknown): ChatCompletion {
+function readCompletion(
+  payload: unknown,
+  providerId: string,
+  modelId: string,
+  profile: ModelProfile | null,
+): ChatCompletion {
   const choice = (
     payload as {
       choices?: {
@@ -1176,19 +1381,35 @@ function readCompletion(payload: unknown): ChatCompletion {
       }[];
     }
   )?.choices?.[0];
+  const finishReason = normalizedFinishReason(choice?.finish_reason);
 
   // Balasan yang terpotong tampak seperti balasan rusak di lapisan atas, dan
   // penyebabnya tidak terlihat sama sekali. Model penalaran menghabiskan jatah
   // token untuk berpikir, lalu jawabannya terpenggal di tengah.
-  if (choice?.finish_reason === "length") {
+  if (finishReason === "length") {
     throw new AiError(
       "Balasan model terpotong karena batas token (finish_reason=length). " +
         "Naikkan maxTokens untuk permintaan ini.",
     );
   }
 
+  if (
+    finishReason !== "stop" &&
+    finishReason !== "tool_calls"
+  ) {
+    const reason = finishReason ?? "missing";
+    throw new AiError(
+      `Balasan model tidak lengkap atau ditolak (finish_reason=${reason}).`,
+    );
+  }
+
   const rawToolCalls = choice?.message?.tool_calls;
   if (rawToolCalls !== undefined && rawToolCalls !== null) {
+    if (finishReason !== "tool_calls") {
+      throw new AiError(
+        "Native tool call tidak mempunyai finish_reason=tool_calls.",
+      );
+    }
     if (
       !Array.isArray(rawToolCalls) ||
       rawToolCalls.length < 1 ||
@@ -1197,7 +1418,30 @@ function readCompletion(payload: unknown): ChatCompletion {
       throw new AiError("Native tool call model tidak dikenali.");
     }
     const toolCalls = rawToolCalls.map(readToolCall);
-    return { kind: "tool_calls", toolCalls };
+    const content = choice?.message?.content;
+    if (content !== null && content !== undefined && typeof content !== "string") {
+      throw new AiError("Konten assistant native tool tidak sah.");
+    }
+    const continuation = readAssistantContinuation(
+      choice?.message,
+      providerId,
+      modelId,
+      profile,
+    );
+    const assistant = immutableAssistantToolMessage({
+        role: "assistant",
+        content: typeof content === "string" ? content : null,
+        tool_calls: toolCalls,
+        continuation,
+      });
+    for (const call of assistant.tool_calls) {
+      bindProviderToolCall(call, { providerId, modelId });
+    }
+    return {
+      kind: "tool_calls",
+      toolCalls: assistant.tool_calls,
+      assistant,
+    };
   }
 
   if (choice?.finish_reason === "tool_calls") {
@@ -1271,6 +1515,227 @@ function readToolCallExtraContent(
     throw new AiError("Thought signature native tool call tidak sah.");
   }
   return { google: { thought_signature: signature } };
+}
+
+function readAssistantContinuation(
+  value: unknown,
+  providerId: string,
+  modelId: string,
+  profile: ModelProfile | null,
+): AssistantContinuation {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return Object.freeze({ providerId, modelId });
+  }
+  const message = value as Record<string, unknown>;
+  const reasoning = readBoundedReasoningString(message["reasoning"], "reasoning");
+  const reasoningContent = readBoundedReasoningString(
+    message["reasoning_content"],
+    "reasoning_content",
+  );
+  const rawDetails = message["reasoning_details"];
+  let reasoningDetails: readonly unknown[] | undefined;
+  if (rawDetails !== undefined && rawDetails !== null) {
+    if (
+      !Array.isArray(rawDetails) ||
+      !isBoundedJsonData(rawDetails) ||
+      safeSerializedLength(rawDetails) > MAX_REASONING_DETAILS_CHARACTERS
+    ) {
+      throw new AiError("Reasoning details provider tidak sah atau terlalu besar.");
+    }
+    reasoningDetails = deepFreezeJson(structuredClone(rawDetails));
+  }
+  if (
+    (reasoning !== undefined ||
+      reasoningContent !== undefined ||
+      reasoningDetails !== undefined) &&
+    (profile?.verification !== "explicit" ||
+      !profile.continuation.preserveReasoning)
+  ) {
+    throw new AiError(
+      "Profile model tidak mengizinkan reasoning continuation provider.",
+    );
+  }
+  return Object.freeze({
+    providerId,
+    modelId,
+    ...(reasoning !== undefined ? { reasoning } : {}),
+    ...(reasoningContent !== undefined ? { reasoningContent } : {}),
+    ...(reasoningDetails !== undefined ? { reasoningDetails } : {}),
+  });
+}
+
+function readBoundedReasoningString(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length > MAX_REASONING_CONTINUATION_CHARACTERS
+  ) {
+    throw new AiError(`${field} provider tidak sah atau terlalu besar.`);
+  }
+  return value;
+}
+
+function isBoundedJsonData(root: unknown): boolean {
+  const stack: { value: unknown; depth: number }[] = [{ value: root, depth: 0 }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    nodes += 1;
+    if (nodes > MAX_REASONING_DETAILS_NODES || current.depth > MAX_REASONING_DETAILS_DEPTH) {
+      return false;
+    }
+    const value = current.value;
+    if (
+      value === null ||
+      typeof value === "string" ||
+      typeof value === "boolean" ||
+      (typeof value === "number" && Number.isFinite(value))
+    ) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        stack.push({ value: entry, depth: current.depth + 1 });
+      }
+      continue;
+    }
+    if (!value || typeof value !== "object") return false;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    for (const entry of Object.values(value)) {
+      stack.push({ value: entry, depth: current.depth + 1 });
+    }
+  }
+  return true;
+}
+
+function deepFreezeJson<T>(root: T): T {
+  const stack: object[] = [];
+  if (root !== null && typeof root === "object") stack.push(root as object);
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    for (const value of Object.values(current)) {
+      if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+        stack.push(value);
+      }
+    }
+    Object.freeze(current);
+  }
+  return root;
+}
+
+function immutableAssistantToolMessage(
+  message: ChatAssistantToolMessage,
+): ChatAssistantToolMessage {
+  return deepFreezeJson(structuredClone(message));
+}
+
+function assertExecutionRequest(
+  request: ChatRequest,
+  profile: ModelProfile | null,
+  timeoutMs: number,
+): void {
+  const execution = request.execution;
+  if (
+    profile?.verification === "explicit" &&
+    profile.reasoning.mandatory &&
+    (!execution || execution.effectiveEffort === null)
+  ) {
+    throw new AiError("Profile reasoning wajib memerlukan execution effort.");
+  }
+  if (execution) {
+    if (
+      request.maxTokens !== execution.maxOutputTokens ||
+      timeoutMs > execution.deadlineMs ||
+      (request.usage !== undefined && request.usage.tier !== execution.tier) ||
+      (request.tools !== undefined && !execution.allowTools)
+    ) {
+      throw new AiError("Request model tidak cocok dengan execution plan.");
+    }
+    if (
+      execution.effectiveEffort !== null &&
+      (!profile ||
+        !profile.reasoning.supportedEfforts.includes(execution.effectiveEffort))
+    ) {
+      throw new AiError("Execution plan memakai reasoning effort tanpa profile sah.");
+    }
+  }
+  if (request.tools && profile && !profile.supports.tools) {
+    throw new AiError("Profile model tidak mendukung native tool.");
+  }
+  if (
+    request.json &&
+    profile?.verification === "explicit" &&
+    !profile.supports.structuredOutput
+  ) {
+    throw new AiError("Profile model tidak mendukung structured output.");
+  }
+  if (
+    request.tools &&
+    execution &&
+    execution.maxSteps > 1 &&
+    profile?.verification === "explicit" &&
+    !profile.continuation.preserveAssistantMessage
+  ) {
+    throw new AiError("Profile model tidak mendukung continuation native tool.");
+  }
+  if (
+    request.tools &&
+    execution?.effectiveEffort !== null &&
+    execution?.effectiveEffort !== undefined &&
+    profile?.verification === "explicit" &&
+    !profile.continuation.preserveReasoning
+  ) {
+    throw new AiError("Profile model tidak mendukung reasoning continuation.");
+  }
+  const continuedAssistantTurns = request.messages.filter(
+    (message): message is ChatAssistantToolMessage =>
+      message.role === "assistant" && "tool_calls" in message,
+  );
+  if (
+    continuedAssistantTurns.length > 0 &&
+    profile?.verification === "explicit" &&
+    !profile.continuation.preserveAssistantMessage
+  ) {
+    throw new AiError("Profile model tidak mendukung replay assistant tool turn.");
+  }
+  if (
+    continuedAssistantTurns.some((message) =>
+      message.continuation?.reasoning !== undefined ||
+      message.continuation?.reasoningContent !== undefined ||
+      message.continuation?.reasoningDetails !== undefined
+    ) &&
+    profile?.verification === "explicit" &&
+    !profile.continuation.preserveReasoning
+  ) {
+    throw new AiError("Profile model tidak mendukung replay reasoning.");
+  }
+  const maxOutputTokens = request.maxTokens ?? 800;
+  if (
+    profile?.maxOutputTokens !== null &&
+    profile?.maxOutputTokens !== undefined &&
+    maxOutputTokens > profile.maxOutputTokens
+  ) {
+    throw new AiError("Request melampaui output ceiling profile model.");
+  }
+  if (
+    profile?.contextWindow !== null &&
+    profile?.contextWindow !== undefined &&
+    estimateRequestInputTokens(request) + maxOutputTokens >
+      profile.contextWindow
+  ) {
+    throw new AiError("Request melampaui context window profile model.");
+  }
+  if (
+    typeof request.toolChoice === "object" &&
+    profile &&
+    !profile.supports.namedToolChoice
+  ) {
+    throw new AiError("Profile model tidak mendukung named tool choice.");
+  }
 }
 
 function assertNativeToolRequest(

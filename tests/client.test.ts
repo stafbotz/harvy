@@ -17,6 +17,11 @@ import type {
   TokenUsage,
   UsageObserver,
 } from "../src/domain/telemetry.js";
+import {
+  ModelProfileRegistry,
+  type ModelProfile,
+} from "../src/ai/model-profile.js";
+import { ExecutionPolicy } from "../src/core/execution-policy.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -140,6 +145,483 @@ describe("AiClient", () => {
       },
     ]);
     assert.doesNotMatch(JSON.stringify(infoLogs), /SIGNATURE_CANARY_NATIVE_123/u);
+  });
+
+  it("mempertahankan reasoning_details OpenRouter pada assistant turn utuh", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const infoLogs: Record<string, unknown>[] = [];
+    const reasoningDetails = [{
+      type: "reasoning.encrypted",
+      data: "REASONING_DETAILS_CANARY_456",
+      index: 0,
+    }];
+    let call = 0;
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      call += 1;
+      return call === 1
+        ? nativeToolResponse(
+            "harvy_final_v1",
+            { reply: "baca" },
+            undefined,
+            {
+              reasoning: "RAW_REASONING_CANARY_789",
+              reasoning_details: reasoningDetails,
+            },
+          )
+        : nativeToolResponse("harvy_final_v1", { reply: "selesai" });
+    };
+    const registry = modelProfiles("openrouter", "openrouter-reasoning");
+    const execution = new ExecutionPolicy().decide({
+      tier: "ambitious",
+      role: "planner",
+      workClass: "agent",
+      profile: registry.require("openrouter", "model-uji"),
+      maxOutputTokens: 4_096,
+      deadlineMs: 45_000,
+      maxSteps: 6,
+      allowTools: true,
+    });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      providerId: "openrouter",
+      modelProfiles: registry,
+      logger: recordingLogger((_event, fields) => infoLogs.push(fields ?? {})),
+    });
+
+    const first = await client.completeToolTurn({
+      ...nativeToolRequest(),
+      maxTokens: 4_096,
+      execution,
+    });
+    assert.deepEqual(first.continuation?.reasoningDetails, reasoningDetails);
+    assert.equal(first.continuation?.providerId, "openrouter");
+    assert.equal(Object.isFrozen(first), true);
+    assert.equal(Object.isFrozen(first.continuation?.reasoningDetails), true);
+
+    await client.completeToolTurn({
+      ...nativeToolRequest(),
+      maxTokens: 4_096,
+      execution,
+      messages: [
+        { role: "user", content: "selesaikan" },
+        first,
+        {
+          role: "tool",
+          tool_call_id: first.tool_calls[0]!.id,
+          content: '{"status":"ok"}',
+        },
+      ],
+    });
+
+    assert.deepEqual(bodies[0]?.["reasoning"], {
+      effort: "medium",
+      exclude: false,
+    });
+    const replay = (bodies[1]?.["messages"] as Record<string, unknown>[])[1];
+    assert.deepEqual(replay?.["reasoning_details"], reasoningDetails);
+    assert.equal(replay?.["reasoning"], "RAW_REASONING_CANARY_789");
+    assert.doesNotMatch(
+      JSON.stringify(infoLogs),
+      /(?:REASONING_DETAILS|RAW_REASONING)_CANARY/u,
+    );
+  });
+
+  it("menyerialisasi effort Google tanpa field OpenRouter", async () => {
+    let body: Record<string, unknown> | null = null;
+    globalThis.fetch = async (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return chatResponse("selesai");
+    };
+    const registry = modelProfiles(
+      "google-ai-studio",
+      "openai-reasoning-effort",
+    );
+    const execution = new ExecutionPolicy().decide({
+      tier: "cheap",
+      role: "classifier",
+      workClass: "mechanical",
+      profile: registry.require("google-ai-studio", "model-uji"),
+      maxOutputTokens: 128,
+      deadlineMs: 2_000,
+    });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      providerId: "google-ai-studio",
+      modelProfiles: registry,
+    });
+
+    await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "klasifikasikan" }],
+      temperature: 0,
+      maxTokens: 128,
+      timeoutMs: 2_000,
+      execution,
+    });
+    assert.ok(body);
+    assert.equal(body["reasoning_effort"], "low");
+    assert.equal(body["reasoning"], undefined);
+    assert.equal(body["temperature"], 0);
+  });
+
+  it("menghilangkan tool_choice untuk profile DeepSeek yang tidak mendukungnya", async () => {
+    let body: Record<string, unknown> | null = null;
+    globalThis.fetch = async (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return nativeToolResponse("harvy_final_v1", { reply: "selesai" });
+    };
+    const registry = new ModelProfileRegistry([{
+      provider: "deepseek",
+      id: "model-uji",
+      verification: "explicit",
+      reasoning: {
+        mandatory: false,
+        defaultEffort: "high",
+        supportedEfforts: ["high", "max"],
+        wireFormat: "deepseek-thinking",
+      },
+      supports: {
+        tools: true,
+        toolChoice: false,
+        namedToolChoice: false,
+        structuredOutput: true,
+        temperature: false,
+      },
+      continuation: {
+        preserveReasoning: true,
+        preserveAssistantMessage: true,
+      },
+      contextWindow: null,
+      maxOutputTokens: null,
+    }]);
+    const execution = new ExecutionPolicy().decide({
+      tier: "ambitious",
+      role: "recovery",
+      workClass: "agent",
+      profile: registry.require("deepseek", "model-uji"),
+      maxOutputTokens: 4_096,
+      deadlineMs: 30_000,
+      allowTools: true,
+      allowEscalation: true,
+      escalationReason: "validator_failed",
+    });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      providerId: "deepseek",
+      modelProfiles: registry,
+    });
+
+    await client.completeToolTurn({
+      ...nativeToolRequest(),
+      maxTokens: 4_096,
+      execution,
+    });
+    assert.ok(body);
+    assert.equal(body["tool_choice"], undefined);
+    assert.equal(body["parallel_tool_calls"], undefined);
+    assert.equal(body["temperature"], undefined);
+    assert.equal(body["reasoning_effort"], "high");
+    assert.deepEqual(body["thinking"], { type: "enabled" });
+  });
+
+  it("menolak continuation lintas provider sebelum network", async () => {
+    let fetches = 0;
+    let attemptStarts = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return nativeToolResponse("harvy_final_v1", { reply: "tidak boleh" });
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      providerId: "google-ai-studio",
+      attemptObserver: {
+        startAttempt: async () => {
+          attemptStarts += 1;
+        },
+        finishAttempt: async () => undefined,
+      },
+    });
+    await assert.rejects(
+      () => client.completeToolTurn({
+        ...nativeToolRequest(),
+        messages: [
+          { role: "user", content: "lanjut" },
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [nativeDecisionToolCall()],
+            continuation: {
+              providerId: "openrouter",
+              modelId: "model-uji",
+              reasoningDetails: [{ type: "reasoning.encrypted", data: "x" }],
+            },
+          },
+          {
+            role: "tool",
+            tool_call_id: "call-uji",
+            content: "{}",
+          },
+        ],
+        usage: {
+          ownerId: "pemilik-uji",
+          tier: "cheap",
+          purpose: "reply",
+          safetyCritical: false,
+        },
+      }),
+      /terikat provider\/model lain/u,
+    );
+    assert.equal(fetches, 0);
+    assert.equal(attemptStarts, 0);
+  });
+
+  it("menolak reasoning continuation yang belum di-opt-in profile", async () => {
+    let fetches = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return nativeToolResponse(
+        "harvy_final_v1",
+        { reply: "belum boleh" },
+        undefined,
+        { reasoning: "opaque-but-unverified" },
+      );
+    };
+    const explicit = modelProfiles(
+      "openrouter",
+      "openrouter-reasoning",
+    ).require("openrouter", "model-uji");
+    const compatibility = new ModelProfileRegistry([{
+      ...explicit,
+      verification: "compatibility",
+      reasoning: {
+        mandatory: false,
+        defaultEffort: "none",
+        supportedEfforts: [],
+        wireFormat: "none",
+      },
+      continuation: {
+        preserveReasoning: false,
+        preserveAssistantMessage: true,
+      },
+    }]);
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      providerId: "openrouter",
+      modelProfiles: compatibility,
+    });
+
+    await assert.rejects(
+      () => client.completeToolTurn(nativeToolRequest()),
+      /tidak mengizinkan reasoning continuation provider/u,
+    );
+    assert.equal(fetches, 1);
+  });
+
+  it("menegakkan capability explicit walau caller legacy tanpa execution plan", async () => {
+    let fetches = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return chatResponse("tidak boleh tercapai");
+    };
+    const base = modelProfiles(
+      "google-ai-studio",
+      "openai-reasoning-effort",
+    ).require("google-ai-studio", "model-uji");
+    const noTools = new ModelProfileRegistry([{
+      ...base,
+      supports: {
+        tools: false,
+        toolChoice: false,
+        namedToolChoice: false,
+        structuredOutput: false,
+        temperature: true,
+      },
+      contextWindow: 1,
+      maxOutputTokens: 1,
+    }]);
+    const toolClient = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      providerId: "google-ai-studio",
+      modelProfiles: noTools,
+    });
+    await assert.rejects(
+      () => toolClient.completeToolTurn(nativeToolRequest()),
+      /tidak mendukung native tool/u,
+    );
+
+    const tinyOutput = new ModelProfileRegistry([{
+      ...base,
+      contextWindow: null,
+      maxOutputTokens: 1,
+    }]);
+    const textClient = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      providerId: "google-ai-studio",
+      modelProfiles: tinyOutput,
+    });
+    await assert.rejects(
+      () => textClient.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 2,
+      }),
+      /melampaui output ceiling/u,
+    );
+    assert.equal(fetches, 0);
+  });
+
+  it("menolak model asing saat registry aktif sebelum key dan attempt dipakai", async () => {
+    let fetches = 0;
+    let keyTakes = 0;
+    let attemptStarts = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return chatResponse("tidak boleh tercapai");
+    };
+    const keys = new ApiKeyPool(["kunci-uji"]);
+    const take = keys.take.bind(keys);
+    keys.take = () => {
+      keyTakes += 1;
+      return take();
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys,
+      providerId: "google-ai-studio",
+      modelProfiles: modelProfiles(
+        "google-ai-studio",
+        "openai-reasoning-effort",
+      ),
+      attemptObserver: {
+        startAttempt: async () => {
+          attemptStarts += 1;
+        },
+        finishAttempt: async () => undefined,
+      },
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-asing",
+        messages: [{ role: "user", content: "halo" }],
+      }),
+      /Profile model tidak terdaftar/u,
+    );
+    assert.equal(fetches, 0);
+    assert.equal(keyTakes, 0);
+    assert.equal(attemptStarts, 0);
+  });
+
+  it("menolak terminal content_filter sebagai final sukses", async () => {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      choices: [{
+        message: { content: "teks parsial" },
+        finish_reason: "content_filter",
+      }],
+    }), { status: 200 });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+      }),
+      /tidak lengkap atau ditolak/u,
+    );
+  });
+
+  it("menolak finish_reason yang hilang sebagai final sukses", async () => {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      choices: [{ message: { content: "teks tanpa terminal" } }],
+    }), { status: 200 });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+      }),
+      /finish_reason=missing/u,
+    );
+  });
+
+  it("menolak tool call yang mengaku finish_reason stop", async () => {
+    globalThis.fetch = async () => {
+      const response = await nativeToolResponse(
+        "harvy_final_v1",
+        { reply: "belum sah" },
+      );
+      const payload = await response.json() as {
+        choices: { finish_reason: string }[];
+      };
+      payload.choices[0]!.finish_reason = "stop";
+      return new Response(JSON.stringify(payload), { status: 200 });
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+    });
+    await assert.rejects(
+      () => client.completeToolTurn(nativeToolRequest()),
+      /tidak mempunyai finish_reason=tool_calls/u,
+    );
+  });
+
+  it("tidak memutar API key untuk request execution yang ditolak lokal", async () => {
+    const authorizations: string[] = [];
+    globalThis.fetch = async (_input, init) => {
+      authorizations.push(String((init?.headers as Record<string, string>).authorization));
+      return chatResponse("selesai");
+    };
+    const registry = modelProfiles(
+      "google-ai-studio",
+      "openai-reasoning-effort",
+    );
+    const execution = new ExecutionPolicy().decide({
+      tier: "cheap",
+      role: "classifier",
+      workClass: "mechanical",
+      profile: registry.require("google-ai-studio", "model-uji"),
+      maxOutputTokens: 128,
+      deadlineMs: 2_000,
+    });
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-1", "kunci-2"]),
+      providerId: "google-ai-studio",
+      modelProfiles: registry,
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "invalid" }],
+        maxTokens: 256,
+        timeoutMs: 2_000,
+        execution,
+      }),
+      /tidak cocok dengan execution plan/u,
+    );
+    await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "valid" }],
+      maxTokens: 128,
+      timeoutMs: 2_000,
+      execution,
+    });
+    assert.deepEqual(authorizations, ["Bearer kunci-1"]);
   });
 
   it("menolak thought signature native yang kosong", async () => {
@@ -822,6 +1304,79 @@ describe("AiClient", () => {
     assert.equal(bodies[1]?.response_format, undefined);
   });
 
+  it("menolak capability explicit fallback alih-alih menurunkan reasoning diam-diam", async () => {
+    let fetches = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      throw new TypeError("primary network down");
+    };
+    const fallbackProfiles = new ModelProfileRegistry([
+      {
+        provider: "primary",
+        id: "model-utama",
+        verification: "compatibility",
+        reasoning: {
+          mandatory: false,
+          defaultEffort: "none",
+          supportedEfforts: [],
+          wireFormat: "none",
+        },
+        supports: {
+          tools: true,
+          toolChoice: true,
+          namedToolChoice: true,
+          structuredOutput: true,
+          temperature: true,
+        },
+        continuation: {
+          preserveReasoning: false,
+          preserveAssistantMessage: true,
+        },
+        contextWindow: null,
+        maxOutputTokens: null,
+      },
+      {
+        provider: "deepseek",
+        id: "model-fallback",
+        verification: "explicit",
+        reasoning: {
+          mandatory: true,
+          defaultEffort: "high",
+          supportedEfforts: ["high", "max"],
+          wireFormat: "deepseek-thinking",
+        },
+        supports: {
+          tools: true,
+          toolChoice: false,
+          namedToolChoice: false,
+          structuredOutput: true,
+          temperature: false,
+        },
+        continuation: {
+          preserveReasoning: true,
+          preserveAssistantMessage: true,
+        },
+        contextWindow: null,
+        maxOutputTokens: null,
+      },
+    ]);
+    const client = new AiClient({
+      baseUrl: "https://primary.invalid/v1",
+      keys: new ApiKeyPool(["utama"]),
+      fallback: testFallback({ providerId: "deepseek" }),
+      modelProfiles: fallbackProfiles,
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-utama",
+        messages: [{ role: "user", content: "halo" }],
+      }),
+      /Capability explicit provider fallback belum didukung/u,
+    );
+    assert.equal(fetches, 1);
+  });
+
   it("berhenti setelah fallback ikut gagal", async () => {
     let fetches = 0;
     globalThis.fetch = async () => {
@@ -871,12 +1426,14 @@ function nativeToolResponse(
   name: string,
   input: Record<string, unknown>,
   extraContent?: NonNullable<ChatToolCall["extra_content"]>,
+  assistantFields: Record<string, unknown> = {},
 ): Response {
   return new Response(
     JSON.stringify({
       choices: [{
         message: {
           content: null,
+          ...assistantFields,
           tool_calls: [{
             id: "call-uji",
             type: "function",
@@ -894,6 +1451,47 @@ function nativeToolResponse(
     }),
     { status: 200, headers: { "content-type": "application/json" } },
   );
+}
+
+function nativeDecisionToolCall(): ChatToolCall {
+  return {
+    id: "call-uji",
+    type: "function",
+    function: {
+      name: "harvy_final_v1",
+      arguments: '{"reply":"selesai"}',
+    },
+  };
+}
+
+function modelProfiles(
+  provider: string,
+  wireFormat: ModelProfile["reasoning"]["wireFormat"],
+): ModelProfileRegistry {
+  return new ModelProfileRegistry([{
+    provider,
+    id: "model-uji",
+    verification: "explicit",
+    reasoning: {
+      mandatory: false,
+      defaultEffort: "medium",
+      supportedEfforts: ["low", "medium", "high"],
+      wireFormat,
+    },
+    supports: {
+      tools: true,
+      toolChoice: true,
+      namedToolChoice: true,
+      structuredOutput: true,
+      temperature: true,
+    },
+    continuation: {
+      preserveReasoning: true,
+      preserveAssistantMessage: true,
+    },
+    contextWindow: null,
+    maxOutputTokens: null,
+  }]);
 }
 
 function recordingLogger(

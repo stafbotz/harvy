@@ -73,9 +73,11 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
 
 - `src/ai/` — lapisan Harvy di atas model: `persona.ts` (kepribadian, batas
   moral, aturan keselamatan), `model-policy.ts` (memilih tingkatan model dari
-  kesulitan), `understand.ts` (membaca balasan model sebagai masukan tidak
-  tepercaya), `client.ts` (HTTP kompatibel OpenAI dengan rotasi kunci serta
-  boundary native `tools`/`tool_choice`),
+  kesulitan), `model-profile.ts` (capability exact provider+model),
+  `provider-adapter.ts` (allowlist message dan reasoning wire per provider),
+  `understand.ts` (membaca balasan model sebagai masukan tidak tepercaya),
+  `client.ts` (HTTP kompatibel OpenAI dengan rotasi kunci, execution-plan
+  validation, dan boundary native `tools`/`tool_choice`),
   `key-pool.ts`, `identity.ts` (jawaban produk "model Capybara"),
   `group-conversation.ts` (planner dan balasan grup), `episode-summary.ts`
   (prompt/parser compaction v2), `context.ts`
@@ -123,13 +125,19 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   yang dinormalisasi menjadi `final|need_input|action`; kernel
   memvalidasi capability dan input sebelum eksekusi. Checkpoint juga membekukan
   batas langkah. `conversation.ts` memegang transcript provider hanya selama
-  satu invocation: exact assistant `tool_calls` diteruskan dengan pesan `tool`
-  dan `tool_call_id` yang cocok, termasuk replay thought signature Gemini.
-  Transcript ini dibuang saat invocation berakhir; checkpoint tetap
+  satu invocation: exact assistant turn diteruskan dengan pesan `tool` dan
+  `tool_call_id` yang cocok. Profile explicit mengizinkan replay berbatas untuk
+  `reasoning`, `reasoning_content`, `reasoning_details`, sedangkan thought
+  signature Gemini tetap dipertahankan; semuanya terikat provider+model dan
+  tidak masuk log. Transcript ini dibuang saat invocation berakhir; checkpoint tetap
   provider-neutral dan resume membangun transcript baru dari state tepercaya.
   Untuk klarifikasi, checkpoint memasangkan prompt `need_input` dengan jawaban
   pengguna sehingga jawaban pendek tetap mempunyai referen tanpa menyimpan
   call ID atau metadata provider.
+  `src/core/execution-policy.ts` memisahkan role, work class, requested/effective
+  reasoning effort, verbosity metadata, deadline, output ceiling, serta izin
+  tool/delegasi dari tier/model routing lama. Seluruh call production membawa
+  plan, tetapi cumulative RunBudget dan context-pressure compaction belum ada.
   Kernel
   dipakai Agent Runtime read-only; kernel tetap stateless,
   sedangkan adapter Telegram dapat mempersistenkan hanya status

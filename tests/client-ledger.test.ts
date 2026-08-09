@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { AiClient } from "../src/ai/client.js";
+import {
+  AiClient,
+  type ChatFunctionTool,
+} from "../src/ai/client.js";
 import { ApiKeyPool } from "../src/ai/key-pool.js";
 import type {
   AiUsageContext,
@@ -176,6 +179,140 @@ describe("AiClient usage ledger", () => {
         },
       });
       assert.equal(raw, "bukan-json-domain");
+      assert.equal(logical.after[0]?.succeeded, false);
+      assert.equal(attempts.finishes[0]?.result.status, "completed");
+      assert.equal(attempts.finishes[0]?.result.responseOutcome, "schema_rejected");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("mencatat respons nonterminal sebagai incomplete beserta usage", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      choices: [{ message: { content: "teks belum terminal" } }],
+      usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+    }), { status: 200 })) as typeof fetch;
+    try {
+      const attempts = new AttemptObserver();
+      const client = new AiClient({
+        baseUrl: "https://primary.example/v1",
+        keys: new ApiKeyPool(["key"]),
+        attemptObserver: attempts,
+      });
+      await assert.rejects(
+        () => client.complete({
+          model: "model",
+          messages: [{ role: "user", content: "uji" }],
+          usage: {
+            ownerId: "student",
+            tier: "cheap",
+            purpose: "reply",
+            safetyCritical: false,
+          },
+        }),
+        /finish_reason=missing/u,
+      );
+      assert.equal(attempts.finishes[0]?.result.status, "response_rejected");
+      assert.equal(attempts.finishes[0]?.result.responseOutcome, "incomplete");
+      assert.equal(attempts.finishes[0]?.result.finishReason, null);
+      assert.equal(attempts.finishes[0]?.result.usage.inputTokens, 7);
+      assert.equal(attempts.finishes[0]?.result.usage.outputTokens, 3);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("menormalisasi finish_reason asing tanpa mempersistenkan isi provider", async () => {
+    const originalFetch = globalThis.fetch;
+    const canary = "SECRET_REASONING_CANARY_MUST_NOT_PERSIST";
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      choices: [{
+        message: { content: "parsial" },
+        finish_reason: canary,
+      }],
+      usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+    }), { status: 200 })) as typeof fetch;
+    try {
+      const attempts = new AttemptObserver();
+      const client = new AiClient({
+        baseUrl: "https://primary.example/v1",
+        keys: new ApiKeyPool(["key"]),
+        attemptObserver: attempts,
+      });
+      let rejection: unknown;
+      try {
+        await client.complete({
+          model: "model",
+          messages: [{ role: "user", content: "uji" }],
+          usage: {
+            ownerId: "student",
+            tier: "cheap",
+            purpose: "reply",
+            safetyCritical: false,
+          },
+        });
+      } catch (error) {
+        rejection = error;
+      }
+      assert.ok(rejection instanceof Error);
+      assert.match(rejection.message, /finish_reason=other/u);
+      assert.doesNotMatch(rejection.message, /SECRET_REASONING_CANARY/u);
+      assert.equal(attempts.finishes[0]?.result.finishReason, "other");
+      assert.doesNotMatch(JSON.stringify(attempts), /SECRET_REASONING_CANARY/u);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("mencatat native tool di luar kontrak sebagai schema_rejected", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: null,
+          tool_calls: [{
+            id: "call-asing",
+            type: "function",
+            function: { name: "tool_tidak_tersedia", arguments: "{}" },
+          }],
+        },
+        finish_reason: "tool_calls",
+      }],
+      usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 },
+    }), { status: 200 })) as typeof fetch;
+    try {
+      const logical = new LogicalObserver();
+      const attempts = new AttemptObserver();
+      const tools = [{
+        type: "function",
+        function: {
+          name: "tool_diizinkan",
+          description: "Tool uji.",
+          parameters: { type: "object", additionalProperties: false },
+        },
+      }] satisfies readonly ChatFunctionTool[];
+      const client = new AiClient({
+        baseUrl: "https://primary.example/v1",
+        keys: new ApiKeyPool(["key"]),
+        usageObserver: logical,
+        attemptObserver: attempts,
+      });
+
+      await assert.rejects(
+        () => client.completeToolTurn({
+          model: "model",
+          messages: [{ role: "user", content: "uji" }],
+          tools,
+          usage: {
+            ownerId: "student",
+            tier: "cheap",
+            purpose: "agent",
+            safetyCritical: false,
+          },
+        }),
+        /tidak tersedia/u,
+      );
       assert.equal(logical.after[0]?.succeeded, false);
       assert.equal(attempts.finishes[0]?.result.status, "completed");
       assert.equal(attempts.finishes[0]?.result.responseOutcome, "schema_rejected");

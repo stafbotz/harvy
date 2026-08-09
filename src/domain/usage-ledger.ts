@@ -8,6 +8,11 @@ import type {
   TokenUsage,
   UsageTier,
 } from "./telemetry.js";
+import type {
+  ModelRole,
+  ReasoningEffort,
+  Verbosity,
+} from "./model-execution.js";
 
 export type RuntimeEnvironment = "development" | "staging" | "production";
 export type UsageCostCenter = "runtime" | "evaluation" | "probe" | "migration";
@@ -41,6 +46,10 @@ export interface ProviderAttemptStart {
   inputTokenEstimate: number;
   safetyCritical: boolean;
   startedAt: string;
+  modelRole?: ModelRole;
+  requestedEffort?: ReasoningEffort;
+  effectiveEffort?: ReasoningEffort | null;
+  verbosity?: Verbosity;
 }
 
 export interface ProviderAttemptFinish {
@@ -57,6 +66,7 @@ export interface ProviderAttemptFinish {
   responseOutcome:
     | "accepted"
     | "truncated"
+    | "incomplete"
     | "empty"
     | "schema_rejected"
     | "not_checked";
@@ -89,6 +99,11 @@ export interface ProviderAttemptRecord {
   maxOutputTokens: number;
   inputTokenEstimate: number;
   safetyCritical: boolean;
+  /** Optional agar record schema v1 lama tetap dapat dibaca tanpa migrasi isi. */
+  modelRole?: ModelRole;
+  requestedEffort?: ReasoningEffort;
+  effectiveEffort?: ReasoningEffort | null;
+  verbosity?: Verbosity;
   status: "started" | ProviderAttemptFinish["status"];
   httpStatus: number | null;
   responseOutcome: ProviderAttemptFinish["responseOutcome"];

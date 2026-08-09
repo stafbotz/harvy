@@ -42,6 +42,14 @@ Model konkret untuk tiap tingkatan **tidak ditulis di kode**. Semuanya dibaca
 dari environment (`AI_MODEL_CHEAP`, `AI_MODEL_EFFICIENT`,
 `AI_MODEL_AMBITIOUS`).
 
+**Amandemen 9 Agustus 2026.** Tier tetap memilih slot model seperti keputusan
+ini, tetapi capability, role, reasoning effort, verbosity metadata, dan wire
+provider diatur ADR-025. Base URL resmi tidak membuktikan capability setiap
+model. Tanpa deklarasi exact `AI_MODEL_PROFILES`, runtime memakai profile
+compatibility dan tidak mengirim reasoning control baru. Ini menggantikan
+asumsi bahwa semua model pada satu endpoint OpenAI-compatible mempunyai
+capability seragam.
+
 Rencana saat keputusan ini dibuat: DeepSeek V4 Flash sebagai `cheap`,
 GPT 5.6 Luna sebagai `efficient`, dan GPT 5.6 Terra sebagai `ambitious`.
 
