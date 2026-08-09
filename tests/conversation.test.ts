@@ -154,27 +154,31 @@ describe("pemahaman pesan", () => {
     assert.equal(manifest?.includedTurnCount, 1);
   });
 
-  it("port grup mempertahankan screening privasi secara eksplisit", async () => {
+  it("compiler ingress grup memisahkan risk hint dari privasi konteks", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(
       recorder(
         requests,
-        '{"risiko":"biasa","sendirian":false,"sensitif":true,"ringkasan":""}',
+        '{"riskHint":{"level":"none","category":null,"confidence":0.98},"contextPrivacy":"sensitive"}',
       ),
       ROUTING,
       "Asia/Jakarta",
     );
 
-    const result = await conversation.triageRisk(
+    const result = await conversation.assessGroupIngress(
       "cerita pribadi",
+      undefined,
       "group",
-      undefined,
-      undefined,
-      { includePrivacySensitivity: true },
     );
 
-    assert.equal(result?.sensitive, true);
-    assert.match(requests[0]?.messages[0]?.content ?? "", /"sensitif"/u);
+    assert.equal(result?.riskHint?.level, "none");
+    assert.equal(result?.contextPrivacy, "sensitive");
+    assert.equal(requests[0]?.usage?.purpose, "group-ingress");
+    assert.equal(requests[0]?.usage?.safetyCritical, false);
+    assert.match(
+      requests[0]?.messages[0]?.content ?? "",
+      /cerita personal.*tanpa bukti bahaya akut.*none/isu,
+    );
   });
 
   it("menilai privasi hanya ketika ada kandidat memori dan bukan sebagai safety-critical", async () => {

@@ -3,10 +3,54 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { TurnTelemetryRecord } from "../src/domain/telemetry.js";
+import type {
+  AiUsageRecord,
+  TurnTelemetryRecord,
+} from "../src/domain/telemetry.js";
 import { FileTelemetryRepository } from "../src/storage/file-telemetry-repository.js";
 
 describe("FileTelemetryRepository migration", () => {
+  it("mempertahankan purpose group-ingress setelah repository dibuka ulang", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "harvy-group-ingress-"));
+    const file = join(directory, "telemetry.json");
+    try {
+      const record: AiUsageRecord = {
+        id: "usage-group-ingress",
+        at: "2026-08-08T00:00:00.000Z",
+        requestId: "request-group-ingress",
+        turnId: "turn-group-ingress",
+        ownerId: "whatsapp:group-1",
+        subjectKind: "group",
+        channel: "whatsapp",
+        tier: "cheap",
+        purpose: "group-ingress",
+        model: "model-uji",
+        maxTokens: 192,
+        inputTokenEstimate: 20,
+        safetyCritical: false,
+        billable: false,
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        estimated: false,
+        estimatedCostUsd: 0,
+        succeeded: true,
+        latencyMs: 12,
+      };
+      await new FileTelemetryRepository(file).appendUsage(record);
+
+      const reopened = new FileTelemetryRepository(file);
+      const stored = await reopened.usageSince(
+        "whatsapp:group-1",
+        new Date("2026-08-07T00:00:00.000Z"),
+      );
+      assert.equal(stored[0]?.purpose, "group-ingress");
+      assert.equal(stored[0]?.billable, false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("memigrasikan v1 tanpa mengarang provenance provider", async () => {
     const directory = await mkdtemp(join(tmpdir(), "harvy-telemetry-migration-"));
     const file = join(directory, "telemetry.json");

@@ -35,6 +35,88 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-09 — Sinyal safety privat bertahan melewati batching
+
+Scope: MessageBatcher Telegram, onboarding/held messages, adapter private,
+serta regresi safety per bubble.
+
+Changed: emergency lokal per bubble dan hasil boundary `urgent` kini dibawa
+sebagai metadata terpisah sampai handler sehingga penggabungan teks tidak
+menghilangkan kewajiban acute triage. Hanya pesan pertama boleh dinilai sebelum
+consent; bubble lain tetap ditahan lokal dengan batas aslinya, lalu baru
+diperiksa per bubble setelah consent agar marker konteks lama tidak memveto
+emergency baru.
+
+Verified: `npm run check` PASS; `npm test` PASS, 755 test dalam 100 suite, 0
+gagal; `npm run context:check` PASS dengan output bootstrap 3.742 byte (estimasi
+936 token).
+
+Not verified: Telegram/model live, latency ACK jaringan nyata, dan akurasi
+false-positive/false-negative pada corpus model aktual.
+
+Next: ukur corpus safety aktual dan uji split-bubble/ACK lewat Telegram nyata.
+
+## 2026-08-09 — Selective safety dan privacy ingress grup
+
+Scope: classifier/planner ingress grup, GroupTurnService, batching WhatsApp,
+usage policy, kontrak arsitektur, dan tes regresi grup.
+
+Changed: core kini menyelesaikan membership authority, binding aktif, dan
+notice live sebelum assessment model. Direct/ambient menghasilkan `riskHint`
+acute-only dan `contextPrivacy` raw-retention-only dengan parser independen;
+ordinary melewati triage, outage safety evidence-aware, unknown privacy
+no-retain tanpa UX krisis, dan durable memory memakai classifier candidate-only
+terpisah. Reviewer menjadi kondisional dan kontrol eksplisit low-risk tetap
+tersedia pada support yang pasti. Bubble pra-join difilter sebelum matcher/model,
+revocation membatalkan assessment aktif/queued, dan emergency lokal melewati
+debounce/`direct_only`: fixed ACK terpisah dari reservation triage, acute triage
+tidak menunggu compiler/memory extraction, emergency ambient tetap mendapat
+final reviewed safety reply, dan matcher full-turn menilai tiap bubble agar
+marker konteks lama tidak memveto emergency baru. Full turn tetap FIFO.
+Observation authority async diserialkan per runtime dan hanya observation
+authorized/live yang boleh menaikkan revision atau menyupersesi ambient. Alias
+default/durable dihidrasi sebelum admission, observation yang sengaja ditolak
+disettle pada generation yang sama, dan mode runtime efektif dibaca ulang tepat
+sebelum pending revalidation, delivery, serta fixed ACK. ADR-024 mengikat
+kontrak ini.
+
+Verified: `npm run check` PASS; tes terarah GroupTurnService dan runtime policy
+PASS, 80 test dalam 2 suite; `npm test` PASS, 755 test dalam 100 suite, 0 gagal;
+`npm run context:check` PASS dengan output bootstrap 3.742 byte (estimasi 936
+token). Audit read-only lifecycle runtime-mode tidak menemukan blocker tersisa.
+
+Not verified: WhatsApp live, grup nyata, model/provider live, latency ACK nyata,
+akurasi false-positive/false-negative classifier risk/privacy pada corpus model
+aktual, serta kualitas split bubble produksi.
+
+Next: ukur false-positive/false-negative safety pada corpus model aktual dan
+validasi latency/split-bubble kanal nyata; Phase C provider/execution policy
+tetap change set terpisah.
+
+## 2026-08-09 — Adaptive debounce per subjek
+
+Scope: batching Telegram privat dan WhatsApp grup, pure timing policy,
+kontrak arsitektur, serta tes regresinya.
+
+Changed: debounce kini belajar p90 gap antar-arrival content-free berbatas per
+pemilik atau `scope+account+participant`, termasuk lintas batch yang sudah
+ter-flush. Speaker switch memutus sampel grup A→B→A; fallback lama tetap sampai
+tiga sampel dan state RAM dibersihkan lewat TTL yang tidak diperpanjang akses,
+eviction, invalidasi, serta shutdown. Estimasi mengubah settle awal dan ruang
+multi-bubble lengkap; window semantik open/incomplete tetap 7/12 detik.
+Perubahan tidak menambah model call, persistensi, isi telemetry/log, atau
+authority baru. ADR-023 mengikat policy.
+
+Verified: `npm run check` PASS; tes terarah policy/batcher/turn-taking PASS;
+`npm test` PASS, 755 test dalam 100 suite, 0 gagal; `npm run context:check` PASS
+dengan output bootstrap 3.742 byte (estimasi 936 token).
+
+Not verified: Telegram live, WhatsApp live, latency jaringan nyata, dan kualitas
+split bubble produksi.
+
+Next: validasi latency dan kualitas split-bubble pada kanal nyata; Phase C
+provider/execution policy tetap change set terpisah.
+
 ## 2026-08-08 — Selective safety routing dan privacy memory privat
 
 Scope: compiler/triage/reviewer percakapan privat, izin tindakan per efek,

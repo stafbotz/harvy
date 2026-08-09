@@ -36,6 +36,7 @@ import {
   type PriceBootstrap,
 } from "./core/control-plane-service.js";
 import { UsageLedgerService } from "./core/usage-ledger-service.js";
+import { groupRuntimeAdmission } from "./core/group-runtime-policy.js";
 import { ConsoleServer } from "./console/console-server.js";
 import { startCheckInWorker } from "./reminders/checkin-worker.js";
 import { startReminderWorker } from "./reminders/reminder-worker.js";
@@ -391,12 +392,12 @@ if (whatsapp && groupMemories) {
       message: string,
       ownerId?: string,
       context?: HarvyContext,
+      signal?: AbortSignal,
     ) => conversation.triageRisk(
       message,
       ownerId,
       context,
-      undefined,
-      { includePrivacySensitivity: true },
+      signal,
     ),
     reviewReply: (
       message: string,
@@ -424,22 +425,41 @@ if (whatsapp && groupMemories) {
     config.defaultTimezone,
     conversation,
     whatsapp,
+    conversation,
+    (message) => resolveManagedGroupRuntimeAdmission(controlPlane, message),
   );
-  groupBatcher = new GroupMessageBatcher(async (message) => {
-    const outcome = groupTurns
-      ? await runManagedGroupTurn(controlPlane, groupTurns, message)
-      : undefined;
-    logger.info(
-      "whatsapp_group_turn_outcome",
-      "Pipeline giliran grup menghasilkan keputusan.",
-      {
-        accountId: message.accountId,
-        outcome: outcome ?? "unavailable",
-      },
-    );
-  }, undefined, undefined, undefined, undefined, logger.child(
-    "whatsapp.group-batcher",
-  ), undefined, (message) => groupTurns?.observe(message) ?? message);
+  groupBatcher = new GroupMessageBatcher(
+    async (message) => {
+      const outcome = groupTurns
+        ? await runManagedGroupTurn(controlPlane, groupTurns, message)
+        : undefined;
+      logger.info(
+        "whatsapp_group_turn_outcome",
+        "Pipeline giliran grup menghasilkan keputusan.",
+        {
+          accountId: message.accountId,
+          outcome: outcome ?? "unavailable",
+        },
+      );
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    logger.child("whatsapp.group-batcher"),
+    undefined,
+    (message) => groupTurns?.observeAuthorized(message) ?? message,
+    undefined,
+    async (message) => {
+      if (groupTurns) {
+        await runManagedGroupUrgentPreflight(
+          controlPlane,
+          groupTurns,
+          message,
+        );
+      }
+    },
+  );
 }
 
 const SHUTDOWN_GRACE_MS = 60_000;
@@ -799,19 +819,17 @@ async function runManagedGroupTurn(
   // lakukan di sini agar panggilan vocative "Harvy, ..." tetap dianggap
   // direct sebelum paket direct-only memutuskan untuk diam.
   if (message.ingressRevision === undefined) {
-    message = turns.observe(message);
+    const observed = await turns.observeAuthorized(message);
+    if (!observed) return "inactive";
+    message = observed;
   }
-  const ownerId = groupScopeKey(message.scope);
-  const effective = await controlPlane.effectiveEnrollment(ownerId);
-  const mode = effective.enrollment.groupRuntimeMode ?? "direct_only";
-  if (mode === "disabled") return "inactive";
-  if (mode === "paused") return "silent";
-  if (
-    mode === "direct_only" &&
-    !message.mentionsHarvy &&
-    !message.repliesToHarvy
-  ) {
-    return "silent";
+  const admission = await resolveManagedGroupRuntimeAdmission(
+    controlPlane,
+    message,
+  );
+  if (admission !== "process") {
+    turns.settleRejectedObservation(message);
+    return admission;
   }
   return withUsageAttribution(
     {
@@ -822,6 +840,30 @@ async function runManagedGroupTurn(
     },
     () => turns.handle(message),
   );
+}
+
+async function runManagedGroupUrgentPreflight(
+  controlPlane: ControlPlaneService,
+  turns: GroupTurnService,
+  message: GroupMessage,
+): Promise<void> {
+  if (
+    (await resolveManagedGroupRuntimeAdmission(controlPlane, message)) !==
+    "process"
+  ) {
+    return;
+  }
+  await turns.preflightUrgent(message);
+}
+
+async function resolveManagedGroupRuntimeAdmission(
+  controlPlane: ControlPlaneService,
+  message: GroupMessage,
+) {
+  const ownerId = groupScopeKey(message.scope);
+  const enrollment = await controlPlane.enrollmentForOwner(ownerId);
+  const mode = enrollment.groupRuntimeMode ?? "direct_only";
+  return groupRuntimeAdmission(mode, message);
 }
 
 function operatorSecretChannel(environment: string) {

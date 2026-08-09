@@ -7,6 +7,8 @@ import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
 } from "../observability/operational-logger.js";
+import { AdaptiveDebouncePolicy } from "../core/adaptive-debounce-policy.js";
+import { hasExplicitImmediateDangerSignal } from "../core/safety-policy.js";
 
 interface PendingBatch {
   messages: GroupMessage[];
@@ -34,6 +36,11 @@ const DEFAULT_MAX_CHARACTERS = 24_000;
  */
 export class GroupMessageBatcher {
   private readonly pending = new Map<string, PendingBatch>();
+  private readonly chains = new Map<string, Promise<void>>();
+  private readonly ingressGenerations = new Map<string, number>();
+  private readonly observationTasks = new Set<Promise<GroupMessage | null>>();
+  private readonly observationChains = new Map<string, Promise<void>>();
+  private readonly lastParticipantByStream = new Map<string, string>();
   private readonly active = new Set<Promise<void>>();
   private accepting = true;
 
@@ -48,16 +55,55 @@ export class GroupMessageBatcher {
     private readonly directSettleMs = 350,
     private readonly observe: (
       message: GroupMessage,
-    ) => GroupMessage = (message) => message,
+    ) => GroupMessage | null | Promise<GroupMessage | null> =
+      (message) => message,
+    private readonly adaptiveDebounce = new AdaptiveDebouncePolicy({
+      minDelayMs: Math.min(Math.max(1, directSettleMs), 300),
+      maxDelayMs: Math.min(2_500, Math.max(1, maxWaitMs)),
+      maxGapMs: Math.max(1, maxWaitMs),
+    }),
+    private readonly urgentPreflight?: (
+      message: GroupMessage,
+    ) => Promise<void>,
   ) {}
 
-  enqueue(message: GroupMessage): Promise<void> {
+  async enqueue(message: GroupMessage): Promise<void> {
     if (!this.accepting) return Promise.resolve();
+    const rawKey = streamKey(message);
+    const ingressGeneration = this.ingressGenerations.get(rawKey) ?? 0;
+    this.ingressGenerations.set(rawKey, ingressGeneration);
     // Observasi harus terjadi sebelum pergantian pembicara menutup batch lama.
     // Dengan urutan ini, kandidat ambient A sudah tahu bahwa pesan B datang
     // sebelum A sempat dikirim.
-    message = this.observe(message);
+    const candidate = this.observeInOrder(rawKey, message);
+    this.observationTasks.add(candidate);
+    let observed: GroupMessage | null;
+    try {
+      observed = await candidate;
+    } finally {
+      this.observationTasks.delete(candidate);
+    }
+    if (
+      !this.accepting ||
+      this.ingressGenerations.get(rawKey) !== ingressGeneration
+    ) {
+      return;
+    }
+    if (!observed) return;
+    message = observed;
+    const urgent = hasExplicitImmediateDangerSignal(message.text);
+    if (urgent) this.startUrgentPreflight(message);
     const key = streamKey(message);
+    const timingKey = debounceSubjectKey(message);
+    const enqueuedAt = Date.now();
+    const previousParticipant = this.lastParticipantByStream.get(key);
+    this.adaptiveDebounce.observeArrival(
+      timingKey,
+      enqueuedAt,
+      previousParticipant === undefined ||
+        previousParticipant === message.participantId,
+    );
+    this.lastParticipantByStream.set(key, message.participantId);
     let existing = this.pending.get(key);
     if (
       existing &&
@@ -71,7 +117,7 @@ export class GroupMessageBatcher {
     return new Promise<void>((resolve, reject) => {
       const batch = existing ?? {
         messages: [],
-        firstEnqueuedAt: Date.now(),
+        firstEnqueuedAt: enqueuedAt,
         waiters: [],
         settleTimer: null,
         deadlineTimer: null,
@@ -98,18 +144,25 @@ export class GroupMessageBatcher {
         (candidate) =>
           candidate.mentionsHarvy || candidate.repliesToHarvy,
       );
+      const baseSettleMs = hasDirectCall
+        ? Math.min(this.settleMs, this.directSettleMs)
+        : this.settleMs;
+      const adaptiveTiming = this.adaptiveDebounce.estimate(
+        timingKey,
+        baseSettleMs,
+      );
       batch.settleTimer = setTimeout(() => {
         this.flush(key, batch);
-      }, Math.max(
-        1,
-        hasDirectCall
-          ? Math.min(this.settleMs, this.directSettleMs)
-          : this.settleMs,
-      ));
+      }, Math.max(1, Math.min(this.maxWaitMs, adaptiveTiming.settleMs)));
       batch.settleTimer.unref();
       this.pending.set(key, batch);
 
-      if (
+      if (urgent) {
+        // Fixed ACK boleh out-of-band, tetapi full turn tetap mengikuti urutan
+        // stream. Bubble lama dari speaker sama ikut batch ini; speaker lama
+        // yang berbeda sudah di-start lebih dulu oleh flush di atas.
+        this.flush(key, batch);
+      } else if (
         batch.messages.length >= Math.max(1, this.maxMessages) ||
         batchCharacters(batch) >= Math.max(1, this.maxCharacters)
       ) {
@@ -121,24 +174,56 @@ export class GroupMessageBatcher {
   invalidateScope(scopeKey: string, accountId?: string): void {
     const exact = accountId ? `${scopeKey}\u0000${accountId}` : null;
     const prefix = `${scopeKey}\u0000`;
+    if (exact) {
+      this.ingressGenerations.set(
+        exact,
+        (this.ingressGenerations.get(exact) ?? 0) + 1,
+      );
+    } else {
+      for (const key of this.ingressGenerations.keys()) {
+        if (key.startsWith(prefix)) {
+          this.ingressGenerations.set(
+            key,
+            (this.ingressGenerations.get(key) ?? 0) + 1,
+          );
+        }
+      }
+    }
     for (const [key, batch] of this.pending) {
       if (exact ? key !== exact : !key.startsWith(prefix)) continue;
       this.clearTimers(batch);
       this.pending.delete(key);
       for (const waiter of batch.waiters) waiter.resolve();
     }
+    for (const key of this.lastParticipantByStream.keys()) {
+      if (exact ? key === exact : key.startsWith(prefix)) {
+        this.lastParticipantByStream.delete(key);
+      }
+    }
+    this.adaptiveDebounce.forgetPrefix(
+      accountId
+        ? `${scopeKey}\u0000${accountId}\u0000`
+        : `${scopeKey}\u0000`,
+    );
   }
 
   async stopIngress(): Promise<void> {
     this.accepting = false;
     await this.drainAll();
+    this.lastParticipantByStream.clear();
+    this.ingressGenerations.clear();
+    this.observationChains.clear();
+    this.adaptiveDebounce.clear();
   }
 
   async drainAll(): Promise<void> {
+    while (this.observationTasks.size > 0) {
+      await Promise.allSettled([...this.observationTasks]);
+    }
     for (const [key, batch] of [...this.pending]) {
       this.pending.delete(key);
       this.clearTimers(batch);
-      this.start(batch);
+      this.start(key, batch);
     }
     while (this.active.size > 0) {
       await Promise.allSettled([...this.active]);
@@ -149,27 +234,28 @@ export class GroupMessageBatcher {
     if (this.pending.get(key) !== batch) return;
     this.pending.delete(key);
     this.clearTimers(batch);
-    this.start(batch);
+    this.start(key, batch);
   }
 
-  private start(batch: PendingBatch): void {
-    const startedAt = Date.now();
+  private start(key: string, batch: PendingBatch): void {
     const merged = mergeGroupMessages(batch.messages);
-    const running = this.handle(merged).then(
-      () => {
-        this.logger.info(
-          "whatsapp_group_turn_completed",
-          "Giliran grup WhatsApp selesai diproses.",
-          {
-            accountId: merged.accountId,
-            bubbleCount: batch.messages.length,
-            characterCount: merged.text.length,
-            durationMs: Date.now() - startedAt,
-            latencyMs: Date.now() - batch.firstEnqueuedAt,
-          },
-        );
-        for (const waiter of batch.waiters) waiter.resolve();
-      },
+    const previous = this.chains.get(key) ?? Promise.resolve();
+    const running = previous.catch(() => undefined).then(async () => {
+      const startedAt = Date.now();
+      await this.handle(merged);
+      this.logger.info(
+        "whatsapp_group_turn_completed",
+        "Giliran grup WhatsApp selesai diproses.",
+        {
+          accountId: merged.accountId,
+          bubbleCount: batch.messages.length,
+          characterCount: merged.text.length,
+          durationMs: Date.now() - startedAt,
+          latencyMs: Date.now() - batch.firstEnqueuedAt,
+        },
+      );
+      for (const waiter of batch.waiters) waiter.resolve();
+    }).catch(
       (error: unknown) => {
         this.logger.error(
           "whatsapp_group_turn_failed",
@@ -179,13 +265,59 @@ export class GroupMessageBatcher {
             accountId: merged.accountId,
             bubbleCount: batch.messages.length,
             characterCount: merged.text.length,
-            durationMs: Date.now() - startedAt,
             latencyMs: Date.now() - batch.firstEnqueuedAt,
           },
         );
         for (const waiter of batch.waiters) waiter.reject(error);
       },
     );
+    const barrier = running.then(
+      () => {
+        if (this.chains.get(key) === barrier) this.chains.delete(key);
+      },
+      () => {
+        if (this.chains.get(key) === barrier) this.chains.delete(key);
+      },
+    );
+    this.chains.set(key, barrier);
+    this.active.add(running);
+    void running.then(
+      () => this.active.delete(running),
+      () => this.active.delete(running),
+    );
+  }
+
+  /** Hanya fixed ACK yang boleh keluar dari FIFO full-turn. */
+  private startUrgentPreflight(message: GroupMessage): void {
+    if (!this.urgentPreflight) return;
+    const startedAt = Date.now();
+    const running = Promise.resolve()
+      .then(() => this.urgentPreflight!(message))
+      .then(
+        () => {
+          this.logger.info(
+            "whatsapp_group_urgent_preflight_completed",
+            "Preflight darurat lokal grup selesai tanpa debounce.",
+            {
+              accountId: message.accountId,
+              characterCount: message.text.length,
+              durationMs: Date.now() - startedAt,
+            },
+          );
+        },
+        (error: unknown) => {
+          this.logger.error(
+            "whatsapp_group_urgent_preflight_failed",
+            "Preflight darurat lokal grup gagal diproses.",
+            error,
+            {
+              accountId: message.accountId,
+              characterCount: message.text.length,
+              durationMs: Date.now() - startedAt,
+            },
+          );
+        },
+      );
     this.active.add(running);
     void running.then(
       () => this.active.delete(running),
@@ -209,6 +341,28 @@ export class GroupMessageBatcher {
       batchCharacters(batch) + message.text.length >
         Math.max(1, this.maxCharacters)
     );
+  }
+
+  private observeInOrder(
+    key: string,
+    message: GroupMessage,
+  ): Promise<GroupMessage | null> {
+    const previous = this.observationChains.get(key) ?? Promise.resolve();
+    const running = previous
+      .catch(() => undefined)
+      .then(() => this.observe(message));
+    const barrier: Promise<void> = running.then(
+      (): void => this.releaseObservation(key, barrier),
+      (): void => this.releaseObservation(key, barrier),
+    );
+    this.observationChains.set(key, barrier);
+    return running;
+  }
+
+  private releaseObservation(key: string, barrier: Promise<void>): void {
+    if (this.observationChains.get(key) === barrier) {
+      this.observationChains.delete(key);
+    }
   }
 }
 
@@ -256,6 +410,10 @@ export function mergeGroupMessages(
 
 function streamKey(message: GroupMessage): string {
   return `${groupScopeKey(message.scope)}\u0000${message.accountId}`;
+}
+
+function debounceSubjectKey(message: GroupMessage): string {
+  return `${streamKey(message)}\u0000${message.participantId}`;
 }
 
 function batchCharacters(batch: PendingBatch): number {

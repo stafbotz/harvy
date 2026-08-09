@@ -20,7 +20,6 @@ import {
   decideSafetyRouting,
   hasExplicitImmediateDangerSignal,
   needsConditionalReplyReview,
-  needsReplyReview,
   parseRiskHint,
   safetyEffectPermissions,
   shouldRaiseProfessionalHelp,
@@ -207,10 +206,6 @@ describe("triase risiko", () => {
   });
 
   it("menentukan mana yang perlu diperiksa dan dicatat", () => {
-    assert.equal(needsReplyReview("biasa"), false);
-    assert.equal(needsReplyReview("dukungan"), true);
-    assert.equal(needsReplyReview("bahaya"), true);
-
     assert.equal(worthRecording("biasa"), false);
     assert.equal(worthRecording("dukungan"), true);
   });

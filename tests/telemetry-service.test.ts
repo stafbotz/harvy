@@ -362,6 +362,25 @@ describe("TelemetryService", () => {
     assert.equal(repository.usage[0]?.billable, false);
   });
 
+  it("menganggap compiler ingress grup sebagai overhead", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const telemetry = new TelemetryService(repository, options());
+    const context = usageContext("whatsapp:group-1", {
+      purpose: "group-ingress",
+    });
+    await telemetry.beforeRequest(context);
+    await telemetry.afterRequest(
+      context,
+      { inputTokens: 10, outputTokens: 5, totalTokens: 15, estimated: false },
+      { succeeded: true, latencyMs: 2 },
+    );
+
+    const summary = await telemetry.summary("whatsapp:group-1");
+    assert.equal(summary.totalTokens, 0);
+    assert.equal(summary.capacityUsedTokens, 0);
+    assert.equal(repository.usage[0]?.billable, false);
+  });
+
   it("tetap melewatkan dan mencatat panggilan keselamatan saat cap habis", async () => {
     const repository = new MemoryTelemetryRepository();
     const telemetry = new TelemetryService(repository, options(1));

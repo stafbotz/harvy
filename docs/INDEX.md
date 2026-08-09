@@ -84,6 +84,8 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 | [`ADR-020`](decisions/ADR-020-baseline-telemetry-per-giliran.md) | baseline turn telemetry, korelasi, latency/rate p50-p95 |
 | [`ADR-021`](decisions/ADR-021-emergency-preflight-dan-boundary-local-first.md) | emergency preflight, local-first boundary, deterministic time fast path |
 | [`ADR-022`](decisions/ADR-022-selective-safety-routing-dan-privacy-memory.md) | selective safety routing, unavailable, privacy memory, izin per efek |
+| [`ADR-023`](decisions/ADR-023-adaptive-debounce-per-subjek.md) | adaptive debounce content-free per pemilik/anggota grup |
+| [`ADR-024`](decisions/ADR-024-selective-safety-dan-privacy-ingress-grup.md) | selective group safety, raw-context privacy, authority-first preflight |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.

@@ -969,6 +969,151 @@ describe("alur adapter Telegram", () => {
     assert.ok(harness.sent.includes(URGENT_ACKNOWLEDGEMENT));
   });
 
+  it("membawa sinyal darurat per-bubble ke safety turn penuh", async () => {
+    let boundaryCalls = 0;
+    let understandingCalls = 0;
+    let triageCalls = 0;
+    const safetyReply = "Aku tetap di sini bersamamu.";
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => {
+        boundaryCalls += 1;
+        return "complete";
+      },
+      understand: async () => {
+        understandingCalls += 1;
+        return understanding();
+      },
+      triageRisk: async () => {
+        triageCalls += 1;
+        return {
+          level: "bahaya",
+          alone: false,
+          sensitive: true,
+          summary: "bahaya langsung",
+          certain: true,
+        };
+      },
+      reply: async () => safetyReply,
+      reviewReply: async () => true,
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate("contoh untuk tugas", 1));
+    await harness.bot.handleUpdate(
+      messageUpdate("aku dalam bahaya sekarang", 2),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(boundaryCalls, 0);
+    assert.equal(understandingCalls, 0);
+    assert.equal(triageCalls, 1);
+    assert.ok(harness.sent.includes(URGENT_ACKNOWLEDGEMENT));
+    assert.ok(harness.sent.includes(safetyReply));
+  });
+
+  it("memaksa triase saat fallback boundary menilai turn urgent", async () => {
+    let boundaryCalls = 0;
+    let understandingCalls = 0;
+    let triageCalls = 0;
+    const safetyReply = "Aku menemanimu sekarang.";
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => {
+        boundaryCalls += 1;
+        return "urgent";
+      },
+      understand: async () => {
+        understandingCalls += 1;
+        return understanding();
+      },
+      triageRisk: async () => {
+        triageCalls += 1;
+        return {
+          level: "bahaya",
+          alone: false,
+          sensitive: true,
+          summary: "bahaya langsung",
+          certain: true,
+        };
+      },
+      reply: async () => safetyReply,
+      reviewReply: async () => true,
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate("aku capek banget"));
+    await waitFor(() => boundaryCalls === 1);
+    await waitFor(() => harness.sent.includes(URGENT_ACKNOWLEDGEMENT));
+    await harness.bot.drainPending();
+
+    assert.equal(boundaryCalls, 1);
+    assert.equal(understandingCalls, 1);
+    assert.equal(triageCalls, 1);
+    assert.ok(harness.sent.includes(URGENT_ACKNOWLEDGEMENT));
+    assert.ok(harness.sent.includes(safetyReply));
+  });
+
+  it("membawa sinyal darurat bubble tertahan setelah consent diterima", async () => {
+    let consented = false;
+    let understandingCalls = 0;
+    const triageTexts: string[] = [];
+    const safetyReply = "Aku fokus menemanimu sekarang.";
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => {
+          understandingCalls += 1;
+          return understanding();
+        },
+        triageRisk: async (text: string) => {
+          triageTexts.push(text);
+          return text.includes("bahaya")
+            ? {
+                level: "bahaya",
+                alone: false,
+                sensitive: true,
+                summary: "bahaya langsung",
+                certain: true,
+              }
+            : CALM_TRIAGE;
+        },
+        reply: async () => safetyReply,
+        reviewReply: async () => true,
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        profiles: {
+          needsOnboarding: async () => !consented,
+          acceptConsent: async () => {
+            consented = true;
+            return profile();
+          },
+          load: async () => profile(),
+        } as unknown as ProfileService,
+        telemetry: {
+          allow: async () => undefined,
+          beginTurn: async () => undefined,
+          event: async () => undefined,
+          noteTurnSignal: async () => undefined,
+          recordTurn: async () => undefined,
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("contoh untuk tugas", 1));
+    await harness.bot.handleUpdate(
+      messageUpdate("aku dalam bahaya sekarang", 2),
+    );
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(callbackUpdate("consent:yes", 3));
+    await harness.bot.drainPending();
+
+    assert.equal(understandingCalls, 0);
+    assert.deepEqual(triageTexts, [
+      "contoh untuk tugas",
+      "contoh untuk tugas\naku dalam bahaya sekarang",
+    ]);
+    assert.ok(harness.sent.includes(safetyReply));
+  });
+
   it("menghapus memori biasa lagi bila pemberitahuannya gagal terkirim", async () => {
     const stored = new Map<string, MemoryItem>();
     const harness = basicHarness(

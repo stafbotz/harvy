@@ -224,9 +224,20 @@ export class HeldMessageStore {
 
   /** Mengambil sekaligus mengosongkan; pesan yang sama tidak diproses dua kali. */
   take(ownerId: string): string {
+    return this.takeBatch(ownerId).text;
+  }
+
+  /** Membawa sinyal per-bubble agar penggabungan teks tidak memveto safety. */
+  takeBatch(ownerId: string): {
+    text: string;
+    bubbles: string[];
+  } {
     const bubbles = this.held.get(ownerId) ?? [];
     this.held.delete(ownerId);
-    return bubbles.join("\n");
+    return {
+      text: bubbles.join("\n"),
+      bubbles: [...bubbles],
+    };
   }
 
   /**

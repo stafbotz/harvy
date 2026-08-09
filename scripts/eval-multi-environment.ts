@@ -14,9 +14,9 @@
 import { Conversation } from "../src/ai/conversation.js";
 import { GroupConversation, type GroupConversationContext } from "../src/ai/group-conversation.js";
 import {
+  CALM_TRIAGE,
   resolveRiskAssessment,
   safetyOnlyUnderstanding,
-  uncertainTriage,
 } from "../src/ai/safety.js";
 import {
   hasExplicitImmediateDangerSignal,
@@ -205,7 +205,7 @@ async function runMultiEnvironmentEval() {
           if (isDirect) {
             // Direct tag: Langsung minta balasan dari GroupConversation
             const replyText = await withSmartRetry(
-              () => groupConversation.reply(groupMsg, groupCtx, uncertainTriage(false), "eval-owner"),
+              () => groupConversation.reply(groupMsg, groupCtx, CALM_TRIAGE, "eval-owner"),
               `GroupDirectReply [Step ${step.turnIndex}]`
             );
 

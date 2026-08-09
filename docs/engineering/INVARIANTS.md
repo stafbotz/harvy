@@ -84,17 +84,25 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 ## Bubble dan giliran
 
 - **Satu giliran dapat terdiri dari beberapa bubble.** Emergency preflight
-  berpresisi tinggi berjalan saat `enqueue`, sebelum jeda 650 milidetik; hasil
+  berpresisi tinggi berjalan saat `enqueue`, sebelum debounce; hasil
   positif hanya mengirim acknowledgment tetap dan mempercepat flush, bukan
   menetapkan disposition atau izin mutasi. Pada jalur boundary umum setelah
   fast path/pending dikecualikan, satu bubble dalam closed set diputus lokal
   sebagai `complete`/`incomplete`; multi-bubble dan bentuk ambigu memakai model
   `cheap` sebagai fallback `complete|open|incomplete|urgent`. Guard lokal tetap
-  mengoreksi bentuk hasil itu. Pesan lengkap tunggal diproses langsung sesudah
-  settle, gabungan lengkap diberi ruang 4 detik, pembuka/narasi terbuka 7 detik,
-  dan fragmen keras 12 detik sejak bubble terakhir. Emergency lokal maupun hasil `urgent` model
+  mengoreksi bentuk hasil itu. Debounce mempelajari p90 gap antar-arrival,
+  termasuk lintas batch yang sudah ter-flush, dari maksimum 32 sampel
+  content-free per pemilik setelah tiga sampel; state hanya di RAM, kedaluwarsa
+  dua jam tanpa diperpanjang oleh akses, dibatasi 5.000 subjek, dan dilupakan
+  saat invalidasi.
+  Sebelum cukup sampel, settle tetap 650 ms. Estimasi adaptif mengubah settle
+  awal dan ruang gabungan lengkap, sedangkan pembuka/narasi terbuka dan fragmen
+  keras tetap menunggu 7/12 detik sejak bubble terakhir. Emergency lokal maupun hasil `urgent` model
   mengirim acknowledgment di luar FIFO; timer 12 detik tetap fail-safe saat
-  model berpikir. Jalur urgent menaikkan generation dan mengirim `AbortSignal`:
+  model berpikir. Sinyal `explicitImmediateDanger` per bubble dan
+  `urgentBoundary` wajib bertahan sebagai metadata sampai handler; merge teks
+  tidak boleh menghapus kewajiban acute triage. Jalur urgent menaikkan
+  generation dan mengirim `AbortSignal`:
   batch biasa lama yang belum mulai dibatalkan, sedangkan handler lengkap dan
   semua mutasi tetap FIFO di belakang handler pengguna yang masih aktif.
   Satu pemilik hanya boleh memiliki satu pemeriksaan batas yang aktif; revisi
@@ -218,7 +226,10 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   sebelum `MessageBatcher.enqueue`, karena batcher memanggil
   `classifyTurnBoundary`. Pesan pertama ditahan `HeldMessageStore` di memori
   proses — tidak pernah ke berkas — lalu diproses sendiri setelah tombolnya
-  ditekan; pengguna tidak diminta mengetik ulang. `/start` hanya salah satu
+  ditekan; pengguna tidak diminta mengetik ulang. Batas bubble wajib tetap
+  disimpan, tetapi bubble selain yang pertama baru boleh diperiksa per bagian
+  setelah consent aktif; marker konteks lama tidak boleh memveto emergency pada
+  bubble baru. `/start` hanya salah satu
   pintu masuk, bukan syarat. Pengecualian triase pertama disahkan Konstitusi
   v0.3 Pasal 3.9 dan naskah perkenalan mengatakannya apa adanya; emergency
   lokal justru tidak mengirim teks ke provider. Menghapus
@@ -418,24 +429,61 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   tetap harus masuk antrean penyimpanan saat snapshot binding masih kosong;
   pemeriksaan generation sesudah setiap I/O wajib mencegah implicit activation,
   notice, alias, konteks, atau marker risiko hidup lagi setelah removal.
+  Sebelum isi pesan mencapai assessment/preflight model, core wajib sudah
+  membuktikan `social.read`, binding account aktif, dan notice versi live;
+  authority ingress dari adapter bukan pengganti revalidation core. Batch yang
+  melintasi waktu join wajib difilter per bubble sebelum matcher, ACK, typing,
+  atau model. Revocation authority wajib menaikkan generation, mengirim abort
+  ke assessment aktif, dan menghapus assessment yang belum mulai dari antrean.
+  Pemeriksaan authority observation async wajib FIFO per runtime. Hanya
+  observation authorized/live yang boleh menaikkan revision atau menyupersesi
+  ambient; alias default/durable harus dihidrasi setelah authority tetapi
+  sebelum admission, dan observation yang kemudian ditolak hanya boleh
+  disettle bila revision+generation masih cocok.
 - **Panggilan grup dan pesan ambient berbeda.** Metadata platform untuk tag dan
   quote serta julukan lokal berbentuk vocative selalu dianggap panggilan;
-  penyebutan Harvy sebagai topik bukan panggilan. Direct memakai settle 350 ms,
+  penyebutan Harvy sebagai topik bukan panggilan. Direct memakai fallback
+  settle 350 ms,
   membatalkan planner ambient aktif, dan tidak menghabiskan budget sosial.
-  Pesan ambient melewati planner `speak|silent`, pagar bentuk lokal, serta
-  budget adaptif; planner atau triase yang gagal berarti diam. Kandidat bernilai
-  tinggi yang tersusul boleh menjadi satu pending candidate per runtime:
+  Ambient memakai fallback 1,2 detik. Keduanya memakai p90 gap content-free
+  per `scope+account+participant` setelah tiga sampel, termasuk lintas batch;
+  pergantian speaker memutus sampel A→B→A. Timing tetap tunduk pada deadline
+  empat detik dan profile dihapus saat scope diinvalidasi. Pesan
+  ambient melewati planner `speak|silent`, pagar bentuk lokal, serta
+  budget adaptif. Planner ambient sekaligus menghasilkan `riskHint` acute-only
+  dan `contextPrivacy` raw-retention-only; direct memakai compiler ingress
+  dengan schema yang sama. Plan, hint, dan privacy wajib diparse independen:
+  field rusak menjadi null, bukan `none`/`ordinary`. Kandidat bernilai tinggi
+  yang tersusul boleh menjadi satu pending candidate per runtime:
   tunggu quiet gap 900 ms, kedaluwarsa 15 detik/empat giliran, lalu revalidasi
   terhadap konteks aman. Revalidasi baru boleh mulai bila semua observation
   yang sudah terlihat juga sudah settled; timer 900 ms tidak boleh mendahului
-  settle adapter 1,2 detik. Direct call, bahaya, kelanjutan pengirim target,
+  settle adapter yang berlaku. Keputusan mode saat ingress bukan authority
+  durable: mode efektif wajib dibaca ulang tepat sebelum model revalidation,
+  fixed ACK, dan delivery. Hasil selain `process` membatalkan work lama tanpa
+  mengirim balasan. Direct call, bahaya, kelanjutan pengirim target,
   quote target, removal, atau shutdown wajib membatalkan timer dan request
-  revalidation/fact-reply yang sedang aktif. Panggilan langsung
-  dengan triase gagal memakai `uncertainTriage` dan review fail-closed. Ketika
-  FIFO sedang sibuk, triase awal boleh mengirim acknowledgment tetap untuk
-  `bahaya`; reservation/dedupe, batas empat aktif, dan antrean 32 wajib
-  dipertahankan. Balasan lengkap tetap FIFO. Harvy tidak mengirim DM dari
-  otorisasi grup.
+  revalidation/fact-reply yang sedang aktif. `RiskHint none` melewati acute
+  triage; possible/strong, compiler unavailable, marker continuation, dan
+  emergency lokal memanggil triage. Outage tanpa bukti kuat tetap normal;
+  strong unresolved memakai support konservatif. Hanya danger dan support
+  tidak pasti yang direview. Emergency lokal berpresisi tinggi melewati
+  debounce dan paket `direct_only`, tetapi baru boleh ACK setelah
+  authority+binding+notice; `disabled/paused` tetap tertutup. Fixed ACK adalah
+  satu-satunya efek out-of-band; full turn lintas speaker tetap diserialkan.
+  Matcher local emergency wajib dinilai per bubble setelah filter join; kata
+  konteks pada bubble lama tidak boleh memveto emergency eksplisit pada bubble
+  berikutnya, sementara quote/negasi di bubble emergency itu sendiri tetap
+  gagal tertutup.
+  Reservation ACK dan assessment harus terpisah agar ACK tidak menelan triase.
+  Emergency acute triage tidak menunggu ingress/memory extraction. Direct yang
+  tertahan FIFO boleh memakai risk preflight dengan privacy no-retain; ambient
+  biasa tidak boleh mengisi antrean itu dan memakai satu envelope planner.
+  Emergency ambient yang berakhir sebagai support tetap wajib mendapat final
+  safety reply ter-review, bukan ACK lalu diam, dan origin safety tidak boleh
+  dibatalkan oleh observation ambient yang lebih baru.
+  Dedupe, batas empat assessment aktif, antrean 32, generation, dan
+  `AbortSignal` wajib dipertahankan. Harvy tidak mengirim DM dari otorisasi grup.
 - **Ingress grup tidak menunggu AI.** Normalisasi dan enqueue berurutan per
   grup, tetapi listener Baileys hanya melacak task `onMessage`; ia tidak boleh
   menahan pesan berikutnya sampai planner/balasan selesai. Metadata refresh
@@ -444,9 +492,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   pengirim nonmember, Harvy yang tidak ada di peserta, dan self-echo gagal
   tertutup. Event authority menghapus cache serta membatalkan batch/pending
   pada call stack yang sama sebelum pekerjaan antrean berjalan. Observation
-  revision dipasang sebelum speaker switch menutup batch lama; duplicate,
-  replay sebelum join, dan akun non-binding tidak boleh membatalkan kandidat
-  sah.
+  authority dan insert batch diserialkan hanya sampai ingress commit agar await
+  resolver yang lambat tidak membalik FIFO. Revision dipasang sebelum speaker
+  switch menutup batch lama; duplicate, replay sebelum join, akun non-binding,
+  dan turn yang ditolak admission tidak boleh membatalkan atau menggantung
+  kandidat sah.
 - **Natural bukan berarti menyamar sebagai manusia.** Riwayat grup masuk sebagai
   giliran chat beridentitas. Harvy perlu memahami lowercase, singkatan,
   code-mix, elongation, emoji, dan beberapa bubble, tetapi tidak meniru typo,
@@ -454,19 +504,25 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   pasti, atau menjamin transaksi. `fact_correction` harus diregenerasi lewat
   tier `efficient`, bukan mengirim kandidat model cheap sebagai fakta final.
 - **Memori grup mempunyai room context dan member memory yang berbeda.** Raw
-  context beridentitas hanya berada
-  24 giliran atau dua jam di memori proses; pesan **dan balasan** giliran sensitif/berisiko
-  tidak masuk. Penanda tingkat risiko tanpa isi boleh hidup 30 menit agar
+  context beridentitas hanya berada 24 giliran atau dua jam di memori proses.
+  Message dan reply hanya boleh masuk bila `contextPrivacy=ordinary` dan
+  safety `calm+certain`; privacy null/sensitive gagal tertutup ke no-retain
+  tanpa mengubah UX menjadi support. Pending ambient wajib membawa keputusan
+  retensi yang sama sampai revalidation/delivery. Penanda tingkat risiko tanpa
+  isi boleh hidup 30 menit agar
   jawaban pendek tetap fail-closed. Repository menyimpan nama grup/julukan
   selama aktif, pasangan PN/LID, nama tampilan/koreksi, last-seen dan aktivitas
   harian 30 hari, dedupe 24 jam, serta cooldown; ranking selalu menyebut
   jendela 7 hari dan bukan sifat permanen. Pembersihan berjalan berkala dan
   seluruh memori sosial dihapus saat disable. Memori semantik hanya milik satu
   kanal+grup+anggota, tidak boleh masuk state privat/grup lain, dan hanya boleh
-  dipakai saat anggota itu berbicara. Memori biasa hasil pesan direct boleh
-  ditulis setelah notice lalu diumumkan pada balasan yang sama; kegagalan kirim
-  wajib rollback. Jenis personal atau hasil triase sensitif tidak boleh
-  otomatis tersimpan; usulan personal hanya boleh disimpan sesudah anggota
+  dipakai saat anggota itu berbicara. `contextPrivacy` bukan consent authority
+  memori durable. Setelah direct menghasilkan kandidat, classifier
+  `memory-privacy` khusus kandidat menentukan sensitivitas; jenis personal,
+  hasil sensitive, port/parse null, timeout, atau error tidak boleh otomatis
+  tersimpan. Tidak ada kandidat berarti tidak ada call privacy. Memori biasa
+  boleh ditulis setelah notice lalu diumumkan pada balasan yang sama; kegagalan
+  kirim wajib rollback. Usulan sensitif hanya boleh disimpan sesudah anggota
   yang sama mengonfirmasi pending 10 menit dalam scope yang sama. Pending baru
   dipasang setelah promptnya berhasil dikirim dan baru dibersihkan setelah
   acknowledgment sukses; kegagalan acknowledgment wajib rollback write dengan
@@ -477,6 +533,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   proposal eksplisit anggota dan konfirmasi admin, kedaluwarsa 60 hari, terlihat
   seluruh grup, dan tidak boleh disamakan dengan member-local memory. Reset
   admin menghapus state bersama tetapi mempertahankan member-local memory.
+  Kontrol eksplisit berisiko rendah yang diizinkan policy safety tetap harus
+  mencapai flow ini pada support yang pasti; output model tidak pernah
+  menggantikan guard member/admin untuk menjalankannya.
   Semua mutator user-facing wajib membawa guard authority yang diperiksa di
   dalam antrean service tepat sebelum write. Pada repository file, lupakan diri
   menghapus profil sosial, member-local memory, dan atribusi pengusul room dalam

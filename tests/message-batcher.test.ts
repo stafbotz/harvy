@@ -6,8 +6,118 @@ import {
   type MessageBatchMetrics,
 } from "../src/bot/message-batcher.js";
 import type { TurnBoundaryState } from "../src/core/turn-taking-policy.js";
+import { AdaptiveDebouncePolicy } from "../src/core/adaptive-debounce-policy.js";
 
 describe("MessageBatcher", () => {
+  it("memakai settle adaptif setelah ritme bubble pemilik terukur", async () => {
+    const handled: string[] = [];
+    const policy = new AdaptiveDebouncePolicy({
+      minSamples: 1,
+      minDelayMs: 50,
+      maxDelayMs: 50,
+      maxGapMs: 500,
+    });
+    policy.observe("student", 10);
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async (_ownerId, batch) => {
+        handled.push(batch.text);
+      },
+      500,
+      250,
+      400,
+      300,
+      undefined,
+      undefined,
+      policy,
+    );
+
+    batcher.enqueue("student", "iya", "ctx");
+
+    await waitFor(() => handled.length === 1, 180);
+    assert.deepEqual(handled, ["iya"]);
+  });
+
+  it("mempelajari ritme pemilik lintas batch tanpa pre-seed manual", async () => {
+    const handled: string[] = [];
+    const policy = new AdaptiveDebouncePolicy({
+      minSamples: 1,
+      minDelayMs: 80,
+      maxDelayMs: 80,
+      maxGapMs: 10_000,
+    });
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async (_ownerId, batch) => {
+        handled.push(batch.text);
+      },
+      500,
+      10,
+      400,
+      300,
+      undefined,
+      undefined,
+      policy,
+    );
+
+    batcher.enqueue("student", "pertama", "ctx-1");
+    await waitFor(() => handled.length === 1, 200);
+    await delay(40);
+    batcher.enqueue("student", "kedua", "ctx-2");
+    await delay(30);
+    assert.deepEqual(handled, ["pertama"]);
+    await waitFor(() => handled.length === 2, 200);
+  });
+
+  it("tidak memendekkan window fragmen keras dari profil debounce", async () => {
+    const handled: string[] = [];
+    const policy = new AdaptiveDebouncePolicy({
+      minSamples: 1,
+      minDelayMs: 10,
+      maxDelayMs: 10,
+      maxGapMs: 500,
+    });
+    policy.observe("student", 5);
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async (_ownerId, batch) => {
+        handled.push(batch.text);
+      },
+      180,
+      50,
+      120,
+      80,
+      undefined,
+      undefined,
+      policy,
+    );
+
+    batcher.enqueue("student", "karena", "ctx");
+    await delay(90);
+    assert.deepEqual(handled, []);
+    await waitFor(() => handled.length === 1, 180);
+  });
+
+  it("melupakan timing pemilik saat batch diinvalidasi", () => {
+    const policy = new AdaptiveDebouncePolicy({ minSamples: 1 });
+    policy.observe("student", 800);
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async () => undefined,
+      500,
+      50,
+      400,
+      300,
+      undefined,
+      undefined,
+      policy,
+    );
+
+    batcher.invalidate("student");
+
+    assert.equal(policy.estimate("student", 650).adaptive, false);
+  });
+
   it("menggabungkan bubble yang dipenggal sebelum menjawab", async () => {
     const handled: string[] = [];
     const carriers: string[] = [];
@@ -201,11 +311,14 @@ describe("MessageBatcher", () => {
   });
 
   it("memproses seketika ketika fallback model menyatakan urgent", async () => {
-    const handled: string[] = [];
+    const handled: Array<{ text: string; urgentBoundary: boolean }> = [];
     const batcher = new MessageBatcher<string>(
       async () => "urgent" as TurnBoundaryState,
       async (_ownerId, batch) => {
-        handled.push(batch.text);
+        handled.push({
+          text: batch.text,
+          urgentBoundary: batch.urgentBoundary,
+        });
       },
       200,
       5,
@@ -216,7 +329,10 @@ describe("MessageBatcher", () => {
     batcher.enqueue("student", "aku capek banget", "ctx-1");
 
     await waitFor(() => handled.length === 1, 120);
-    assert.deepEqual(handled, ["aku capek banget"]);
+    assert.deepEqual(handled, [{
+      text: "aku capek banget",
+      urgentBoundary: true,
+    }]);
   });
 
   it("mengakui bahaya eksplisit sebelum debounce tanpa classifier", async () => {
@@ -249,6 +365,54 @@ describe("MessageBatcher", () => {
     assert.equal(classifierCalls, 0);
     assert.deepEqual(acknowledgements, [emergency]);
     assert.deepEqual(handled, [emergency]);
+  });
+
+  it("mempertahankan sinyal darurat bubble terbaru saat batch lama memuat marker konteks", async () => {
+    let classifierCalls = 0;
+    const acknowledgements: Array<{
+      text: string;
+      explicitImmediateDanger: boolean;
+    }> = [];
+    const handled: Array<{
+      text: string;
+      explicitImmediateDanger: boolean;
+    }> = [];
+    const batcher = new MessageBatcher<string>(
+      async () => {
+        classifierCalls += 1;
+        return "complete";
+      },
+      async (_ownerId, batch) => {
+        handled.push({
+          text: batch.text,
+          explicitImmediateDanger: batch.explicitImmediateDanger,
+        });
+      },
+      500,
+      150,
+      300,
+      200,
+    ).onUrgent(async (_ownerId, batch) => {
+      acknowledgements.push({
+        text: batch.text,
+        explicitImmediateDanger: batch.explicitImmediateDanger,
+      });
+    });
+
+    batcher.enqueue("student", "contoh untuk tugas", "ctx-1");
+    batcher.enqueue("student", "aku dalam bahaya sekarang", "ctx-2");
+
+    await waitFor(
+      () => acknowledgements.length === 1 && handled.length === 1,
+      1_500,
+    );
+    const expected = {
+      text: "contoh untuk tugas\naku dalam bahaya sekarang",
+      explicitImmediateDanger: true,
+    };
+    assert.equal(classifierCalls, 0);
+    assert.deepEqual(acknowledgements, [expected]);
+    assert.deepEqual(handled, [expected]);
   });
 
   it("menyerahkan kutipan bahaya ke classifier tanpa urgent palsu", async () => {

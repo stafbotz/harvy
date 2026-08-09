@@ -806,6 +806,7 @@ export class TelemetryService implements UsageObserver {
         accumulator.boundaryCallCount += 1;
         break;
       case "understanding":
+      case "group-ingress":
         accumulator.understandingCallCount += 1;
         break;
       case "risk-triage":
@@ -1087,6 +1088,7 @@ function isBillable(context: AiUsageContext, succeeded: boolean): boolean {
     context.purpose === "due-date" ||
     context.purpose === "risk-triage" ||
     context.purpose === "memory-privacy" ||
+    context.purpose === "group-ingress" ||
     context.purpose === "reply-review" ||
     context.purpose === "summary" ||
     context.purpose === "insight" ||

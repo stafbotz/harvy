@@ -97,6 +97,7 @@ export type ChatCompletion =
   | { kind: "tool_calls"; toolCalls: readonly ChatToolCall[] };
 
 export type AiRequestOperation =
+  | "group-ingress"
   | "group-plan-ambient"
   | "group-revalidate-ambient"
   | "group-reply";

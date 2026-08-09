@@ -751,6 +751,7 @@ function entitlementDisposition(
     context.purpose === "due-date" ||
     context.purpose === "risk-triage" ||
     context.purpose === "memory-privacy" ||
+    context.purpose === "group-ingress" ||
     context.purpose === "reply-review" ||
     context.purpose === "summary" ||
     context.purpose === "insight" ||

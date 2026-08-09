@@ -471,6 +471,8 @@ export function createBot(
             isCurrent: batch.isCurrent,
           },
           batch.firstIngressSequence ?? batch.carrier.update.update_id,
+          batch.explicitImmediateDanger,
+          batch.urgentBoundary,
         ),
       );
     },
@@ -950,6 +952,8 @@ export function createBot(
     text: string,
     runtime: ConversationRuntime = {},
     firstIngressUpdateId = ctx.update.update_id,
+    explicitImmediateDanger = false,
+    urgentBoundary = false,
   ): Promise<void> {
     // Indikator muncul ketika Harvy benar-benar mulai menangani satu giliran,
     // bukan pada setiap bubble saat ia masih menyimak.
@@ -1005,7 +1009,8 @@ export function createBot(
     )
       ? pendingAtStart
       : null;
-    const immediateDanger = hasExplicitImmediateDangerSignal(text);
+    const immediateDanger =
+      explicitImmediateDanger || hasExplicitImmediateDangerSignal(text);
 
     // Nilai formulir yang closed-set melewati compiler dan triase umum. Sinyal
     // darurat lokal tetap diperiksa lebih dulu dan membuat jalur ini gagal
@@ -1068,7 +1073,9 @@ export function createBot(
         });
     // Bahaya eksplisit tidak menunggu compiler. Pesan lain baru membayar
     // triase setelah RiskHint compiler menyatakan possible/strong.
-    const earlyRisk = immediateDanger ? requestRiskTriage() : undefined;
+    const earlyRisk = immediateDanger || urgentBoundary
+      ? requestRiskTriage()
+      : undefined;
     const readResult = immediateDanger
       ? ({ value: safetyOnlyUnderstanding() } as const)
       : await conversation
@@ -1094,7 +1101,10 @@ export function createBot(
           understanding.safetySensitive,
         ) ?? NO_RISK_HINT
       : NO_RISK_HINT;
-    const riskHint = withImmediateDangerHint(parsedHint, immediateDanger);
+    const riskHint = withImmediateDangerHint(
+      parsedHint,
+      immediateDanger || urgentBoundary,
+    );
     // Bila compiler gagal, tidak adanya RiskHint bukan bukti tenang. Jalankan
     // triase sebagai fallback; bila itu juga gagal, policy tetap memetakan
     // keadaan tanpa bukti kuat ke `unavailable` + jalur percakapan biasa.
@@ -3528,16 +3538,31 @@ export function createBot(
     consentChecks.set(ownerId, Promise.resolve(true));
     await dropKeyboard(ctx);
 
-    const waiting = held.take(ownerId);
+    const waiting = held.takeBatch(ownerId);
     held.clear(ownerId);
+    // Pemeriksaan bubble kedua dan seterusnya baru boleh terjadi setelah
+    // consent berhasil dibuka. Batas bubble dipertahankan agar marker konteks
+    // pada satu bubble tidak memveto bahaya eksplisit pada bubble lain.
+    const explicitImmediateDanger = waiting.bubbles.some(
+      hasExplicitImmediateDangerSignal,
+    );
 
     await ctx.reply("😉");
-    await ctx.reply(waiting ? CONSENT_ACCEPTED_HELD : CONSENT_ACCEPTED);
+    await ctx.reply(waiting.text ? CONSENT_ACCEPTED_HELD : CONSENT_ACCEPTED);
 
     // Diproses langsung, bukan lewat batcher: pesannya sudah selesai ditulis
     // jauh sebelum tombol ditekan, jadi tidak ada batas giliran yang perlu
     // ditebak. Ini tetap berada di dalam antrean pengguna yang sama.
-    if (waiting) await handleFreeText(ctx, ownerId, waiting);
+    if (waiting.text) {
+      await handleFreeText(
+        ctx,
+        ownerId,
+        waiting.text,
+        {},
+        ctx.update.update_id,
+        explicitImmediateDanger,
+      );
+    }
   }
 
   async function refreshMemories(

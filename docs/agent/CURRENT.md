@@ -1,24 +1,25 @@
 # Current Context
 
-Refreshed: 2026-08-06
+Refreshed: 2026-08-09
 
 ## Verified baseline
 
-- Product capability baseline: commit `43d8e16` (6 Agustus 2026).
-- Last recorded product gates: `npm run check` PASS; `npm test` PASS, 644 test
-  dalam 93 suite.
-- Context-system working tree: `npm run context:check` PASS;
-  `npm run check` PASS; `npm test` PASS, 654 test dalam 94 suite.
+- Product capability baseline: working tree Phase B di atas `b5e54c6`
+  (9 Agustus 2026).
+- Product gates: `npm run check` PASS; `npm test` PASS, 755 test dalam 100
+  suite, 0 gagal.
+- Context system: `npm run context:check` PASS; output 3.742 byte dengan
+  estimasi 936 token.
 
 ## Recent material changes
 
-- Native agent continuation now replays exact assistant tool calls, matching
-  tool-call IDs, and provider thought signatures during one invocation; the
-  post-fix path is automatically tested but not yet live-tested.
-- The agent harness now uses native tool calling with closed schemas and keeps
-  executor validation as execution authority.
-- Agent instructions now use code-first progressive loading with a compact
-  status index and bounded bootstrap; product runtime code is unchanged.
+- Adaptive debounce content-free kini belajar ritme bubble per pemilik atau
+  anggota+scope grup tanpa memendekkan jendela semantik open/incomplete.
+- Safety privat dan grup memakai selective triage, privacy memory/raw-context
+  terpisah, conditional review, dan metadata emergency per bubble.
+- Observation grup diserialkan setelah authority; alias dihidrasi sebelum
+  admission dan mode runtime dibaca ulang sebelum pending model, ACK, atau
+  delivery.
 
 ## Active cross-subsystem blockers
 
@@ -29,6 +30,9 @@ Refreshed: 2026-08-06
   production RunStore/outbox/reconciliation do not exist.
 - Dual model misclassification can still miss pre-save consent for sensitive
   memory. Do not claim this privacy gap is closed.
+- False-positive/false-negative safety pada corpus model aktual belum diukur;
+  selective routing baru terverifikasi otomatis dan belum membuktikan kanal
+  nyata.
 - Forced shutdown can leave a stale runtime lock, and a startup-cancel race
   remains open. Verify the recorded owner process is dead before removing a
   stale lock.

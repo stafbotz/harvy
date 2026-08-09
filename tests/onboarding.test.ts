@@ -122,6 +122,18 @@ describe("pesan yang ditahan sebelum persetujuan", () => {
     assert.equal(held.take("student"), "");
   });
 
+  it("mempertahankan batas bubble saat pesan ditahan digabung", () => {
+    const held = new HeldMessageStore();
+
+    held.hold("student", "contoh untuk tugas");
+    held.hold("student", "aku dalam bahaya sekarang");
+
+    assert.deepEqual(held.takeBatch("student"), {
+      text: "contoh untuk tugas\naku dalam bahaya sekarang",
+      bubbles: ["contoh untuk tugas", "aku dalam bahaya sekarang"],
+    });
+  });
+
   it("berhenti menampung ketika sudah kebanyakan", () => {
     const held = new HeldMessageStore();
 

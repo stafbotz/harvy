@@ -957,5 +957,5 @@ function intentGuidance(intent: ConversationIntent | null): string {
 // sedang diperbaiki, muncul kembali tepat ketika sistemnya paling rapuh.
 // Pada chat privat penggantinya adalah RiskHint + RiskDisposition: outage tanpa
 // bukti kuat tetap normal, sedangkan bukti kuat memakai jalur konservatif.
-// `uncertainTriage` kini hanya dipertahankan untuk port grup yang belum
-// memisahkan screening privasi dari acute-safety triage.
+// Jalur privat dan grup kini sama-sama merekonsiliasi RiskHint dengan
+// disposition evidence-aware; outage tanpa bukti kuat tidak menjadi krisis.

@@ -55,7 +55,6 @@ import {
 } from "./episode-summary.js";
 import {
   CALM_TRIAGE,
-  GROUP_RISK_AND_PRIVACY_TRIAGE_PROMPT,
   insightInput,
   INSIGHT_PROMPT,
   parseInsightDraft,
@@ -69,6 +68,12 @@ import {
   type InsightDraftShape,
   type RiskTriage,
 } from "./safety.js";
+import {
+  GROUP_INGRESS_PROMPT,
+  groupIngressInput,
+  parseGroupIngressAssessment,
+  type GroupIngressAssessment,
+} from "./group-ingress.js";
 import {
   parseDueDate,
   parseUnderstanding,
@@ -171,6 +176,8 @@ const REVIEW_MAX_TOKENS = 256;
 const REVIEW_TIMEOUT_MS = 8_000;
 const MEMORY_PRIVACY_MAX_TOKENS = 128;
 const MEMORY_PRIVACY_TIMEOUT_MS = 8_000;
+const GROUP_INGRESS_MAX_TOKENS = 192;
+const GROUP_INGRESS_TIMEOUT_MS = 8_000;
 const INSIGHT_MAX_TOKENS = 512;
 
 /**
@@ -350,15 +357,13 @@ export class Conversation {
    * Menilai risiko sebuah pesan tanpa menjawabnya.
    *
    * Dipanggil hanya setelah RiskHint `possible`/`strong`, ketika compiler gagal,
-   * atau langsung pada emergency lokal. Port grup lama masih memanggilnya pada
-   * semua pesan demi screening konteks privat grup.
+   * atau langsung pada emergency lokal.
    */
   async triageRisk(
     message: string,
     ownerId?: string,
     context: HarvyContext = EMPTY_CONTEXT,
     signal?: AbortSignal,
-    options: { includePrivacySensitivity?: boolean } = {},
   ): Promise<RiskTriage | null> {
     const { context: boundedContext, manifest: contextManifest } =
       compileHarvyContext(
@@ -379,9 +384,7 @@ export class Conversation {
       messages: [
         {
           role: "system",
-          content: options.includePrivacySensitivity
-            ? GROUP_RISK_AND_PRIVACY_TRIAGE_PROMPT
-            : RISK_TRIAGE_PROMPT,
+          content: RISK_TRIAGE_PROMPT,
         },
         {
           role: "user",
@@ -398,6 +401,54 @@ export class Conversation {
       );
     }
     return triage;
+  }
+
+  /**
+   * Compiler ringan untuk ingress grup direct. Risk hint dan izin retensi raw
+   * context dibaca independen; kegagalan salah satunya tidak memberi authority
+   * kepada field lain.
+   */
+  async assessGroupIngress(
+    message: string,
+    context: HarvyContext = EMPTY_CONTEXT,
+    ownerId?: string,
+    signal?: AbortSignal,
+  ): Promise<GroupIngressAssessment | null> {
+    const { context: boundedContext, manifest: contextManifest } =
+      compileHarvyContext(
+        context,
+        undefined,
+        TURNS_ONLY_CONTEXT_PROJECTION,
+      );
+    const raw = await this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: GROUP_INGRESS_MAX_TOKENS,
+      timeoutMs: GROUP_INGRESS_TIMEOUT_MS,
+      maxAttempts: 1,
+      json: true,
+      validateResponse: (content) =>
+        parseGroupIngressAssessment(content) !== null,
+      ...(signal ? { signal } : {}),
+      contextManifest,
+      operation: "group-ingress",
+      usage: this.usage(ownerId, "cheap", "group-ingress"),
+      messages: [
+        { role: "system", content: GROUP_INGRESS_PROMPT },
+        {
+          role: "user",
+          content: groupIngressInput(message, boundedContext.turns),
+        },
+      ],
+    });
+    const assessment = parseGroupIngressAssessment(raw);
+    if (!assessment) {
+      this.logger.warn(
+        "group_ingress_parse_failed",
+        "Balasan model untuk assessment ingress grup tidak dapat dibaca.",
+      );
+    }
+    return assessment;
   }
 
   /**

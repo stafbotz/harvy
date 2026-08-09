@@ -27,6 +27,12 @@ import {
 } from "../observability/operational-logger.js";
 import type { HarvyContextMemory } from "./context.js";
 import {
+  GROUP_INGRESS_FIELD_GUIDANCE,
+  parseGroupIngressRecord,
+  readGroupJsonObject,
+  type GroupIngressAssessment,
+} from "./group-ingress.js";
+import {
   DEFAULT_HARVY_AGENT_HARNESS,
   type AgentHarness,
 } from "../harness/agent-harness.js";
@@ -41,7 +47,7 @@ import { groupAgentScope } from "../harness/scope.js";
  * parser berubah. Evaluator memasukkannya ke signature agar dua run yang
  * tampak memakai prompt sama tidak dibandingkan secara keliru.
  */
-export const GROUP_CONVERSATION_PIPELINE_VERSION = "2026-07-31.1";
+export const GROUP_CONVERSATION_PIPELINE_VERSION = "2026-08-08.1";
 
 export const GROUP_PARTICIPATION_PROMPT = [
   "Kamu adalah perencana giliran sosial sekaligus penulis kandidat balasan",
@@ -53,7 +59,8 @@ export const GROUP_PARTICIPATION_PROMPT = [
   '  "useful_context" | "fact_correction" | "invited_banter" |',
   '  "already_answered" | "human_exchange" | "directed_elsewhere" |',
   '  "reaction_only" | "sensitive" | "stale" | "low_value",',
-  '  "value": 0 | 1 | 2 | 3, "confidence": number, "reply": string | null }',
+  '  "value": 0 | 1 | 2 | 3, "confidence": number, "reply": string | null,',
+  '  "riskHint": object, "contextPrivacy": "ordinary" | "sensitive" }',
   "",
   "Pilih speak bila setelah membayangkan satu kandidat singkat, kandidat itu",
   "jelas menambah sesuatu yang belum diberikan anggota lain: menjawab",
@@ -173,6 +180,11 @@ export interface GroupParticipationPlan {
   reply: string | null;
 }
 
+export interface GroupAmbientAssessment extends GroupIngressAssessment {
+  /** Null tidak membuang risk/privacy signal lain yang berhasil dibaca. */
+  plan: GroupParticipationPlan | null;
+}
+
 export interface GroupConversationContext {
   turns: readonly GroupTurn[];
   /** Hanya milik anggota yang sedang berbicara, di grup ini saja. */
@@ -187,6 +199,12 @@ export interface GroupConversationContext {
 }
 
 export interface GroupConversationPort {
+  assessAmbient(
+    message: GroupMessage,
+    context: GroupConversationContext,
+    ownerId: string,
+    signal?: AbortSignal,
+  ): Promise<GroupAmbientAssessment | null>;
   planAmbient(
     message: GroupMessage,
     context: GroupConversationContext,
@@ -224,6 +242,16 @@ export class GroupConversation implements GroupConversationPort {
     ownerId: string,
     signal?: AbortSignal,
   ): Promise<GroupParticipationPlan | null> {
+    return (await this.assessAmbient(message, context, ownerId, signal))?.plan
+      ?? null;
+  }
+
+  async assessAmbient(
+    message: GroupMessage,
+    context: GroupConversationContext,
+    ownerId: string,
+    signal?: AbortSignal,
+  ): Promise<GroupAmbientAssessment | null> {
     const compiled = compileGroupConversationContext(context);
     const capabilities = this.harness.capabilityContext(
       groupAgentScope(
@@ -239,7 +267,8 @@ export class GroupConversation implements GroupConversationPort {
       timeoutMs: GROUP_PARTICIPATION_TIMEOUT_MS,
       maxAttempts: 1,
       json: true,
-      validateResponse: (content) => parseGroupParticipationPlan(content) !== null,
+      validateResponse: (content) =>
+        parseGroupAmbientAssessment(content) !== null,
       contextManifest: compiled.manifest,
       operation: "group-plan-ambient",
       ...(signal ? { signal } : {}),
@@ -250,6 +279,7 @@ export class GroupConversation implements GroupConversationPort {
           content: [
             HARVY_GROUP_IDENTITY,
             GROUP_PARTICIPATION_PROMPT,
+            GROUP_INGRESS_FIELD_GUIDANCE,
             GROUP_AMBIENT_REPLY_GUARDRAILS,
             capabilities,
             groupSystemContext(compiled.context),
@@ -259,14 +289,14 @@ export class GroupConversation implements GroupConversationPort {
       ],
     });
 
-    const plan = parseGroupParticipationPlan(raw);
-    if (!plan) {
+    const assessment = parseGroupAmbientAssessment(raw);
+    if (!assessment) {
       this.logger.warn(
         "group_participation_parse_failed",
-        "Balasan planner partisipasi grup tidak dapat dibaca.",
+        "Balasan planner dan ingress ambient grup tidak dapat dibaca.",
       );
     }
-    return plan;
+    return assessment;
   }
 
   async revalidateAmbient(
@@ -506,6 +536,23 @@ export function parseGroupParticipationPlan(
   } catch {
     return null;
   }
+}
+
+/**
+ * Parser envelope ambient menjaga plan, risk hint, dan privacy independen.
+ * Plan yang rusak tidak boleh menghapus strong hint; privacy yang rusak tidak
+ * boleh dianggap ordinary.
+ */
+export function parseGroupAmbientAssessment(
+  raw: string,
+): GroupAmbientAssessment | null {
+  const record = readGroupJsonObject(raw);
+  if (!record) return null;
+  const ingress = parseGroupIngressRecord(record);
+  const plan = parseGroupParticipationPlan(raw);
+  return plan || ingress.riskHint || ingress.contextPrivacy
+    ? { ...ingress, plan }
+    : null;
 }
 
 function groupChatMessages(

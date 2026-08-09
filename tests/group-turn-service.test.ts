@@ -13,11 +13,15 @@ import {
   CLAIMED_GROUP_AUTHORITY_RESOLVER,
   type GroupAuthorityResolver,
 } from "../src/core/group-authority-policy.js";
+import { NO_RISK_HINT } from "../src/core/safety-policy.js";
+import { groupRuntimeAdmission } from "../src/core/group-runtime-policy.js";
 import {
   GROUP_NOTICE_VERSION,
   GroupTurnService,
   groupNotice,
   type GroupMemoryExtractionPort,
+  type GroupIngressAssessmentPort,
+  type GroupRuntimeAdmissionResolver,
   type GroupSafetyPort,
   type GroupTransport,
   type GroupUsageControlPort,
@@ -602,13 +606,48 @@ describe("giliran grup", () => {
       }),
     );
 
-    const observed = runtime.turns.observe(
+    const observed = await observeAuthorized(runtime.turns,
       message({
         messageId: "panggil-kapi",
         text: "Kapi, bantu cek ini dong",
       }),
     );
 
+    assert.equal(observed.mentionsHarvy, true);
+  });
+
+  it("mendekorasi vocative Harvy sebelum sentinel aktivasi pertama", async () => {
+    const runtime = createRuntime();
+    const observed = await runtime.turns.observeAuthorized(message({
+      messageId: "cold-vocative",
+      text: "Harvy, bantu cek ini",
+      mentionsHarvy: false,
+    }));
+
+    assert.ok(observed);
+    assert.equal(observed.mentionsHarvy, true);
+    assert.equal(observed.ingressRevision, 0);
+    assert.equal(await runtime.turns.handle(observed), "replied");
+  });
+
+  it("menghidrasi alias durable sebelum admission pertama setelah restart", async () => {
+    const repository = new MemoryGroupRepository();
+    const original = createRuntime({ repository });
+    await original.turns.handle(message({
+      messageId: "simpan-alias-durable",
+      text: "Harvy, mulai sekarang panggil kamu Kapi",
+      mentionsHarvy: true,
+      isAdmin: true,
+    }));
+
+    const restarted = createRuntime({ repository });
+    const observed = await restarted.turns.observeAuthorized(message({
+      messageId: "cold-custom-alias",
+      text: "Kapi, bantu cek ini",
+      mentionsHarvy: false,
+    }));
+
+    assert.ok(observed);
     assert.equal(observed.mentionsHarvy, true);
   });
 
@@ -663,7 +702,7 @@ describe("giliran grup", () => {
         return speakPlan("jawaban yang sudah basi");
       },
     });
-    const first = runtime.turns.observe(
+    const first = await observeAuthorized(runtime.turns,
       message({
         messageId: "pertanyaan",
         text: "ada yang tau jawabannya?",
@@ -672,7 +711,7 @@ describe("giliran grup", () => {
     const pending = runtime.turns.handle(first);
     await planStarted;
 
-    runtime.turns.observe(
+    await observeAuthorized(runtime.turns,
       message({
         messageId: "jawaban-manusia",
         participantId: "p2",
@@ -703,16 +742,16 @@ describe("giliran grup", () => {
         return speakPlan("jawaban tetap relevan");
       },
     });
-    const original = runtime.turns.observe(
+    const original = await observeAuthorized(runtime.turns,
       message({ messageId: "pertanyaan-valid" }),
     );
     const pending = runtime.turns.handle(original);
     await planStarted;
 
-    runtime.turns.observe(
+    await observeAuthorized(runtime.turns,
       message({ messageId: "pertanyaan-valid" }),
     );
-    runtime.turns.observe(
+    await observeAuthorized(runtime.turns,
       message({
         accountId: "nomor-non-binding",
         messageId: "event-akun-lain",
@@ -746,7 +785,7 @@ describe("giliran grup", () => {
       groupName: "Grup uji",
       at: "2026-07-29T12:05:00.000Z",
     });
-    const live = runtime.turns.observe(
+    const live = await observeAuthorized(runtime.turns,
       message({
         messageId: "live",
         at: "2026-07-29T12:06:00.000Z",
@@ -754,12 +793,13 @@ describe("giliran grup", () => {
     );
     const pending = runtime.turns.handle(live);
     await planStarted;
-    runtime.turns.observe(
+    const replay = await runtime.turns.observeAuthorized(
       message({
         messageId: "replay-lama",
         at: "2026-07-29T12:00:00.000Z",
       }),
     );
+    assert.equal(replay, null);
     releasePlan();
 
     assert.equal(await pending, "replied");
@@ -850,7 +890,7 @@ describe("giliran grup", () => {
       },
     });
     const first = runtime.turns.handle(
-      runtime.turns.observe(
+      await observeAuthorized(runtime.turns,
         message({
           messageId: "target",
           text: "ada yang tahu jawabannya?",
@@ -859,7 +899,7 @@ describe("giliran grup", () => {
       ),
     );
     await firstPlanStarted;
-    const secondMessage = runtime.turns.observe(
+    const secondMessage = await observeAuthorized(runtime.turns,
       message({
         messageId: "sela",
         participantId: "p2",
@@ -875,6 +915,111 @@ describe("giliran grup", () => {
     assert.equal(await first, "silent");
     assert.equal(await second, "silent");
     await within(replied, 2_500);
+  });
+
+  it("membatalkan kandidat ambient lama ketika mode runtime ditutup", async () => {
+    const closedModes = [
+      "direct_only",
+      "paused",
+      "disabled",
+    ] as const;
+
+    await Promise.all(closedModes.map(async (closedMode) => {
+      let mode: Parameters<typeof groupRuntimeAdmission>[0] = "ambient";
+      let releaseFirstPlan!: () => void;
+      let markFirstPlanStarted!: () => void;
+      const firstPlanGate = new Promise<void>((resolve) => {
+        releaseFirstPlan = resolve;
+      });
+      const firstPlanStarted = new Promise<void>((resolve) => {
+        markFirstPlanStarted = resolve;
+      });
+      let revalidationCalls = 0;
+      const runtime = createRuntime({
+        now: () => new Date(),
+        runtimeAdmission: async (incoming) =>
+          groupRuntimeAdmission(mode, incoming),
+        planAmbient: async (incoming) => {
+          if (incoming.messageId === `target-${closedMode}`) {
+            markFirstPlanStarted();
+            await firstPlanGate;
+            return speakPlan("kandidat lama");
+          }
+          return silentPlan();
+        },
+        revalidateAmbient: async () => {
+          revalidationCalls += 1;
+          return speakPlan("tidak boleh terkirim");
+        },
+      });
+      const first = runtime.turns.handle(
+        await observeAuthorized(runtime.turns, message({
+          messageId: `target-${closedMode}`,
+          text: "ada yang tahu jawabannya?",
+          at: new Date().toISOString(),
+        })),
+      );
+      await firstPlanStarted;
+      const second = runtime.turns.handle(
+        await observeAuthorized(runtime.turns, message({
+          messageId: `sela-${closedMode}`,
+          participantId: "p2",
+          participantAliases: ["p2"],
+          participantName: "Bima",
+          text: "sebentar, aku cek dulu",
+          at: new Date().toISOString(),
+        })),
+      );
+      releaseFirstPlan();
+
+      assert.equal(await first, "silent");
+      assert.equal(await second, "silent");
+      mode = closedMode;
+      await new Promise<void>((resolve) => setTimeout(resolve, 1_050));
+      await runtime.turns.drain();
+
+      assert.equal(revalidationCalls, 0, closedMode);
+      assert.deepEqual(runtime.replies, [], closedMode);
+    }));
+  });
+
+  it("memeriksa ulang mode sebelum mengirim hasil ambient aktif", async () => {
+    const closedModes = [
+      ["direct_only", "silent"],
+      ["paused", "silent"],
+      ["disabled", "inactive"],
+    ] as const;
+
+    for (const [closedMode, expected] of closedModes) {
+      let mode: Parameters<typeof groupRuntimeAdmission>[0] = "ambient";
+      let releasePlan!: () => void;
+      let markPlanStarted!: () => void;
+      const planGate = new Promise<void>((resolve) => {
+        releasePlan = resolve;
+      });
+      const planStarted = new Promise<void>((resolve) => {
+        markPlanStarted = resolve;
+      });
+      const runtime = createRuntime({
+        runtimeAdmission: async (incoming) =>
+          groupRuntimeAdmission(mode, incoming),
+        planAmbient: async () => {
+          markPlanStarted();
+          await planGate;
+          return speakPlan("hasil yang sudah kedaluwarsa");
+        },
+      });
+      const turn = runtime.turns.handle(message({
+        messageId: `active-${closedMode}`,
+        text: "ada yang tahu?",
+      }));
+      await planStarted;
+      mode = closedMode;
+      releasePlan();
+
+      assert.equal(await turn, expected, closedMode);
+      assert.deepEqual(runtime.replies, [], closedMode);
+    }
   });
 
   it("menunggu seluruh bubble yang sudah terlihat selesai sebelum revalidasi", async () => {
@@ -908,7 +1053,7 @@ describe("giliran grup", () => {
       },
     });
     const first = runtime.turns.handle(
-      runtime.turns.observe(
+      await observeAuthorized(runtime.turns,
         message({
           messageId: "target-belum-settle",
           text: "ada yang tahu jawabannya?",
@@ -917,7 +1062,7 @@ describe("giliran grup", () => {
       ),
     );
     await firstPlanStarted;
-    const delayed = runtime.turns.observe(
+    const delayed = await observeAuthorized(runtime.turns,
       message({
         messageId: "bubble-terlihat",
         participantId: "p2",
@@ -976,7 +1121,7 @@ describe("giliran grup", () => {
       },
     });
     const first = runtime.turns.handle(
-      runtime.turns.observe(
+      await observeAuthorized(runtime.turns,
         message({
           messageId: "target-revalidasi",
           text: "ada yang bisa bantu?",
@@ -986,7 +1131,7 @@ describe("giliran grup", () => {
     );
     await firstPlanStarted;
     const interjection = runtime.turns.handle(
-      runtime.turns.observe(
+      await observeAuthorized(runtime.turns,
         message({
           messageId: "sela-revalidasi",
           participantId: "p2",
@@ -1049,7 +1194,7 @@ describe("giliran grup", () => {
       },
     });
     const first = runtime.turns.handle(
-      runtime.turns.observe(
+      await observeAuthorized(runtime.turns,
         message({
           messageId: "target-baca-konteks",
           text: "ada yang tahu?",
@@ -1059,7 +1204,7 @@ describe("giliran grup", () => {
     );
     await firstPlanStarted;
     const interjection = runtime.turns.handle(
-      runtime.turns.observe(
+      await observeAuthorized(runtime.turns,
         message({
           messageId: "sela-baca-konteks",
           participantId: "p2",
@@ -1091,6 +1236,79 @@ describe("giliran grup", () => {
 
     assert.equal(await within(direct, 500), "replied");
     assert.equal(revalidationCalls, 0);
+  });
+
+  it("tidak memulai revalidasi bila mode ditutup saat konteks dibaca", async () => {
+    let mode: Parameters<typeof groupRuntimeAdmission>[0] = "ambient";
+    let releaseFirstPlan!: () => void;
+    let markFirstPlanStarted!: () => void;
+    let releaseMemory!: () => void;
+    let markMemoryRead!: () => void;
+    const firstPlanGate = new Promise<void>((resolve) => {
+      releaseFirstPlan = resolve;
+    });
+    const firstPlanStarted = new Promise<void>((resolve) => {
+      markFirstPlanStarted = resolve;
+    });
+    const memoryGate = new Promise<void>((resolve) => {
+      releaseMemory = resolve;
+    });
+    const memoryRead = new Promise<void>((resolve) => {
+      markMemoryRead = resolve;
+    });
+    const repository = new GatedMemoryRepository();
+    let revalidationCalls = 0;
+    const runtime = createRuntime({
+      repository,
+      now: () => new Date(),
+      runtimeAdmission: async (incoming) =>
+        groupRuntimeAdmission(mode, incoming),
+      planAmbient: async (incoming) => {
+        if (incoming.messageId === "target-mode-baca-konteks") {
+          markFirstPlanStarted();
+          await firstPlanGate;
+          return speakPlan("kandidat lama");
+        }
+        return silentPlan();
+      },
+      revalidateAmbient: async () => {
+        revalidationCalls += 1;
+        return speakPlan("tidak boleh dibuat");
+      },
+    });
+    const first = runtime.turns.handle(
+      await observeAuthorized(runtime.turns, message({
+        messageId: "target-mode-baca-konteks",
+        text: "ada yang tahu?",
+        at: new Date().toISOString(),
+      })),
+    );
+    await firstPlanStarted;
+    const interjection = runtime.turns.handle(
+      await observeAuthorized(runtime.turns, message({
+        messageId: "sela-mode-baca-konteks",
+        participantId: "p2",
+        participantAliases: ["p2"],
+        participantName: "Bima",
+        text: "aku cek dulu",
+        at: new Date().toISOString(),
+      })),
+    );
+    releaseFirstPlan();
+    assert.equal(await first, "silent");
+    assert.equal(await interjection, "silent");
+
+    repository.gateNextMemory = async () => {
+      markMemoryRead();
+      await memoryGate;
+    };
+    await within(memoryRead, 2_500);
+    mode = "direct_only";
+    releaseMemory();
+    await runtime.turns.drain();
+
+    assert.equal(revalidationCalls, 0);
+    assert.deepEqual(runtime.replies, []);
   });
 
   it("tidak memanggil planner untuk pesan yang sedang membalas anggota lain", async () => {
@@ -1159,7 +1377,103 @@ describe("giliran grup", () => {
       message({ at: "2026-07-29T12:00:00.000Z" }),
     );
 
-    assert.equal(outcome, "before-join");
+    assert.equal(outcome, "inactive");
+  });
+
+  it("memfilter bubble pra-join sebelum priority assessment model", async () => {
+    let releaseOrdinary!: () => void;
+    const ordinaryGate = new Promise<void>((resolve) => {
+      releaseOrdinary = resolve;
+    });
+    let markOrdinaryBlocked!: () => void;
+    const ordinaryBlocked = new Promise<void>((resolve) => {
+      markOrdinaryBlocked = resolve;
+    });
+    let markPriorityAssessed!: () => void;
+    const priorityAssessed = new Promise<void>((resolve) => {
+      markPriorityAssessed = resolve;
+    });
+    const assessed: string[] = [];
+    const triaged: string[] = [];
+    const repliedTo: string[] = [];
+    const runtime = createRuntime({
+      assessGroupIngress: async (text) => {
+        assessed.push(text);
+        if (text.includes("PESAN-LIVE")) {
+          markPriorityAssessed();
+          return {
+            riskHint: {
+              level: "possible",
+              category: "acute_distress",
+              confidence: 0.7,
+            },
+            contextPrivacy: "ordinary",
+          };
+        }
+        return { riskHint: NO_RISK_HINT, contextPrivacy: "ordinary" };
+      },
+      triageRisk: async (text) => {
+        triaged.push(text);
+        return CALM_TRIAGE;
+      },
+      reply: async (incoming) => {
+        repliedTo.push(incoming.text);
+        if (incoming.messageId === "pemblokir") {
+          markOrdinaryBlocked();
+          await ordinaryGate;
+        }
+        return "balasan";
+      },
+    });
+    await runtime.turns.activateGroup({
+      scope: { channel: "whatsapp", groupId: "grup@g.us" },
+      accountId: "utama",
+      groupName: "Grup uji",
+      at: "2026-07-29T12:05:00.000Z",
+    });
+    const ordinary = runtime.turns.handle(message({
+      messageId: "pemblokir",
+      text: "Harvy tunggu sebentar",
+      at: "2026-07-29T12:05:01.000Z",
+      mentionsHarvy: true,
+    }));
+    await within(ordinaryBlocked, 1_000);
+    const mixed = runtime.turns.handle(message({
+      messageId: "live",
+      text: "RAHASIA-SEBELUM-JOIN aku dalam bahaya sekarang\nPESAN-LIVE",
+      at: "2026-07-29T12:05:02.000Z",
+      mentionsHarvy: true,
+      parts: [
+        {
+          messageId: "old",
+          text: "RAHASIA-SEBELUM-JOIN aku dalam bahaya sekarang",
+          at: "2026-07-29T12:00:00.000Z",
+          mentionsHarvy: true,
+          repliesToHarvy: false,
+        },
+        {
+          messageId: "live",
+          text: "PESAN-LIVE",
+          at: "2026-07-29T12:05:02.000Z",
+          mentionsHarvy: true,
+          repliesToHarvy: false,
+        },
+      ],
+    }));
+    await within(priorityAssessed, 1_000);
+
+    assert.deepEqual(assessed, ["Harvy tunggu sebentar", "PESAN-LIVE"]);
+    assert.deepEqual(triaged, ["PESAN-LIVE"]);
+    releaseOrdinary();
+    await Promise.all([ordinary, mixed]);
+    assert.ok(repliedTo.every((text) => !text.includes("RAHASIA-SEBELUM-JOIN")));
+    const memory = await runtime.memories.memory("whatsapp:grup@g.us");
+    assert.ok(
+      memory?.recentMessageIds.some((seen) => seen.messageId === "live"),
+    );
+    assert.ok(
+      memory?.recentMessageIds.every((seen) => seen.messageId !== "old"),
+    );
   });
 
   it("tidak memproses pesan bila pemberitahuan gagal terkirim", async () => {
@@ -1184,6 +1498,36 @@ describe("giliran grup", () => {
     );
     assert.equal(runtime.replies.length, 0);
     assert.equal(modelCalls, 0);
+  });
+
+  it("mengulang notice gagal lalu memproses pesan berikutnya", async () => {
+    let notices = 0;
+    const runtime = createRuntime({
+      sendNotice: async () => {
+        notices += 1;
+        if (notices === 1) throw new Error("WhatsApp gagal sementara");
+      },
+      reply: async () => "notice sudah siap",
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "notice-gagal-pertama",
+        text: "Harvy, percobaan pertama",
+        mentionsHarvy: false,
+      })),
+      "notice-failed",
+    );
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "notice-berhasil-kedua",
+        text: "Harvy, coba lagi",
+        mentionsHarvy: false,
+      })),
+      "replied",
+    );
+    assert.equal(notices, 2);
+    assert.deepEqual(runtime.replies, ["notice sudah siap"]);
   });
 
   it("mempertahankan identitas pembicara dalam konteks grup", async () => {
@@ -1489,6 +1833,512 @@ describe("giliran grup", () => {
     );
   });
 
+  it("menjalankan triase hanya untuk hint possible/strong dan menjaga outage evidence-aware", async () => {
+    let triageCalls = 0;
+    let reviewCalls = 0;
+    const routed = new Map<string, { level: RiskTriage["level"]; certain: boolean }>();
+    const runtime = createRuntime({
+      assessGroupIngress: async (text) => ({
+        riskHint: text.includes("ordinary")
+          ? NO_RISK_HINT
+          : {
+              level: text.includes("strong") ? "strong" : "possible",
+              category: "acute_distress",
+              confidence: 0.9,
+            },
+        contextPrivacy: "ordinary",
+      }),
+      triageRisk: async () => {
+        triageCalls += 1;
+        return null;
+      },
+      reviewReply: async () => {
+        reviewCalls += 1;
+        return true;
+      },
+      reply: async (incoming, _context, triage) => {
+        routed.set(incoming.messageId, {
+          level: triage.level,
+          certain: triage.certain,
+        });
+        return "balasan normal";
+      },
+    });
+
+    await runtime.turns.handle(message({
+      messageId: "ordinary",
+      text: "Harvy, ordinary",
+      mentionsHarvy: true,
+    }));
+    await runtime.turns.handle(message({
+      messageId: "possible",
+      text: "Harvy, possible",
+      mentionsHarvy: true,
+    }));
+    await runtime.turns.handle(message({
+      messageId: "strong",
+      text: "Harvy, strong",
+      mentionsHarvy: true,
+    }));
+
+    assert.equal(triageCalls, 2);
+    assert.deepEqual(routed.get("ordinary"), {
+      level: "biasa",
+      certain: true,
+    });
+    assert.deepEqual(routed.get("possible"), {
+      level: "biasa",
+      certain: false,
+    });
+    assert.deepEqual(routed.get("strong"), {
+      level: "dukungan",
+      certain: false,
+    });
+    assert.equal(reviewCalls, 1);
+  });
+
+  it("fallback triase saat ingress unavailable tanpa menyimpan raw context", async () => {
+    let triageCalls = 0;
+    const contexts = new Map<string, string>();
+    const routed = new Map<string, { level: RiskTriage["level"]; certain: boolean }>();
+    const runtime = createRuntime({
+      assessGroupIngress: async (text) =>
+        text.includes("ordinary-after")
+          ? {
+              riskHint: NO_RISK_HINT,
+              contextPrivacy: "ordinary",
+            }
+          : null,
+      triageRisk: async () => {
+        triageCalls += 1;
+        return null;
+      },
+      reply: async (incoming, context, triage) => {
+        contexts.set(
+          incoming.messageId,
+          context.turns.map((turn) => turn.text).join(" "),
+        );
+        routed.set(incoming.messageId, {
+          level: triage.level,
+          certain: triage.certain,
+        });
+        return `normal-${incoming.messageId}`;
+      },
+    });
+
+    await runtime.turns.handle(message({
+      messageId: "ingress-unavailable",
+      text: "Harvy, ingress unavailable",
+      mentionsHarvy: true,
+    }));
+    await runtime.turns.handle(message({
+      messageId: "ordinary-after",
+      text: "Harvy, ordinary-after",
+      mentionsHarvy: true,
+    }));
+
+    assert.equal(triageCalls, 1);
+    assert.deepEqual(routed.get("ingress-unavailable"), {
+      level: "biasa",
+      certain: false,
+    });
+    assert.doesNotMatch(
+      contexts.get("ordinary-after") ?? "",
+      /ingress unavailable|normal-ingress-unavailable/u,
+    );
+  });
+
+  it("mereview danger tetapi tidak membayar reviewer kedua untuk support yang pasti", async () => {
+    let reviews = 0;
+    const support: RiskTriage = {
+      level: "dukungan",
+      alone: false,
+      sensitive: false,
+      summary: "butuh dukungan",
+      certain: true,
+    };
+    const danger: RiskTriage = {
+      ...support,
+      level: "bahaya",
+      summary: "bahaya dekat",
+    };
+    const runtime = createRuntime({
+      assessGroupIngress: async () => ({
+        riskHint: {
+          level: "possible",
+          category: "acute_distress",
+          confidence: 0.7,
+        },
+        contextPrivacy: "ordinary",
+      }),
+      triageRisk: async (text) =>
+        text.includes("danger-result") ? danger : support,
+      reviewReply: async () => {
+        reviews += 1;
+        return true;
+      },
+    });
+
+    await runtime.turns.handle(message({
+      messageId: "support-certain",
+      text: "Harvy, support-result",
+      mentionsHarvy: true,
+    }));
+    assert.equal(reviews, 0);
+    await runtime.turns.handle(message({
+      messageId: "danger-certain",
+      text: "Harvy, danger-result",
+      mentionsHarvy: true,
+    }));
+    assert.equal(reviews, 1);
+  });
+
+  it("privacy sensitive atau unavailable menahan raw context tanpa mengubah UX normal", async () => {
+    const contexts = new Map<string, string>();
+    let triageCalls = 0;
+    const runtime = createRuntime({
+      assessGroupIngress: async (text) => ({
+        riskHint: NO_RISK_HINT,
+        contextPrivacy: text.includes("sensitive")
+          ? "sensitive"
+          : text.includes("unknown")
+            ? null
+            : "ordinary",
+      }),
+      triageRisk: async () => {
+        triageCalls += 1;
+        return CALM_TRIAGE;
+      },
+      reply: async (incoming, context, triage) => {
+        contexts.set(
+          incoming.messageId,
+          context.turns.map((turn) => turn.text).join(" "),
+        );
+        assert.equal(triage.level, "biasa");
+        return `normal-${incoming.messageId}`;
+      },
+    });
+
+    await runtime.turns.handle(message({
+      messageId: "sensitive",
+      text: "Harvy, sensitive story",
+      mentionsHarvy: true,
+    }));
+    await runtime.turns.handle(message({
+      messageId: "unknown",
+      text: "Harvy, unknown privacy",
+      mentionsHarvy: true,
+    }));
+    await runtime.turns.handle(message({
+      messageId: "ordinary-after",
+      text: "Harvy, ordinary after",
+      mentionsHarvy: true,
+    }));
+
+    assert.equal(triageCalls, 0);
+    assert.doesNotMatch(
+      contexts.get("ordinary-after") ?? "",
+      /sensitive story|unknown privacy|normal-sensitive|normal-unknown/u,
+    );
+  });
+
+  it("classifier privacy durable hanya berjalan saat ada kandidat dan gagal tertutup", async () => {
+    let privacyCalls = 0;
+    const runtime = createRuntime({
+      memoryExtractor: {
+        understand: async (text) =>
+          text.includes("candidate")
+            ? understanding({
+                kind: "preference",
+                content: "Suka belajar pagi",
+              })
+            : { ...understanding({
+                kind: "preference",
+                content: "tidak dipakai",
+              }), memories: [] },
+        assessMemoryPrivacy: async () => {
+          privacyCalls += 1;
+          return null;
+        },
+      },
+      assessGroupIngress: async () => ({
+        riskHint: NO_RISK_HINT,
+        contextPrivacy: "ordinary",
+      }),
+    });
+
+    await runtime.turns.handle(message({
+      messageId: "tanpa-candidate",
+      text: "Harvy, halo",
+      mentionsHarvy: true,
+    }));
+    assert.equal(privacyCalls, 0);
+    await runtime.turns.handle(message({
+      messageId: "dengan-candidate",
+      text: "Harvy, candidate",
+      mentionsHarvy: true,
+    }));
+
+    assert.equal(privacyCalls, 1);
+    assert.deepEqual(
+      await runtime.memories.memberMemories(
+        "whatsapp:grup@g.us",
+        ["p1"],
+      ),
+      [],
+    );
+    assert.match(runtime.replies.at(-1) ?? "", /belum kusimpan/iu);
+  });
+
+  it("menolak semua model call ketika authority ingress tidak terbukti", async () => {
+    let ingressCalls = 0;
+    let triageCalls = 0;
+    let replyCalls = 0;
+    const runtime = createRuntime({
+      authority: {
+        resolveGroupAuthority: async () => null,
+      },
+      assessGroupIngress: async () => {
+        ingressCalls += 1;
+        return { riskHint: NO_RISK_HINT, contextPrivacy: "ordinary" };
+      },
+      triageRisk: async () => {
+        triageCalls += 1;
+        return CALM_TRIAGE;
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "tidak boleh terkirim";
+      },
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({
+        text: "aku dalam bahaya sekarang",
+        mentionsHarvy: true,
+      })),
+      "inactive",
+    );
+    assert.equal(ingressCalls, 0);
+    assert.equal(triageCalls, 0);
+    assert.equal(replyCalls, 0);
+    assert.deepEqual(runtime.replies, []);
+  });
+
+  it("ingress tanpa authority tidak membatalkan planner sah yang sedang berjalan", async () => {
+    let denySecondParticipant = false;
+    let plannerSignal: AbortSignal | undefined;
+    const plannerStarted = deferredVoid();
+    const releasePlanner = deferredVoid();
+    const runtime = createRuntime({
+      authority: {
+        resolveGroupAuthority: async ({ participantIds }) =>
+          denySecondParticipant && participantIds.includes("p2")
+            ? null
+            : { role: "member", authorityEpoch: 1 },
+      },
+      planAmbient: async (
+        _incoming,
+        _context,
+        _ownerId,
+        signal,
+      ) => {
+        plannerSignal = signal;
+        plannerStarted.resolve();
+        await releasePlanner.promise;
+        return speakPlan("jawaban sah tetap terkirim");
+      },
+    });
+
+    const valid = runtime.turns.handle(message({
+      messageId: "ambient-sah",
+      text: "ada yang tahu jawabannya?",
+    }));
+    await plannerStarted.promise;
+    denySecondParticipant = true;
+    const denied = runtime.turns.handle(message({
+      messageId: "direct-tanpa-authority",
+      participantId: "p2",
+      participantAliases: ["p2"],
+      mentionsHarvy: true,
+      text: "Harvy, batalkan yang tadi",
+    }));
+
+    assert.equal(await denied, "inactive");
+    assert.equal(plannerSignal?.aborted, false);
+    releasePlanner.resolve();
+    assert.equal(await valid, "replied");
+    assert.deepEqual(runtime.replies, ["jawaban sah tetap terkirim"]);
+  });
+
+  it("menandai committed observation sebagai settled saat revalidasi menolak turn", async () => {
+    let authorityCalls = 0;
+    const runtime = createRuntime({
+      authority: {
+        resolveGroupAuthority: async () => {
+          authorityCalls += 1;
+          return authorityCalls === 1
+            ? { role: "member", authorityEpoch: 1 }
+            : null;
+        },
+      },
+    });
+    await runtime.turns.activateGroup({
+      scope: { channel: "whatsapp", groupId: "grup@g.us" },
+      accountId: "utama",
+      groupName: "Grup uji",
+      at: NOW.toISOString(),
+    });
+    const observed = await runtime.turns.observeAuthorized(message({
+      messageId: "committed-lalu-ditolak",
+      mentionsHarvy: true,
+    }));
+    assert.ok(observed);
+    assert.equal(observed.ingressRevision, 1);
+
+    assert.equal(await runtime.turns.handle(observed), "inactive");
+    const state = runtime.turns as unknown as {
+      settledObservations: Map<string, number>;
+    };
+    assert.equal(
+      state.settledObservations.get("whatsapp:grup@g.us\u0000account:utama"),
+      1,
+    );
+  });
+
+  it("menyelesaikan watermark observation yang ditolak runtime admission", async () => {
+    const runtime = createRuntime();
+    await runtime.turns.activateGroup({
+      scope: { channel: "whatsapp", groupId: "grup@g.us" },
+      accountId: "utama",
+      groupName: "Grup uji",
+      at: NOW.toISOString(),
+    });
+    const observed = await observeAuthorized(runtime.turns, message({
+      messageId: "ditolak-admission",
+    }));
+
+    runtime.turns.settleRejectedObservation(observed);
+    const state = runtime.turns as unknown as {
+      settledObservations: Map<string, number>;
+    };
+    assert.equal(
+      state.settledObservations.get("whatsapp:grup@g.us\u0000account:utama"),
+      observed.ingressRevision,
+    );
+  });
+
+  it("menserialisasi observasi authority agar resolusi lambat tidak membalik ingress", async () => {
+    const firstAuthorityStarted = deferredVoid();
+    const releaseFirstAuthority = deferredVoid();
+    const resolvedParticipants: string[] = [];
+    const runtime = createRuntime({
+      authority: {
+        resolveGroupAuthority: async ({ participantIds }) => {
+          const participant = participantIds[0] ?? "unknown";
+          resolvedParticipants.push(participant);
+          if (participant === "p1") {
+            firstAuthorityStarted.resolve();
+            await releaseFirstAuthority.promise;
+          }
+          return { role: "member", authorityEpoch: 1 };
+        },
+      },
+    });
+    await runtime.turns.activateGroup({
+      scope: { channel: "whatsapp", groupId: "grup@g.us" },
+      accountId: "utama",
+      groupName: "Grup uji",
+      at: NOW.toISOString(),
+    });
+
+    const first = runtime.turns.observeAuthorized(message({
+      messageId: "observasi-a",
+      participantId: "p1",
+      participantAliases: ["p1"],
+    }));
+    await firstAuthorityStarted.promise;
+    const second = runtime.turns.observeAuthorized(message({
+      messageId: "observasi-b",
+      participantId: "p2",
+      participantAliases: ["p2"],
+    }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(resolvedParticipants, ["p1"]);
+
+    releaseFirstAuthority.resolve();
+    const [observedFirst, observedSecond] = await Promise.all([first, second]);
+    assert.equal(observedFirst?.ingressRevision, 1);
+    assert.equal(observedSecond?.ingressRevision, 2);
+    assert.deepEqual(resolvedParticipants, ["p1", "p2"]);
+  });
+
+  it("hak hapus data tetap mencapai control flow pada support yang pasti", async () => {
+    const support: RiskTriage = {
+      level: "dukungan",
+      alone: false,
+      sensitive: false,
+      summary: "butuh dukungan",
+      certain: true,
+    };
+    const runtime = createRuntime({
+      assessGroupIngress: async () => ({
+        riskHint: {
+          level: "possible",
+          category: "acute_distress",
+          confidence: 0.7,
+        },
+        contextPrivacy: "ordinary",
+      }),
+      triageRisk: async () => support,
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "forget-support",
+        text: "Harvy, lupakan tentang aku",
+        mentionsHarvy: true,
+      })),
+      "replied",
+    );
+    assert.match(runtime.replies.at(-1) ?? "", /balas.*ya.*lupakan/iu);
+  });
+
+  it("kontrol eksplisit berotoritas tetap berjalan pada support yang pasti", async () => {
+    const support: RiskTriage = {
+      level: "dukungan",
+      alone: false,
+      sensitive: false,
+      summary: "butuh dukungan",
+      certain: true,
+    };
+    const runtime = createRuntime({
+      assessGroupIngress: async () => ({
+        riskHint: {
+          level: "possible",
+          category: "acute_distress",
+          confidence: 0.7,
+        },
+        contextPrivacy: "ordinary",
+      }),
+      triageRisk: async () => support,
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "alias-support",
+        text: "Harvy, mulai sekarang panggil kamu Kapi",
+        mentionsHarvy: true,
+        isAdmin: true,
+      })),
+      "replied",
+    );
+    assert.deepEqual(
+      (await runtime.memories.memory("whatsapp:grup@g.us"))?.harvyAliases,
+      ["Harvy", "Kapi"],
+    );
+  });
+
   it("memberi triase konteks orang yang sama beserta balasan Harvy", async () => {
     const followUpContexts: HarvyContext[] = [];
     const runtime = createRuntime({
@@ -1588,6 +2438,58 @@ describe("giliran grup", () => {
     assert.equal(followUpLevel, "dukungan");
   });
 
+  it("marker dukungan tidak menurunkan strong hint pada lanjutan pendek", async () => {
+    const support: RiskTriage = {
+      level: "dukungan",
+      alone: false,
+      sensitive: true,
+      summary: "butuh dukungan",
+      certain: true,
+    };
+    let reviews = 0;
+    const followUpTriages: RiskTriage[] = [];
+    const runtime = createRuntime({
+      assessGroupIngress: async (text) => ({
+        riskHint: text === "belum"
+          ? {
+              level: "strong",
+              category: "acute_distress",
+              confidence: 0.95,
+            }
+          : {
+              level: "possible",
+              category: "acute_distress",
+              confidence: 0.7,
+            },
+        contextPrivacy: "sensitive",
+      }),
+      triageRisk: async (text) => text === "belum" ? null : support,
+      reviewReply: async () => {
+        reviews += 1;
+        return true;
+      },
+      reply: async (incoming, _context, triage) => {
+        if (incoming.text === "belum") followUpTriages.push(triage);
+        return "balasan hati-hati";
+      },
+    });
+
+    await runtime.turns.handle(message({
+      messageId: "support-awal",
+      text: "Harvy, aku sedang tertekan",
+      mentionsHarvy: true,
+    }));
+    await runtime.turns.handle(message({
+      messageId: "support-lanjut-strong",
+      text: "belum",
+      repliesToHarvy: true,
+    }));
+
+    assert.equal(followUpTriages[0]?.level, "dukungan");
+    assert.equal(followUpTriages[0]?.certain, false);
+    assert.equal(reviews, 1);
+  });
+
   it("tidak mewariskan marker atau konteks dari triase yang selesai setelah removal", async () => {
     let releaseTriage!: () => void;
     let markTriageStarted!: () => void;
@@ -1665,14 +2567,12 @@ describe("giliran grup", () => {
     assert.doesNotMatch(followUpContext, /Catatan keselamatan|percakapan lama/);
   });
 
-  it("tidak menjalankan mutasi memori dari pesan sensitif atau negatif", async () => {
-    const sensitive: RiskTriage = {
-      ...CALM_TRIAGE,
-      sensitive: true,
-    };
+  it("mengizinkan kontrol eksplisit sensitif tetapi menolak bentuk negatif", async () => {
     const runtime = createRuntime({
-      triageRisk: async (text) =>
-        text.includes("Kapi") ? sensitive : CALM_TRIAGE,
+      assessGroupIngress: async (text) => ({
+        riskHint: NO_RISK_HINT,
+        contextPrivacy: text.includes("Kapi") ? "sensitive" : "ordinary",
+      }),
     });
 
     await runtime.turns.handle(
@@ -1693,7 +2593,7 @@ describe("giliran grup", () => {
     );
 
     const memory = await runtime.memories.memory("whatsapp:grup@g.us");
-    assert.deepEqual(memory?.harvyAliases, ["Harvy"]);
+    assert.deepEqual(memory?.harvyAliases, ["Harvy", "Kapi"]);
   });
 
   it("membedakan koreksi nama anggota dari julukan Harvy", async () => {
@@ -1723,6 +2623,50 @@ describe("giliran grup", () => {
     const memory = await runtime.memories.memory("whatsapp:grup@g.us");
     assert.equal(memory?.participants[0]?.displayNameOverride, "Budi");
     assert.deepEqual(memory?.harvyAliases, ["Harvy", "Kapi"]);
+  });
+
+  it("memeriksa ulang mode tepat sebelum fixed urgent ACK", async () => {
+    const cases = [
+      ["direct_only", 1],
+      ["paused", 0],
+      ["disabled", 0],
+    ] as const;
+
+    for (const [closedMode, expectedAckCount] of cases) {
+      let mode: Parameters<typeof groupRuntimeAdmission>[0] = "ambient";
+      let releaseAdmission!: () => void;
+      let markAdmissionStarted!: () => void;
+      const admissionGate = new Promise<void>((resolve) => {
+        releaseAdmission = resolve;
+      });
+      const admissionStarted = new Promise<void>((resolve) => {
+        markAdmissionStarted = resolve;
+      });
+      const runtime = createRuntime({
+        runtimeAdmission: async (incoming) => {
+          markAdmissionStarted();
+          await admissionGate;
+          return groupRuntimeAdmission(mode, incoming);
+        },
+      });
+      await runtime.turns.activateGroup({
+        scope: { channel: "whatsapp", groupId: "grup@g.us" },
+        accountId: "utama",
+        groupName: "Grup uji",
+        at: NOW.toISOString(),
+      });
+      const preflight = runtime.turns.preflightUrgent(message({
+        messageId: `urgent-mode-${closedMode}`,
+        text: "aku dalam bahaya sekarang",
+        mentionsHarvy: false,
+      }));
+      await within(admissionStarted, 1_000);
+      mode = closedMode;
+      releaseAdmission();
+      await preflight;
+
+      assert.equal(runtime.replies.length, expectedAckCount, closedMode);
+    }
   });
 
   it("mengirim acknowledgment bahaya tanpa menunggu giliran biasa selesai", async () => {
@@ -1820,6 +2764,414 @@ describe("giliran grup", () => {
     await Promise.all([ordinary, first, duplicate]);
   });
 
+  it("ACK urgent tidak menelan triase prioritas full turn", async () => {
+    let releaseOrdinary!: () => void;
+    const ordinaryGate = new Promise<void>((resolve) => {
+      releaseOrdinary = resolve;
+    });
+    let releaseTriage!: () => void;
+    const triageGate = new Promise<void>((resolve) => {
+      releaseTriage = resolve;
+    });
+    let markTriageStarted!: () => void;
+    const triageStarted = new Promise<void>((resolve) => {
+      markTriageStarted = resolve;
+    });
+    const replies: string[] = [];
+    const ingressTexts: string[] = [];
+    let understandingCalls = 0;
+    const danger: RiskTriage = {
+      level: "bahaya",
+      alone: false,
+      sensitive: true,
+      summary: "bahaya dekat",
+      certain: true,
+    };
+    const runtime = createRuntime({
+      assessGroupIngress: async (text) => {
+        ingressTexts.push(text);
+        return { riskHint: NO_RISK_HINT, contextPrivacy: "ordinary" };
+      },
+      memoryExtractor: {
+        understand: async () => {
+          understandingCalls += 1;
+          return null;
+        },
+      },
+      triageRisk: async (text) => {
+        if (text.includes("bahaya")) {
+          markTriageStarted();
+          await triageGate;
+          return danger;
+        }
+        return CALM_TRIAGE;
+      },
+      reply: async (incoming) => {
+        if (incoming.messageId === "lambat-preflight") {
+          await ordinaryGate;
+        }
+        return "balasan penuh";
+      },
+      sendReply: async (_incoming, text) => {
+        replies.push(text);
+      },
+    });
+    const ordinary = runtime.turns.handle(message({
+      messageId: "lambat-preflight",
+      text: "Harvy, jelaskan ini",
+      mentionsHarvy: true,
+    }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const urgentMessage = message({
+      messageId: "urgent-preflight",
+      text: "aku dalam bahaya sekarang",
+      mentionsHarvy: true,
+    });
+
+    await runtime.turns.preflightUrgent(urgentMessage);
+    const urgent = runtime.turns.handle(urgentMessage);
+    await within(triageStarted, 1_000);
+
+    assert.equal(
+      replies.filter((text) => /mungkin mendesak/i.test(text)).length,
+      1,
+    );
+    assert.ok(!ingressTexts.includes(urgentMessage.text));
+    assert.equal(understandingCalls, 1);
+    releaseTriage();
+    releaseOrdinary();
+    await Promise.all([ordinary, urgent]);
+    assert.equal(
+      replies.filter((text) => /mungkin mendesak/i.test(text)).length,
+      1,
+    );
+  });
+
+  it("emergency ambient tetap mendapat final safety reply saat triase tidak mengonfirmasi danger", async () => {
+    for (const triage of [null, CALM_TRIAGE] as const) {
+      const replies: string[] = [];
+      let reviews = 0;
+      const runtime = createRuntime({
+        assessGroupIngress: async () => {
+          throw new Error("Emergency lokal tidak boleh menunggu ingress.");
+        },
+        triageRisk: async () => triage,
+        reviewReply: async () => {
+          reviews += 1;
+          return true;
+        },
+        reply: async (_incoming, _context, assessment) => {
+          assert.equal(assessment.level, "dukungan");
+          assert.equal(assessment.certain, false);
+          return "Aku tetap menanggapimu dengan hati-hati.";
+        },
+        sendReply: async (_incoming, text) => {
+          replies.push(text);
+        },
+      });
+      await runtime.turns.activateGroup({
+        scope: { channel: "whatsapp", groupId: "grup@g.us" },
+        accountId: "utama",
+        groupName: "Grup uji",
+        at: NOW.toISOString(),
+      });
+      const incoming = message({
+        messageId: triage === null ? "ambient-null" : "ambient-calm",
+        text: "contoh untuk tugas\naku dalam bahaya sekarang",
+        at: "2026-07-29T12:00:01.000Z",
+        parts: [
+          {
+            messageId: triage === null ? "context-null" : "context-calm",
+            text: "contoh untuk tugas",
+            at: NOW.toISOString(),
+            mentionsHarvy: false,
+            repliesToHarvy: false,
+          },
+          {
+            messageId: triage === null ? "ambient-null" : "ambient-calm",
+            text: "aku dalam bahaya sekarang",
+            at: "2026-07-29T12:00:01.000Z",
+            mentionsHarvy: false,
+            repliesToHarvy: false,
+          },
+        ],
+      });
+
+      await runtime.turns.preflightUrgent(incoming);
+      const outcome = runtime.turns.handle(incoming);
+      await observeAuthorized(runtime.turns, message({
+        messageId: `${incoming.messageId}-lebih-baru`,
+        text: "pesan ambient yang lebih baru",
+      }));
+      assert.equal(await outcome, "replied");
+      await runtime.turns.drain();
+
+      assert.equal(
+        replies.filter((text) => /mungkin mendesak/i.test(text)).length,
+        1,
+      );
+      assert.equal(
+        replies.filter((text) => /tetap menanggapimu/i.test(text)).length,
+        1,
+      );
+      assert.equal(reviews, 1);
+    }
+  });
+
+  it("revocation membatalkan priority assessment yang sedang berjalan", async () => {
+    let releaseOrdinary!: () => void;
+    const ordinaryGate = new Promise<void>((resolve) => {
+      releaseOrdinary = resolve;
+    });
+    let releaseIngress!: () => void;
+    const ingressGate = new Promise<void>((resolve) => {
+      releaseIngress = resolve;
+    });
+    let markIngressStarted!: () => void;
+    const ingressStarted = new Promise<void>((resolve) => {
+      markIngressStarted = resolve;
+    });
+    let markOrdinaryBlocked!: () => void;
+    const ordinaryBlocked = new Promise<void>((resolve) => {
+      markOrdinaryBlocked = resolve;
+    });
+    let authorized = true;
+    let runningSignal: AbortSignal | undefined;
+    let triageCalls = 0;
+    const runtime = createRuntime({
+      assessGroupIngress: async (text, _context, _ownerId, signal) => {
+        if (text === "priority-running") {
+          runningSignal = signal;
+          markIngressStarted();
+          await ingressGate;
+        }
+        return {
+          riskHint: text === "priority-running"
+            ? {
+                level: "possible",
+                category: "acute_distress",
+                confidence: 0.7,
+              }
+            : NO_RISK_HINT,
+          contextPrivacy: "ordinary",
+        };
+      },
+      triageRisk: async () => {
+        triageCalls += 1;
+        return CALM_TRIAGE;
+      },
+      reply: async (incoming) => {
+        if (incoming.messageId === "ordinary-running") {
+          markOrdinaryBlocked();
+          await ordinaryGate;
+        }
+        return "balasan";
+      },
+      authority: {
+        resolveGroupAuthority: async (request) => authorized
+          ? {
+              role: request.claimedAdmin ? "admin" : "member",
+              authorityEpoch: request.claimedAuthorityEpoch,
+            }
+          : null,
+      },
+    });
+    const ordinary = runtime.turns.handle(message({
+      messageId: "ordinary-running",
+      mentionsHarvy: true,
+    }));
+    await within(ordinaryBlocked, 1_000);
+    const priority = runtime.turns.handle(message({
+      messageId: "priority-running",
+      text: "priority-running",
+      mentionsHarvy: true,
+    }));
+    await within(ingressStarted, 1_000);
+
+    authorized = false;
+    runtime.turns.invalidateAuthority(
+      "whatsapp:grup@g.us",
+      "utama",
+      2,
+    );
+    assert.equal(runningSignal?.aborted, true);
+    releaseIngress();
+    releaseOrdinary();
+
+    assert.equal(await within(priority, 1_000), "inactive");
+    assert.equal(await ordinary, "inactive");
+    assert.equal(triageCalls, 0);
+    assert.deepEqual(runtime.replies, []);
+  });
+
+  it("revocation menghapus priority assessment yang masih mengantre", async () => {
+    let releaseOrdinary!: () => void;
+    const ordinaryGate = new Promise<void>((resolve) => {
+      releaseOrdinary = resolve;
+    });
+    let releaseIngress!: () => void;
+    const ingressGate = new Promise<void>((resolve) => {
+      releaseIngress = resolve;
+    });
+    let started = 0;
+    let markFourStarted!: () => void;
+    const fourStarted = new Promise<void>((resolve) => {
+      markFourStarted = resolve;
+    });
+    let markOrdinaryBlocked!: () => void;
+    const ordinaryBlocked = new Promise<void>((resolve) => {
+      markOrdinaryBlocked = resolve;
+    });
+    const ingressTexts: string[] = [];
+    const runningSignals: AbortSignal[] = [];
+    const runtime = createRuntime({
+      assessGroupIngress: async (text, _context, _ownerId, signal) => {
+        ingressTexts.push(text);
+        if (text.startsWith("priority-queued-")) {
+          if (signal) runningSignals.push(signal);
+          started += 1;
+          if (started === 4) markFourStarted();
+          await ingressGate;
+        }
+        return { riskHint: NO_RISK_HINT, contextPrivacy: "ordinary" };
+      },
+      reply: async (incoming) => {
+        if (incoming.messageId === "ordinary-queued") {
+          markOrdinaryBlocked();
+          await ordinaryGate;
+        }
+        return "balasan";
+      },
+    });
+    const ordinary = runtime.turns.handle(message({
+      messageId: "ordinary-queued",
+      mentionsHarvy: true,
+    }));
+    await within(ordinaryBlocked, 1_000);
+    const priorities = Array.from({ length: 5 }, (_unused, index) =>
+      runtime.turns.handle(message({
+        messageId: `priority-queued-${index}`,
+        text: `priority-queued-${index}`,
+        mentionsHarvy: true,
+      })),
+    );
+    await within(fourStarted, 1_000);
+    const priorityState = runtime.turns as unknown as {
+      priorityQueue: Array<() => void>;
+    };
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(priorityState.priorityQueue.length, 1);
+
+    runtime.turns.invalidateAuthority(
+      "whatsapp:grup@g.us",
+      "utama",
+      2,
+    );
+    assert.equal(priorityState.priorityQueue.length, 0);
+    assert.ok(runningSignals.every((signal) => signal.aborted));
+    assert.ok(!ingressTexts.includes("priority-queued-4"));
+    releaseOrdinary();
+
+    assert.deepEqual(
+      await within(Promise.all(priorities), 1_000),
+      Array.from({ length: 5 }, () => "inactive"),
+    );
+    assert.equal(await ordinary, "inactive");
+    releaseIngress();
+    await runtime.turns.drain();
+    assert.equal(started, 4);
+  });
+
+  it("burst ambient ordinary tidak memulai assessment prioritas", async () => {
+    let releaseOrdinary!: () => void;
+    const ordinaryGate = new Promise<void>((resolve) => {
+      releaseOrdinary = resolve;
+    });
+    let triageCalls = 0;
+    const ingressTexts: string[] = [];
+    let ambientAssessments = 0;
+    const runtime = createRuntime({
+      assessGroupIngress: async (text) => {
+        ingressTexts.push(text);
+        return { riskHint: NO_RISK_HINT, contextPrivacy: "ordinary" };
+      },
+      assessAmbient: async () => {
+        ambientAssessments += 1;
+        return {
+          plan: silentPlan(),
+          riskHint: NO_RISK_HINT,
+          contextPrivacy: "ordinary",
+        };
+      },
+      triageRisk: async () => {
+        triageCalls += 1;
+        return CALM_TRIAGE;
+      },
+      reply: async (incoming) => {
+        if (incoming.messageId === "lambat-ordinary") {
+          await ordinaryGate;
+        }
+        return "balasan";
+      },
+    });
+    const ordinary = runtime.turns.handle(message({
+      messageId: "lambat-ordinary",
+      mentionsHarvy: true,
+    }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const burst = Array.from({ length: 60 }, (_unused, index) =>
+      runtime.turns.handle(message({
+        messageId: `ordinary-${index}`,
+        text: `obrolan biasa ${index}`,
+      })),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(triageCalls, 0);
+    assert.deepEqual(ingressTexts, ["halo semua"]);
+    assert.equal(ambientAssessments, 0);
+    releaseOrdinary();
+    await Promise.all([ordinary, ...burst]);
+    assert.equal(triageCalls, 0);
+    assert.equal(ingressTexts.length + ambientAssessments, 61);
+  });
+
+  it("ambient normal memakai satu envelope planner tanpa ingress call kedua", async () => {
+    let ambientAssessments = 0;
+    let ingressCalls = 0;
+    let triageCalls = 0;
+    const runtime = createRuntime({
+      assessAmbient: async () => {
+        ambientAssessments += 1;
+        return {
+          plan: silentPlan(),
+          riskHint: NO_RISK_HINT,
+          contextPrivacy: "ordinary",
+        };
+      },
+      assessGroupIngress: async () => {
+        ingressCalls += 1;
+        return { riskHint: NO_RISK_HINT, contextPrivacy: "ordinary" };
+      },
+      triageRisk: async () => {
+        triageCalls += 1;
+        return CALM_TRIAGE;
+      },
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "ambient-envelope",
+        text: "obrolan ambient biasa",
+      })),
+      "silent",
+    );
+    assert.equal(ambientAssessments, 1);
+    assert.equal(ingressCalls, 0);
+    assert.equal(triageCalls, 0);
+  });
+
   it("membatasi konkurensi triase prioritas ketika grup mengalami burst", async () => {
     let releaseOrdinary!: () => void;
     let releaseTriage!: () => void;
@@ -1832,6 +3184,16 @@ describe("giliran grup", () => {
     let active = 0;
     let maximum = 0;
     const runtime = createRuntime({
+      assessGroupIngress: async (text) => ({
+        riskHint: text.startsWith("burst-")
+          ? {
+              level: "possible",
+              category: "acute_distress",
+              confidence: 0.7,
+            }
+          : NO_RISK_HINT,
+        contextPrivacy: "ordinary",
+      }),
       triageRisk: async (text) => {
         if (!text.startsWith("burst-")) return CALM_TRIAGE;
         active += 1;
@@ -1857,6 +3219,7 @@ describe("giliran grup", () => {
         message({
           messageId: `burst-${index}`,
           text: `burst-${index}`,
+          mentionsHarvy: true,
         }),
       ),
     );
@@ -1873,6 +3236,7 @@ describe("giliran grup", () => {
 
 interface RuntimeOptions {
   events?: string[];
+  assessAmbient?: NonNullable<GroupConversationPort["assessAmbient"]>;
   planAmbient?: GroupConversationPort["planAmbient"];
   revalidateAmbient?: GroupConversationPort["revalidateAmbient"];
   reply?: GroupConversationPort["reply"];
@@ -1884,8 +3248,10 @@ interface RuntimeOptions {
   now?: () => Date;
   repository?: MemoryGroupRepository;
   memoryExtractor?: GroupMemoryExtractionPort;
+  assessGroupIngress?: GroupIngressAssessmentPort["assessGroupIngress"];
   usageControl?: GroupUsageControlPort;
   authority?: GroupAuthorityResolver;
+  runtimeAdmission?: GroupRuntimeAdmissionResolver;
 }
 
 function createRuntime(options: RuntimeOptions = {}): {
@@ -1898,12 +3264,26 @@ function createRuntime(options: RuntimeOptions = {}): {
   const memories = new GroupMemoryService(repository, now);
   const replies: string[] = [];
   const events = options.events ?? [];
+  const planAmbient =
+    options.planAmbient ??
+    (async () => {
+      return silentPlan();
+    });
   const conversation: GroupConversationPort = {
-    planAmbient:
-      options.planAmbient ??
-      (async () => {
-        return silentPlan();
-      }),
+    assessAmbient:
+      options.assessAmbient ??
+      (async (...args) => ({
+        plan: await planAmbient(...args),
+        riskHint: options.triageRisk
+          ? {
+              level: "possible" as const,
+              category: "acute_distress" as const,
+              confidence: 0.5,
+            }
+          : NO_RISK_HINT,
+        contextPrivacy: "ordinary" as const,
+      })),
+    planAmbient,
     ...(options.revalidateAmbient
       ? { revalidateAmbient: options.revalidateAmbient }
       : {}),
@@ -1931,6 +3311,32 @@ function createRuntime(options: RuntimeOptions = {}): {
       }),
     sendTyping: options.sendTyping ?? (async () => undefined),
   };
+  const memoryExtractor: GroupMemoryExtractionPort | null =
+    options.memoryExtractor
+      ? {
+          understand: (...args) =>
+            options.memoryExtractor!.understand(...args),
+          assessMemoryPrivacy:
+            options.memoryExtractor.assessMemoryPrivacy
+              ? (...args) =>
+                  options.memoryExtractor!.assessMemoryPrivacy!(...args)
+              : async () => false,
+        }
+      : null;
+  const ingressAssessment: GroupIngressAssessmentPort = {
+    assessGroupIngress:
+      options.assessGroupIngress ??
+      (async () => ({
+        riskHint: options.triageRisk
+          ? {
+              level: "possible",
+              category: "acute_distress",
+              confidence: 0.5,
+            }
+          : NO_RISK_HINT,
+        contextPrivacy: "ordinary",
+      })),
+  };
 
   return {
     turns: new GroupTurnService(
@@ -1944,8 +3350,10 @@ function createRuntime(options: RuntimeOptions = {}): {
       undefined,
       14,
       "Asia/Jakarta",
-      options.memoryExtractor ?? null,
+      memoryExtractor,
       options.authority ?? CLAIMED_GROUP_AUTHORITY_RESOLVER,
+      ingressAssessment,
+      options.runtimeAdmission,
     ),
     memories,
     replies,
@@ -2084,6 +3492,15 @@ function speakPlan(
   };
 }
 
+async function observeAuthorized(
+  turns: GroupTurnService,
+  incoming: GroupMessage,
+): Promise<GroupMessage> {
+  const observed = await turns.observeAuthorized(incoming);
+  assert.ok(observed, "fixture harus memiliki authority dan binding aktif");
+  return observed;
+}
+
 function message(overrides: Partial<GroupMessage> = {}): GroupMessage {
   return {
     scope: { channel: "whatsapp", groupId: "grup@g.us" },
@@ -2120,4 +3537,12 @@ async function within<T>(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function deferredVoid(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }

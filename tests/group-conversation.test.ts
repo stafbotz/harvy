@@ -107,18 +107,21 @@ describe("percakapan grup", () => {
     const conversation = new GroupConversation(
       recorder(
         requests,
-        '{"decision":"speak","reason":"unanswered_question","value":3,"confidence":0.9,"reply":"Jawabannya 42."}',
+        '{"decision":"speak","reason":"unanswered_question","value":3,"confidence":0.9,"reply":"Jawabannya 42.","riskHint":{"level":"none","category":null,"confidence":0.99},"contextPrivacy":"ordinary"}',
       ),
       ROUTING,
     );
 
-    const plan = await conversation.planAmbient(
+    const assessment = await conversation.assessAmbient(
       message(),
       context(false),
       "whatsapp:grup@g.us",
     );
+    const plan = assessment?.plan;
 
     assert.equal(plan?.reply, "Jawabannya 42.");
+    assert.equal(assessment?.riskHint?.level, "none");
+    assert.equal(assessment?.contextPrivacy, "ordinary");
     const request = requests[0];
     assert.equal(request?.maxAttempts, 1);
     assert.equal(request?.timeoutMs, 8_000);
@@ -139,6 +142,10 @@ describe("percakapan grup", () => {
     assert.match(
       request?.messages[0]?.content ?? "",
       /jangan mendiagnosis/iu,
+    );
+    assert.match(
+      request?.messages[0]?.content ?? "",
+      /contextPrivacy.*ordinary.*sensitive/isu,
     );
     assert.equal(request?.messages[1]?.role, "user");
     assert.match(request?.messages[1]?.content ?? "", /^\[Ayu\]/u);

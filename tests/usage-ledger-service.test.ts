@@ -536,6 +536,30 @@ describe("UsageLedgerService", () => {
     assert.equal(entitlementRepository.entries[0]?.debitedTokens, 0);
   });
 
+  it("compiler ingress grup adalah overhead dan tidak mendebit paket", async () => {
+    const { ledger, entitlementRepository } = runtime();
+    await ledger.settleEntitlement(
+      {
+        requestId: "group-ingress",
+        turnId: "turn-group-ingress",
+        ownerId: "whatsapp:group-1",
+        tier: "cheap",
+        purpose: "group-ingress",
+        model: "primary-model",
+        maxTokens: 192,
+        inputTokenEstimate: 20,
+        safetyCritical: false,
+      },
+      { inputTokens: 10, outputTokens: 5, totalTokens: 15, estimated: false },
+      { succeeded: true },
+    );
+    assert.equal(
+      entitlementRepository.entries[0]?.disposition,
+      "included_overhead",
+    );
+    assert.equal(entitlementRepository.entries[0]?.debitedTokens, 0);
+  });
+
   it("hapus diri anggota membersihkan seluruh alias ledger tanpa menghapus anggota lain", async () => {
     const { ledger, control, ledgerRepository } = runtime();
     const first = start("attempt-1", "request-1", ["pn:1", "lid:1"]);

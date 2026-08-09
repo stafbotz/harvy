@@ -262,6 +262,7 @@ function normalizeUsageRecord(value: unknown, index: number): AiUsageRecord {
     record.purpose,
     [
       "turn-boundary", "understanding", "due-date", "risk-triage", "memory-privacy",
+      "group-ingress",
       "reply", "reply-review", "summary", "agent", "research", "insight", "session",
       "group-participation", "group-reply",
     ] as const,

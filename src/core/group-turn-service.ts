@@ -11,7 +11,10 @@ import {
   type GroupTurn,
 } from "../domain/group.js";
 import type { HarvyContext } from "../ai/context.js";
-import type { Understanding } from "../ai/understand.js";
+import type {
+  ExtractedMemory,
+  Understanding,
+} from "../ai/understand.js";
 import type { ConversationRuntime } from "../ai/conversation.js";
 import type {
   GroupConversationContext,
@@ -24,10 +27,23 @@ import {
 } from "../ai/identity.js";
 import {
   CALM_TRIAGE,
-  uncertainTriage,
+  resolveRiskAssessment,
   type RiskTriage,
 } from "../ai/safety.js";
-import { needsReplyReview } from "./safety-policy.js";
+import {
+  needsConditionalReplyReview,
+  NO_RISK_HINT,
+  safetyEffectPermissions,
+  withImmediateDangerHint,
+  type RiskHint,
+} from "./safety-policy.js";
+import {
+  hasExplicitImmediateGroupDanger,
+  type GroupRuntimeAdmission,
+} from "./group-runtime-policy.js";
+import type {
+  GroupIngressAssessment,
+} from "../ai/group-ingress.js";
 import { shouldHoldAmbientTurn } from "./group-turn-policy.js";
 import {
   GroupMemoryService,
@@ -113,6 +129,13 @@ type GroupRiskMarker = {
   timer: NodeJS.Timeout | null;
 };
 
+type GroupSafetyPreflight = {
+  ingress: GroupIngressAssessment | null;
+  hint: RiskHint;
+  triage: RiskTriage | null | undefined;
+  triageAttempted: boolean;
+};
+
 type GroupControlReply = {
   text: string;
   retainContext: boolean;
@@ -141,6 +164,7 @@ type PendingAmbientCandidate = {
   generation: number;
   message: GroupMessage;
   plan: GroupParticipationPlan;
+  retainContext: boolean;
   createdAt: number;
   lastObservedAt: number;
   newerTurns: number;
@@ -188,6 +212,7 @@ export interface GroupSafetyPort {
     message: string,
     ownerId?: string,
     context?: HarvyContext,
+    signal?: AbortSignal,
   ): Promise<RiskTriage | null>;
   reviewReply(
     message: string,
@@ -204,7 +229,28 @@ export interface GroupMemoryExtractionPort {
     context?: HarvyContext,
     runtime?: ConversationRuntime,
   ): Promise<Understanding | null>;
+  assessMemoryPrivacy?(
+    candidates: readonly ExtractedMemory[],
+    ownerId?: string,
+    signal?: AbortSignal,
+  ): Promise<boolean | null>;
 }
+
+export interface GroupIngressAssessmentPort {
+  assessGroupIngress(
+    message: string,
+    context?: HarvyContext,
+    ownerId?: string,
+    signal?: AbortSignal,
+  ): Promise<GroupIngressAssessment | null>;
+}
+
+export type GroupRuntimeAdmissionResolver = (
+  message: GroupMessage,
+) => Promise<GroupRuntimeAdmission>;
+
+const ALLOW_GROUP_RUNTIME_ADMISSION: GroupRuntimeAdmissionResolver =
+  async () => "process";
 
 export type GroupNoticeTarget = Pick<GroupMessage, "scope" | "accountId">;
 
@@ -236,7 +282,7 @@ export class GroupTurnService {
   private readonly observations = new Map<string, number>();
   private readonly settledObservations = new Map<string, number>();
   private readonly observedMessageIds =
-    new Map<string, Map<string, number>>();
+    new Map<string, Map<string, { revision: number; generation: number }>>();
   private readonly joinedAtByRuntime = new Map<string, number>();
   private readonly aliasesByRuntime = new Map<string, string[]>();
   private readonly priorityReservations =
@@ -246,11 +292,14 @@ export class GroupTurnService {
   private readonly pendingAmbient =
     new Map<string, PendingAmbientCandidate>();
   private readonly priorityQueue: (() => void)[] = [];
+  private readonly priorityControllers =
+    new Map<string, Set<AbortController>>();
   private priorityActive = 0;
   private readonly pendingControls = new Map<string, PendingGroupControl>();
   private readonly pendingRoomMemories = new Map<string, PendingRoomMemory>();
   private readonly riskMarkers = new Map<string, GroupRiskMarker>();
   private readonly priorityTasks = new Set<Promise<void>>();
+  private readonly observationChains = new Map<string, Promise<void>>();
   private readonly noticeReady = new Set<string>();
   private accepting = true;
 
@@ -270,32 +319,110 @@ export class GroupTurnService {
     private readonly memoryExtractor: GroupMemoryExtractionPort | null = null,
     private readonly authority: GroupAuthorityResolver =
       DENY_GROUP_AUTHORITY_RESOLVER,
+    private readonly ingressAssessment: GroupIngressAssessmentPort | null =
+      null,
+    private readonly runtimeAdmission: GroupRuntimeAdmissionResolver =
+      ALLOW_GROUP_RUNTIME_ADMISSION,
   ) {}
 
   /**
-   * Dipanggil adapter segera ketika bubble terlihat, sebelum settle/batching.
-   * Nomornya ikut menempel pada batch sehingga kandidat ambient lama dapat
-   * dibatalkan ketika manusia sudah melanjutkan percakapan.
+   * Memvalidasi ingress sebelum observasinya boleh mengubah state supersession.
+   * Adapter memanggil ini sebelum settle/batching; event tanpa `social.read`,
+   * binding live, notice, atau bubble pasca-join ditolak tanpa efek.
    */
-  observe(message: GroupMessage): GroupMessage {
+  async observeAuthorized(message: GroupMessage): Promise<GroupMessage | null> {
     const scopeKey = groupScopeKey(message.scope);
     const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
+    const previous = this.observationChains.get(runtimeKey) ?? Promise.resolve();
+    const running = previous
+      .catch(() => undefined)
+      .then(() => this.resolveAuthorizedObservation(message));
+    const barrier: Promise<void> = running.then(
+      (): void => this.releaseObservation(runtimeKey, barrier),
+      (): void => this.releaseObservation(runtimeKey, barrier),
+    );
+    this.observationChains.set(runtimeKey, barrier);
+    return running;
+  }
+
+  private async resolveAuthorizedObservation(
+    message: GroupMessage,
+  ): Promise<GroupMessage | null> {
+    if (!this.accepting) return null;
+    const scopeKey = groupScopeKey(message.scope);
+    const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
+    const generation = this.generationOf(runtimeKey);
+    const authority = await this.currentAuthority(message);
     if (
-      !message.mentionsHarvy &&
-      addressesAlias(
-        message.text,
-        this.aliasesByRuntime.get(runtimeKey) ?? ["Harvy"],
-      )
+      !this.accepting ||
+      !authority ||
+      !groupAuthorityAllows(authority.role, "social.read") ||
+      !this.isCurrentGeneration(runtimeKey, generation)
     ) {
-      // Batcher memakai flag ini untuk settle direct 350 ms. Keputusan akhir
-      // tetap dihitung lagi setelah memori alias grup dimuat.
-      message = { ...message, mentionsHarvy: true };
+      return null;
     }
+    const binding = await this.memories.binding(scopeKey);
+    if (!this.accepting || !this.isCurrentGeneration(runtimeKey, generation)) {
+      return null;
+    }
+    let aliases = this.aliasesByRuntime.get(runtimeKey);
+    if (
+      !aliases &&
+      binding?.accountId === message.accountId &&
+      binding.disabledAt === null
+    ) {
+      const memory = await this.memories.memory(scopeKey);
+      if (!this.accepting || !this.isCurrentGeneration(runtimeKey, generation)) {
+        return null;
+      }
+      aliases = [...(memory?.harvyAliases ?? ["Harvy"])];
+      this.aliasesByRuntime.set(runtimeKey, aliases);
+    }
+    const authorized = this.decorateAddressing({
+      ...message,
+      isAdmin: authority.role === "admin",
+      authorityEpoch: authority.authorityEpoch,
+    }, runtimeKey, aliases);
+    // Binding/notice yang belum siap tetap harus mencapai FIFO agar `process`
+    // dapat mengaktivasi atau mengulang notice. Sentinel 0 berarti authority
+    // sudah terbukti, tetapi state supersession belum boleh dimutasi.
+    if (!binding) return { ...authorized, ingressRevision: 0 };
+    if (binding.accountId !== message.accountId) {
+      return { ...authorized, ingressRevision: 0 };
+    }
+    this.rememberJoinedAt(scopeKey, message.accountId, binding.joinedAt);
+    const eligible = messageAfterJoin(authorized, binding.joinedAt);
+    if (!eligible) return null;
+    if (
+      binding.disabledAt !== null ||
+      binding.noticeVersion !== this.noticeVersion ||
+      binding.noticeSentAt === null
+    ) {
+      return { ...eligible, ingressRevision: 0 };
+    }
+    this.noticeReady.add(scopeKey);
+    return this.commitObservation(eligible);
+  }
+
+  private releaseObservation(
+    runtimeKey: string,
+    barrier: Promise<void>,
+  ): void {
+    if (this.observationChains.get(runtimeKey) === barrier) {
+      this.observationChains.delete(runtimeKey);
+    }
+  }
+
+  /** Nomor observasi hanya boleh dibuat setelah `observeAuthorized`. */
+  private commitObservation(message: GroupMessage): GroupMessage {
+    const scopeKey = groupScopeKey(message.scope);
+    const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
+    message = this.decorateAddressing(message, runtimeKey);
     const previousRevision = this.observedMessageIds
       .get(runtimeKey)
       ?.get(message.messageId);
     if (previousRevision !== undefined) {
-      return { ...message, ingressRevision: previousRevision };
+      return { ...message, ingressRevision: previousRevision.revision };
     }
 
     const currentRevision = this.observations.get(runtimeKey) ?? 0;
@@ -314,15 +441,115 @@ export class GroupTurnService {
     this.observePendingAmbient(runtimeKey, message);
     this.observations.set(runtimeKey, revision);
     const ids =
-      this.observedMessageIds.get(runtimeKey) ?? new Map<string, number>();
+      this.observedMessageIds.get(runtimeKey) ??
+        new Map<string, { revision: number; generation: number }>();
     while (ids.size >= MAX_OBSERVED_MESSAGE_IDS) {
       const oldest = ids.keys().next().value as string | undefined;
       if (oldest === undefined) break;
       ids.delete(oldest);
     }
-    ids.set(message.messageId, revision);
+    ids.set(message.messageId, {
+      revision,
+      generation: this.generationOf(runtimeKey),
+    });
     this.observedMessageIds.set(runtimeKey, ids);
     return { ...message, ingressRevision: revision };
+  }
+
+  private decorateAddressing(
+    message: GroupMessage,
+    runtimeKey: string,
+    aliases = this.aliasesByRuntime.get(runtimeKey) ?? ["Harvy"],
+  ): GroupMessage {
+    if (message.mentionsHarvy || !addressesAlias(message.text, aliases)) {
+      return message;
+    }
+    // Hanya derivasi lokal setelah authority. Batcher memakai flag ini untuk
+    // settle direct; keputusan akhir tetap dihitung lagi di full turn.
+    return { ...message, mentionsHarvy: true };
+  }
+
+  /** Menutup watermark observasi yang sengaja ditolak sebelum full turn. */
+  settleRejectedObservation(message: GroupMessage): void {
+    const revision = message.ingressRevision ?? 0;
+    if (revision <= 0) return;
+    const scopeKey = groupScopeKey(message.scope);
+    const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
+    const observed = this.observedMessageIds
+      .get(runtimeKey)
+      ?.get(message.messageId);
+    if (
+      !observed ||
+      observed.revision !== revision ||
+      observed.generation !== this.generationOf(runtimeKey)
+    ) {
+      return;
+    }
+    this.settledObservations.set(
+      runtimeKey,
+      Math.max(this.settledObservations.get(runtimeKey) ?? 0, revision),
+    );
+  }
+
+  /**
+   * Fixed ACK lokal sebelum debounce. Tidak menjalankan classifier, planner,
+   * final reply, atau mutasi; full turn tetap masuk lewat `handle()` dan FIFO.
+   */
+  async preflightUrgent(message: GroupMessage): Promise<void> {
+    if (!this.accepting) return;
+    const scopeKey = groupScopeKey(message.scope);
+    const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
+    if (message.ingressRevision === undefined) {
+      const observed = await this.observeAuthorized(message);
+      if (!observed) return;
+      message = observed;
+    }
+    const generation = this.generationOf(runtimeKey);
+    const ingressAuthority = await this.currentAuthority(message);
+    if (
+      !ingressAuthority ||
+      !groupAuthorityAllows(ingressAuthority.role, "social.read") ||
+      !this.isCurrentGeneration(runtimeKey, generation)
+    ) {
+      return;
+    }
+    message = {
+      ...message,
+      isAdmin: ingressAuthority.role === "admin",
+      authorityEpoch: ingressAuthority.authorityEpoch,
+    };
+    const binding = await this.memories.binding(scopeKey);
+    if (
+      !binding ||
+      binding.accountId !== message.accountId ||
+      binding.disabledAt !== null ||
+      binding.noticeVersion !== this.noticeVersion ||
+      binding.noticeSentAt === null ||
+      !this.isCurrentGeneration(runtimeKey, generation)
+    ) {
+      return;
+    }
+    this.rememberJoinedAt(
+      scopeKey,
+      message.accountId,
+      binding.joinedAt,
+    );
+    this.noticeReady.add(scopeKey);
+    const eligibleMessage = messageAfterJoin(message, binding.joinedAt);
+    if (
+      !eligibleMessage ||
+      !hasExplicitImmediateGroupDanger(eligibleMessage)
+    ) {
+      return;
+    }
+    message = eligibleMessage;
+    await this.acknowledgeUrgent(
+      scopeKey,
+      generation,
+      message,
+      Promise.resolve(null),
+      true,
+    );
   }
 
   async activateGroup(
@@ -354,45 +581,122 @@ export class GroupTurnService {
     const scopeKey = groupScopeKey(message.scope);
     const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
     if (message.ingressRevision === undefined) {
-      message = this.observe(message);
-    } else {
-      this.observations.set(
-        runtimeKey,
-        Math.max(
-          this.observations.get(runtimeKey) ?? 0,
-          message.ingressRevision,
-        ),
-      );
+      const observed = await this.observeAuthorized(message);
+      if (!observed) return "inactive";
+      message = observed;
     }
     const capturedObservation = message.ingressRevision ?? 0;
+    const observationState = { value: capturedObservation };
     const capturedGeneration = this.generationOf(runtimeKey);
+
+    // Tidak ada isi pesan yang boleh mencapai classifier/model sebelum core
+    // sendiri membuktikan membership. Adapter ingress tetap hanya hint.
+    const ingressAuthority = await this.currentAuthority(message);
+    if (
+      !ingressAuthority ||
+      !groupAuthorityAllows(ingressAuthority.role, "social.read") ||
+      !this.isCurrentGeneration(runtimeKey, capturedGeneration)
+    ) {
+      this.settleRejectedObservation(message);
+      return "inactive";
+    }
+    message = {
+      ...message,
+      isAdmin: ingressAuthority.role === "admin",
+      authorityEpoch: ingressAuthority.authorityEpoch,
+    };
     this.generation.set(runtimeKey, capturedGeneration);
-    const queueBusy =
-      this.queues.has(scopeKey) && this.noticeReady.has(scopeKey);
+    this.observations.set(
+      runtimeKey,
+      Math.max(
+        this.observations.get(runtimeKey) ?? 0,
+        capturedObservation,
+      ),
+    );
+
+    const ingressBinding = await this.memories.binding(scopeKey);
+    const liveNoticeReady = Boolean(
+      ingressBinding &&
+        ingressBinding.accountId === message.accountId &&
+        ingressBinding.disabledAt === null &&
+        ingressBinding.noticeVersion === this.noticeVersion &&
+        ingressBinding.noticeSentAt !== null,
+    );
+    if (liveNoticeReady && ingressBinding) {
+      this.rememberJoinedAt(
+        scopeKey,
+        message.accountId,
+        ingressBinding.joinedAt,
+      );
+      this.noticeReady.add(scopeKey);
+    } else {
+      this.noticeReady.delete(scopeKey);
+    }
+    const queueBusy = this.queues.has(scopeKey) && liveNoticeReady;
+    const priorityMessage = ingressBinding
+      ? messageAfterJoin(message, ingressBinding.joinedAt)
+      : null;
+    const immediateDanger = priorityMessage
+      ? hasExplicitImmediateGroupDanger(priorityMessage)
+      : false;
+    const directPriority = Boolean(
+      priorityMessage?.mentionsHarvy || priorityMessage?.repliesToHarvy,
+    );
     const priorityEligible =
-      queueBusy && this.reservePriorityPreflight(scopeKey, message);
-    const preflight = priorityEligible
-      ? this.schedulePriorityTriage(() =>
-          this.safeTriage(
-            message.text,
+      this.isCurrentGeneration(runtimeKey, capturedGeneration) &&
+      liveNoticeReady &&
+      priorityMessage !== null &&
+      (immediateDanger || (queueBusy && directPriority)) &&
+      this.reservePriorityAction(
+        scopeKey,
+        priorityMessage,
+        "assessment",
+      );
+    const priorityContext = priorityMessage
+      ? toSafetyContext(
+          this.contextFor(scopeKey),
+          participantIdentities(priorityMessage),
+          this.riskMarker(
             scopeKey,
-            { summary: null, turns: [], memories: [] },
+            participantIdentities(priorityMessage),
+          ),
+        )
+      : { summary: null, turns: [], memories: [] };
+    const preflight = priorityEligible
+      ? this.schedulePriorityAssessment(
+          runtimeKey,
+          capturedGeneration,
+          (signal) =>
+          this.buildSafetyPreflight(
+            priorityMessage.text,
+            scopeKey,
+            priorityContext,
+            immediateDanger,
+            signal,
+            () =>
+              this.accepting &&
+              this.isCurrentGeneration(
+                runtimeKey,
+                capturedGeneration,
+              ),
           ),
         )
       : Promise.resolve(null);
     const preTyping =
       queueBusy &&
-      (message.mentionsHarvy || message.repliesToHarvy);
-    if (preTyping) {
-      this.trackPriorityTask(this.showTyping(message));
+      directPriority;
+    if (preTyping && priorityMessage) {
+      this.trackPriorityTask(this.showTyping(priorityMessage));
     }
     if (priorityEligible) {
+      this.trackPriorityTask(preflight.then(() => undefined));
       this.trackPriorityTask(
         this.acknowledgeUrgent(
           scopeKey,
           capturedGeneration,
-          message,
+          priorityMessage,
           preflight,
+          immediateDanger,
         ),
       );
     }
@@ -400,15 +704,17 @@ export class GroupTurnService {
     try {
       return await this.enqueue(scopeKey, async () => {
         if (
-          !this.accepting ||
-          capturedGeneration !== this.generationOf(runtimeKey)
+          !this.accepting
         ) {
           return "stopped";
+        }
+        if (capturedGeneration !== this.generationOf(runtimeKey)) {
+          return "inactive";
         }
         return this.process(
           scopeKey,
           capturedGeneration,
-          capturedObservation,
+          observationState,
           message,
           await preflight,
           preTyping,
@@ -423,7 +729,7 @@ export class GroupTurnService {
           runtimeKey,
           Math.max(
             this.settledObservations.get(runtimeKey) ?? 0,
-            capturedObservation,
+            observationState.value,
           ),
         );
       }
@@ -445,6 +751,7 @@ export class GroupTurnService {
     this.joinedAtByRuntime.delete(runtimeKey);
     this.aliasesByRuntime.delete(runtimeKey);
     this.priorityReservations.delete(runtimeKey);
+    this.abortPriorityAssessments(runtimeKey);
     this.abortAmbient(runtimeKey);
     this.cancelPendingAmbient(runtimeKey);
     this.clearContext(scopeKey);
@@ -477,6 +784,7 @@ export class GroupTurnService {
   ): void {
     const runtimeKey = groupRuntimeKey(scopeKey, accountId);
     this.generation.set(runtimeKey, this.generationOf(runtimeKey) + 1);
+    this.abortPriorityAssessments(runtimeKey);
     this.abortAmbient(runtimeKey);
     this.cancelPendingAmbient(runtimeKey);
     this.clearPendingControls(scopeKey);
@@ -498,6 +806,9 @@ export class GroupTurnService {
     this.joinedAtByRuntime.clear();
     this.aliasesByRuntime.clear();
     this.priorityReservations.clear();
+    for (const runtimeKey of this.priorityControllers.keys()) {
+      this.abortPriorityAssessments(runtimeKey);
+    }
     for (const runtimeKey of this.activeAmbient.keys()) {
       this.abortAmbient(runtimeKey);
     }
@@ -519,6 +830,7 @@ export class GroupTurnService {
 
   async drain(): Promise<void> {
     await Promise.allSettled([
+      ...this.observationChains.values(),
       ...this.queues.values(),
       ...this.priorityTasks,
     ]);
@@ -527,9 +839,9 @@ export class GroupTurnService {
   private async process(
     scopeKey: string,
     generation: number,
-    observation: number,
+    observation: { value: number },
     message: GroupMessage,
-    preflight: RiskTriage | null,
+    preflight: GroupSafetyPreflight | null,
     typingAlreadyStarted: boolean,
   ): Promise<GroupTurnOutcome> {
     const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
@@ -589,6 +901,25 @@ export class GroupTurnService {
     const eligibleMessage = messageAfterJoin(message, binding.joinedAt);
     if (!eligibleMessage) return "before-join";
     message = eligibleMessage;
+    if (observation.value <= 0) {
+      message = this.commitObservation(message);
+      observation.value = message.ingressRevision ?? 0;
+    }
+
+    if (
+      preflight === null &&
+      hasExplicitImmediateGroupDanger(message)
+    ) {
+      this.trackPriorityTask(
+        this.acknowledgeUrgent(
+          scopeKey,
+          generation,
+          message,
+          Promise.resolve(null),
+          true,
+        ),
+      );
+    }
 
     const recorded = await this.memories.recordIncoming(message);
     if (!this.isCurrentGeneration(runtimeKey, generation)) {
@@ -701,19 +1032,24 @@ export class GroupTurnService {
       participantIdentities(message),
       riskMarker,
     );
+    const immediateDanger = hasExplicitImmediateGroupDanger(message);
 
-    let triage: RiskTriage;
+    let ingress = preflight?.ingress ?? null;
     let memoryUnderstanding: Understanding | null = null;
     let ambientPlan: GroupParticipationPlan | null = null;
     if (direct) {
       if (!typingAlreadyStarted) {
         this.trackPriorityTask(this.showTyping(message));
       }
-      const [triageResult, understandingResult] = await Promise.all([
+      const [ingressResult, understandingResult] = await Promise.all([
         preflight
-          ? Promise.resolve(preflight)
-          : this.safeTriage(message.text, scopeKey, safetyContext),
-        this.memoryExtractor
+          ? Promise.resolve(preflight.ingress)
+          : this.safeAssessGroupIngress(
+              message.text,
+              scopeKey,
+              safetyContext,
+            ),
+        this.memoryExtractor && !immediateDanger
           ? this.memoryExtractor
               .understand(
                 message.text,
@@ -738,18 +1074,22 @@ export class GroupTurnService {
               })
           : Promise.resolve(null),
       ]);
-      triage = triageResult ?? uncertainTriage(false);
+      ingress = ingressResult;
       memoryUnderstanding = understandingResult;
     } else {
       const staleBeforePlanning = this.isAmbientSuperseded(
         runtimeKey,
-        observation,
+        observation.value,
       ) || Boolean(
         !message.repliesToHarvy &&
           (message.quotedMessageId || message.quotedParticipantId),
       ) || shouldHoldAmbientTurn(message.text);
       let planner: ActiveAmbientPlanner | null = null;
-      if (!staleBeforePlanning && preflight?.level !== "bahaya") {
+      if (
+        !staleBeforePlanning &&
+        !immediateDanger &&
+        preflight?.triage?.level !== "bahaya"
+      ) {
         planner = {
           controller: new AbortController(),
           messageId: message.messageId,
@@ -757,40 +1097,70 @@ export class GroupTurnService {
         };
         this.activeAmbient.set(runtimeKey, planner);
       }
-      let plan: GroupParticipationPlan | null;
-      let ambientTriage: RiskTriage | null;
       try {
-        [plan, ambientTriage] =
-          preflight?.level === "bahaya"
-            ? [null, preflight]
-            : await Promise.all([
-                planner
-                  ? this.conversation
-                      .planAmbient(
-                        message,
-                        conversationContext,
-                        scopeKey,
-                        planner.controller.signal,
-                      )
-                      .catch((error: unknown) => {
-                        if (!planner?.controller.signal.aborted) {
-                          this.logger.warn(
-                            "group_participation_planner_failed",
-                            "Planner partisipasi grup gagal; Harvy memilih diam.",
-                            { error },
-                          );
-                        }
-                        return null;
-                      })
-                  : Promise.resolve(null),
-                preflight
-                  ? Promise.resolve(preflight)
-                  : this.safeTriage(
-                      message.text,
-                      scopeKey,
-                      safetyContext,
-                    ),
-              ]);
+        if (preflight?.triage?.level === "bahaya") {
+          ambientPlan = null;
+          ingress = preflight.ingress;
+        } else if (
+          planner &&
+          !preflight
+        ) {
+          const assessment = await this.conversation
+            .assessAmbient(
+              message,
+              conversationContext,
+              scopeKey,
+              planner.controller.signal,
+            )
+            .catch((error: unknown) => {
+              if (!planner?.controller.signal.aborted) {
+                this.logger.warn(
+                  "group_participation_planner_failed",
+                  "Planner partisipasi dan ingress grup gagal; Harvy memilih diam.",
+                  { error },
+                );
+              }
+              return null;
+            });
+          ambientPlan = assessment?.plan ?? null;
+          ingress = assessment
+            ? {
+                riskHint: assessment.riskHint,
+                contextPrivacy: assessment.contextPrivacy,
+              }
+            : null;
+        } else {
+          const [plan, ingressResult] = await Promise.all([
+            planner
+              ? this.conversation
+                  .planAmbient(
+                    message,
+                    conversationContext,
+                    scopeKey,
+                    planner.controller.signal,
+                  )
+                  .catch((error: unknown) => {
+                    if (!planner?.controller.signal.aborted) {
+                      this.logger.warn(
+                        "group_participation_planner_failed",
+                        "Planner partisipasi grup gagal; Harvy memilih diam.",
+                        { error },
+                      );
+                    }
+                    return null;
+                  })
+              : Promise.resolve(null),
+            preflight
+              ? Promise.resolve(preflight.ingress)
+              : this.safeAssessGroupIngress(
+                  message.text,
+                  scopeKey,
+                  safetyContext,
+                ),
+          ]);
+          ambientPlan = plan;
+          ingress = ingressResult;
+        }
       } finally {
         if (
           planner &&
@@ -799,28 +1169,46 @@ export class GroupTurnService {
           this.activeAmbient.delete(runtimeKey);
         }
       }
-      if (ambientTriage === null) return "silent";
-      ambientPlan = plan;
-      triage = ambientTriage;
     }
+
+    const rawRiskHint = ingress?.riskHint ?? null;
+    let effectiveHint = rawRiskHint ?? NO_RISK_HINT;
+    if (safetyContinuation && riskMarker) {
+      effectiveHint = strongerRiskHint(effectiveHint, {
+        level: riskMarker.level === "bahaya" ? "strong" : "possible",
+        category: "acute_distress",
+        confidence: riskMarker.level === "bahaya" ? 1 : 0.7,
+      });
+    }
+    effectiveHint = withImmediateDangerHint(effectiveHint, immediateDanger);
+    const triageRequired =
+      immediateDanger ||
+      safetyContinuation ||
+      rawRiskHint === null ||
+      effectiveHint.level !== "none";
+    const triageResult = preflight?.triageAttempted
+      ? preflight.triage
+      : triageRequired
+        ? await this.safeTriage(message.text, scopeKey, safetyContext)
+        : undefined;
+    const riskAssessment = resolveRiskAssessment(
+      effectiveHint,
+      triageResult,
+    );
+    // Field legacy ini hanya membantu prompt/fallback. Authority retensi tetap
+    // `contextPrivacy` di bawah dan tidak berasal dari triase akut.
+    riskAssessment.sensitive = ingress?.contextPrivacy !== "ordinary";
 
     if (!(await this.isCurrentTurn(scopeKey, generation, message.accountId))) {
       this.clearRuntimeState(scopeKey, runtimeKey);
       return "inactive";
     }
-    if (
-      riskMarker &&
-      triage.level === "biasa" &&
-      safetyContinuation
-    ) {
-      triage = uncertainTriage(riskMarker.level === "bahaya");
-    }
-    if (triage.level !== "biasa") {
+    if (riskAssessment.level !== "biasa") {
       this.cancelPendingAmbient(runtimeKey);
       this.setRiskMarker(
         scopeKey,
         participantIdentities(message),
-        triage,
+        riskAssessment,
       );
     } else if (riskMarker && !safetyContinuation) {
       this.clearRiskMarker(riskMarker);
@@ -829,7 +1217,13 @@ export class GroupTurnService {
     // Pesan sensitif/berisiko boleh dipahami untuk giliran ini, tetapi tidak
     // menjadi konteks otomatis yang diputar ulang pada percakapan grup nanti.
     const retainContext =
-      triage.level === "biasa" && triage.certain && !triage.sensitive;
+      ingress?.contextPrivacy === "ordinary" &&
+      riskAssessment.disposition === "calm" &&
+      riskAssessment.certain;
+    const effectPermissions = safetyEffectPermissions(
+      riskAssessment.routing,
+      immediateDanger,
+    );
     if (retainContext) {
       this.pushTurn(scopeKey, {
         role: "member",
@@ -842,24 +1236,30 @@ export class GroupTurnService {
       this.noteAcceptedTurnForPending(runtimeKey, message);
     }
 
-    if (!direct && triage.level !== "bahaya") {
+    if (
+      !direct &&
+      riskAssessment.level !== "bahaya" &&
+      !immediateDanger
+    ) {
       // Dukungan yang tidak meminta Harvy tetap privat bagi percakapan manusia.
-      // Hanya bahaya dekat yang boleh menembus keputusan ambient.
+      // Hanya bahaya dekat atau emergency lokal eksplisit yang boleh menembus
+      // keputusan ambient.
       if (
-        triage.level !== "biasa" ||
+        riskAssessment.level !== "biasa" ||
         safetyContinuation ||
         ambientPlan?.decision !== "speak" ||
         !ambientPlan.reply
       ) {
         return "silent";
       }
-      if (this.isAmbientSuperseded(runtimeKey, observation)) {
+      if (this.isAmbientSuperseded(runtimeKey, observation.value)) {
         this.rememberPendingAmbient(
           runtimeKey,
           scopeKey,
           generation,
           message,
           ambientPlan,
+          retainContext,
         );
         return "silent";
       }
@@ -868,7 +1268,12 @@ export class GroupTurnService {
       }
     }
 
-    if (retainContext && direct) {
+    const explicitDataControl = isExplicitGroupControl(message.text);
+    if (
+      direct &&
+      (retainContext ||
+        (effectPermissions.explicitControl && explicitDataControl))
+    ) {
       const controlReply = await this.controlReply(
         scopeKey,
         generation,
@@ -892,7 +1297,7 @@ export class GroupTurnService {
           generation,
           message,
           controlReply.text,
-          controlReply.retainContext,
+          retainContext && controlReply.retainContext,
           "control",
           controlReply.savedMemories,
           null,
@@ -928,7 +1333,7 @@ export class GroupTurnService {
     let reply: string;
     if (
       !direct &&
-      triage.level === "biasa" &&
+      riskAssessment.level === "biasa" &&
       ambientPlan?.decision === "speak" &&
       ambientPlan.reply &&
       ambientPlan.reason !== "fact_correction"
@@ -939,7 +1344,7 @@ export class GroupTurnService {
         reply = await this.conversation.reply(
           message,
           conversationContext,
-          triage,
+          riskAssessment,
           scopeKey,
         );
       } catch (error) {
@@ -949,17 +1354,17 @@ export class GroupTurnService {
           error,
         );
         reply =
-          triage.level === "biasa"
+          riskAssessment.level === "biasa"
             ? GROUP_AI_FAILURE_REPLY
-            : groupSafetyFallback(triage.level);
+            : groupSafetyFallback(riskAssessment.level);
       }
     }
-    if (needsReplyReview(triage.level)) {
+    if (needsConditionalReplyReview(riskAssessment.routing)) {
       const approved = await this.safety
         .reviewReply(
           message.text,
           reply,
-          triage,
+          riskAssessment,
           scopeKey,
           safetyContext,
         )
@@ -971,11 +1376,13 @@ export class GroupTurnService {
           );
           return null;
         });
-      if (approved !== true) reply = groupSafetyFallback(triage.level);
+      if (approved !== true) {
+        reply = groupSafetyFallback(riskAssessment.level);
+      }
     }
 
     if (
-      triage.level === "biasa" &&
+      riskAssessment.level === "biasa" &&
       !groupReplyPassesNarrowGuard(reply, direct ? "direct" : "ambient")
     ) {
       this.logger.warn(
@@ -989,10 +1396,9 @@ export class GroupTurnService {
 
     const memoryCandidates =
       direct &&
-      retainContext &&
+      effectPermissions.generalState &&
       reply !== GROUP_AI_FAILURE_REPLY &&
-      memoryUnderstanding &&
-      !memoryUnderstanding.safetySensitive
+      memoryUnderstanding
         ? await this.saveMemberMemoryCandidates(
             scopeKey,
             generation,
@@ -1016,7 +1422,7 @@ export class GroupTurnService {
       retainContext,
       direct
         ? "direct"
-        : triage.level === "bahaya"
+        : riskAssessment.level !== "biasa"
           ? "safety"
           : "ambient",
       savedMemories,
@@ -1032,7 +1438,32 @@ export class GroupTurnService {
   ): Promise<GroupMemoryCandidateResult> {
     const saved: GroupMemberMemoryItem[] = [];
     let consent: GroupMemoryConsentProposal | null = null;
-    for (const candidate of understanding.memories.slice(0, 2)) {
+    const candidates = understanding.memories.slice(0, 2);
+    if (candidates.length === 0) return { saved, consent };
+
+    let sensitive = candidates.some(
+      (candidate) => candidate.kind === "personal",
+    );
+    if (!sensitive) {
+      try {
+        // Classifier ini hanya melihat kandidat durable, bukan raw context.
+        // Port hilang, parse error, dan outage semuanya gagal tertutup.
+        sensitive =
+          (await this.memoryExtractor?.assessMemoryPrivacy?.(
+            candidates,
+            scopeKey,
+          )) ?? true;
+      } catch (error) {
+        sensitive = true;
+        this.logger.warn(
+          "group_member_memory_privacy_failed",
+          "Penilaian privasi kandidat memori grup gagal; consent diwajibkan.",
+          { error },
+        );
+      }
+    }
+
+    for (const candidate of candidates) {
       try {
         const result = await this.memories.rememberParticipantMemory(
           scopeKey,
@@ -1041,8 +1472,7 @@ export class GroupTurnService {
           {
             kind: candidate.kind,
             content: candidate.content,
-            sensitivity:
-              candidate.kind === "personal" ? "sensitive" : "ordinary",
+            sensitivity: sensitive ? "sensitive" : "ordinary",
             consent: "notice",
             source: "conversation",
           },
@@ -1596,6 +2026,21 @@ export class GroupTurnService {
     }
   }
 
+  private async currentRuntimeAdmission(
+    message: GroupMessage,
+  ): Promise<GroupRuntimeAdmission> {
+    try {
+      return await this.runtimeAdmission(message);
+    } catch (error) {
+      this.logger.warn(
+        "group_runtime_admission_failed",
+        "Mode runtime grup gagal direvalidasi; work aktif ditolak.",
+        { error },
+      );
+      return "inactive";
+    }
+  }
+
   /**
    * Guard yang dibawa sampai tepat sebelum repository write. Pemeriksaan awal
    * di `controlReply` saja masih membuka jendela ketika metadata otoritas
@@ -1634,6 +2079,7 @@ export class GroupTurnService {
     savedMemoryIdentities: readonly string[] | null = null,
     savedRoomMemories: readonly GroupRoomMemoryItem[] = [],
   ): Promise<GroupTurnOutcome> {
+    const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
     if (
       !(await this.isCurrentTurn(
         scopeKey,
@@ -1654,17 +2100,57 @@ export class GroupTurnService {
       );
       return "inactive";
     }
+    const runtimeAdmission = await this.currentRuntimeAdmission(message);
+    if (runtimeAdmission !== "process") {
+      try {
+        await this.usageControl.discardUndelivered?.(scopeKey);
+      } catch (discardError) {
+        this.logger.warn(
+          "group_entitlement_discard_failed",
+          "Kandidat entitlement grup gagal dibatalkan setelah mode runtime berubah.",
+          { error: discardError },
+        );
+      }
+      await this.rollbackMemberMemories(
+        scopeKey,
+        message.accountId,
+        savedMemoryIdentities ?? participantIdentities(message),
+        savedMemories,
+      );
+      await this.rollbackRoomMemories(
+        scopeKey,
+        message.accountId,
+        savedRoomMemories,
+      );
+      if (origin === "ambient") {
+        this.cancelPendingAmbient(runtimeKey);
+      }
+      return runtimeAdmission;
+    }
+    if (!this.isCurrentGeneration(runtimeKey, generation)) {
+      await this.rollbackMemberMemories(
+        scopeKey,
+        message.accountId,
+        savedMemoryIdentities ?? participantIdentities(message),
+        savedMemories,
+      );
+      await this.rollbackRoomMemories(
+        scopeKey,
+        message.accountId,
+        savedRoomMemories,
+      );
+      return "inactive";
+    }
     if (
       origin === "ambient" &&
       this.isAmbientSuperseded(
-        groupRuntimeKey(scopeKey, message.accountId),
+        runtimeKey,
         message.ingressRevision ?? 0,
       )
     ) {
       return "silent";
     }
     if (origin === "ambient") {
-      const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
       const pending = this.pendingAmbient.get(runtimeKey);
       if (
         pending &&
@@ -1886,12 +2372,17 @@ export class GroupTurnService {
     scopeKey: string,
     generation: number,
     message: GroupMessage,
-    preflight: Promise<RiskTriage | null>,
+    preflight: Promise<GroupSafetyPreflight | null>,
+    immediateDanger: boolean,
   ): Promise<void> {
-    const triage = await preflight;
+    const assessment = immediateDanger ? null : await preflight;
     if (
-      triage?.level !== "bahaya" ||
-      !this.accepting ||
+      (!immediateDanger && assessment?.triage?.level !== "bahaya") ||
+      !this.accepting
+    ) {
+      return;
+    }
+    if (
       !(await this.isCurrentTurn(
         scopeKey,
         generation,
@@ -1900,6 +2391,10 @@ export class GroupTurnService {
     ) {
       return;
     }
+    if ((await this.currentRuntimeAdmission(message)) !== "process") return;
+    const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
+    if (!this.isCurrentGeneration(runtimeKey, generation)) return;
+    if (!this.reservePriorityAction(scopeKey, message, "ack")) return;
     await this.transport.sendReply(message, GROUP_URGENT_ACK);
   }
 
@@ -1917,9 +2412,10 @@ export class GroupTurnService {
     });
   }
 
-  private reservePriorityPreflight(
+  private reservePriorityAction(
     scopeKey: string,
     message: GroupMessage,
+    kind: "ack" | "assessment",
   ): boolean {
     const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
     const joinedAt = this.joinedAtByRuntime.get(runtimeKey);
@@ -1927,7 +2423,7 @@ export class GroupTurnService {
     if (
       joinedAt === undefined ||
       !Number.isFinite(messageAt) ||
-      messageAt < joinedAt
+      messageAt < joinedAt - 999
     ) {
       return false;
     }
@@ -1939,7 +2435,8 @@ export class GroupTurnService {
     for (const [messageId, expiresAt] of reservations) {
       if (expiresAt <= nowMs) reservations.delete(messageId);
     }
-    if (reservations.has(message.messageId)) return false;
+    const reservationKey = `${kind}:${message.messageId}`;
+    if (reservations.has(reservationKey)) return false;
     while (reservations.size >= MAX_OBSERVED_MESSAGE_IDS) {
       const oldest = reservations.keys().next().value as
         | string
@@ -1948,7 +2445,7 @@ export class GroupTurnService {
       reservations.delete(oldest);
     }
     reservations.set(
-      message.messageId,
+      reservationKey,
       nowMs + PRIORITY_RESERVATION_MS,
     );
     this.priorityReservations.set(runtimeKey, reservations);
@@ -2030,6 +2527,7 @@ export class GroupTurnService {
     generation: number,
     message: GroupMessage,
     plan: GroupParticipationPlan,
+    retainContext: boolean,
   ): void {
     if (!this.conversation.revalidateAmbient || !plan.reply) return;
     this.cancelPendingAmbient(runtimeKey);
@@ -2040,6 +2538,7 @@ export class GroupTurnService {
       generation,
       message,
       plan,
+      retainContext,
       createdAt: nowMs,
       lastObservedAt: nowMs,
       newerTurns: 0,
@@ -2114,6 +2613,12 @@ export class GroupTurnService {
       return;
     }
     if (
+      (await this.currentRuntimeAdmission(pending.message)) !== "process"
+    ) {
+      this.cancelPendingAmbient(pending.runtimeKey);
+      return;
+    }
+    if (
       nowMs - pending.lastObservedAt < PENDING_AMBIENT_QUIET_MS
     ) {
       pending.taskScheduled = false;
@@ -2145,6 +2650,19 @@ export class GroupTurnService {
     const memory = await this.memories.memory(pending.scopeKey);
     const roomMemories = await this.memories.roomMemories(pending.scopeKey);
     if (this.pendingAmbient.get(pending.runtimeKey) !== pending) return;
+    if (
+      (await this.currentRuntimeAdmission(pending.message)) !== "process"
+    ) {
+      this.cancelPendingAmbient(pending.runtimeKey);
+      return;
+    }
+    if (
+      !this.isCurrentGeneration(pending.runtimeKey, pending.generation) ||
+      this.pendingAmbient.get(pending.runtimeKey) !== pending
+    ) {
+      this.cancelPendingAmbient(pending.runtimeKey);
+      return;
+    }
     const prior = resolvedParticipantTurns(
       this.contextFor(pending.scopeKey),
       memory,
@@ -2243,7 +2761,7 @@ export class GroupTurnService {
         ingressRevision: latestObservation,
       },
       reply,
-      true,
+      pending.retainContext,
       "ambient",
     );
   }
@@ -2258,33 +2776,99 @@ export class GroupTurnService {
     this.pendingAmbient.delete(runtimeKey);
   }
 
-  private schedulePriorityTriage(
-    operation: () => Promise<RiskTriage | null>,
-  ): Promise<RiskTriage | null> {
+  private schedulePriorityAssessment(
+    runtimeKey: string,
+    generation: number,
+    operation: (signal: AbortSignal) => Promise<GroupSafetyPreflight>,
+  ): Promise<GroupSafetyPreflight | null> {
     if (
       this.priorityActive + this.priorityQueue.length >=
       MAX_PRIORITY_TRIAGE_CONCURRENCY + MAX_PRIORITY_TRIAGE_QUEUE
     ) {
       this.logger.warn(
         "group_priority_triage_saturated",
-        "Antrean triase prioritas grup penuh; giliran tetap menjalani triase di FIFO.",
+        "Antrean assessment safety grup penuh; giliran tetap diperiksa di FIFO.",
         { count: this.priorityQueue.length },
       );
       return Promise.resolve(null);
     }
 
-    return new Promise<RiskTriage | null>((resolve) => {
-      this.priorityQueue.push(() => {
+    const controller = new AbortController();
+    this.registerPriorityController(runtimeKey, controller);
+    return new Promise<GroupSafetyPreflight | null>((resolve) => {
+      let started = false;
+      const run = () => {
+        started = true;
+        controller.signal.removeEventListener("abort", cancelQueued);
+        if (
+          controller.signal.aborted ||
+          !this.accepting ||
+          !this.isCurrentGeneration(runtimeKey, generation)
+        ) {
+          this.releasePriorityController(runtimeKey, controller);
+          resolve(null);
+          return;
+        }
         this.priorityActive += 1;
-        void operation()
-          .then(resolve, () => resolve(null))
+        void operation(controller.signal)
+          .then(
+            (assessment) => {
+              resolve(
+                !controller.signal.aborted &&
+                  this.accepting &&
+                  this.isCurrentGeneration(runtimeKey, generation)
+                  ? assessment
+                  : null,
+              );
+            },
+            () => resolve(null),
+          )
           .finally(() => {
+            this.releasePriorityController(runtimeKey, controller);
             this.priorityActive -= 1;
             this.pumpPriorityTriage();
           });
+      };
+      const cancelQueued = () => {
+        if (started) return;
+        const index = this.priorityQueue.indexOf(run);
+        if (index >= 0) this.priorityQueue.splice(index, 1);
+        this.releasePriorityController(runtimeKey, controller);
+        resolve(null);
+      };
+      controller.signal.addEventListener("abort", cancelQueued, {
+        once: true,
       });
+      this.priorityQueue.push(run);
       this.pumpPriorityTriage();
     });
+  }
+
+  private registerPriorityController(
+    runtimeKey: string,
+    controller: AbortController,
+  ): void {
+    const controllers =
+      this.priorityControllers.get(runtimeKey) ?? new Set<AbortController>();
+    controllers.add(controller);
+    this.priorityControllers.set(runtimeKey, controllers);
+  }
+
+  private releasePriorityController(
+    runtimeKey: string,
+    controller: AbortController,
+  ): void {
+    const controllers = this.priorityControllers.get(runtimeKey);
+    if (!controllers) return;
+    controllers.delete(controller);
+    if (controllers.size === 0) this.priorityControllers.delete(runtimeKey);
+  }
+
+  private abortPriorityAssessments(runtimeKey: string): void {
+    const controllers = this.priorityControllers.get(runtimeKey);
+    if (!controllers) return;
+    this.priorityControllers.delete(runtimeKey);
+    for (const controller of controllers) controller.abort();
   }
 
   private pumpPriorityTriage(): void {
@@ -2411,14 +2995,105 @@ export class GroupTurnService {
     for (const marker of markers) this.clearRiskMarker(marker);
   }
 
+  private async buildSafetyPreflight(
+    message: string,
+    scopeKey: string,
+    context: HarvyContext,
+    immediateDanger: boolean,
+    signal?: AbortSignal,
+    isCurrent: () => boolean = () => true,
+  ): Promise<GroupSafetyPreflight> {
+    if (signal?.aborted || !isCurrent()) {
+      throw new Error("Group priority assessment dibatalkan.");
+    }
+    if (immediateDanger) {
+      const triage = await this.safeTriage(
+        message,
+        scopeKey,
+        context,
+        signal,
+      );
+      if (signal?.aborted || !isCurrent()) {
+        throw new Error("Group priority assessment dibatalkan.");
+      }
+      return {
+        ingress: null,
+        hint: withImmediateDangerHint(NO_RISK_HINT, true),
+        triage,
+        triageAttempted: true,
+      };
+    }
+    const assessedIngress = await this.safeAssessGroupIngress(
+      message,
+      scopeKey,
+      context,
+      signal,
+    );
+    if (signal?.aborted || !isCurrent()) {
+      throw new Error("Group priority assessment dibatalkan.");
+    }
+    const rawHint = assessedIngress?.riskHint ?? null;
+    // Snapshot pre-FIFO dapat menjadi stale terhadap turn yang masih aktif.
+    // Risk hint tetap berguna untuk routing cepat, tetapi tidak pernah menjadi
+    // authority retensi raw-context: privacy harus gagal tertutup.
+    const ingress = assessedIngress
+      ? { ...assessedIngress, contextPrivacy: null }
+      : null;
+    const hint = withImmediateDangerHint(
+      rawHint ?? NO_RISK_HINT,
+      immediateDanger,
+    );
+    const triageAttempted =
+      immediateDanger || rawHint === null || hint.level !== "none";
+    const triage = triageAttempted
+      ? await this.safeTriage(message, scopeKey, context, signal)
+      : undefined;
+    if (signal?.aborted || !isCurrent()) {
+      throw new Error("Group priority assessment dibatalkan.");
+    }
+    return { ingress, hint, triage, triageAttempted };
+  }
+
+  private async safeAssessGroupIngress(
+    message: string,
+    scopeKey: string,
+    context: HarvyContext,
+    signal?: AbortSignal,
+  ): Promise<GroupIngressAssessment | null> {
+    if (!this.ingressAssessment) return null;
+    try {
+      return await this.ingressAssessment.assessGroupIngress(
+        message,
+        context,
+        scopeKey,
+        signal,
+      );
+    } catch (error) {
+      if (signal?.aborted) return null;
+      this.logger.error(
+        "group_ingress_assessment_failed",
+        "Assessment ingress grup gagal; triase fallback dan no-retain dipakai.",
+        error,
+      );
+      return null;
+    }
+  }
+
   private async safeTriage(
     message: string,
     scopeKey: string,
     context: HarvyContext,
+    signal?: AbortSignal,
   ): Promise<RiskTriage | null> {
     try {
-      return await this.safety.triageRisk(message, scopeKey, context);
+      return await this.safety.triageRisk(
+        message,
+        scopeKey,
+        context,
+        signal,
+      );
     } catch (error) {
+      if (signal?.aborted) return null;
       this.logger.error(
         "group_risk_triage_failed",
         "Triase keselamatan grup gagal.",
@@ -2861,6 +3536,42 @@ function asksResetGroup(text: string): boolean {
 
 function confirmsResetGroup(text: string): boolean {
   return /^(?:harvy\s+)?(?:ya|iya)\s+reset memori grup$/.test(text);
+}
+
+/**
+ * Kontrol data eksplisit tetap boleh diproses ketika UX safety tertentu
+ * menahan mutasi umum. Ini hanya klasifikasi intent; authority grup tetap
+ * direvalidasi tepat sebelum setiap write.
+ */
+function isExplicitGroupControl(text: string): boolean {
+  const normalized = normalize(text);
+  return Boolean(
+    asksMemoryList(normalized) ||
+      asksActivityRanking(normalized) ||
+      extractOwnNameCorrection(text) ||
+      extractMemberMemoryEdit(text) ||
+      extractMemberMemoryDelete(text) ||
+      extractRoomMemoryDelete(text) ||
+      extractAlias(text) ||
+      extractRoomMemoryProposal(text) ||
+      confirmsRoomMemory(normalized) ||
+      asksForgetSelf(normalized) ||
+      confirmsForgetSelf(normalized) ||
+      confirmsSensitiveMemory(normalized) ||
+      asksResetGroup(normalized) ||
+      confirmsResetGroup(normalized),
+  );
+}
+
+function strongerRiskHint(left: RiskHint, right: RiskHint): RiskHint {
+  const rank: Readonly<Record<RiskHint["level"], number>> = {
+    none: 0,
+    possible: 1,
+    strong: 2,
+  };
+  if (rank[right.level] > rank[left.level]) return right;
+  if (rank[right.level] < rank[left.level]) return left;
+  return right.confidence > left.confidence ? right : left;
 }
 
 function isNegatedOrTentative(text: string): boolean {

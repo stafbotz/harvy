@@ -1,6 +1,6 @@
 # Harvy — Keputusan Proyek dan Backlog
 
-Terakhir diperbarui: 8 Agustus 2026.
+Terakhir diperbarui: 9 Agustus 2026.
 
 ## Identitas dan produk
 
@@ -212,6 +212,16 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   pending/ack fast path sempit, serta izin per efek yang mempertahankan kontrol
   eksplisit atas data sendiri. Lihat
   [`ADR-022`](decisions/ADR-022-selective-safety-routing-dan-privacy-memory.md).
+- [x] Debounce adaptif content-free mengikuti p90 gap bubble per pemilik atau
+  anggota+scope grup setelah sampel minimum, termasuk lintas batch yang sudah
+  ter-flush, dengan TTL/cap in-memory dan fallback timing lama. Speaker switch
+  memutus sampel grup; jendela semantik open/incomplete belum dipendekkan.
+  Lihat [`ADR-023`](decisions/ADR-023-adaptive-debounce-per-subjek.md).
+- [x] Safety grup selektif melalui `riskHint`, privacy raw-context terpisah,
+  memory-privacy candidate-only, authority sebelum model, conditional review,
+  serta emergency bypass debounce yang tetap tunduk binding dan notice.
+  Lihat
+  [`ADR-024`](decisions/ADR-024-selective-safety-dan-privacy-ingress-grup.md).
 - [x] Tombol tindakan cepat untuk selesai, ingatkan, ubah tenggat, dan batalkan.
 - [x] Tombol adaptif menurut keadaan percakapan. Model hanya boleh mengusulkan
   ID tindakan dari daftar tertutup; kode memilih maksimum satu sebelum balasan
@@ -261,7 +271,8 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 - [x] Memindahkan penilaian keselamatan ke pemeriksaan tersendiri, sesuai alur
   teknis di `ADR-003`. Sejak ADR-022, chat privat hanya memanggil acute triage
   untuk emergency lokal, RiskHint `possible|strong`, atau compiler failure;
-  port grup masih memakai screening gabungan lama sampai migrasi terpisah.
+  sejak ADR-024 grup memakai risk hint acute-only, privacy raw-context terpisah,
+  dan envelope ambient tunggal setelah authority+binding+notice.
 - [x] Memberi tahu pengguna bahwa pesannya diproses penyedia model pihak ketiga,
   dan meminta persetujuannya. Dijamin Konstitusi Pasal 3.9. Masuk 26 Juli 2026
   bersama perkenalan kontak pertama. Pesan pertama boleh menjalani satu triase

@@ -303,11 +303,6 @@ function normalizeDangerText(text: string): string {
     .trim();
 }
 
-/** Giliran yang balasannya wajib diperiksa lagi sebelum dikirim. */
-export function needsReplyReview(level: RiskLevel): boolean {
-  return level !== "biasa";
-}
-
 /** Giliran yang isinya layak dicatat sebagai riwayat keselamatan. */
 export function worthRecording(level: RiskLevel): boolean {
   return level !== "biasa";

@@ -19,15 +19,14 @@ import {
  * menempel pada satu model — Pasal 3.13.
  *
  * Yang membedakan lapisan ini dari sekadar tambahan prompt: ia mempunyai
- * classifier dan reviewer tersendiri. Chat privat memanggil keduanya secara
- * selektif; port grup masih mempertahankan pemeriksaan luasnya.
+ * classifier dan reviewer tersendiri. Chat privat maupun grup memanggilnya
+ * secara selektif dari sinyal compiler yang tidak memiliki authority efek.
  */
 
 /**
  * Triase risiko: satu panggilan model termurah yang terpisah dari compiler
- * maksud. Chat privat memanggilnya dari RiskHint, kegagalan compiler, atau
- * langsung pada emergency lokal. Screening privasi memori berada di pipeline
- * lain; hanya port grup lama yang masih meminta keduanya sekaligus.
+ * maksud. Dipanggil dari RiskHint, kegagalan compiler, atau langsung pada
+ * emergency lokal. Screening privasi berada di pipeline lain.
  */
 export const RISK_TRIAGE_PROMPT = [
   "Kamu menilai acute-safety risk satu pesan. Kamu TIDAK menjawab isinya.",
@@ -59,53 +58,6 @@ export const RISK_TRIAGE_PROMPT = [
   '- "aku suka sama cowok temen gameku" -> biasa (privasi, bukan acute risk)',
   '- "aku ngerasa nggak berguna dan capek hidup" -> dukungan',
   '- "aku mau ngakhirin semuanya malam ini" -> bahaya',
-].join("\n");
-
-/** Port grup lama masih membutuhkan sinyal privasi untuk menahan raw context. */
-export const GROUP_RISK_AND_PRIVACY_TRIAGE_PROMPT = [
-  "Kamu menilai risiko satu pesan. Kamu TIDAK menjawab isinya.",
-  "",
-  "Keluarkan JSON saja:",
-  "{",
-  '  "risiko": "biasa" | "dukungan" | "bahaya",',
-  '  "sendirian": boolean,',
-  '  "sensitif": boolean,',
-  '  "ringkasan": "satu kalimat pendek tentang apa yang sedang ia hadapi"',
-  "}",
-  "",
-  "risiko:",
-  "- biasa: keluhan sehari-hari — lelah, malas, bingung, sedih ringan, kesal",
-  "  sesaat. Ini yang paling sering. Menaikkannya tanpa alasan membuat hal",
-  "  biasa terasa seperti keadaan darurat.",
-  "- dukungan: tekanan yang jelas lebih berat dari sehari-hari — putus asa,",
-  "  merasa tidak berharga, tertekan berkepanjangan, diperlakukan buruk,",
-  "  kehilangan, atau kesepian yang dalam. Belum ada ancaman langsung.",
-  "- bahaya: ancaman nyata dan dekat pada keselamatan seseorang — niat",
-  "  menyakiti diri atau mengakhiri hidup, kekerasan yang sedang terjadi,",
-  "  pelecehan, eksploitasi, atau permintaan tolong yang mendesak.",
-  "",
-  "sendirian: true bila ia menyatakan tidak punya orang yang bisa dihubungi,",
-  "tidak percaya siapa pun, takut atau trauma pada orang, atau merasa sendirian.",
-  "Ini penting: menyuruh orang seperti itu bercerita kepada orang lain justru",
-  "memperberat keadaannya.",
-  "",
-  "sensitif: true bila isinya hal yang tidak pantas disimpan tanpa izin —",
-  "kesehatan, keluarga, hubungan romantis, ketertarikan pada seseorang,",
-  "identitas gender, orientasi seksual, keadaan ekonomi, atau tekanan emosional",
-  "yang berat. Tandai juga tuduhan atau aib tentang orang lain, konflik",
-  "antarpribadi, preferensi/afiliasi politik, serta kerentanan belajar atau",
-  "kesulitan akademik pribadi. Kategori tambahan ini penting ketika pesan",
-  "berasal dari grup dan dapat menyangkut orang selain pengirim.",
-  "",
-  "ringkasan: kalimat netral tanpa menilai, untuk catatan Harvy sendiri.",
-  "Kosongkan bila risikonya biasa.",
-  "",
-  "Contoh:",
-  '- "males banget besok senin" -> biasa, sendirian false, sensitif false',
-  '- "aku ngerasa nggak berguna dan capek hidup" -> dukungan',
-  '- "aku mau ngakhirin semuanya malam ini" -> bahaya',
-  '- "aku nggak punya siapa-siapa buat cerita" -> sendirian true',
-  '- "aku suka sama cowok temen gameku" -> sensitif true, risiko biasa',
 ].join("\n");
 
 export function riskTriageInput(
@@ -156,7 +108,7 @@ export interface RiskTriage {
   certain: boolean;
 }
 
-/** Putusan policy privat setelah hint dan triase direkonsiliasi. */
+/** Putusan policy setelah hint compiler dan triase direkonsiliasi. */
 export interface RiskAssessment extends RiskTriage {
   disposition: RiskDisposition;
   routing: SafetyRoutingDecision;
@@ -207,8 +159,8 @@ export function resolveRiskAssessment(
   return {
     level: routing.responseLevel,
     alone: routing.responseLevel === "biasa" ? false : observed.alone,
-    // Acute-safety routing tidak lagi menjadi authority privasi pada chat
-    // privat. Field ini dipertahankan untuk port grup lama sampai migrasinya.
+    // Acute-safety routing tidak pernah menjadi authority privasi. Field ini
+    // hanya dipertahankan untuk kompatibilitas bentuk triase lama.
     sensitive: observed.sensitive,
     summary: triage?.summary ?? "",
     certain: routing.certain,
@@ -219,28 +171,6 @@ export function resolveRiskAssessment(
 
 export const EMERGENCY_AVAILABILITY_NOTE =
   "Di daerah yang sudah mengoperasikannya, 112 gratis dan tersedia 24 jam; kalau tidak tersambung, gunakan petugas atau jalur darurat setempat yang lain.";
-
-/**
- * Triase pengganti untuk port grup lama ketika pemeriksaannya sendiri gagal.
- *
- * Chat privat tidak memakai fungsi ini sejak ADR-022; ia mempertahankan
- * disposition `unavailable` dan menimbang bukti sebelumnya. Port grup belum
- * dimigrasikan karena classifier yang sama masih menjadi pagar retensi
- * privasinya. Uji QA 27 Juli 2026 membuktikan
- * `triageRisk` benar-benar dapat kehabisan waktu, dan ketika itu terjadi
- * keadaan lama menjatuhkannya ke "biasa" — yang sekaligus mematikan arahan
- * anti-penolakan dan pemeriksaan balasan. Dua jaring pengaman lumpuh bersamaan,
- * tepat pada giliran yang paling tidak boleh salah.
- */
-export function uncertainTriage(sensitive: boolean): RiskTriage {
-  return {
-    level: "dukungan",
-    alone: false,
-    sensitive,
-    summary: "(penilaian risiko tidak selesai)",
-    certain: false,
-  };
-}
 
 /**
  * Membaca hasil triase sebagai masukan yang tidak tepercaya.

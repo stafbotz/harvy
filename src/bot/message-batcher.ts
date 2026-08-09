@@ -8,6 +8,7 @@ import {
   type TurnBoundaryState,
 } from "../core/turn-taking-policy.js";
 import { hasExplicitImmediateDangerSignal } from "../core/safety-policy.js";
+import { AdaptiveDebouncePolicy } from "../core/adaptive-debounce-policy.js";
 import { randomUUID } from "node:crypto";
 import {
   NOOP_OPERATIONAL_LOGGER,
@@ -23,6 +24,10 @@ import {
  */
 export interface MessageBatch<T> {
   text: string;
+  /** Ada bubble yang secara mandiri lolos matcher bahaya eksplisit lokal. */
+  explicitImmediateDanger: boolean;
+  /** Fallback boundary menilai turn perlu triase segera. */
+  urgentBoundary: boolean;
   carrier: T;
   /** Korelasi acak satu giliran dari boundary sampai delivery. */
   turnId: string;
@@ -47,6 +52,8 @@ export interface MessageBatchMetrics {
 
 interface BatchEntry<T> {
   chunks: string[];
+  explicitImmediateDanger: boolean;
+  urgentBoundary: boolean;
   carrier: T;
   turnId: string;
   firstIngressSequence: number | null;
@@ -96,6 +103,14 @@ export class MessageBatcher<T> {
     private readonly observeTurn?: (
       metrics: MessageBatchMetrics,
     ) => Promise<void> | void,
+    private readonly adaptiveDebounce = new AdaptiveDebouncePolicy({
+      minDelayMs: Math.min(Math.max(1, settleMs), 300),
+      maxDelayMs: Math.max(
+        Math.min(Math.max(1, settleMs), 300),
+        Math.min(2_500, Math.max(1, maxWaitMs)),
+      ),
+      maxGapMs: Math.max(1, maxWaitMs),
+    }),
   ) {}
 
   /**
@@ -125,11 +140,14 @@ export class MessageBatcher<T> {
     ingressSequence?: number,
   ): void {
     const now = Date.now();
+    this.adaptiveDebounce.observeArrival(ownerId, now);
     const existing = this.entries.get(ownerId);
     if (existing) clearTimers(existing);
 
     const entry: BatchEntry<T> = existing ?? {
       chunks: [],
+      explicitImmediateDanger: false,
+      urgentBoundary: false,
       carrier,
       turnId: randomUUID(),
       firstIngressSequence:
@@ -144,6 +162,10 @@ export class MessageBatcher<T> {
     };
 
     entry.chunks.push(text);
+    // Nilai tiap bubble secara mandiri. Marker konteks pada bubble lama tidak
+    // boleh memveto sinyal darurat eksplisit pada bubble terbaru ketika teks
+    // batch kemudian digabung untuk pemahaman penuh.
+    entry.explicitImmediateDanger ||= hasExplicitImmediateDangerSignal(text);
     entry.carrier = carrier;
     if (
       entry.firstIngressSequence === null &&
@@ -162,12 +184,16 @@ export class MessageBatcher<T> {
     );
 
     const revision = entry.revision;
-    if (hasExplicitImmediateDangerSignal(entry.chunks.join("\n"))) {
+    if (entry.explicitImmediateDanger) {
       this.acknowledgeUrgent(ownerId, entry);
       this.scheduleDeadline(ownerId, entry, revision, 0);
       return;
     }
 
+    const adaptiveTiming = this.adaptiveDebounce.estimate(
+      ownerId,
+      this.settleMs,
+    );
     entry.settleTimer = setTimeout(() => {
       entry.settleTimer = null;
       void this.evaluate(ownerId, revision).catch((error: unknown) => {
@@ -177,7 +203,7 @@ export class MessageBatcher<T> {
           error,
         );
       });
-    }, this.settleMs);
+    }, Math.min(this.maxWaitMs, adaptiveTiming.settleMs));
     entry.settleTimer.unref?.();
 
     // Fail-safe terpanjang dimulai dari bubble terakhir, bukan setelah model
@@ -213,6 +239,7 @@ export class MessageBatcher<T> {
       });
     }
     this.entries.delete(ownerId);
+    this.adaptiveDebounce.forget(ownerId);
     this.cleanupOwner(ownerId);
   }
 
@@ -411,7 +438,7 @@ export class MessageBatcher<T> {
       evaluated.evaluationRequested = false;
 
       const text = evaluated.chunks.join("\n");
-      let state: TurnBoundaryState | null = hasExplicitImmediateDangerSignal(text)
+      let state: TurnBoundaryState | null = evaluated.explicitImmediateDanger
         ? "urgent"
         : classifyTurnBoundaryLocally(text);
       if (state === null) {
@@ -440,14 +467,27 @@ export class MessageBatcher<T> {
           state,
         );
         if (guarded === "urgent") {
+          evaluated.urgentBoundary = true;
           this.acknowledgeUrgent(ownerId, evaluated);
         }
+        const adaptiveTiming = this.adaptiveDebounce.estimate(
+          ownerId,
+          this.settleMs,
+        );
+        const learnedSettleMs = adaptiveTiming.settleMs;
+        const multiBubbleMs = adaptiveTiming.adaptive
+          ? Math.min(this.multiBubbleWaitMs, learnedSettleMs)
+          : this.multiBubbleWaitMs;
         const waitMs = Math.min(
           this.maxWaitMs,
           idleWindowMs(guarded, evaluated.chunks.length, {
+            // Pembuka/narasi dan fragmen keras membawa makna, bukan sekadar
+            // ritme ketik. Sampai telemetry membuktikan window yang lebih
+            // pendek aman, adaptive profile hanya mengubah debounce awal dan
+            // ruang gabungan bubble yang sudah lengkap.
             openMs: this.openWaitMs,
             incompleteMs: this.maxWaitMs,
-            multiBubbleMs: this.multiBubbleWaitMs,
+            multiBubbleMs,
           }),
         );
         this.scheduleDeadline(ownerId, evaluated, targetRevision, waitMs);
@@ -471,6 +511,8 @@ export class MessageBatcher<T> {
 
     const batch = {
       text: entry.chunks.join("\n"),
+      explicitImmediateDanger: entry.explicitImmediateDanger,
+      urgentBoundary: entry.urgentBoundary,
       carrier: entry.carrier,
       turnId: entry.turnId,
       firstIngressSequence: entry.firstIngressSequence,
@@ -598,6 +640,8 @@ export class MessageBatcher<T> {
     const controller = new AbortController();
     const batch = {
       text: entry.chunks.join("\n"),
+      explicitImmediateDanger: entry.explicitImmediateDanger,
+      urgentBoundary: entry.urgentBoundary,
       carrier: entry.carrier,
       turnId: entry.turnId,
       firstIngressSequence: entry.firstIngressSequence,

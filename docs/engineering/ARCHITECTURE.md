@@ -50,6 +50,7 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   expiry absolut, dan lifecycle checkpoint klarifikasi),
   `data-control-service.ts` (ekspor,
   tombstone, dan penghapusan lintas store), serta
+  `adaptive-debounce-policy.ts` (p90 gap content-free per subjek, TTL, dan LRU),
   `turn-taking-policy.ts` (closed set boundary lokal, koreksi bentuk, serta
   jendela state-aware 4/7/12 detik). Policy emergency dan policy bentuk giliran
   sengaja terpisah; disposition keselamatan tetap milik triase risiko.
@@ -60,8 +61,11 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   Core grup berada di `group-memory-service.ts` dan `group-turn-service.ts`:
   binding akun, statistik sosial berjendela, konteks pendek beridentitas, FIFO
   per grup, notice, kontrol dua langkah, planner nimbrung, triase/review,
-  acknowledgment bahaya di luar FIFO, penanda risiko minimal, generation guard
-  removal, matriks authority member/admin, dan shared room memory eksplisit
+  fixed acknowledgment bahaya di luar FIFO, full-turn chain lintas speaker,
+  penanda risiko minimal, generation/abort guard removal atau revocation,
+  authorized-observation chain per runtime, hidrasi alias sebelum admission,
+  settled-observation watermark, revalidasi mode efektif sebelum pending/model/
+  delivery, matriks authority member/admin, dan shared room memory eksplisit
   dengan preview+konfirmasi admin. Ia tidak menerima dependency memori/profil/
   sesi pribadi.
 
@@ -78,21 +82,28 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   (`HarvyContext`: ringkasan, giliran terakhir, dan
   memori), `safety.ts` (acute-risk triage, disposition resolution, arahan
   anti-penolakan, dan pemeriksaan balasan), `memory-privacy.ts` (classifier
-  sensitivitas candidate-only), dan `conversation.ts` (menyatukan pemahaman,
-  balasan, peringkasan episode, dan Agent Runtime).
+  sensitivitas candidate-only), `group-ingress.ts` (risk hint dan privacy raw
+  context grup), dan `conversation.ts` (menyatukan pemahaman, balasan,
+  peringkasan episode, dan Agent Runtime).
   Pada free-text Telegram privat pasca-consent, pure policy immediate-danger
   berjalan saat ingress sebelum debounce dan hanya dapat mempercepat ACK.
   Sesudah settle, closed set lokal memutus satu bubble yang jelas sebagai
   `complete`/`incomplete`; model `cheap` hanya menjadi fallback
   `complete|open|incomplete|urgent` untuk jalur boundary yang ambigu. Giliran
-  yang sudah utuh menjalankan compiler `cheap`; hanya RiskHint
+  Metadata immediate-danger per bubble dan hasil boundary `urgent` bertahan
+  sampai handler. Sebelum consent hanya pesan pertama boleh dinilai; batas
+  bubble lain dipertahankan dan baru diperiksa per bagian setelah consent.
+  Giliran yang sudah utuh menjalankan compiler `cheap`; hanya RiskHint
   `possible|strong` atau kegagalan compiler yang memanggil acute triage.
   Emergency lokal langsung mentriase tanpa compiler. Privacy memory hanya
   dinilai ketika ada kandidat, dan support pasti tidak rutin direview; danger
   serta support belum pasti tetap fail-closed. Ekstraksi tidak pernah membayar
   harga model besar, sementara tutor memakai `ambitious` hanya pada giliran
-  tenang. Port grup masih memakai screening risk+privacy gabungan sampai
-  migrasi terpisah.
+  tenang. Grup memakai kontrak selektif yang sama setelah authority, binding,
+  dan notice live: direct memakai compiler ingress, ambient menggabungkannya
+  dengan planner, raw-context privacy dan durable-memory privacy tetap terpisah,
+  serta emergency lokal dapat melewati debounce dan memulai acute triage tanpa
+  compiler umum tanpa memberi authority mutasi.
 
 ## Harness
 

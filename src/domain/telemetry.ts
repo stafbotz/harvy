@@ -13,6 +13,7 @@ export type AiPurpose =
   | "due-date"
   | "risk-triage"
   | "memory-privacy"
+  | "group-ingress"
   | "reply"
   | "reply-review"
   | "summary"
