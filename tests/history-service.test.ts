@@ -30,6 +30,66 @@ describe("HistoryService", () => {
     assert.equal(mine.turns[0]?.text, "halo");
   });
 
+  it("mencari episode hanya dalam scope pemilik dan berhenti saat history diblokir", async () => {
+    const store = new HistoryStore();
+    await store.save(historyWithEpisode(
+      "student-a",
+      "Persiapan ujian biologi tentang mitosis.",
+    ));
+    await store.save(historyWithEpisode(
+      "student-b",
+      "Persiapan ujian biologi tentang meiosis.",
+    ));
+    const service = new HistoryService(store, neverSummarize);
+
+    const mine = await service.search("student-a", "biologi mitosis");
+    assert.equal(mine.length, 1);
+    assert.match(mine[0]?.claims[0]?.text ?? "", /mitosis/u);
+    assert.equal(
+      mine.some((match) => match.claims.some((claim) => /meiosis/u.test(claim.text))),
+      false,
+    );
+
+    service.suspend("student-a");
+    assert.deepEqual(await service.search("student-a", "mitosis"), []);
+    service.allow("student-a");
+    assert.equal((await service.search("student-a", "mitosis")).length, 1);
+
+    assert.equal(await service.forget("student-a", true), true);
+    assert.deepEqual(await service.search("student-a", "mitosis"), []);
+  });
+
+  it("membuang hasil search yang selesai setelah consent diblokir", async () => {
+    const stored = historyWithEpisode(
+      "student",
+      "Persiapan ujian kimia tentang stoikiometri.",
+    );
+    let releaseLoad: (() => void) | undefined;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const repository: HistoryRepository = {
+      load: async () => {
+        markStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseLoad = resolve;
+        });
+        return structuredClone(stored);
+      },
+      save: async () => undefined,
+      remove: async () => true,
+    };
+    const service = new HistoryService(repository, neverSummarize);
+
+    const searching = service.search("student", "stoikiometri");
+    await started;
+    service.suspend("student");
+    releaseLoad?.();
+
+    assert.deepEqual(await searching, []);
+  });
+
   it("hanya membawa jendela darurat terbaru ke dalam prompt", async () => {
     const service = new HistoryService(new HistoryStore(), neverSummarize);
 
@@ -487,6 +547,52 @@ describe("HistoryService", () => {
     assert.equal(drained, true);
   });
 
+  it("membuang context dan episode retrieval yang selesai sesudah consent ditarik", async () => {
+    const stored = historyWithEpisode("student", "Rahasia lama");
+    stored.turns.push({
+      sequence: 3,
+      role: "user",
+      text: "Pesan terbaru",
+      at: "2026-08-09T00:00:00.000Z",
+    });
+    const contextStore = new SlowLoadHistoryStore(stored);
+    const contextService = new HistoryService(contextStore, neverSummarize);
+    const pendingContext = contextService.context("student");
+    await contextStore.started;
+    contextService.suspend("student");
+    contextStore.release();
+    assert.deepEqual(await pendingContext, { summary: null, turns: [] });
+
+    const episodeStore = new SlowLoadHistoryStore(stored);
+    const episodeService = new HistoryService(episodeStore, neverSummarize);
+    const pendingEpisodes = episodeService.episodesForRetrieval("student");
+    await episodeStore.started;
+    episodeService.suspend("student");
+    episodeStore.release();
+    assert.deepEqual(await pendingEpisodes, []);
+  });
+
+  it("generation guard menutup suspend-allow ABA untuk read dan append", async () => {
+    const stored = historyWithEpisode("student", "Rahasia lama");
+    const contextStore = new SlowLoadHistoryStore(stored);
+    const contextService = new HistoryService(contextStore, neverSummarize);
+    const pendingContext = contextService.context("student");
+    await contextStore.started;
+    contextService.suspend("student");
+    contextService.allow("student");
+    contextStore.release();
+    assert.deepEqual(await pendingContext, { summary: null, turns: [] });
+
+    const appendStore = new SlowLoadHistoryStore(stored);
+    const appendService = new HistoryService(appendStore, neverSummarize);
+    const pendingAppend = appendService.append("student", "user", "pesan basi");
+    await appendStore.started;
+    appendService.suspend("student");
+    appendService.allow("student");
+    appendStore.release();
+    assert.equal(await pendingAppend, null);
+  });
+
   it("mengabaikan giliran kosong", async () => {
     const service = new HistoryService(new HistoryStore(), neverSummarize);
 
@@ -513,6 +619,30 @@ function emptyDraft(): EpisodeSummaryDraft {
     unresolved: [],
     temporalAnchors: [],
     uncertainties: [],
+  };
+}
+
+function historyWithEpisode(ownerId: string, text: string): ConversationHistory {
+  return {
+    ownerId,
+    episodes: [{
+      schemaVersion: 2,
+      episodeId: `episode_${ownerId}`,
+      source: {
+        kind: "turn-range",
+        fromSequence: 1,
+        throughSequence: 2,
+        turnCount: 2,
+        sourceHash: "a".repeat(64),
+      },
+      summarizerVersion: "test",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      ...emptyDraft(),
+      facts: [{ text, sourceSequences: [1] }],
+    }],
+    turns: [],
+    nextSequence: 3,
+    updatedAt: "2026-08-01T00:00:00.000Z",
   };
 }
 
@@ -567,5 +697,41 @@ class HistoryStore implements HistoryRepository {
       facts: [{ text: "Episode lain masuk bersamaan.", sourceSequences: [] }],
     };
     history.episodes.push(episode);
+  }
+}
+
+class SlowLoadHistoryStore implements HistoryRepository {
+  readonly started: Promise<void>;
+  private markStarted: (() => void) | undefined;
+  private finish: (() => void) | undefined;
+  private readonly gate: Promise<void>;
+
+  constructor(private readonly history: ConversationHistory) {
+    this.started = new Promise<void>((resolve) => {
+      this.markStarted = resolve;
+    });
+    this.gate = new Promise<void>((resolve) => {
+      this.finish = resolve;
+    });
+  }
+
+  release(): void {
+    this.finish?.();
+  }
+
+  async load(ownerId: string): Promise<ConversationHistory | null> {
+    this.markStarted?.();
+    await this.gate;
+    return ownerId === this.history.ownerId
+      ? structuredClone(this.history)
+      : null;
+  }
+
+  async save(): Promise<void> {
+    throw new Error("save tidak diharapkan");
+  }
+
+  async remove(): Promise<boolean> {
+    return false;
   }
 }

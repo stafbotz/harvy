@@ -286,7 +286,7 @@ describe("kontrak konteks coding agent", () => {
       text("docs/engineering/status/archive/2026-08-06-monolith.md"),
     ]);
 
-    assert.equal(archivedLog.match(/^## /gmu)?.length, 46);
+    assert.equal(archivedLog.match(/^## /gmu)?.length, 47);
     assert.ok(Buffer.byteLength(archivedStatus, "utf8") > 60_000);
     assert.doesNotMatch(
       archivedLog,

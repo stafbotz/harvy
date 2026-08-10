@@ -1805,7 +1805,45 @@ function boundedContextSnapshot(
       content: memory.content.slice(0, 1_000),
     };
   });
-  return { summary, turns, memories };
+  const retrieved = (context.retrieved ?? []).slice(0, 16).map((evidence) => {
+    if (
+      !evidence ||
+      typeof evidence.id !== "string" ||
+      !Array.isArray(evidence.sources) ||
+      evidence.sources.length < 1 ||
+      evidence.sources.some((source) =>
+        source !== "episode" && source !== "semantic" && source !== "graph") ||
+      (evidence.sources.includes("graph") &&
+        !evidence.sources.includes("semantic")) ||
+      typeof evidence.text !== "string" ||
+      !Number.isFinite(evidence.score) ||
+      !["active", "superseded", "uncertain", "expired"]
+        .includes(evidence.status) ||
+      !["normal", "personal", "restricted"].includes(evidence.sensitivity) ||
+      !Array.isArray(evidence.sourceEpisodeIds) ||
+      !Array.isArray(evidence.sourceSequences) ||
+      !Array.isArray(evidence.sourceMemoryIds) ||
+      (evidence.sourceEpisodeIds.length === 0 &&
+        evidence.sourceSequences.length === 0 &&
+        evidence.sourceMemoryIds.length === 0)
+    ) {
+      throw new Error("Evidence konteks active AgentRun tidak sah.");
+    }
+    return {
+      ...structuredClone(evidence),
+      id: evidence.id.slice(0, 300),
+      text: evidence.text.slice(0, 1_000),
+      sourceEpisodeIds: evidence.sourceEpisodeIds.slice(0, 64),
+      sourceSequences: evidence.sourceSequences.slice(0, 256),
+      sourceMemoryIds: evidence.sourceMemoryIds.slice(0, 64),
+    };
+  });
+  return {
+    summary,
+    turns,
+    memories,
+    ...(retrieved.length > 0 ? { retrieved } : {}),
+  };
 }
 
 function activeEvent(

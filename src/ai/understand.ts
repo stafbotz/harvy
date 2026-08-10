@@ -32,6 +32,17 @@ export interface ExtractedTask {
 export interface ExtractedMemory {
   kind: MemoryKind;
   content: string;
+  /** Diisi adapter dari HistoryService; model/parser tidak boleh menentukannya. */
+  sourceSequences?: number[];
+  /** Diisi policy privasi lokal; model/parser tidak boleh menentukannya. */
+  sensitivity?: import("../domain/memory-knowledge.js").MemorySensitivity;
+  /** Metadata berikut diisi adapter lokal, bukan parser JSON model. */
+  subject?: string;
+  predicate?: string;
+  value?: string;
+  correction?: boolean;
+  provenance?: import("../domain/memory-knowledge.js").MemoryProvenance;
+  graphProjection?: import("../domain/memory-knowledge.js").MemoryGraphProjection | null;
 }
 
 export type TaskAction = "save" | "offer";

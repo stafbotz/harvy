@@ -1,10 +1,13 @@
 import type {
+  ConversationEpisode,
   ConversationTurn,
   EpisodeSummaryDraft,
   HistoryRepository,
+  HistoricalEpisodeMatch,
   StoredConversationTurn,
   TurnRole,
 } from "../domain/history.js";
+import { HISTORY_EPISODE_CONTEXT_LIMIT } from "../domain/history.js";
 import {
   needsCompaction,
   promptWindow,
@@ -18,6 +21,10 @@ import {
   renderEpisodeContext,
   retainConversationEpisode,
 } from "./episodic-compaction.js";
+import {
+  searchConversationEpisodes,
+  type HistorySearchOptions,
+} from "./history-search.js";
 import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
@@ -65,12 +72,23 @@ export class HistoryService {
   ) {}
 
   async context(ownerId: string): Promise<ConversationContext> {
-    if (this.blockedOwners.has(ownerId)) {
+    const generation = this.generationOf(ownerId);
+    if (!this.canRead(ownerId)) {
       return { summary: null, turns: [] };
     }
     return this.exclusive(ownerId, async () => {
+      if (
+        !this.canRead(ownerId) ||
+        generation !== this.generationOf(ownerId)
+      ) return { summary: null, turns: [] };
       const history = await this.repository.load(ownerId);
-      if (!history) return { summary: null, turns: [] };
+      if (
+        !history ||
+        !this.canRead(ownerId) ||
+        generation !== this.generationOf(ownerId)
+      ) {
+        return { summary: null, turns: [] };
+      }
 
       return {
         summary: renderEpisodeContext(history.episodes),
@@ -83,11 +101,16 @@ export class HistoryService {
     ownerId: string,
     role: TurnRole,
     text: string,
-  ): Promise<void> {
+  ): Promise<StoredConversationTurn | null> {
     const clean = trimTurnText(text);
-    if (!clean || this.blockedOwners.has(ownerId)) return;
+    if (!clean || this.blockedOwners.has(ownerId)) return null;
+    const generation = this.generationOf(ownerId);
 
-    await this.exclusive(ownerId, async () => {
+    return this.exclusive(ownerId, async () => {
+      if (
+        this.blockedOwners.has(ownerId) ||
+        generation !== this.generationOf(ownerId)
+      ) return null;
       const history = (await this.repository.load(ownerId)) ?? {
         ownerId,
         episodes: [],
@@ -96,19 +119,49 @@ export class HistoryService {
         updatedAt: this.now().toISOString(),
       };
 
-      history.turns.push({
+      const turn: StoredConversationTurn = {
         sequence: history.nextSequence,
         role,
         text: clean,
         at: this.now().toISOString(),
-      });
+      };
+      history.turns.push(turn);
       history.nextSequence += 1;
       history.updatedAt = this.now().toISOString();
+      if (
+        this.blockedOwners.has(ownerId) ||
+        generation !== this.generationOf(ownerId)
+      ) return null;
 
       // Penyimpanan giliran tidak menunggu model peringkas. `compact()` dipanggil
       // setelah balasan terkirim sehingga model yang lambat tidak menahan chat.
       await this.repository.save(history);
+      return structuredClone(turn);
     });
+  }
+
+  /** Episode lengkap untuk semantic retrieval, tetap fail-closed saat suspend. */
+  async episodesForRetrieval(ownerId: string): Promise<ConversationEpisode[]> {
+    const generation = this.generationOf(ownerId);
+    if (!this.canRead(ownerId)) return [];
+    return this.exclusive(ownerId, async () => {
+      if (!this.canRead(ownerId) || generation !== this.generationOf(ownerId)) {
+        return [];
+      }
+      const history = await this.repository.load(ownerId);
+      if (
+        !history ||
+        !this.canRead(ownerId) ||
+        generation !== this.generationOf(ownerId)
+      ) return [];
+      return structuredClone(history.episodes);
+    });
+  }
+
+  /** Hanya jendela episode yang memang boleh dirender otomatis. */
+  async episodesForContext(ownerId: string): Promise<ConversationEpisode[]> {
+    const episodes = await this.episodesForRetrieval(ownerId);
+    return episodes.slice(-HISTORY_EPISODE_CONTEXT_LIMIT);
   }
 
   async forget(ownerId: string, blockWrites = false): Promise<boolean> {
@@ -126,6 +179,35 @@ export class HistoryService {
     } finally {
       this.forgettingOwners.delete(ownerId);
     }
+  }
+
+  /**
+   * Mencari klaim episode lama secara lokal tanpa memanggil model.
+   *
+   * Hasil belum otomatis masuk prompt: routing query, suppression setelah
+   * `forget one`, dan ContextCompiler Phase E berikutnya harus menentukan kapan
+   * data lama memang layak dibawa. Owner yang consent/history-nya diblokir
+   * selalu mendapat hasil kosong.
+   */
+  async search(
+    ownerId: string,
+    query: string,
+    options: HistorySearchOptions = {},
+  ): Promise<HistoricalEpisodeMatch[]> {
+    const generation = this.generationOf(ownerId);
+    if (!this.canRead(ownerId)) return [];
+    return this.exclusive(ownerId, async () => {
+      if (!this.canRead(ownerId) || generation !== this.generationOf(ownerId)) {
+        return [];
+      }
+      const history = await this.repository.load(ownerId);
+      if (
+        !history ||
+        !this.canRead(ownerId) ||
+        generation !== this.generationOf(ownerId)
+      ) return [];
+      return searchConversationEpisodes(history.episodes, query, options);
+    });
   }
 
   /**
@@ -297,6 +379,11 @@ export class HistoryService {
 
   private generationOf(ownerId: string): number {
     return this.forgetGeneration.get(ownerId) ?? 0;
+  }
+
+  private canRead(ownerId: string): boolean {
+    return !this.blockedOwners.has(ownerId) &&
+      !this.forgettingOwners.has(ownerId);
   }
 
   private async withCompactionSlot<T>(

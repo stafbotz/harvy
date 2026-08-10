@@ -19,6 +19,7 @@ import { AgentRunService } from "../src/core/agent-run-service.js";
 import type { HistoryService } from "../src/core/history-service.js";
 import type { InsightService } from "../src/core/insight-service.js";
 import type { MemoryService } from "../src/core/memory-service.js";
+import type { MemoryContextCompiler } from "../src/core/memory-context-compiler.js";
 import {
   CONSENT_VERSION,
   ProfileService,
@@ -31,7 +32,7 @@ import type {
   AgentRunRepository,
   DurableAgentRun,
 } from "../src/domain/agent-run.js";
-import type { MemoryItem } from "../src/domain/memory.js";
+import type { MemoryItem, NewMemory } from "../src/domain/memory.js";
 import type {
   ProfileRepository,
   UserProfile,
@@ -529,6 +530,7 @@ describe("alur adapter Telegram", () => {
     let triageCalls = 0;
     let dueDateCalls = 0;
     let dueUpdates = 0;
+    let retrievalCalls = 0;
     const dueAt = new Date("2026-08-09T19:00:00+07:00");
     const harness = basicHarness(
       {
@@ -563,6 +565,14 @@ describe("alur adapter Telegram", () => {
           };
         },
       } as unknown as TaskService,
+      {
+        memoryContextCompiler: {
+          compilePrivate: async () => {
+            retrievalCalls += 1;
+            throw new Error("retrieval tidak boleh dipanggil");
+          },
+        } as unknown as MemoryContextCompiler,
+      },
     );
 
     await harness.bot.handleUpdate(callbackUpdate("edit:task-1", 1));
@@ -574,6 +584,7 @@ describe("alur adapter Telegram", () => {
     assert.equal(triageCalls, 0);
     assert.equal(dueDateCalls, 1);
     assert.equal(dueUpdates, 1);
+    assert.equal(retrievalCalls, 0);
     assert.ok(harness.sent.some((text) => text.includes("udah aku ubah")));
   });
 
@@ -630,6 +641,79 @@ describe("alur adapter Telegram", () => {
           ).includes("udah nggak berlaku"),
       ),
     );
+  });
+
+  it("mengikat koreksi dan graph dari giliran user sebelum memori disimpan", async () => {
+    const inputs: NewMemory[] = [];
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({
+          memories: [{ kind: "profile", content: "Sekolah di SMAN Baru" }],
+        }),
+        assessMemoryPrivacy: async () => false,
+        reply: async () => "Oke, aku catat sekolahmu yang baru.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        histories: {
+          context: async () => ({ summary: null, turns: [] }),
+          append: async (
+            _ownerId: string,
+            role: "user" | "harvy",
+            text: string,
+          ) => ({
+            sequence: role === "user" ? 41 : 42,
+            role,
+            text,
+            at: "2026-08-10T00:00:00.000Z",
+          }),
+          compact: async () => undefined,
+          allow: () => undefined,
+          suspend: () => undefined,
+        } as unknown as HistoryService,
+        memories: {
+          relevantTo: async () => [],
+          markUsed: async () => undefined,
+          remember: async (input: NewMemory) => {
+            inputs.push(input);
+            return {
+              id: "memory-1",
+              ownerId: input.ownerId,
+              kind: input.kind,
+              content: input.content,
+              createdAt: "2026-08-10T00:00:00.000Z",
+              lastUsedAt: null,
+              expiresAt: null,
+            };
+          },
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("Ralat, aku sudah pindah sekolah ke SMAN Baru"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(inputs.length, 1);
+    assert.deepEqual(inputs[0], {
+      ownerId: "123",
+      kind: "profile",
+      content: "Sekolah di SMAN Baru",
+      sourceSequences: [41],
+      subject: "user",
+      predicate: "studies_at",
+      value: "SMAN Baru",
+      correction: true,
+      provenance: "asserted",
+      graphProjection: {
+        from: { type: "person", canonicalName: "Pengguna" },
+        relation: "studies_at",
+        to: { type: "place", canonicalName: "SMAN Baru" },
+      },
+    });
   });
 
   it("memisahkan privasi memori dari acute-safety routing", async () => {
@@ -2249,6 +2333,7 @@ describe("alur adapter Telegram", () => {
     let agentCalls = 0;
     let replyCalls = 0;
     let receivedTimeZone = "";
+    let retrievalCalls = 0;
     const turnSignals: string[] = [];
     const harness = basicHarness(
       {
@@ -2293,6 +2378,16 @@ describe("alur adapter Telegram", () => {
           recordTurn: async () => undefined,
           drain: async () => undefined,
         } as unknown as TelemetryService,
+        memoryContextCompiler: {
+          compilePrivate: async () => {
+            retrievalCalls += 1;
+            return {
+              context: {},
+              plan: {},
+              manifest: {},
+            };
+          },
+        } as unknown as MemoryContextCompiler,
       },
     );
 
@@ -2305,9 +2400,80 @@ describe("alur adapter Telegram", () => {
     assert.equal(triageCalls, 0);
     assert.equal(agentCalls, 0);
     assert.equal(replyCalls, 0);
+    assert.equal(retrievalCalls, 0);
     assert.equal(receivedTimeZone, "Asia/Jayapura");
     assert.ok(harness.sent.some((text) => text.includes("01.30 WIT")));
     assert.deepEqual(turnSignals, ["deterministic-fast-path"]);
+  });
+
+  it("cold ACK dan identitas murni tidak membayar memory retrieval", async () => {
+    for (const text of ["makasih", "kamu pakai model apa?"]) {
+      let retrievalCalls = 0;
+      const harness = basicHarness(
+        {
+          classifyTurnBoundary: async () => "complete",
+          triageRisk: async () => CALM_TRIAGE,
+          understand: async () => understanding({ intent: "question" }),
+          reply: async () => "jalur model",
+        } as unknown as Conversation,
+        {} as TaskService,
+        {
+          memoryContextCompiler: {
+            compilePrivate: async () => {
+              retrievalCalls += 1;
+              throw new Error("retrieval tidak boleh dipanggil");
+            },
+          } as unknown as MemoryContextCompiler,
+        },
+      );
+      await harness.bot.handleUpdate(messageUpdate(text));
+      await harness.bot.drainPending();
+      assert.equal(retrievalCalls, 0, text);
+    }
+  });
+
+  it("explicit danger dan urgent boundary tidak menunggu memory retrieval", async () => {
+    for (const scenario of [
+      { text: "aku mau bunuh diri sekarang", boundary: "complete" as const },
+      { text: "aku capek banget", boundary: "urgent" as const },
+    ]) {
+      let retrievalCalls = 0;
+      const harness = basicHarness(
+        {
+          classifyTurnBoundary: async () => scenario.boundary,
+          triageRisk: async () => ({
+            level: "bahaya",
+            alone: false,
+            sensitive: true,
+            summary: "butuh bantuan segera",
+            certain: true,
+          }),
+          understand: async () => understanding({
+            riskHint: {
+              level: "strong",
+              category: "self_harm",
+              confidence: 1,
+            },
+          }),
+          reply: async () => "Aku fokus menemanimu sekarang.",
+          reviewReply: async () => true,
+        } as unknown as Conversation,
+        {} as TaskService,
+        {
+          memoryContextCompiler: {
+            compilePrivate: async () => {
+              retrievalCalls += 1;
+              throw new Error("retrieval tidak boleh dipanggil");
+            },
+          } as unknown as MemoryContextCompiler,
+        },
+      );
+      await harness.bot.handleUpdate(messageUpdate(scenario.text));
+      await waitFor(() => harness.sent.includes(URGENT_ACKNOWLEDGEMENT));
+      await harness.bot.drainPending();
+      assert.equal(retrievalCalls, 0, scenario.text);
+      assert.ok(harness.sent.includes("Aku fokus menemanimu sekarang."));
+    }
   });
 
   it("mempertahankan kontrak identitas model pada episode aktif", async () => {
@@ -3209,6 +3375,8 @@ function basicHarness(
     dataControls?: DataControlService;
     telemetry?: TelemetryService;
     agentRuns?: AgentRunService;
+    memoryContextCompiler?: MemoryContextCompiler;
+    histories?: HistoryService;
     telegramCalls?: TelegramCall[];
     failSend?: (text: string) => boolean;
   } = {},
@@ -3229,7 +3397,7 @@ function basicHarness(
       relevantTo: async () => [],
       markUsed: async () => undefined,
     } as unknown as MemoryService,
-    {
+    overrides.histories ?? {
       context: async () => ({ summary: null, turns: [...turns] }),
       append: async (_ownerId: string, role: "user" | "harvy", text: string) => {
         turns.push({ role, text, at: new Date().toISOString() });
@@ -3255,6 +3423,7 @@ function basicHarness(
     } as unknown as TelemetryService,
     undefined,
     overrides.agentRuns,
+    overrides.memoryContextCompiler,
   );
   installFakeTelegram(bot, sent, telegramCalls, overrides.failSend);
   return { bot, sent, turns, telegramCalls };

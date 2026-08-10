@@ -308,6 +308,44 @@ describe("file agent run repository", () => {
     );
   });
 
+  it("menolak graph-only atau graph tanpa provenance pada snapshot run", async () => {
+    const service = new AgentRunService(
+      new FileAgentRunRepository(await temporaryFile()),
+      () => new Date("2026-08-09T05:00:00.000Z"),
+    );
+    for (const sources of [["graph"], ["semantic", "graph"]] as const) {
+      await assert.rejects(service.startActive({
+        channel: "telegram",
+        ownerId: "alice",
+        request: "Buat rencana belajar.",
+        mode: "orchestrate",
+        intent: "request",
+        timeZone: "Asia/Jakarta",
+        style: "advice",
+        context: {
+          summary: null,
+          turns: [],
+          memories: [],
+          retrieved: [{
+            id: "graph-invalid",
+            sources: [...sources],
+            text: "Guru Matematika adalah Pak Ardi",
+            score: 1,
+            validFrom: null,
+            validUntil: null,
+            status: "active",
+            sensitivity: "normal",
+            sourceEpisodeIds: [],
+            sourceSequences: [],
+            sourceMemoryIds: [],
+          }],
+        },
+        chatId: "alice",
+        turnId: "turn-invalid-graph",
+      }), /Evidence konteks/iu);
+    }
+  });
+
   it("menolak horizon di atas sepuluh menit dan elemen checkpoint rusak", async () => {
     const file = await temporaryFile();
     const repository = new FileAgentRunRepository(file);

@@ -4,6 +4,7 @@ import {
   EPISODE_CLAIMS_PER_FIELD_LIMIT,
   EPISODE_SCHEMA_VERSION,
   EPISODE_TOTAL_CLAIMS_LIMIT,
+  HISTORY_EPISODE_CONTEXT_LIMIT,
   HISTORY_EPISODE_RETENTION_LIMIT,
   type ConversationEpisode,
   type EpisodeClaim,
@@ -15,6 +16,7 @@ export {
   EPISODE_CLAIM_MAX_CHARS,
   EPISODE_CLAIMS_PER_FIELD_LIMIT,
   EPISODE_TOTAL_CLAIMS_LIMIT,
+  HISTORY_EPISODE_CONTEXT_LIMIT,
   HISTORY_EPISODE_RETENTION_LIMIT,
 } from "../domain/history.js";
 
@@ -186,7 +188,9 @@ export function renderEpisodeContext(
   const lines = [...preface];
   let included = 0;
 
-  for (const episode of [...episodes].reverse()) {
+  for (const episode of episodes
+    .slice(-HISTORY_EPISODE_CONTEXT_LIMIT)
+    .reverse()) {
     const details = episodeLines(episode);
     if (details.length === 0) continue;
 

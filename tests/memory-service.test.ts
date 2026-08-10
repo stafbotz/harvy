@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { MemoryService } from "../src/core/memory-service.js";
-import type { MemoryItem, MemoryRepository } from "../src/domain/memory.js";
+import {
+  MemoryService,
+  type MemoryDerivationLifecycle,
+} from "../src/core/memory-service.js";
+import type {
+  MemoryItem,
+  MemoryRepository,
+  NewMemory,
+} from "../src/domain/memory.js";
 
 describe("MemoryService", () => {
   it("mengisolasi memori berdasarkan pemilik", async () => {
@@ -75,6 +82,7 @@ describe("MemoryService", () => {
       ownerId: "student",
       kind: "personal",
       content: "Ibunya sedang sakit",
+      sensitiveConsent: true,
     });
 
     const forgotten = await service.forget("student", dropped?.id ?? "");
@@ -114,6 +122,15 @@ describe("MemoryService", () => {
       }),
       null,
     );
+  });
+
+  it("menolak primary personal memory tanpa token consent adapter", async () => {
+    const service = new MemoryService(new MemoryStore());
+    assert.equal(await service.remember({
+      ownerId: "student",
+      kind: "personal",
+      content: "Ibunya sedang sakit",
+    }), null);
   });
 
   it("mengubah isi tanpa mengganti ID, jenis, atau metadata", async () => {
@@ -164,11 +181,170 @@ describe("MemoryService", () => {
     );
     assert.equal(await service.edit("other", first.id, "Kelas 12"), null);
   });
+
+  it("mengkonsolidasikan remember di belakang respons lalu mengurutkan forget sesudahnya", async () => {
+    const lifecycle = new MemoryLifecycle();
+    const service = new MemoryService(
+      new MemoryStore(),
+      () => new Date("2026-08-09T00:00:00.000Z"),
+      lifecycle,
+    );
+    const saved = await service.remember({
+      ownerId: "student",
+      kind: "preference",
+      content: "Suka diagram",
+      sourceSequences: [7],
+    });
+    assert.ok(saved);
+    await service.drain();
+    assert.deepEqual(lifecycle.events, ["remember:student:7"]);
+
+    await service.forget("student", saved.id);
+    assert.deepEqual(lifecycle.events, [
+      "remember:student:7",
+      "forget:student:forgotten",
+    ]);
+  });
+
+  it("menutup relevant memory saat consent ditarik dan hanya membuka setelah allow", async () => {
+    const lifecycle = new MemoryLifecycle();
+    const service = new MemoryService(new MemoryStore(), () => new Date(), lifecycle);
+    await service.remember({
+      ownerId: "student",
+      kind: "profile",
+      content: "Kelas 11",
+    });
+    await service.drain();
+
+    service.suspend("student");
+    assert.deepEqual(await service.relevantTo("student", "kelas"), []);
+    assert.equal(
+      await service.remember({
+        ownerId: "student",
+        kind: "profile",
+        content: "Sekolah A",
+      }),
+      null,
+    );
+    service.allow("student");
+    assert.equal((await service.relevantTo("student", "kelas")).length, 1);
+    assert.deepEqual(lifecycle.events.slice(-2), ["suspend:student", "allow:student"]);
+  });
+
+  it("forget-all menghapus derivation dan mempertahankan block penghapusan penuh", async () => {
+    const lifecycle = new MemoryLifecycle();
+    const service = new MemoryService(new MemoryStore(), () => new Date(), lifecycle);
+    await service.remember({
+      ownerId: "student",
+      kind: "profile",
+      content: "Kelas 11",
+    });
+    await service.drain();
+    service.suspend("student");
+    await service.forgetAll("student");
+    assert.deepEqual(lifecycle.events.slice(-2), [
+      "suspend:student",
+      "forget-all:student",
+    ]);
+  });
+
+  it("tidak menghidupkan primary memory dari remember yang tertahan saat full delete", async () => {
+    const store = new GatedListMemoryStore();
+    const service = new MemoryService(store);
+    const pendingRemember = service.remember({
+      ownerId: "student",
+      kind: "profile",
+      content: "Kelas 11",
+    });
+    await store.listStarted;
+
+    service.suspend("student");
+    const deletion = service.forgetAll("student");
+    store.releaseList();
+
+    assert.equal(await pendingRemember, null);
+    assert.equal(await deletion, 0);
+    assert.deepEqual(await store.list("student"), []);
+  });
+
+  it("markUsed completion lama tidak membuat ulang item sesudah full delete", async () => {
+    const store = new MemoryStore();
+    const service = new MemoryService(store);
+    const saved = await service.remember({
+      ownerId: "student",
+      kind: "preference",
+      content: "Suka diagram",
+    });
+    assert.ok(saved);
+    service.suspend("student");
+    await service.forgetAll("student");
+
+    await service.markUsed([saved]);
+    assert.deepEqual(await store.list("student"), []);
+  });
+
+  it("hak edit dan forget tetap lokal ketika retrieval consent disuspend", async () => {
+    const store = new MemoryStore();
+    const service = new MemoryService(store, () => new Date(), new MemoryLifecycle());
+    const saved = await service.remember({
+      ownerId: "student",
+      kind: "preference",
+      content: "Suka malam",
+    });
+    assert.ok(saved);
+    await service.drain();
+    service.suspend("student");
+
+    const edited = await service.edit("student", saved.id, "Suka pagi");
+    assert.equal(edited?.content, "Suka pagi");
+    assert.equal((await service.list("student"))[0]?.content, "Suka pagi");
+    assert.equal((await service.forget("student", saved.id))?.id, saved.id);
+    assert.deepEqual(await service.list("student"), []);
+  });
+
+  it("membuka kembali ordinary wipe setelah lifecycle gagal agar retry dapat selesai", async () => {
+    const lifecycle = new FailOnceForgetAllLifecycle();
+    const store = new MemoryStore();
+    const service = new MemoryService(store, () => new Date(), lifecycle);
+    await service.remember({
+      ownerId: "student",
+      kind: "profile",
+      content: "Kelas 11",
+    });
+    await service.drain();
+
+    await assert.rejects(service.forgetAll("student"), /gagal sekali/u);
+    assert.ok(await service.remember({
+      ownerId: "student",
+      kind: "profile",
+      content: "Sekolah A",
+    }));
+    assert.equal(await service.forgetAll("student"), 2);
+    assert.deepEqual(await store.list("student"), []);
+  });
+
+  it("membuang relevant snapshot lama melintasi suspend-allow ABA", async () => {
+    const store = new GatedListMemoryStore(false);
+    const service = new MemoryService(store);
+    await service.remember({
+      ownerId: "student",
+      kind: "profile",
+      content: "Kelas 11",
+    });
+    store.holdNextList();
+    const pending = service.relevantTo("student", "kelas");
+    await store.listStarted;
+    const wipe = service.forgetAll("student");
+    store.releaseList();
+
+    assert.deepEqual(await pending, []);
+    await wipe;
+  });
 });
 
 /** Penyimpanan di memori proses, agar tes tidak menyentuh berkas nyata. */
 class MemoryStore implements MemoryRepository {
-  private items: MemoryItem[] = [];
+  protected items: MemoryItem[] = [];
 
   async save(item: MemoryItem): Promise<void> {
     const index = this.items.findIndex(
@@ -199,5 +375,90 @@ class MemoryStore implements MemoryRepository {
     const before = this.items.length;
     this.items = this.items.filter((item) => item.ownerId !== ownerId);
     return before - this.items.length;
+  }
+}
+
+class GatedListMemoryStore extends MemoryStore {
+  private hold: boolean;
+  private release: (() => void) | null = null;
+  private startedResolve: (() => void) | null = null;
+  listStarted: Promise<void>;
+
+  constructor(hold = true) {
+    super();
+    this.hold = hold;
+    this.listStarted = new Promise((resolve) => {
+      this.startedResolve = resolve;
+    });
+  }
+
+  holdNextList(): void {
+    this.hold = true;
+    this.listStarted = new Promise((resolve) => {
+      this.startedResolve = resolve;
+    });
+  }
+
+  releaseList(): void {
+    this.release?.();
+    this.release = null;
+    this.hold = false;
+  }
+
+  override async list(ownerId: string): Promise<MemoryItem[]> {
+    if (this.hold) {
+      this.startedResolve?.();
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    return super.list(ownerId);
+  }
+}
+
+class MemoryLifecycle implements MemoryDerivationLifecycle {
+  readonly events: string[] = [];
+
+  async rememberSource(_item: MemoryItem, input: NewMemory): Promise<void> {
+    this.events.push(
+      `remember:${input.ownerId}:${input.sourceSequences?.join(",") ?? ""}`,
+    );
+  }
+
+  async editSource(previous: MemoryItem): Promise<void> {
+    this.events.push(`edit:${previous.ownerId}`);
+  }
+
+  async forgetSource(
+    item: MemoryItem,
+    reason = "forgotten",
+  ): Promise<void> {
+    this.events.push(`forget:${item.ownerId}:${reason}`);
+  }
+
+  async forgetPrivateOwner(ownerId: string): Promise<void> {
+    this.events.push(`forget-all:${ownerId}`);
+  }
+
+  suspendPrivateOwner(ownerId: string): void {
+    this.events.push(`suspend:${ownerId}`);
+  }
+
+  allowPrivateOwner(ownerId: string): void {
+    this.events.push(`allow:${ownerId}`);
+  }
+
+  async drain(): Promise<void> {}
+}
+
+class FailOnceForgetAllLifecycle extends MemoryLifecycle {
+  private failed = false;
+
+  override async forgetPrivateOwner(ownerId: string): Promise<void> {
+    if (!this.failed) {
+      this.failed = true;
+      throw new Error("gagal sekali");
+    }
+    await super.forgetPrivateOwner(ownerId);
   }
 }

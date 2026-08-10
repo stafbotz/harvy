@@ -5,6 +5,10 @@
 - Pemilik keputusan: pengguna Harvy
 - Terkait: `ADR-004` (percakapan sepenuhnya lewat AI), Konstitusi Pasal 3.9 dan
   Pasal 4
+- Disupersesi sebagian: `ADR-030` memisahkan retensi storage 32 episode padat
+  dari attention context otomatis 12 episode.
+- Ditindaklanjuti: `ADR-031` menambah semantic projection, Context Pack, dan
+  lifecycle suppression; `ADR-032` menambah graph temporal turunan.
 
 ## Konteks
 
@@ -94,9 +98,11 @@ dan source hash masih sama. Bubble yang datang saat model bekerja tetap ada.
 Kegagalan mempertahankan sumber mentah dan diberi cooldown satu menit; shutdown
 normal menunggu pekerjaan yang sudah dimulai.
 
-Riwayat tetap terbatas: hanya 12 episode disimpan dan hanya 3.000 karakter
-episode terbaru masuk prompt. Ringkasan v1 lama dimigrasikan sebagai episode
-warisan tanpa mengarang sequence atau provenance.
+Riwayat tetap terbatas. Keputusan awal menyimpan 12 episode; sejak `ADR-030`,
+storage menyimpan maksimum 32 episode padat sebagai sumber search lokal,
+sementara hanya 12 episode terbaru dan maksimum 3.000 karakter masuk context
+otomatis. Ringkasan v1 lama dimigrasikan sebagai episode warisan tanpa
+mengarang sequence atau provenance.
 
 Ini bukan sekadar penghematan token. Ringkasan adalah bentuk penyimpanan yang
 lebih sedikit, dan Pasal 3.9 meminta data dikumpulkan sesedikit mungkin serta

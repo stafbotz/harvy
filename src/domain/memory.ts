@@ -40,6 +40,22 @@ export interface NewMemory {
   ownerId: string;
   kind: MemoryKind;
   content: string;
+  /** Metadata consolidation dibuat/diikat kode, bukan dipercaya dari model. */
+  subject?: string;
+  predicate?: string;
+  value?: string;
+  confidence?: number;
+  validFrom?: string | null;
+  validUntil?: string | null;
+  sourceEpisodeIds?: string[];
+  sourceSequences?: number[];
+  sensitivity?: import("./memory-knowledge.js").MemorySensitivity;
+  /** Hanya adapter consent bertoken yang boleh mengisi true. */
+  sensitiveConsent?: boolean;
+  provenance?: import("./memory-knowledge.js").MemoryProvenance;
+  /** Hanya parser lokal atas giliran user yang boleh menandai koreksi. */
+  correction?: boolean;
+  graphProjection?: import("./memory-knowledge.js").MemoryGraphProjection | null;
 }
 
 export interface MemoryRepository {

@@ -36,8 +36,10 @@ import {
 } from "../core/action-policy.js";
 import { HISTORY_WINDOW } from "../core/history-policy.js";
 import type { HistoryService } from "../core/history-service.js";
+import type { MemoryContextCompiler } from "../core/memory-context-compiler.js";
 import type { InsightService } from "../core/insight-service.js";
 import { isSensitiveMemory } from "../core/memory-policy.js";
+import { deriveMemoryMetadata } from "../core/memory-candidate.js";
 import type { MemoryService } from "../core/memory-service.js";
 import { ProfileService, shouldAskStyle } from "../core/profile-service.js";
 import type { DataControlService } from "../core/data-control-service.js";
@@ -88,6 +90,7 @@ import {
   type RiskTriage,
 } from "../ai/safety.js";
 import type { MemoryItem } from "../domain/memory.js";
+import type { StoredConversationTurn } from "../domain/history.js";
 import type { QuietHours, StylePreference } from "../domain/profile.js";
 import type {
   ActiveSession,
@@ -253,6 +256,7 @@ export function createBot(
   logger: OperationalLogger =
     NOOP_OPERATIONAL_LOGGER.child("telegram.bot"),
   agentRuns: AgentRunService | null = null,
+  memoryContextCompiler: MemoryContextCompiler | null = null,
 ): HarvyBot {
   const currentTurnId = (): string | null =>
     currentUsageAttribution()?.turnId ?? null;
@@ -722,6 +726,7 @@ export function createBot(
       await messageBatcher.drainAll();
       await stopActiveAgentWork();
       await history.drain?.();
+      await memories.drain?.();
       await telemetry.drain();
     },
     sendCheckIn: (candidate: ActiveSession) =>
@@ -990,11 +995,12 @@ export function createBot(
 
     // Konteks disusun sebelum pesan ini ikut tercatat, supaya giliran yang
     // sedang ditangani tidak muncul dua kali di dalam promptnya sendiri.
-    const [context, profile, activeSession] = await Promise.all([
+    const [initialContext, profile, activeSession] = await Promise.all([
       contextFor(ownerId, text),
       profiles.load(ownerId),
       sessions.active(ownerId),
     ]);
+    let context = initialContext;
     const engagedSession =
       activeSession && sessionAppliesToMessage(activeSession, text)
         ? activeSession
@@ -1085,9 +1091,70 @@ export function createBot(
       return;
     }
 
+    // Normalisasi local-only tetap menutup supersession/suppression pada jalur
+    // safety yang sengaja tidak membayar embedding/provider.
+    if (
+      memoryContextCompiler &&
+      typeof memoryContextCompiler.normalizePrivateBase === "function" &&
+      (immediateDanger || urgentBoundary)
+    ) {
+      context = await memoryContextCompiler.normalizePrivateBase(
+        ownerId,
+        text,
+        context,
+        runtime.signal ? { signal: runtime.signal } : {},
+      );
+    }
+
+    // Retrieval lama/vector/graph baru boleh dibayar sesudah seluruh fast path
+    // lokal di atas selesai. Jalur bahaya segera tetap memakai recent context
+    // saja agar bantuan akut tidak menunggu provider embedding.
+    if (memoryContextCompiler && !immediateDanger && !urgentBoundary) {
+      try {
+        const compiled = await memoryContextCompiler.compilePrivate(
+          ownerId,
+          text,
+          context,
+          {
+            allowRetrieval: true,
+            ...(runtime.signal ? { signal: runtime.signal } : {}),
+          },
+        );
+        context = compiled.context;
+        logger.info(
+          "memory_context_compiled",
+          "Context memory on-demand selesai dikompilasi.",
+          {
+            episodicRequested: compiled.manifest.episodicRequested,
+            semanticRequested: compiled.manifest.semanticRequested,
+            graphRequested: compiled.manifest.graphRequested,
+            semanticProviderAvailable:
+              compiled.manifest.semanticProviderAvailable,
+            episodicResultCount: compiled.manifest.episodicResultCount,
+            semanticResultCount: compiled.manifest.semanticResultCount,
+            graphResultCount: compiled.manifest.graphResultCount,
+            graphUsed: compiled.context.retrieved?.some((item) =>
+              item.sources.includes("graph")) ?? false,
+            suppressedCount: compiled.manifest.suppressedCount,
+            selectedCount: compiled.manifest.selectedCount,
+            selectedCharacters: compiled.manifest.selectedCharacters,
+            failedRouteCount: compiled.manifest.failedRouteCount,
+          },
+        );
+      } catch (error) {
+        logger.warn(
+          "memory_context_compile_failed",
+          "Context retrieval gagal; recent context tetap dipakai.",
+          { errorType: error instanceof Error ? error.name : "unknown" },
+        );
+      }
+      if (!(await runtimeIsCurrent(runtime))) return;
+    }
+
     let understanding: Understanding | null;
     let triage: RiskAssessment;
     let userAlreadyAppended = false;
+    let storedUserTurn: StoredConversationTurn | null = null;
     let activeRunLaunch: ActiveAgentRun | null = null;
     let activeRunLaunched = false;
     let activeRunSurfaceReply = false;
@@ -1181,7 +1248,7 @@ export function createBot(
     }
 
     if (!userAlreadyAppended) {
-      await history.append(ownerId, "user", text);
+      storedUserTurn = await history.append(ownerId, "user", text);
     }
 
     try {
@@ -1298,7 +1365,13 @@ export function createBot(
       const plannedActions = actionGoal ? proposedActions : [];
       const memoryCandidates = effectPermissions.generalState
           && !requiresAgentPlanning
-        ? understanding.memories
+        ? understanding.memories.map((memory) => ({
+            ...memory,
+            ...deriveMemoryMetadata(memory.kind, memory.content, text),
+            ...(storedUserTurn
+              ? { sourceSequences: [storedUserTurn.sequence] }
+              : {}),
+          }))
         : [];
       // Berjalan bersama generasi balasan; hanya kandidat memori yang membayar
       // classifier privasi terpisah ini.
@@ -2364,6 +2437,9 @@ export function createBot(
         kind: memory.kind,
         content: memory.content,
       })),
+      ...(context.retrieved?.length
+        ? { retrieved: structuredClone(context.retrieved) }
+        : {}),
     };
   }
 
@@ -2378,6 +2454,9 @@ export function createBot(
         lastUsedAt: null,
         expiresAt: null,
       })),
+      ...(run.context.retrieved?.length
+        ? { retrieved: structuredClone(run.context.retrieved) }
+        : {}),
     };
   }
 
@@ -3099,7 +3178,7 @@ export function createBot(
     try {
       for (const item of items) {
         if (isSensitiveMemory(item, sensitiveByModel)) {
-          sensitive ??= item;
+          sensitive ??= { ...item, sensitivity: "personal" };
           continue;
         }
 
@@ -3107,6 +3186,10 @@ export function createBot(
           ownerId,
           kind: item.kind,
           content: item.content,
+          ...(item.sourceSequences
+            ? { sourceSequences: [...item.sourceSequences] }
+            : {}),
+          ...knowledgeFields(item),
         });
         if (stored) saved.push(stored);
       }
@@ -3460,6 +3543,16 @@ export function createBot(
           ownerId,
           kind: waiting.memory.kind,
           content: waiting.memory.content,
+          ...(waiting.memory.sourceSequences
+            ? { sourceSequences: [...waiting.memory.sourceSequences] }
+            : {}),
+          ...knowledgeFields(waiting.memory),
+          ...(waiting.memory.sensitivity
+            ? {
+                sensitivity: waiting.memory.sensitivity,
+                sensitiveConsent: true,
+              }
+            : {}),
         });
 
         await safeEdit(
@@ -3564,6 +3657,9 @@ export function createBot(
           await safeEdit(ctx, "Tombol ini udah nggak berlaku.");
           return;
         }
+        memories.suspend(ownerId);
+        history.suspend(ownerId);
+        let wipeComplete = false;
         const stoppedRun = await discardAgentRunForMemoryChange(ownerId);
         // Pasal 4 nomor 6: catatan tersembunyi ikut terhapus bersama sisanya.
         await insights.forget(ownerId);
@@ -3578,6 +3674,11 @@ export function createBot(
         await profiles.forgetPersonal(ownerId);
         await clearPending(ownerId);
         actionOffers.clear(ownerId);
+        wipeComplete = true;
+        if (wipeComplete) {
+          memories.allow(ownerId);
+          history.allow(ownerId);
+        }
 
         await safeEdit(
           ctx,
@@ -3881,10 +3982,18 @@ export function createBot(
     session: ActiveSession,
     instruction: string,
   ): Promise<SentMessageRef | null> {
-    const [context, profile] = await Promise.all([
+    const [baseContext, profile] = await Promise.all([
       contextFor(ownerId, session.goal),
       profiles.load(ownerId),
     ]);
+    const context = memoryContextCompiler &&
+        typeof memoryContextCompiler.normalizePrivateBase === "function"
+      ? await memoryContextCompiler.normalizePrivateBase(
+          ownerId,
+          session.goal,
+          baseContext,
+        )
+      : baseContext;
     const timeZone = profile.timeZone ?? config.defaultTimezone;
     const response = normalizeTelegramText(
       await conversation.sessionReply(
@@ -4113,6 +4222,7 @@ export function createBot(
     held.clear(ownerId);
     messageBatcher.invalidate(ownerId);
     history.suspend(ownerId);
+    memories.suspend?.(ownerId);
     await profiles.withdrawConsent(ownerId);
     messageBatcher.invalidate(ownerId);
     try {
@@ -4274,6 +4384,7 @@ export function createBot(
     await agentRuns?.forget("telegram", ownerId);
     await profiles.acceptConsent(ownerId);
     history.allow(ownerId);
+    memories.allow?.(ownerId);
     await telemetry.allow(ownerId);
     agentRuns?.allow("telegram", ownerId);
     consentChecks.set(ownerId, Promise.resolve(true));
@@ -4495,6 +4606,23 @@ export function createBot(
       }
     }
   }
+}
+
+function knowledgeFields(item: ExtractedMemory): Pick<
+  ExtractedMemory,
+  "subject" | "predicate" | "value" | "correction" | "provenance" |
+    "graphProjection"
+> {
+  return {
+    ...(item.subject !== undefined ? { subject: item.subject } : {}),
+    ...(item.predicate !== undefined ? { predicate: item.predicate } : {}),
+    ...(item.value !== undefined ? { value: item.value } : {}),
+    ...(item.correction !== undefined ? { correction: item.correction } : {}),
+    ...(item.provenance !== undefined ? { provenance: item.provenance } : {}),
+    ...(item.graphProjection !== undefined
+      ? { graphProjection: item.graphProjection }
+      : {}),
+  };
 }
 
 function ownerOf(ctx: Context): string {

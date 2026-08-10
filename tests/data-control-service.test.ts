@@ -27,12 +27,18 @@ describe("DataControlService", () => {
         },
       }),
       cast<MemoryService>({
+        suspend(): void {
+          calls.push("memory-suspend");
+        },
         async forgetAll(): Promise<number> {
           calls.push("memories");
           return 1;
         },
       }),
       cast<HistoryService>({
+        suspend(): void {
+          calls.push("history-suspend");
+        },
         async forget(): Promise<void> {
           calls.push("history");
         },
@@ -72,9 +78,15 @@ describe("DataControlService", () => {
 
     await service.deleteAll("student");
     assert.equal(calls[0], "tombstone");
+    assert.deepEqual(new Set(calls.slice(1, 3)), new Set([
+      "memory-suspend",
+      "history-suspend",
+    ]));
     assert.equal(calls.at(-1), "profile");
     assert.deepEqual(new Set(calls), new Set([
       "tombstone",
+      "memory-suspend",
+      "history-suspend",
       "session",
       "tasks",
       "history",
@@ -205,7 +217,8 @@ describe("DataControlService", () => {
     assert.equal(exported.aiTelemetryRetained.events.length, 1);
     assert.equal(exported.hiddenSafetyData.included, false);
     assert.equal(exported.activeAgentRun?.runId, "run-export");
-    assert.equal(exported.version, 2);
+    assert.equal(exported.version, 3);
+    assert.equal(exported.derivedMemory, null);
     assert.equal(insightRead, false);
   });
 });
@@ -222,11 +235,13 @@ function deletionFixture(overrides: {
       ...overrides.tasks,
     }),
     cast<MemoryService>({
+      suspend(): void {},
       async forgetAll(): Promise<number> {
         return 0;
       },
     }),
     cast<HistoryService>({
+      suspend(): void {},
       async forget(): Promise<void> {},
     }),
     cast<ProfileService>({

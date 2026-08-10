@@ -95,8 +95,12 @@ export function compileHarvyContext(
   }
   selected.reverse();
 
+  const retrievalReserve = projection.includeMemories &&
+      (context.retrieved?.length ?? 0) > 0 && budget.maxMemories > 0
+    ? 1
+    : 0;
   const memoryCandidates = projection.includeMemories
-    ? context.memories.slice(0, budget.maxMemories)
+    ? context.memories.slice(0, budget.maxMemories - retrievalReserve)
     : [];
   const memories = memoryCandidates
     .map((memory) => ({
@@ -117,6 +121,29 @@ export function compileHarvyContext(
       ...memory,
       content: clippedContent.value,
     }));
+
+  const retrieved = projection.includeMemories
+    ? (context.retrieved ?? [])
+        .slice(0, Math.max(0, budget.maxMemories - memories.length))
+        .map((evidence) => ({
+          ...evidence,
+          clippedText: clipWithStatus(
+            evidence.text,
+            budget.maxMemoryCharacters,
+          ),
+        }))
+        .filter((evidence) => {
+          const size = evidence.clippedText.value.length + 24;
+          if (size > remaining) return false;
+          remaining -= size;
+          if (evidence.clippedText.clipped) clippedMemoryCount += 1;
+          return true;
+        })
+        .map(({ clippedText, ...evidence }) => ({
+          ...evidence,
+          text: clippedText.value,
+        }))
+    : [];
 
   const summaryCandidate = projection.includeSummary && context.summary
     ? clipWithStatus(context.summary, budget.maxSummaryCharacters)
@@ -145,15 +172,18 @@ export function compileHarvyContext(
     clippedTurnCount,
     droppedTurnCount:
       (projection.includeTurns ? context.turns.length : 0) - selected.length,
-    sourceMemoryCount: context.memories.length,
+    sourceMemoryCount:
+      context.memories.length + (context.retrieved?.length ?? 0),
     eligibleMemoryCount: projection.includeMemories
-      ? context.memories.length
+      ? context.memories.length + (context.retrieved?.length ?? 0)
       : 0,
-    includedMemoryCount: memories.length,
+    includedMemoryCount: memories.length + retrieved.length,
     clippedMemoryCount,
     droppedMemoryCount:
-      (projection.includeMemories ? context.memories.length : 0) -
-      memories.length,
+      (projection.includeMemories
+        ? context.memories.length + (context.retrieved?.length ?? 0)
+        : 0) -
+      memories.length - retrieved.length,
     summaryPresent,
     summaryEligible: projection.includeSummary && summaryPresent,
     summaryIncluded: summary !== null,
@@ -162,7 +192,15 @@ export function compileHarvyContext(
       (fittedSummary?.clipped ?? false),
   });
 
-  return { context: { summary, turns: selected, memories }, manifest };
+  return {
+    context: {
+      summary,
+      turns: selected,
+      memories,
+      ...(retrieved.length > 0 ? { retrieved } : {}),
+    },
+    manifest,
+  };
 }
 
 function clipWithStatus(
@@ -191,7 +229,11 @@ function contextSourceCharacters(context: HarvyContext): number {
       total + memory.content.trim().length + memory.kind.length + 8,
     0,
   );
-  return summary + turns + memories;
+  const retrieved = (context.retrieved ?? []).reduce(
+    (total, evidence) => total + evidence.text.trim().length + 24,
+    0,
+  );
+  return summary + turns + memories + retrieved;
 }
 
 function validateBudget(budget: ContextBudget): void {

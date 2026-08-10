@@ -23,7 +23,9 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
 
 - `src/domain/` — bentuk data sekaligus port penyimpanan: `task.ts`
   (`StudentTask`, `TaskRepository`), `memory.ts` (`MemoryItem`,
-  `MemoryRepository`), `history.ts` (`ConversationHistory`,
+  `MemoryRepository`), `memory-knowledge.ts` (`SemanticMemory`, evidence,
+  suppression, temporal entity/relation, namespace, repository CAS, dan port
+  embedding), `history.ts` (`ConversationHistory`,
   `HistoryRepository`), `profile.ts` (`UserProfile`, `ProfileRepository` —
   status kenalan, versi persetujuan, preferensi gaya/waktu, dan tombstone),
   `insight.ts` (satu-satunya catatan tersembunyi), `session.ts` (sesi aktif dan
@@ -64,7 +66,15 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   `HistoryService` menerima fungsi peringkas episode dari luar supaya `core/`
   tetap bebas jaringan. `episodic-compaction.ts` membuat provenance/hash,
   retensi, dan rendering context v2 tanpa merangkum ulang episode lama;
-  compaction membatasi satu request lalu mengejar backlog antar-slot.
+  `history-search.ts` membangun index leksikal ephemeral owner-scoped dari
+  klaim episode, mengembalikan provenance minimal, dan tidak menyentuh insight
+  keselamatan. `memory-candidate.ts` melakukan derivation faktual lokal yang
+  sempit; `memory-knowledge-service.ts` mengonsolidasikan semantic memory,
+  contradiction/supersession, suppression, vector retrieval, dan graph temporal
+  derived. `memory-query-plan.ts` memilih route lokal; `memory-context-compiler.ts`
+  membentuk Context Pack bounded melalui FTS/vector/graph fusion, temporal dan
+  privacy filter, serta manifest content-free. Compaction membatasi satu request
+  lalu mengejar backlog antar-slot.
   Core grup berada di `group-memory-service.ts` dan `group-turn-service.ts`:
   binding akun, statistik sosial berjendela, konteks pendek beridentitas, FIFO
   per grup, notice, kontrol dua langkah, planner nimbrung, triase/review,
@@ -86,10 +96,12 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   `client.ts` (HTTP kompatibel OpenAI dengan rotasi kunci, execution-plan
   validation, dan boundary native `tools`/`tool_choice`),
   `key-pool.ts`, `identity.ts` (jawaban produk "model Capybara"),
+  `embedding-client.ts` (adapter embedding kompatibel OpenAI yang opt-in,
+  berbatas deadline/batch/schema, dan tidak menyimpan vector),
   `group-conversation.ts` (planner dan balasan grup), `episode-summary.ts`
   (prompt/parser compaction v2), `context.ts`
-  (`HarvyContext`: ringkasan, giliran terakhir, dan
-  memori), `safety.ts` (acute-risk triage, disposition resolution, arahan
+  (`HarvyContext`: ringkasan, giliran terakhir, primary memory, dan retrieved
+  evidence terstruktur), `safety.ts` (acute-risk triage, disposition resolution, arahan
   anti-penolakan, dan pemeriksaan balasan), `memory-privacy.ts` (classifier
   sensitivitas candidate-only), `group-ingress.ts` (risk hint dan privacy raw
   context grup), dan `conversation.ts` (menyatukan pemahaman, balasan,
@@ -217,8 +229,11 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   `file-session-repository.ts`, dan `file-telemetry-repository.ts`. Memori dan
   catatan tersembunyi memakai bentuk lain: `markdown-memory-repository.ts` dan
   `markdown-insight-repository.ts` menulis satu folder Markdown per pengguna di
-  bawah `MEMORY_FOLDER`. `file-memory-repository.ts` hanya sumber impor sekali
-  jalan. `file-group-repository.ts` menyimpan binding akun, memori sosial grup,
+  bawah `MEMORY_FOLDER`. `file-memory-knowledge-repository.ts` menyimpan
+  semantic/graph projection di `_knowledge` dengan namespace hash, revision
+  CAS, validasi owner/provenance/projection, batas 8 MiB, serta delete final dan
+  `.tmp`; adapter ini juga hanya single-process. `file-memory-repository.ts`
+  hanya sumber impor sekali jalan. `file-group-repository.ts` menyimpan binding akun, memori sosial grup,
   member-local memory, dan shared room memory yang terpisah per scope; reset
   state bersama tersedia atomik. `file-workspace-repository.ts` menyimpan
   authority state Workspace dengan CAS `aclEpoch`. Keduanya aman hanya untuk

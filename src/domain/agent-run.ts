@@ -5,6 +5,7 @@ import type {
 } from "../harness/agent-harness.js";
 import type { AgentChannel } from "../harness/scope.js";
 import type { MemoryKind } from "./memory.js";
+import type { RetrievedMemoryEvidence } from "./memory-knowledge.js";
 import type { TurnRole } from "./history.js";
 import type { StylePreference } from "./profile.js";
 
@@ -100,6 +101,8 @@ export interface AgentRunContextSnapshot {
   summary: string | null;
   turns: Array<{ role: TurnRole; text: string; at: string }>;
   memories: Array<{ id: string; kind: MemoryKind; content: string }>;
+  /** Context pack dibekukan bersama run; resume tidak melakukan retrieval ulang. */
+  retrieved?: RetrievedMemoryEvidence[];
 }
 
 export type RunMailboxMessageKind =

@@ -8,6 +8,7 @@ Cari entri yang relevan dengan `rg -n "istilah|nama-file|error" docs/LOG.md
 docs/log`. Baca maksimal tiga entri yang terkait task. Arsip histori dan fakta
 material lama berada di:
 
+- [`log/2026-08-07.md`](log/2026-08-07.md)
 - [`log/2026-08-02-sampai-2026-08-06.md`](log/2026-08-02-sampai-2026-08-06.md)
 - [`log/2026-07-25-sampai-2026-08-02.md`](log/2026-07-25-sampai-2026-08-02.md)
 
@@ -34,6 +35,34 @@ Next: hanya bila ada tindak lanjut material.
 Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
+
+## 2026-08-10 — Retrieval memori dan graph temporal Phase E/F
+
+Scope: semantic/episodic memory, MemoryQueryPlan/ContextCompiler, embedding
+port, temporal graph, lifecycle storage/delete/export, adapter bot privat, tes,
+dan kontrak dokumentasi memory.
+
+Changed: FTS episode lama kini menjadi salah satu route Context Pack bounded,
+bersama semantic cosine retrieval opt-in dan graph temporal derived. Semantic
+memory membawa provenance, confidence, sensitivity, status, dan validity;
+consolidation menangani contradiction, correction, supersession, serta
+recurrence. Temporal/privacy/suppression/freshness filter berlaku pada recent
+summary maupun seluruh route retrieval. Forget/edit/full-delete melakukan
+cascade tanpa resurrection, export memuat state turunan, dan file repository
+memvalidasi namespace/provenance/projection secara fail-closed. ADR-030 mencatat
+slice FTS; ADR-031 dan ADR-032 mengikat consumer semantic/Context Pack dan graph.
+
+Verified: `npm run check` PASS; `npm test` PASS, 953 test dalam 120 suite,
+0 gagal; `npm run context:check` PASS dengan output 3.924 byte (estimasi 981
+token). Tes otomatis mencakup owner isolation, old-relevant ranking, vector
+threshold, current/as-of, correction/recurrence, graph depth/provenance,
+suppression, restart, CAS/race, export, dan deletion.
+
+Not verified: provider embedding nyata, Telegram/WhatsApp live, kualitas pada
+corpus percakapan nyata, multi-process/file lease, serta consumer group/project.
+
+Next: Phase berikutnya dapat memasang consumer project/group dan procedural
+memory; storage multi-instance memerlukan keputusan serta migrasi tersendiri.
 
 ## 2026-08-09 — RunMailbox idempotent dan lossless
 
@@ -333,29 +362,3 @@ belum diimplementasikan.
 Next: lanjutkan Phase B dengan `RiskHint`/`RiskDisposition`, semantics triage
 `unavailable`, dan selective triage sebelum memisahkan privacy sensitivity dan
 izin tindakan per efek.
-
-## 2026-08-07 — Baseline telemetry per giliran
-
-Scope: telemetry domain/service/storage, batching Telegram privat, kontrak
-observabilitas, serta tes regresinya.
-
-Changed: satu `turnId` acak kini mengikuti bubble dari evaluasi boundary sampai
-handler selesai. Telemetry content-free mencatat outcome, jumlah bubble,
-batch/queue/handling/total latency, jumlah dan tujuan logical model call, serta
-sinyal fast path, triage unavailable, safety fallback, dan urgent
-acknowledgement. File telemetry bermigrasi kompatibel dari version 1/2 ke
-version 3 dengan koleksi `turns`; retensi, ekspor data, dan forget ikut mencakup
-record baru. Ringkasan per pemilik menyediakan p50/p95 dan rate dengan seluruh
-turn sebagai denominator. ADR-020 mengikat batas privasi dan ruang lingkup
-baseline ini.
-
-Verified: `npm run check` PASS. `npm test` PASS, 663 test dalam 94 suite, 0
-gagal. `npm run context:check` PASS dengan output bootstrap 3.627 byte
-(estimasi 907 token). `git diff --check` PASS.
-
-Not verified: provider/model live, Telegram live, WhatsApp live, multi-instance
-durability, dashboard, dan TTFR terpisah tidak dijalankan atau belum
-diimplementasikan.
-
-Next: Phase B harus merekonsiliasi ADR/invariant safety lama sebelum mengubah
-boundary, triage unavailable, review, atau izin mutasi.

@@ -166,6 +166,27 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   serta memeriksa pemilik sebelum menulis. Konfirmasi Lupakan semua, tarik
   persetujuan, dan hapus seluruh data wajib membawa token pending sekali pakai;
   callback lama tidak boleh berlaku pada data yang dibuat setelah promptnya.
+- **Primary memory tetap kendali pengguna; knowledge dan graph hanya turunan.**
+  Semantic record wajib menunjuk MemoryItem atau episode/sequence, sedangkan
+  setiap relation wajib menunjuk semantic source yang masih ada. Confidence,
+  status, dan graph tidak mengubah catatan menjadi authority. Record tanpa
+  provenance, owner yang berbeda dari namespace, atau graph yang tidak dapat
+  diproyeksikan ulang dari source harus ditolak.
+- **Context memory selalu direncanakan, dibatasi, dan dianggap data tidak
+  tepercaya.** `MemoryQueryPlan` lokal tidak membawa authority. Compiler hanya
+  memuat episode lama untuk recall/history dan graph untuk query temporal/
+  relasional, lalu menerapkan validity, suppression/privacy, owner, freshness,
+  serta satu budget primary+retrieved sebelum merender Context Pack. Fast path
+  deterministik, immediate danger, dan urgent boundary tidak boleh menunggu
+  provider retrieval. Manifest/log hanya boleh membawa counter/route.
+- **Tombstone dan interval menang atas semua route retrieval.** Forget satu
+  harus menghapus evidence source, membangun ulang graph, dan menekan klaim
+  episode yang sama tanpa menekan source aktif lain. Edit menghapus source lama
+  dan menulis replacement dalam satu CAS mutation. Read yang menunggu embedding
+  wajib memeriksa revision lagi; forget-all/full-delete memblokir primary,
+  history, knowledge, dan snapshot AgentRun sebelum cleanup. Suppression tidak
+  boleh dipangkas dengan cap yang membuat fakta lama hidup kembali; storage
+  penuh harus gagal tertutup.
 
 ## Keselamatan
 
@@ -293,7 +314,8 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 ## Ekspor dan penghapusan
 
 - **Ekspor dan penghapusan penuh berbeda dari kontrol memori.** Ekspor memuat
-  data yang dapat dilihat pengguna dan mengecualikan insight tersembunyi.
+  data yang dapat dilihat pengguna—termasuk semantic/graph projection serta
+  provenance turunan—dan mengecualikan insight tersembunyi.
   Ekspor AgentRun hanya membawa request, status/revision, progress, observation,
   input, isi mailbox, ChangeSet/work unit, receipt yang sudah membuang effect
   ID, hasil, dan counter usage. Snapshot konteks, capability/scope hash, price
@@ -303,9 +325,10 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   store termasuk insight dan telemetry, lalu menghapus profil terakhir.
   Startup wajib meneruskan tombstone; pekerjaan latar memakai lock/generation
   agar data tidak hidup kembali. Penghapusan menunggu pemadatan riwayat aktif,
-  memblokir append/compact baru sampai persetujuan berikutnya, dan memblokir
+  menyuspensi history, primary memory, dan knowledge sejak awal, memblokir
+  append/compact/retrieval baru sampai persetujuan berikutnya, dan memblokir
   request telemetry/model sebelum store lain dibersihkan. Hanya penerimaan
-  persetujuan baru yang boleh memanggil `history.allow` dan `telemetry.allow`.
+  persetujuan baru yang boleh membuka service yang disuspensi.
 
 ## Telemetry
 
@@ -693,9 +716,17 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   dan shutdown mengurasnya. Penarikan persetujuan wajib memanggil `suspend`
   sebelum queued compaction dapat mulai memakai model.
   Seluruh giliran mentah yang belum diringkas ikut prompt dengan hard cap 24;
-  episode dibatasi 12 dan context hasil render dibatasi 3.000 karakter. Setelah
-  raw source dibuang, sequence/hash hanya receipt concurrency/coverage, bukan
-  bukti bahwa klaim episode benar secara semantik.
+  episode padat dibatasi 32 sebagai sumber retrieval lokal, tetapi context
+  otomatis tetap hanya memakai 12 episode terbaru dan hasil render dibatasi
+  3.000 karakter. `HistoryService.search` membangun index ephemeral hanya dari
+  episode owner yang sama, mempertahankan source sequence/range/hash, dan harus
+  memeriksa suspension/deletion lagi setelah storage load. Hasil hanya boleh
+  masuk prompt melalui `MemoryQueryPlan` dan `MemoryContextCompiler`, setelah
+  suppression, temporal validity, privacy/owner, freshness, dan budget filter.
+  Recent episode summary harus menjalani filter yang sama; ia bukan jalan pintas
+  untuk menghidupkan klaim forgotten/superseded. Setelah raw source dibuang,
+  sequence/hash hanya receipt concurrency/coverage, bukan bukti bahwa klaim
+  episode benar secara semantik.
 
 ## Pending store
 

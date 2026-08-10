@@ -296,6 +296,17 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   merangkum ulang episode lama. Alur tutoring lima langkah
   `ukur → coba → petunjuk → penjelasan → coba lagi` disimpan sebagai satu sesi
   aktif yang dapat dilanjutkan setelah restart.
+- [x] Fondasi factual memory Phase E: FTS episode lama, semantic projection,
+  embedding vector opt-in, consolidation contradiction/supersession,
+  `MemoryQueryPlan`, dan Context Pack bounded kini tersambung ke prompt privat.
+  Temporal/privacy/suppression filter menutup recent summary maupun retrieval
+  setelah `forget one`; export dan full deletion juga mencakup state turunan.
+  Lihat `ADR-030` dan `ADR-031`.
+- [x] Fondasi temporal graph Phase F: entity/relation hanya diproyeksikan dari
+  semantic source berprovenance, mempunyai validity/status, traversal bounded,
+  namespace private/group/project yang terpisah, dan cascade delete/rebuild.
+  Consumer runtime masih privat; group/project consumer dan procedural memory
+  tetap fase berikutnya. Lihat `ADR-032`.
 - [x] “Sesi Langkah Kecil” persisten untuk menjernihkan keadaan, memilih
   prioritas, fokus pada satu langkah, tutoring, menyusun rencana, dan membuat
   draf pesan untuk meminta bantuan manusia. Satu pengguna hanya punya satu sesi
@@ -404,9 +415,10 @@ tetapi routing model masih tiga tier. RunBudget kumulatif sekarang menjadi
 prerequisite yang tersedia untuk Agent Runtime privat. Ceiling general sekarang
 berasal dari role lalu di-clamp profile exact; work call juga tidak dapat
 memakai separuh token/biaya yang dilindungi untuk final synthesis.
-Compaction tekanan konteks, recovery truncation, `toughest`/K3, dan wire visible
-verbosity tetap berada di change set Phase C lanjutan; lihat ADR-025, ADR-026,
-dan ADR-028.
+Compaction tekanan konteks dan satu recovery untuk typed truncation kini ada.
+`toughest`/K3, wire visible verbosity, tokenizer calibration, dan finalizer
+terminal tetap berada di change set Phase C lanjutan; lihat ADR-025, ADR-026,
+ADR-028, dan ADR-029.
 
 Fondasi Phase D untuk active run sekarang tersedia khusus orkestrasi eksplisit
 Telegram privat. Ia belum berarti coding sandbox, artifact pipeline, app

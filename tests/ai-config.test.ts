@@ -23,9 +23,32 @@ const AI_ENV_KEYS = [
   "AI_MODEL_EFFICIENT",
   "AI_MODEL_AMBITIOUS",
   "AI_MODEL_PROFILES",
+  "MEMORY_EMBEDDING_MODEL",
 ] as const;
 
 describe("konfigurasi fallback AI testing", () => {
+  it("mengaktifkan embedding hanya dengan model opt-in eksplisit", () => {
+    withAiEnvironment(validTestingEnvironment(), () => {
+      assert.equal(loadAiConfig().memoryEmbeddingModel, null);
+    });
+    withAiEnvironment(validTestingEnvironment({
+      MEMORY_EMBEDDING_MODEL: "gemini-embedding-001",
+    }), () => {
+      assert.equal(
+        loadAiConfig().memoryEmbeddingModel,
+        "gemini-embedding-001",
+      );
+    });
+    withAiEnvironment(validTestingEnvironment({
+      MEMORY_EMBEDDING_MODEL: "model<rusak",
+    }), () => {
+      assert.throws(
+        () => loadAiConfig(),
+        hasCode("CONFIG_MEMORY_EMBEDDING_MODEL_INVALID"),
+      );
+    });
+  });
+
   it("membaca fallback lengkap dan dapat mematikannya untuk evaluator", () => {
     withAiEnvironment(validTestingEnvironment({
       AI_TESTING_FALLBACK_BASE_URL:

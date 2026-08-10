@@ -54,6 +54,8 @@ export interface AiConfig {
   modelProfiles: ModelProfileRegistry;
   /** Model dari seluruh slot `.env`, tanpa key, base URL, atau credential. */
   configuredModels: ConfiguredModel[];
+  /** Null mempertahankan retrieval semantic fail-closed. */
+  memoryEmbeddingModel: string | null;
   rollingTokenLimit: number;
   prices: Record<ModelTier, TierPrice>;
 }
@@ -337,6 +339,10 @@ export function loadAiConfig(): AiConfig {
   } satisfies Record<ModelTier, string>;
 
   const testingModel = process.env.AI_MODEL_TESTING?.trim() ?? "";
+  const memoryEmbeddingModelRaw = process.env.MEMORY_EMBEDDING_MODEL?.trim() ?? "";
+  const memoryEmbeddingModel = memoryEmbeddingModelRaw
+    ? configuredModelId("MEMORY_EMBEDDING_MODEL", memoryEmbeddingModelRaw)
+    : null;
   const testingModels: Partial<Record<ModelTier, string>> = {
     ...(process.env.AI_MODEL_TESTING_CHEAP?.trim()
       ? { cheap: process.env.AI_MODEL_TESTING_CHEAP.trim() }
@@ -399,6 +405,7 @@ export function loadAiConfig(): AiConfig {
       models,
       modelProfiles,
       configuredModels,
+      memoryEmbeddingModel,
       rollingTokenLimit,
       prices,
     };
@@ -446,6 +453,7 @@ export function loadAiConfig(): AiConfig {
     models,
     modelProfiles,
     configuredModels,
+    memoryEmbeddingModel,
     rollingTokenLimit,
     prices,
   };

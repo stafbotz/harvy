@@ -5,7 +5,10 @@ import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { FileHistoryRepository } from "../src/storage/file-history-repository.js";
 import type { ConversationHistory } from "../src/domain/history.js";
-import { renderEpisodeContext } from "../src/core/episodic-compaction.js";
+import {
+  HISTORY_EPISODE_RETENTION_LIMIT,
+  renderEpisodeContext,
+} from "../src/core/episodic-compaction.js";
 
 describe("FileHistoryRepository", () => {
   it("memigrasikan summary v1 sebagai episode warisan tanpa mengarang provenance", async () => {
@@ -214,9 +217,15 @@ describe("FileHistoryRepository", () => {
 
   it("menolak episode melampaui batas retensi", async () => {
     await withHistoryFile(async (file) => {
-      const episodes = Array.from({ length: 13 }, (_, index) =>
+      const episodes = Array.from({
+        length: HISTORY_EPISODE_RETENTION_LIMIT + 1,
+      }, (_, index) =>
         episode(index + 1, index + 1));
-      await writeFile(file, JSON.stringify(database(episodes, [], 14)), "utf8");
+      await writeFile(file, JSON.stringify(database(
+        episodes,
+        [],
+        HISTORY_EPISODE_RETENTION_LIMIT + 2,
+      )), "utf8");
       await assert.rejects(
         new FileHistoryRepository(file).load("student"),
         /riwayat v2 tidak sah/u,

@@ -91,6 +91,9 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 | [`ADR-027`](decisions/ADR-027-active-agentrun-mailbox-dan-commit-barrier.md) | active AgentRun, RunMailbox, revision gate, Run Anchor, commit receipt |
 | [`ADR-028`](decisions/ADR-028-output-policy-dan-cadangan-final-synthesis.md) | ceiling general code-owned dan cadangan RunBudget untuk final synthesis |
 | [`ADR-029`](decisions/ADR-029-context-pressure-dan-recovery-truncation.md) | context-pressure compaction, evidence-preserving observation, dan recovery truncation |
+| [`ADR-030`](decisions/ADR-030-pencarian-leksikal-episode-lama.md) | FTS leksikal lokal episode lama, provenance, retensi vs attention, dan consent race |
+| [`ADR-031`](decisions/ADR-031-retrieval-memori-semantik-dan-context-pack.md) | semantic retrieval, query plan, Context Pack, consolidation, dan deletion lifecycle |
+| [`ADR-032`](decisions/ADR-032-graph-temporal-turunan.md) | graph temporal derived, provenance, traversal, isolation, dan cascade deletion |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.

@@ -24,7 +24,15 @@ export const EPISODE_SCHEMA_VERSION = 2 as const;
 export const EPISODE_CLAIM_MAX_CHARS = 280;
 export const EPISODE_CLAIMS_PER_FIELD_LIMIT = 4;
 export const EPISODE_TOTAL_CLAIMS_LIMIT = 24;
-export const HISTORY_EPISODE_RETENTION_LIMIT = 12;
+/**
+ * Batas episode padat yang tetap tersedia sebagai sumber pencarian lokal.
+ * Ini bukan attention budget prompt; hanya sebagian terbaru yang dirender
+ * otomatis. Pemisahan ini membuat episode lama dapat dicari tanpa menyuntikkan
+ * seluruh riwayat pada setiap giliran.
+ */
+export const HISTORY_EPISODE_RETENTION_LIMIT = 32;
+/** Episode terbaru yang boleh masuk context otomatis tanpa query retrieval. */
+export const HISTORY_EPISODE_CONTEXT_LIMIT = 12;
 export const HISTORY_TURN_MAX_CHARS = 2_000;
 /** Batas kompatibilitas untuk satu blob ringkasan rolling v1 saat migrasi. */
 export const HISTORY_LEGACY_SUMMARY_MAX_CHARS = 16_000;
@@ -49,6 +57,31 @@ export interface EpisodeSummaryDraft {
   unresolved: EpisodeClaim[];
   temporalAnchors: EpisodeClaim[];
   uncertainties: EpisodeClaim[];
+}
+
+export type EpisodeClaimField = keyof EpisodeSummaryDraft;
+
+/** Satu klaim yang cocok dengan query pencarian episode. */
+export interface HistoricalEpisodeClaimMatch extends EpisodeClaim {
+  field: EpisodeClaimField;
+  /** Posisi asli di field episode; stabil walau hasil diurutkan berdasarkan skor. */
+  claimIndex: number;
+  /** Skor retrieval, bukan confidence bahwa klaimnya benar. */
+  score: number;
+}
+
+/**
+ * Hasil minimal pencarian riwayat. Isi episode lain tidak ikut terbawa hanya
+ * karena satu klaim cocok; provenance penyimpanan tetap tersedia bagi consumer
+ * tepercaya dan tidak dimaksudkan untuk operational log.
+ */
+export interface HistoricalEpisodeMatch {
+  episodeId: string;
+  createdAt: string;
+  source: ConversationEpisode["source"];
+  /** Skor retrieval, bukan authority atau semantic confidence. */
+  score: number;
+  claims: HistoricalEpisodeClaimMatch[];
 }
 
 export type EpisodeSource =

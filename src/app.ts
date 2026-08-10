@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { AiClient } from "./ai/client.js";
+import { OpenAiCompatibleEmbeddingProvider } from "./ai/embedding-client.js";
 import { Conversation } from "./ai/conversation.js";
 import type { HarvyContext } from "./ai/context.js";
 import { GroupConversation } from "./ai/group-conversation.js";
@@ -26,6 +28,8 @@ import {
 } from "./core/group-turn-service.js";
 import { InsightService } from "./core/insight-service.js";
 import { MemoryService } from "./core/memory-service.js";
+import { MemoryKnowledgeService } from "./core/memory-knowledge-service.js";
+import { MemoryContextCompiler } from "./core/memory-context-compiler.js";
 import { ProfileService } from "./core/profile-service.js";
 import { SessionService } from "./core/session-service.js";
 import { shutdownGracefully } from "./core/shutdown-service.js";
@@ -51,6 +55,7 @@ import { FileUsageLedgerRepository } from "./storage/file-usage-ledger-repositor
 import { FileEntitlementLedgerRepository } from "./storage/file-entitlement-ledger-repository.js";
 import { MarkdownInsightRepository } from "./storage/markdown-insight-repository.js";
 import { MarkdownMemoryRepository } from "./storage/markdown-memory-repository.js";
+import { FileMemoryKnowledgeRepository } from "./storage/file-memory-knowledge-repository.js";
 import { FileTaskRepository } from "./storage/file-task-repository.js";
 import { BaileysAccountManager } from "./whatsapp/baileys-account-manager.js";
 import { GroupMessageBatcher } from "./whatsapp/group-message-batcher.js";
@@ -183,8 +188,25 @@ const conversation = new Conversation(
 
 // Memori berupa berkas Markdown, satu folder per pengguna. Berkas JSON lama
 // hanya dibaca sekali sebagai bahan impor, lalu tidak pernah ditulis lagi.
+const memoryEmbedding = config.ai.memoryEmbeddingModel
+  ? new OpenAiCompatibleEmbeddingProvider({
+      baseUrl: config.ai.baseUrl,
+      keys: config.ai.keys,
+      model: config.ai.memoryEmbeddingModel,
+      providerId: config.ai.providerId,
+    })
+  : null;
+const memoryKnowledge = new MemoryKnowledgeService(
+  new FileMemoryKnowledgeRepository(
+    join(config.memoryFolder, "_knowledge"),
+  ),
+  memoryEmbedding,
+);
 const memories = new MemoryService(
   new MarkdownMemoryRepository(config.memoryFolder, config.memoryFile),
+  undefined,
+  memoryKnowledge,
+  logger.child("core.memory"),
 );
 
 // Peringkasnya memanggil model, tetapi `HistoryService` sendiri tidak tahu
@@ -195,6 +217,12 @@ const history = new HistoryService(
   (turns, ownerId) => conversation.summarizeEpisode(turns, ownerId),
   undefined,
   logger.child("core.history"),
+);
+const memoryContextCompiler = new MemoryContextCompiler(
+  history,
+  memoryKnowledge,
+  undefined,
+  logger.child("core.memory-context"),
 );
 
 // Catatan tersembunyi tinggal di folder yang sama dengan memori pengguna,
@@ -216,6 +244,7 @@ const dataControls = new DataControlService(
   telemetry,
   undefined,
   agentRuns,
+  memoryKnowledge,
 );
 
 // Penghapusan lintas beberapa berkas dilanjutkan sebelum bot menerima update.
@@ -241,6 +270,7 @@ const bot = createBot(
   telemetry,
   logger.child("telegram.bot"),
   agentRuns,
+  memoryContextCompiler,
 );
 
 let groupTurns: GroupTurnService | null = null;

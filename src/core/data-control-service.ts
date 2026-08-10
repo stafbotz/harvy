@@ -16,14 +16,18 @@ import type { UserProfile } from "../domain/profile.js";
 import type { StudentTask } from "../domain/task.js";
 import type { DurableAgentRunExport } from "../domain/agent-run.js";
 import type { AgentRunService } from "./agent-run-service.js";
+import type { MemoryKnowledgeState } from "../domain/memory-knowledge.js";
+import type { MemoryKnowledgeService } from "./memory-knowledge-service.js";
 
 export interface UserDataExport {
-  version: 2;
+  version: 3;
   exportedAt: string;
   ownerId: string;
   profile: UserProfile;
   tasks: StudentTask[];
   memories: MemoryItem[];
+  /** Index semantic/graph turunan beserta provenance dan suppression hashes. */
+  derivedMemory: MemoryKnowledgeState | null;
   history: ConversationHistory | null;
   activeSession: ActiveSession | null;
   /** Record run terbaru yang masih diretensi; null bila tidak ada/expired. */
@@ -55,6 +59,7 @@ export class DataControlService {
     private readonly telemetry: TelemetryService,
     private readonly now: () => Date = () => new Date(),
     private readonly agentRuns: AgentRunService | null = null,
+    private readonly knowledge: MemoryKnowledgeService | null = null,
   ) {}
 
   async export(ownerId: string): Promise<UserDataExport> {
@@ -62,6 +67,7 @@ export class DataControlService {
       profile,
       tasks,
       memories,
+      derivedMemory,
       history,
       activeSession,
       activeAgentRun,
@@ -71,6 +77,7 @@ export class DataControlService {
       this.profiles.load(ownerId),
       this.tasks.listAll(ownerId),
       this.memories.list(ownerId),
+      this.knowledge?.snapshotPrivateOwner(ownerId) ?? Promise.resolve(null),
       this.history.snapshot(ownerId),
       this.sessions.active(ownerId),
       this.agentRuns?.export("telegram", ownerId) ?? Promise.resolve(null),
@@ -79,12 +86,13 @@ export class DataControlService {
     ]);
 
     return {
-      version: 2,
+      version: 3,
       exportedAt: this.now().toISOString(),
       ownerId,
       profile,
       tasks,
       memories,
+      derivedMemory,
       history,
       activeSession,
       activeAgentRun,
@@ -100,6 +108,12 @@ export class DataControlService {
 
   async deleteAll(ownerId: string): Promise<void> {
     await this.profiles.markDeletionRequested(ownerId);
+
+    // Derived semantic/graph work harus tertutup sebelum store sumber mulai
+    // dibersihkan. Tombstone profil tetap authority lintas restart; block ini
+    // menutup completion lokal yang sudah terlanjur berjalan.
+    this.memories.suspend(ownerId);
+    this.history.suspend(ownerId);
 
     // Urutan ini idempoten. Profil/tombstone sengaja terakhir.
     // Telemetry diblokir lebih dulu karena ia juga menjadi gerbang tepat

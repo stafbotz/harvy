@@ -537,7 +537,47 @@ function validateActiveContext(run: ActiveAgentRun): void {
         .includes(memory.kind) ||
       typeof memory.content !== "string" ||
       memory.content.length > 1_000
-    )
+    ) ||
+    (context.retrieved !== undefined &&
+      (!Array.isArray(context.retrieved) ||
+        context.retrieved.length > 16 ||
+        context.retrieved.some((evidence) =>
+          !evidence ||
+          typeof evidence.id !== "string" ||
+          evidence.id.length > 300 ||
+          !Array.isArray(evidence.sources) ||
+          evidence.sources.length < 1 ||
+          evidence.sources.some((source) =>
+            source !== "episode" &&
+            source !== "semantic" &&
+            source !== "graph") ||
+          (evidence.sources.includes("graph") &&
+            !evidence.sources.includes("semantic")) ||
+          typeof evidence.text !== "string" ||
+          evidence.text.length > 1_000 ||
+          !Number.isFinite(evidence.score) ||
+          (evidence.validFrom !== null && !validDate(evidence.validFrom)) ||
+          (evidence.validUntil !== null && !validDate(evidence.validUntil)) ||
+          !["active", "superseded", "uncertain", "expired"]
+            .includes(evidence.status) ||
+          !["normal", "personal", "restricted"]
+            .includes(evidence.sensitivity) ||
+          !Array.isArray(evidence.sourceEpisodeIds) ||
+          evidence.sourceEpisodeIds.length > 64 ||
+          evidence.sourceEpisodeIds.some((id) =>
+            typeof id !== "string" || id.length > 256) ||
+          !Array.isArray(evidence.sourceSequences) ||
+          evidence.sourceSequences.length > 256 ||
+          evidence.sourceSequences.some((sequence) =>
+            !Number.isSafeInteger(sequence) || sequence <= 0) ||
+          !Array.isArray(evidence.sourceMemoryIds) ||
+          evidence.sourceMemoryIds.length > 64 ||
+          evidence.sourceMemoryIds.some((id) =>
+            typeof id !== "string" || id.length > 256) ||
+          (evidence.sourceEpisodeIds.length === 0 &&
+            evidence.sourceSequences.length === 0 &&
+            evidence.sourceMemoryIds.length === 0)
+        )))
   ) {
     throw new Error("Snapshot konteks run aktif tidak sah.");
   }

@@ -27,6 +27,10 @@ npm test
 `npm test` membangun TypeScript dan menjalankan seluruh `dist/tests/*.test.js`.
 Perintah dianggap lulus hanya jika exit code `0` dan tidak ada test gagal.
 
+Baseline working tree fondasi Phase E/F pada 10 Agustus 2026 adalah **953 test
+lulus dalam 120 suite**, diverifikasi dengan `npm test` (build TypeScript ikut
+di dalamnya). Angka ini tidak mencakup provider embedding atau kanal live.
+
 Corpus model nyata dijalankan terpisah karena memakai jaringan:
 
 ```bash
@@ -481,6 +485,11 @@ supaya tidak berbiaya.
 Transkrip 26 Juli 2026 sudah membuktikan sebagian jalur lama dan menemukan
 kegagalan. Alur setelah `ADR-007` belum dijalankan ulang melalui Telegram;
 setiap langkah di bawah tetap harus diberi status PASS/FAIL/NOT RUN sendiri.
+Phase E/F kini tersambung pada jalur privat lewat `MemoryContextCompiler`.
+Tes otomatis mengunci FTS/vector/graph fusion, provenance, current/as-of,
+contradiction/supersession, suppression, export/delete, restart, dan race.
+Provider embedding nyata dan perilaku Telegram tetap **NOT RUN** sampai langkah
+manual terkait dijalankan; jangan menurunkan bukti unit menjadi klaim live.
 
 13. Sebutkan sesuatu yang biasa, misalnya "aku kelas 11 IPA". Pastikan Harvy
     mengatakan bahwa ia mengingatnya sebagai satu baris `📎` di ujung balasan —
@@ -513,6 +522,16 @@ setiap langkah di bawah tetap harus diberi status PASS/FAIL/NOT RUN sendiri.
 23. Tulis "kamu ingat isi chat kita kah", lalu "isi chat sebelumnya apa".
     Pastikan Harvy menjawab kemampuan dan isi riwayat, bukan menampilkan daftar
     memori kosong.
+23a. Setelah sedikitnya 13 episode, tanyakan fakta yang hanya ada pada episode
+    lama. Pastikan fakta relevan muncul tanpa episode baru yang tidak relevan.
+    Ulangi setelah menekan Lupakan pada source memory: fakta itu tidak boleh
+    muncul lewat summary, FTS, vector, atau graph.
+23b. Simpan fakta eksklusif, koreksi nilainya, lalu tanyakan "sekarang" dan
+    tanggal sebelum koreksi. Jawaban current harus memakai nilai baru; query
+    historical harus memakai interval lama dan tidak melihat fakta masa depan.
+    Restart proses dan ulangi. Bila `MEMORY_EMBEDDING_MODEL` diaktifkan, catat
+    provider/model uji dan pastikan query sinonim bekerja tanpa memasukkan
+    memory yang tidak relevan; jangan memakai data pengguna nyata.
 24. Uji batas giliran state-aware dan emergency preflight dengan beberapa
     irama:
     - Kirim "eh tau ga", "sumpah", "aku cape banget", "ada tigasss", lalu "aku

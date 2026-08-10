@@ -4,6 +4,11 @@
 - **Tanggal:** 2 Agustus 2026
 - **Pemilik keputusan:** pemilik produk Harvy
 - **Terkait:** Konstitusi v0.4, ADR-006, ADR-007, ADR-008, ADR-012
+- **Disupersesi sebagian:** ADR-030 memisahkan retensi storage 32 episode padat
+  dari attention context otomatis 12 episode.
+- **Ditindaklanjuti:** ADR-031 memfilter episode untuk retrieval/context dengan
+  query plan, temporal validity, dan suppression; ADR-032 memakai provenance
+  episode sebagai salah satu source graph turunan.
 
 ## Konteks
 
@@ -51,9 +56,11 @@ perlu bertahan tetap harus masuk fitur memori beserta notice dan kontrolnya.
    hanya boleh dimulai setelah persetujuan dibuka lagi. Penarikan persetujuan
    segera menyuspensi pemakaian riwayat dan mencegah compaction yang masih
    menunggu slot mulai memanggil model.
-7. **Episode mempunyai retensi dan attention cap.** Maksimal 12 episode
-   disimpan, paling baru dipertahankan. Konteks model merender episode terbaru
-   ke terlama dengan batas 3.000 karakter; metadata hash/ID tidak ikut prompt.
+7. **Episode mempunyai retensi dan attention cap.** Keputusan awal menyimpan
+   maksimal 12 episode. Sejak ADR-030, maksimal 32 episode padat disimpan untuk
+   search lokal, tetapi konteks model tetap hanya merender 12 terbaru dari yang
+   terbaru ke terlama dengan batas 3.000 karakter; metadata hash/ID tidak ikut
+   prompt.
 8. **Migrasi v1 tidak mengarang provenance.** Ringkasan lama dipindahkan
    atomik ke episode `legacy-summary`, tanpa sequence palsu. Saat dirender ia
    diberi label ringkasan lama yang belum terklasifikasi, bukan fakta yang sudah

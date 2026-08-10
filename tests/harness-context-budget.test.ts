@@ -117,6 +117,7 @@ describe("context budget harness", () => {
       summary: "ringkasan lama",
       turns: [{ role: "user", text: "yang tadi", at: "1" }],
       memories: [memory("kelas sebelas")],
+      retrieved: [retrieved("episode lama rahasia")],
     };
 
     const compiled = compileHarvyContext(
@@ -127,12 +128,82 @@ describe("context budget harness", () => {
 
     assert.equal(compiled.context.summary, null);
     assert.equal(compiled.context.memories.length, 0);
+    assert.equal(compiled.context.retrieved, undefined);
     assert.equal(compiled.context.turns.length, 1);
     assert.equal(compiled.manifest.summaryPresent, true);
     assert.equal(compiled.manifest.summaryEligible, false);
-    assert.equal(compiled.manifest.sourceMemoryCount, 1);
+    assert.equal(compiled.manifest.sourceMemoryCount, 2);
     assert.equal(compiled.manifest.eligibleMemoryCount, 0);
     assert.equal(compiled.manifest.includedMemoryCount, 0);
+  });
+
+  it("membatasi Context Pack tanpa meratakannya ke summary atau user memory", () => {
+    const context: HarvyContext = {
+      summary: null,
+      turns: [],
+      memories: [],
+      retrieved: [
+        retrieved("a".repeat(80)),
+        retrieved("b".repeat(80), "semantic"),
+      ],
+    };
+    const fitted = fitHarvyContext(context, {
+      maxCharacters: 90,
+      maxSummaryCharacters: 0,
+      maxTurnCharacters: 0,
+      maxMemoryCharacters: 40,
+      maxTurns: 0,
+      maxMemories: 2,
+    });
+
+    assert.equal(fitted.summary, null);
+    assert.deepEqual(fitted.memories, []);
+    assert.equal(fitted.retrieved?.length, 1);
+    assert.equal(fitted.retrieved?.[0]?.text.length, 40);
+    assert.ok(fitted.retrieved?.[0]?.text.endsWith("…"));
+    assert.equal(context.retrieved?.[0]?.text.length, 80);
+  });
+
+  it("memakai satu item budget bersama untuk user memory dan retrieval", () => {
+    const compiled = compileHarvyContext({
+      summary: null,
+      turns: [],
+      memories: [memory("memori satu"), memory("memori dua")],
+      retrieved: [
+        retrieved("hasil lama satu"),
+        retrieved("hasil lama dua", "semantic"),
+      ],
+    }, {
+      maxCharacters: 1_000,
+      maxSummaryCharacters: 0,
+      maxTurnCharacters: 0,
+      maxMemoryCharacters: 100,
+      maxTurns: 0,
+      maxMemories: 3,
+    });
+
+    assert.equal(
+      compiled.context.memories.length +
+        (compiled.context.retrieved?.length ?? 0),
+      3,
+    );
+    assert.equal(compiled.manifest.sourceMemoryCount, 4);
+    assert.equal(compiled.manifest.includedMemoryCount, 3);
+    assert.equal(compiled.manifest.droppedMemoryCount, 1);
+  });
+
+  it("menyisihkan satu slot agar retrieval relevan tidak dikalahkan profile", () => {
+    const compiled = compileHarvyContext({
+      summary: null,
+      turns: [],
+      memories: Array.from({ length: 8 }, (_, index) =>
+        memory(`profile tidak relevan ${index}`)),
+      retrieved: [retrieved("episode lama yang relevan", "semantic")],
+    });
+
+    assert.equal(compiled.context.memories.length, 7);
+    assert.equal(compiled.context.retrieved?.[0]?.text, "episode lama yang relevan");
+    assert.equal(compiled.manifest.includedMemoryCount, 8);
   });
 
   it("mencatat hasil context pressure sebagai scalar bebas isi", () => {
@@ -177,5 +248,24 @@ function memory(content: string): HarvyContext["memories"][number] {
     createdAt: "2026-01-01T00:00:00.000Z",
     lastUsedAt: null,
     expiresAt: null,
+  };
+}
+
+function retrieved(
+  text: string,
+  source: "episode" | "semantic" | "graph" = "episode",
+): NonNullable<HarvyContext["retrieved"]>[number] {
+  return {
+    id: `${source}-1`,
+    sources: [source],
+    text,
+    score: 1,
+    validFrom: null,
+    validUntil: null,
+    status: "active",
+    sensitivity: "personal",
+    sourceEpisodeIds: source === "episode" ? ["episode-1"] : [],
+    sourceSequences: [1],
+    sourceMemoryIds: [],
   };
 }
