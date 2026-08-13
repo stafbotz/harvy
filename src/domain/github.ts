@@ -289,7 +289,35 @@ export type GitHubConnectionSaveResult =
   | { status: "saved"; state: GitHubConnectionState }
   | { status: "conflict" };
 
-export interface GitHubConnectionRepository {
+/** Content-free locator for an already-sent effect that may only be observed. */
+export interface GitHubUnknownEffectReference {
+  version: 1;
+  ownerWorkspaceKey: string;
+  projectId: string;
+  effectId: string;
+  effectDigest: string;
+}
+
+export interface GitHubUnknownEffectPage {
+  references: GitHubUnknownEffectReference[];
+  nextCursor: string | null;
+}
+
+export interface GitHubUnknownEffectRepository {
+  listUnknownEffects(input: {
+    cursor: string | null;
+    limit: number;
+  }): Promise<GitHubUnknownEffectPage>;
+}
+
+export interface GitHubUnknownEffectReconciler {
+  /** Observation-only: this method must never replay create/push/PR. */
+  reconcileDurableUnknown(
+    reference: GitHubUnknownEffectReference,
+  ): Promise<"committed" | "unknown" | "not_committed" | "missing">;
+}
+
+export interface GitHubConnectionRepository extends GitHubUnknownEffectRepository {
   loadByProject(projectId: string): Promise<GitHubConnectionState | null>;
   create(state: GitHubConnectionState): Promise<GitHubConnectionSaveResult>;
   save(

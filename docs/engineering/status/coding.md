@@ -65,6 +65,11 @@ Refreshed: 2026-08-13
   repository secara atomik. Raw repository ID connect dinonaktifkan; legacy
   binding wajib reconnect sebelum publish. Confirmation publish mengikat
   interaction ID dan audience `workspace-private`; grant group ditolak.
+  Repository file dapat mem-page locator content-free untuk receipt `unknown`;
+  worker rekonsiliasi satu proses mulai segera saat di-compose, memproses satu
+  page per siklus, hanya mengamati exact effect melalui endpoint reconcile,
+  menerima installation historis yang sudah revoked, dan mencatat agregat
+  tanpa me-replay branch/push/PR atau membuka metadata privat.
   Deletion hanya mem-purge connection, approval/receipt, dan selection lokal
   sesudah receipt `unknown` selesai; repository atau installation GitHub remote
   tidak dihapus.
@@ -85,8 +90,9 @@ Refreshed: 2026-08-13
   ingress/UI/composition-root, worker driver, atau scheduler produksi. Adapter metadata
   project/run/evidence/deletion/GitHub file hanya untuk restart lokal satu proses; journal lease
   SQLite sudah transactional lintas proses, tetapi produksi tetap memerlukan
-  distributed admission, implementasi object store/transport live, outbox, dan
-  reconciler.
+  distributed admission, implementasi object store/transport live, dan outbox/
+  reconciler terdistribusi. Worker observasi receipt GitHub lokal belum
+  dirangkai di `app.ts` dan bukan bukti recovery multi-instance.
 - Sandbox output harus dicap sambil streaming oleh backend. Watchdog client
   mencegah hang, tetapi tidak dapat membuktikan memory cap sebelum response
   materialized pada transport yang tidak tepercaya.
@@ -103,6 +109,6 @@ Refreshed: 2026-08-13
 ## Bukti
 
 - `npm run check` PASS.
-- Tes terarah G–J/authority/HTTP PASS, 138 test dalam 15 suite.
-- `npm test` PASS, 1.087 test dalam 134 suite, 0 gagal.
+- Tes terarah G–J/authority/HTTP PASS, 144 test dalam 16 suite.
+- `npm test` PASS, 1.093 test dalam 135 suite, 0 gagal.
 - Belum ada live isolation test, GitHub App test, provider test, atau kanal E2E.

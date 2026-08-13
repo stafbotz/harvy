@@ -686,6 +686,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   Exact push juga mengikat descriptor bundle di effect/approval dan broker harus
   mengonsumsi seluruh stream dengan size+hash cocok sebelum receipt boleh
   menjadi `committed`; ACK tanpa konsumsi penuh tetap `unknown`.
+- **Recovery receipt ambigu adalah observasi saja.** Enumerator hanya
+  mengeluarkan locator content-free exact-bound; worker startup tidak membentuk
+  scope pengguna dan hanya boleh memanggil `reconcileEffect`, tidak pernah
+  create branch, push, atau PR. Installation yang sudah revoked boleh diamati
+  untuk menyelesaikan effect yang telanjur dikirim, tetapi tidak memberi
+  authority publish baru. Terminal ACK wajib membawa effect ID dan permanent
+  operation fence exact; hasil malformed/timeout tetap `unknown`. Siklus worker
+  bounded satu page, non-overlap, stop/drain menunggu kandidat aktif, dan log
+  hanya membawa agregat. Primitive lokal ini belum berarti startup app atau
+  recovery multi-instance sudah aktif.
 - **Konfirmasi publish hanya dari interaction workspace privat.** Grant dan
   digest approval mengikat interaction ID serta audience `workspace-private`;
   interaction group atau replay lintas interaction gagal sebelum persistence

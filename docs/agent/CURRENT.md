@@ -7,10 +7,10 @@ Refreshed: 2026-08-13
 - Product capability baseline: working tree fondasi ProjectWorkspace/Coding
   Phase G–J di atas commit dasar `f29b143` (10 Agustus 2026), diverifikasi
   ulang 13 Agustus 2026.
-- Product gates: `npm run check` PASS; `npm test` PASS, 1.087 test dalam 134
+- Product gates: `npm run check` PASS; `npm test` PASS, 1.093 test dalam 135
   suite, 0 gagal.
-- Context system: `npm run context:check` PASS; output 5.462 byte dengan
-  estimasi 1.366 token.
+- Context system: `npm run context:check` PASS; output 5.850 byte dengan
+  estimasi 1.463 token.
 
 ## Recent material changes
 
@@ -31,6 +31,10 @@ Refreshed: 2026-08-13
   mempunyai budget keputusan kumulatif, pause/resume, state fence, sandbox
   action, dan provider-deletion fence. Publish grant terikat interaction
   `workspace-private`; deletion tidak menghapus konten GitHub remote.
+- Receipt GitHub `unknown` kini dapat ditemukan lewat locator content-free dan
+  diamati oleh worker bounded satu proses setelah restart. Worker hanya
+  memanggil endpoint reconcile, menerima authority historis exact termasuk
+  installation yang sudah revoked, dan tidak me-replay branch/push/PR.
 - Capability coding/GitHub dan permission granular terdaftar; tidak ada
   surface yang diam-diam aktif tanpa executor live.
 
@@ -50,7 +54,8 @@ Refreshed: 2026-08-13
   deletion/GitHub
   masih single-process/file. Journal lease SQLite memberi CAS lintas proses,
   tetapi produksi tetap memerlukan distributed admission, implementasi
-  transport/object store live, outbox, dan reconciler.
+  transport/object store live dan outbox/reconciler terdistribusi. Worker
+  observasi GitHub lokal sudah ada, tetapi belum dirangkai di `app.ts`.
 - Deletion/evidence coordinator belum dirangkai pada startup/composition
   produksi; local detach tidak sama dengan remote GitHub unlink/delete.
 - Dual model misclassification can still miss pre-save consent for sensitive

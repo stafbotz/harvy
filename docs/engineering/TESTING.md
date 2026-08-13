@@ -29,7 +29,7 @@ npm test
 Perintah dianggap lulus hanya jika exit code `0` dan tidak ada test gagal.
 
 Baseline working tree fondasi ProjectWorkspace/Coding Phase G–J pada 13 Agustus
-2026 adalah **1.087 test lulus dalam 134 suite**, diverifikasi dengan `npm test`
+2026 adalah **1.093 test lulus dalam 135 suite**, diverifikasi dengan `npm test`
 (build TypeScript ikut di dalamnya). Angka ini tidak mencakup provider
 embedding, runner isolation, GitHub App, atau kanal live.
 
@@ -204,10 +204,10 @@ Gate terarah tanpa jaringan:
 
 ```bash
 npm run build
-node --test --test-concurrency=1 dist/tests/safe-zip.test.js dist/tests/project-workspace-service.test.js dist/tests/project-memory-service.test.js dist/tests/sandbox-runner-service.test.js dist/tests/coding-run-engine.test.js dist/tests/coding-run-coordinator.test.js dist/tests/coding-agent-executors.test.js dist/tests/workspace-coding-controller.test.js dist/tests/github-broker.test.js dist/tests/github-installation-service.test.js dist/tests/project-deletion-coordinator.test.js dist/tests/workspace-authority-service.test.js dist/tests/http-local-git-transport.test.js dist/tests/http-sandbox-transport.test.js dist/tests/http-github-broker-transport.test.js
+node --test --test-concurrency=1 dist/tests/safe-zip.test.js dist/tests/project-workspace-service.test.js dist/tests/project-memory-service.test.js dist/tests/sandbox-runner-service.test.js dist/tests/coding-run-engine.test.js dist/tests/coding-run-coordinator.test.js dist/tests/coding-agent-executors.test.js dist/tests/workspace-coding-controller.test.js dist/tests/github-broker.test.js dist/tests/github-reconciliation-worker.test.js dist/tests/github-installation-service.test.js dist/tests/project-deletion-coordinator.test.js dist/tests/workspace-authority-service.test.js dist/tests/http-local-git-transport.test.js dist/tests/http-sandbox-transport.test.js dist/tests/http-github-broker-transport.test.js
 ```
 
-Pada 13 Agustus 2026, gate terarah ini lulus **138 test dalam 15 suite**.
+Pada 13 Agustus 2026, gate terarah ini lulus **144 test dalam 16 suite**.
 
 Tes ini wajib mengunci malicious ZIP/path/device/link/bomb/magic, immutable
 snapshot+tamper, quota fisik termasuk working copy, crash-recovery trash,
@@ -236,8 +236,10 @@ serta
 GitHub exact schema/ACL/App/base+target-ref/non-force, confirmation
 authority/grant contract yang terikat interaction `workspace-private`, workflow permission/approval, result ID+operation
 fence, attempt sequencing,
-deterministic unknown reconciliation, draft-only PR, dan
-penolakan credential-like key/value pada metadata, termasuk binding object
+deterministic unknown reconciliation, draft-only PR, worker restart
+observation-only yang bounded/non-overlap, tetap berjalan sesudah installation
+revoked, tidak me-replay efek, dan hanya mencatat agregat; serta penolakan
+credential-like key/value pada metadata, termasuk binding object
 bundle Git, ACK push tanpa konsumsi penuh, dan push CodingRun kedua non-force
 dari head branch Harvy sebelumnya.
 

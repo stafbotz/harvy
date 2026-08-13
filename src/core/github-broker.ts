@@ -25,6 +25,8 @@ import type {
   GitHubRepositoryAccess,
   GitHubRepositoryBinding,
   GitHubInstallationRepository,
+  GitHubUnknownEffectReference,
+  GitHubUnknownEffectReconciler,
 } from "../domain/github.js";
 import type { WorkspacePermission } from "../domain/workspace.js";
 import type { WorkspaceAgentScope } from "../harness/scope.js";
@@ -48,7 +50,7 @@ function boundedTransportTimeout(value: number): number {
  * keys and short-lived installation tokens; neither effect nor repository
  * metadata has a credential field.
  */
-export class GitHubBroker {
+export class GitHubBroker implements GitHubUnknownEffectReconciler {
   private readonly queues = new Map<string, Promise<void>>();
   private readonly transportTimeoutMs: number;
 
@@ -542,6 +544,99 @@ export class GitHubBroker {
     );
   }
 
+  /**
+   * Startup/background reconciliation for an already-sent effect. It accepts
+   * no user scope, performs no ACL-derived mutation authority, and can call
+   * only the broker's observation endpoint. New effects still require the
+   * interactive path above.
+   */
+  async reconcileDurableUnknown(
+    referenceInput: GitHubUnknownEffectReference,
+  ): Promise<"committed" | "unknown" | "not_committed" | "missing"> {
+    const reference = validateUnknownEffectReference(referenceInput);
+    return this.exclusive(reference.projectId, async () => {
+      const state = await this.repository.loadByProject(reference.projectId);
+      if (!state) return "missing";
+      const receipt = state.receipts.find(
+        (candidate) => candidate.effectId === reference.effectId,
+      );
+      if (!receipt) return "missing";
+      const effect = validateEffect(receipt.effect);
+      const digest = effectDigest(effect);
+      if (
+        state.binding.ownerWorkspaceKey !== reference.ownerWorkspaceKey ||
+        state.binding.projectId !== reference.projectId ||
+        receipt.effectDigest !== reference.effectDigest ||
+        receipt.effectDigest !== digest ||
+        receipt.effectId !== effect.effectId ||
+        effect.ownerWorkspaceKey !== state.binding.ownerWorkspaceKey ||
+        effect.projectId !== state.binding.projectId ||
+        effect.installationConnectionId !==
+          state.binding.installationConnectionId ||
+        effect.repositoryBindingId !== state.binding.bindingId ||
+        effect.installationId !== state.binding.installationId ||
+        effect.repositoryId !== state.binding.repositoryId ||
+        effect.baseBranch !== state.binding.defaultBranch
+      ) {
+        throw new Error("Locator rekonsiliasi GitHub tidak cocok exact receipt/binding.");
+      }
+      await this.requireHistoricalReconciliationAuthority(state);
+      if (receipt.status !== "unknown") return receipt.status;
+      let result: GitHubBrokerTransportResult;
+      try {
+        result = await this.transportCall(
+          "GitHub durable effect reconciliation",
+          (signal) => this.transport.reconcileEffect(effect, signal),
+        );
+      } catch {
+        return "unknown";
+      }
+      // A malformed terminal attestation is a protocol/security failure, not
+      // an ordinary still-unknown observation. Keep the durable receipt
+      // untouched and let the worker count/report the failure.
+      validateTransportResult(result, effect);
+      if (result.status === "unknown") return "unknown";
+      const terminalReceipt: GitHubEffectReceipt = {
+        ...receipt,
+        status: result.status,
+        externalId: result.externalId,
+        url: result.url,
+        committedAt: result.completedAt,
+      };
+      let saved: GitHubConnectionState;
+      try {
+        saved = await this.saveConnection(state, {
+          receipts: state.receipts.map((candidate) =>
+            candidate.effectId === effect.effectId ? terminalReceipt : candidate
+          ),
+        });
+      } catch (error) {
+        if (!isGitHubConnectionConflict(error)) throw error;
+        const current = await this.repository.loadByProject(reference.projectId);
+        const durable = current?.receipts.find(
+          (candidate) => candidate.effectId === reference.effectId,
+        );
+        if (
+          !current ||
+          !durable ||
+          durable.effectDigest !== reference.effectDigest ||
+          durable.status !== result.status ||
+          durable.externalId !== result.externalId ||
+          durable.url !== result.url ||
+          durable.committedAt !== result.completedAt
+        ) {
+          throw new Error("CAS rekonsiliasi GitHub konflik; effect tetap unknown.");
+        }
+        saved = current;
+      }
+      const durable = saved.receipts.find(
+        (candidate) => candidate.effectId === reference.effectId,
+      );
+      if (!durable) return "missing";
+      return durable.status;
+    });
+  }
+
   async reconcileProjectUnknown(
     scope: WorkspaceAgentScope,
     projectIdInput: string,
@@ -706,6 +801,39 @@ export class GitHubBroker {
       throw new Error("GitHub installation/selection authority dicabut atau berubah.");
     }
     return state;
+  }
+
+  private async requireHistoricalReconciliationAuthority(
+    state: GitHubConnectionState,
+  ): Promise<void> {
+    const connectionId = state.binding.installationConnectionId;
+    const selectionId = state.binding.repositorySelectionId;
+    if (connectionId === null || selectionId === null) {
+      throw new Error("Binding legacy tidak dapat direkonsiliasi otomatis.");
+    }
+    const [installation, selection] = await Promise.all([
+      this.repository.loadInstallation(connectionId),
+      this.repository.loadSelection(selectionId),
+    ]);
+    const selectionStatusAllowed = state.binding.revokedAt === null
+      ? selection?.status === "bound"
+      : selection?.status === "bound" || selection?.status === "cancelled";
+    if (
+      !installation ||
+      (installation.status !== "active" && installation.status !== "revoked") ||
+      installation.ownerWorkspaceKey !== state.binding.ownerWorkspaceKey ||
+      installation.installationId !== state.binding.installationId ||
+      !selection ||
+      !selectionStatusAllowed ||
+      selection.bindingId !== state.binding.bindingId ||
+      selection.projectId !== state.binding.projectId ||
+      selection.ownerWorkspaceKey !== state.binding.ownerWorkspaceKey ||
+      selection.installationConnectionId !== connectionId ||
+      selection.installationId !== state.binding.installationId ||
+      selection.repositoryId !== state.binding.repositoryId
+    ) {
+      throw new Error("Historical GitHub reconciliation authority tidak cocok.");
+    }
   }
 
   private async saveConnection(
@@ -1266,6 +1394,41 @@ function rejectCredentialMaterial(value: string, field: string): void {
   if (containsSecretLikeValue(value)) {
     throw new Error(`${field} menyerupai credential dan tidak boleh dipersistenkan.`);
   }
+}
+
+function validateUnknownEffectReference(
+  input: GitHubUnknownEffectReference,
+): GitHubUnknownEffectReference {
+  assertExactKeys(input, [
+    "version",
+    "ownerWorkspaceKey",
+    "projectId",
+    "effectId",
+    "effectDigest",
+  ]);
+  if (input.version !== 1) {
+    throw new Error("Versi locator rekonsiliasi GitHub tidak sah.");
+  }
+  const reference: GitHubUnknownEffectReference = {
+    version: 1,
+    ownerWorkspaceKey: safeText(
+      input.ownerWorkspaceKey,
+      "reconciliation ownerWorkspaceKey",
+      512,
+    ),
+    projectId: safeText(input.projectId, "reconciliation projectId", 512),
+    effectId: safeText(input.effectId, "reconciliation effectId", 512),
+    effectDigest: input.effectDigest,
+  };
+  if (!/^[a-f0-9]{64}$/u.test(reference.effectDigest)) {
+    throw new Error("Digest locator rekonsiliasi GitHub tidak sah.");
+  }
+  return Object.freeze(reference);
+}
+
+function isGitHubConnectionConflict(error: unknown): boolean {
+  return error instanceof Error &&
+    error.message === "GitHub connection berubah bersamaan; efek tidak diulang.";
 }
 
 function positive(value: unknown, field: string, zero = false): void {

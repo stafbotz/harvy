@@ -12,6 +12,8 @@ import type {
   GitHubRepositorySelection,
   GitHubRepositorySelectionSaveResult,
   GitHubSelectionBindResult,
+  GitHubUnknownEffectPage,
+  GitHubUnknownEffectReference,
 } from "../domain/github.js";
 import { validateLocalGitObjectBundleReference } from "../domain/local-git.js";
 import type {
@@ -51,6 +53,42 @@ export class FileGitHubConnectionRepository
       (candidate) => candidate.binding.projectId === cleanId,
     );
     return state ? structuredClone(state) : null;
+  }
+
+  async listUnknownEffects(input: {
+    cursor: string | null;
+    limit: number;
+  }): Promise<GitHubUnknownEffectPage> {
+    assertExactKeys(input, ["cursor", "limit"], "unknown effect query");
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+      throw new Error("Limit rekonsiliasi GitHub harus 1..100.");
+    }
+    const after = input.cursor === null ? null : decodeUnknownCursor(input.cursor);
+    const references = (await this.readDatabase()).connections.flatMap((state) =>
+      state.receipts
+        .filter((receipt) => receipt.status === "unknown")
+        .map((receipt): GitHubUnknownEffectReference => ({
+          version: 1,
+          ownerWorkspaceKey: state.binding.ownerWorkspaceKey,
+          projectId: state.binding.projectId,
+          effectId: receipt.effectId,
+          effectDigest: receipt.effectDigest,
+        }))
+    ).sort((left, right) => compareUnknownReferences(left, right));
+    const pending = after === null
+      ? references
+      : references.filter((reference) =>
+          compareUnknownReferences(reference, after) > 0
+        );
+    const selected = pending.slice(0, input.limit).map((reference) =>
+      structuredClone(reference)
+    );
+    return {
+      references: selected,
+      nextCursor: pending.length > selected.length && selected.length > 0
+        ? encodeUnknownCursor(selected[selected.length - 1]!)
+        : null,
+    };
   }
 
   async isProjectSelectionBound(
@@ -1191,6 +1229,12 @@ function validateState(value: unknown): asserts value is GitHubConnectionState {
     if (receipt.url !== null && !/^https:\/\/github\.com\//u.test(receipt.url)) {
       throw new Error("URL receipt GitHub tidak sah.");
     }
+    if (
+      receipt.status !== "committed" &&
+      (receipt.externalId !== null || receipt.url !== null)
+    ) {
+      throw new Error("Receipt GitHub non-committed tidak boleh membawa metadata eksternal.");
+    }
     validIso(receipt.committedAt, "receipt.committedAt");
     if (receiptEffects.has(receipt.effectId)) throw new Error("Effect receipt GitHub duplikat.");
     receiptEffects.add(receipt.effectId);
@@ -1253,11 +1297,19 @@ function validateAppendOnly(
       url: null,
       committedAt: "",
     };
+    const exactBefore = JSON.stringify(before);
+    const exactAfter = JSON.stringify(after);
+    const unknownToTerminal = before.status === "unknown" &&
+      (after.status === "committed" || after.status === "not_committed");
     if (
-      JSON.stringify(immutableBefore) !== JSON.stringify(immutableAfter) ||
-      (before.status !== "unknown" && JSON.stringify(before) !== JSON.stringify(after)) ||
+      (before.status === "unknown" && after.status === "unknown" &&
+        exactBefore !== exactAfter) ||
+      (unknownToTerminal &&
+        JSON.stringify(immutableBefore) !== JSON.stringify(immutableAfter)) ||
+      (!unknownToTerminal && before.status !== "unknown" &&
+        exactBefore !== exactAfter) ||
       (before.status === "unknown" && after.status !== "unknown" &&
-        after.status !== "committed" && after.status !== "not_committed")
+        !unknownToTerminal)
     ) {
       throw new Error("Receipt GitHub lama berubah di luar rekonsiliasi unknown.");
     }
@@ -1414,6 +1466,68 @@ function gitCommit(value: unknown, field: string): void {
     typeof value !== "string" ||
     !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value)
   ) throw new Error(`${field} GitHub tidak sah.`);
+}
+
+function compareUnknownReferences(
+  left: Pick<GitHubUnknownEffectReference, "ownerWorkspaceKey" | "projectId" | "effectId">,
+  right: Pick<GitHubUnknownEffectReference, "ownerWorkspaceKey" | "projectId" | "effectId">,
+): number {
+  const leftKey = JSON.stringify([
+    left.ownerWorkspaceKey,
+    left.projectId,
+    left.effectId,
+  ]);
+  const rightKey = JSON.stringify([
+    right.ownerWorkspaceKey,
+    right.projectId,
+    right.effectId,
+  ]);
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+}
+
+function encodeUnknownCursor(reference: GitHubUnknownEffectReference): string {
+  return Buffer.from(JSON.stringify([
+    1,
+    reference.ownerWorkspaceKey,
+    reference.projectId,
+    reference.effectId,
+  ]), "utf8").toString("base64url");
+}
+
+function decodeUnknownCursor(cursor: string): GitHubUnknownEffectReference {
+  if (
+    cursor.length < 1 ||
+    cursor.length > 4096 ||
+    !/^[A-Za-z0-9_-]+$/u.test(cursor)
+  ) {
+    throw new Error("Cursor rekonsiliasi GitHub tidak sah.");
+  }
+  let parsed: unknown;
+  try {
+    const bytes = Buffer.from(cursor, "base64url");
+    if (bytes.toString("base64url") !== cursor) {
+      throw new Error("non-canonical cursor");
+    }
+    parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    throw new Error("Cursor rekonsiliasi GitHub tidak sah.");
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 4 ||
+    parsed[0] !== 1
+  ) {
+    throw new Error("Cursor rekonsiliasi GitHub tidak sah.");
+  }
+  return {
+    version: 1,
+    ownerWorkspaceKey: safeText(parsed[1], "cursor ownerWorkspaceKey", 512),
+    projectId: safeText(parsed[2], "cursor projectId", 512),
+    effectId: safeText(parsed[3], "cursor effectId", 512),
+    // Cursor ordering does not use the digest; a valid placeholder keeps the
+    // comparator type closed without treating the cursor as an effect record.
+    effectDigest: "0".repeat(64),
+  };
 }
 
 function safeText(value: unknown, field: string, max: number): string {

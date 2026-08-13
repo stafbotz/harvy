@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { CodingRunEngine } from "../src/core/coding-run-engine.js";
 import { effectDigest, GitHubBroker } from "../src/core/github-broker.js";
+import { startGitHubReconciliationWorker } from "../src/core/github-reconciliation-worker.js";
 import { LocalGitService } from "../src/core/local-git-service.js";
 import { ProjectWorkspaceService } from "../src/core/project-workspace-service.js";
 import { callTransportWithDeadline } from "../src/core/transport-deadline.js";
@@ -611,6 +612,214 @@ describe("GitHub Broker Phase J", () => {
     assert.equal(committedRetry.status, "committed");
   });
 
+  it("menemukan unknown secara paged dan worker restart hanya mengamati tanpa replay", async () => {
+    const fixture = await createFixture();
+    const branch = await fixture.broker.prepareEffect(fixture.scope, {
+      runId: fixture.runId,
+      capability: "github.branch.create",
+    });
+    fixture.transport.failBranchBeforeEffect = true;
+    const unknown = await fixture.broker.createBranch(
+      fixture.scope,
+      branch,
+      await approveEffect(fixture, branch),
+    );
+    assert.equal(unknown.status, "unknown");
+    const page = await fixture.connectionRepository.listUnknownEffects({
+      cursor: null,
+      limit: 1,
+    });
+    assert.deepEqual(page.references, [{
+      version: 1,
+      ownerWorkspaceKey: fixture.scope.workspaceKey,
+      projectId: branch.projectId,
+      effectId: branch.effectId,
+      effectDigest: effectDigest(branch),
+    }]);
+    assert.equal(page.nextCursor, null);
+    assert.deepEqual(
+      Object.keys(page.references[0]!).sort(),
+      ["effectDigest", "effectId", "ownerWorkspaceKey", "projectId", "version"],
+    );
+    const serializedPage = JSON.stringify(page);
+    for (const privateField of [
+      "repositoryFullName", "title", "body", "url", "externalId", "effect",
+      "objectBundle",
+    ]) {
+      assert.equal(serializedPage.includes(`"${privateField}":`), false);
+    }
+    await assert.rejects(
+      fixture.connectionRepository.listUnknownEffects({ cursor: "%%%", limit: 1 }),
+      /cursor/iu,
+    );
+    await assert.rejects(
+      fixture.connectionRepository.listUnknownEffects({ cursor: null, limit: 101 }),
+      /limit/iu,
+    );
+
+    fixture.transport.failBranchBeforeEffect = false;
+    fixture.transport.reconcileNotCommitted = true;
+    const branchesBefore = fixture.transport.branches.length;
+    const pushesBefore = fixture.transport.pushes.length;
+    const prsBefore = fixture.transport.pullRequests.length;
+    const restarted = new GitHubBroker(
+      new FileGitHubConnectionRepository(fixture.connectionFile),
+      fixture.transport,
+      fixture.confirmations,
+      fixture.authority,
+      fixture.projects,
+      fixture.codingRepository,
+      fixture.localGitTransport,
+      () => NOW,
+      fixture.ids,
+    );
+    const worker = startGitHubReconciliationWorker(
+      new FileGitHubConnectionRepository(fixture.connectionFile),
+      restarted,
+      undefined,
+      { intervalMs: 60_000, batchSize: 1 },
+    );
+    const report = await worker.runNow();
+    worker.stop();
+    await worker.drain();
+
+    assert.deepEqual(report, {
+      discovered: 1,
+      terminal: 1,
+      unresolved: 0,
+      missing: 0,
+      failed: 0,
+    });
+    assert.equal(fixture.transport.branches.length, branchesBefore);
+    assert.equal(fixture.transport.pushes.length, pushesBefore);
+    assert.equal(fixture.transport.pullRequests.length, prsBefore);
+    assert.equal(fixture.transport.reconciliations, 1);
+    const durable = await fixture.connectionRepository.loadByProject(branch.projectId);
+    assert.equal(
+      durable?.receipts.find((receipt) => receipt.effectId === branch.effectId)?.status,
+      "not_committed",
+    );
+  });
+
+  it("rekonsiliasi durable menahan ACK malformed sebagai unknown dan tidak perlu scope pengguna", async () => {
+    const fixture = await createFixture();
+    const branch = await fixture.broker.prepareEffect(fixture.scope, {
+      runId: fixture.runId,
+      capability: "github.branch.create",
+    });
+    fixture.transport.failBranchBeforeEffect = true;
+    await fixture.broker.createBranch(
+      fixture.scope,
+      branch,
+      await approveEffect(fixture, branch),
+    );
+    const [reference] = (await fixture.connectionRepository.listUnknownEffects({
+      cursor: null,
+      limit: 10,
+    })).references;
+    assert.ok(reference);
+
+    fixture.transport.failBranchBeforeEffect = false;
+    fixture.transport.reconcileNotCommitted = true;
+    fixture.transport.resultFenceOverride = false;
+    await assert.rejects(
+      fixture.broker.reconcileDurableUnknown(reference),
+      /fence.*tidak cocok/iu,
+    );
+    const durableUnknown = await fixture.connectionRepository.loadByProject(
+      branch.projectId,
+    );
+    assert.equal(
+      durableUnknown?.receipts.find(
+        (receipt) => receipt.effectId === branch.effectId,
+      )?.status,
+      "unknown",
+    );
+    assert.ok(durableUnknown);
+    const { revision: expectedRevision, ...binding } = durableUnknown.binding;
+    await assert.rejects(
+      fixture.connectionRepository.save({
+        ...durableUnknown,
+        binding,
+        receipts: durableUnknown.receipts.map((receipt) =>
+          receipt.effectId === branch.effectId
+            ? { ...receipt, externalId: "123" }
+            : receipt
+        ),
+      }, expectedRevision),
+      /non-committed.*metadata eksternal/iu,
+    );
+    await assert.rejects(
+      fixture.connectionRepository.save({
+        ...durableUnknown,
+        binding,
+        receipts: durableUnknown.receipts.map((receipt) =>
+          receipt.effectId === branch.effectId
+            ? { ...receipt, committedAt: new Date(NOW.getTime() + 1_000).toISOString() }
+            : receipt
+        ),
+      }, expectedRevision),
+      /receipt.*berubah.*rekonsiliasi unknown/iu,
+    );
+    await assert.rejects(
+      fixture.broker.reconcileDurableUnknown({
+        ...reference,
+        effectDigest: "f".repeat(64),
+      }),
+      /locator.*tidak cocok/iu,
+    );
+    assert.equal(fixture.transport.reconciliations, 1);
+  });
+
+  it("mengamati effect lama setelah installation dicabut tanpa memberi authority publish baru", async () => {
+    const fixture = await createFixture();
+    const branch = await fixture.broker.prepareEffect(fixture.scope, {
+      runId: fixture.runId,
+      capability: "github.branch.create",
+    });
+    fixture.transport.failBranchBeforeEffect = true;
+    await fixture.broker.createBranch(
+      fixture.scope,
+      branch,
+      await approveEffect(fixture, branch),
+    );
+    const [reference] = (await fixture.connectionRepository.listUnknownEffects({
+      cursor: null,
+      limit: 10,
+    })).references;
+    assert.ok(reference);
+
+    const installation = await fixture.connectionRepository.loadInstallation(
+      "installation-connection-1",
+    );
+    assert.ok(installation);
+    const { revision, ...record } = installation;
+    const revoked = await fixture.connectionRepository.saveInstallation({
+      ...record,
+      status: "revoked",
+      revocationAuthorityId: "revoke-confirmation-after-send",
+      revokedAt: NOW.toISOString(),
+      updatedAt: NOW.toISOString(),
+    }, revision);
+    assert.equal(revoked.status, "saved");
+
+    fixture.transport.failBranchBeforeEffect = false;
+    fixture.transport.reconcileNotCommitted = true;
+    assert.equal(
+      await fixture.broker.reconcileDurableUnknown(reference),
+      "not_committed",
+    );
+    await assert.rejects(
+      fixture.broker.prepareEffect(fixture.scope, {
+        runId: fixture.runId,
+        capability: "github.branch.create",
+      }),
+      /installation\/selection authority|dicabut/iu,
+    );
+    assert.equal(fixture.transport.branches.length, 1);
+    assert.equal(fixture.transport.reconciliations, 1);
+  });
+
   it("menolak field asing dan target ref yang bergerak tanpa force", async () => {
     const fixture = await createFixture();
     const effect = await fixture.broker.prepareEffect(fixture.scope, {
@@ -1191,6 +1400,7 @@ class FakeGitHubTransport implements GitHubBrokerTransport {
   baseCommit = BASE;
   failPush = false;
   failPushBeforeEffect = false;
+  failBranchBeforeEffect = false;
   skipBundleConsumption = false;
   reconcileNotCommitted = false;
   hangCreateBranch = false;
@@ -1204,6 +1414,7 @@ class FakeGitHubTransport implements GitHubBrokerTransport {
   pushes: GitHubExactEffect[] = [];
   pushedBundleSha256: string[] = [];
   pullRequests: GitHubExactEffect[] = [];
+  reconciliations = 0;
   readonly targetHeads = new Map<string, string>();
 
   async health() {
@@ -1245,6 +1456,7 @@ class FakeGitHubTransport implements GitHubBrokerTransport {
     signal?: AbortSignal,
   ): Promise<GitHubBrokerTransportResult> {
     this.branches.push(structuredClone(effect));
+    if (this.failBranchBeforeEffect) throw new Error("safe failure before effect");
     if (this.hangCreateBranch) {
       return new Promise((_resolve, reject) => {
         signal?.addEventListener("abort", () => {
@@ -1295,15 +1507,16 @@ class FakeGitHubTransport implements GitHubBrokerTransport {
   }
 
   async reconcileEffect(effect: GitHubExactEffect): Promise<GitHubBrokerTransportResult> {
+    this.reconciliations += 1;
     if (this.reconcileNotCommitted) {
-      return {
+      return this.maybeMalformed({
         effectId: effect.effectId,
         status: "not_committed",
         operationFenced: true,
         externalId: null,
         url: null,
         completedAt: NOW.toISOString(),
-      };
+      });
     }
     const head = this.targetHeads.get(effect.branch) ?? null;
     if (
@@ -1315,14 +1528,14 @@ class FakeGitHubTransport implements GitHubBrokerTransport {
     ) {
       return this.maybeMalformed(committed(effect, "4"));
     }
-    return {
+    return this.maybeMalformed({
       effectId: effect.effectId,
       status: "unknown",
       operationFenced: false,
       externalId: null,
       url: null,
       completedAt: NOW.toISOString(),
-    };
+    });
   }
 
   private maybeMalformed(

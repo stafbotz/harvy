@@ -390,6 +390,10 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   archive per selection, project ID deterministik, recovery crash, dan atomic
   selection→binding; raw connect ID dinonaktifkan dan legacy fail-closed.
   Grant publish mengikat interaction ID dan audience `workspace-private`.
+  Receipt `unknown` dapat ditemukan sebagai locator content-free dan diamati
+  oleh worker bounded satu proses tanpa scope pengguna atau replay efek;
+  installation revoked masih dapat menyelesaikan observasi historis tetapi
+  tidak dapat mengotorisasi publish baru. Worker belum dirangkai di `app.ts`.
   Project deletion mem-purge ledger/selection lokal hanya setelah effect
   `unknown` selesai; ia tidak menghapus repository atau installation remote.
   Daemon local-git/object store, GitHub App broker, provision secret

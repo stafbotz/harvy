@@ -81,6 +81,8 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   provisioning), `local-git-service.ts` (commit deterministic/reconcile + object
   bundle receipt), dan `github-broker.ts` (ACL/App/ref freshness, approval,
   exact receipt, dan verified bundle streaming),
+  `github-reconciliation-worker.ts` (enumerasi locator content-free dan
+  observasi receipt `unknown` satu page per siklus tanpa replay efek),
   `run-budget.ts` (akun kumulatif root/retry/fallback/worker, reservation
   token+biaya, waktu aktif, dan codec checkpoint),
   `data-control-service.ts` (ekspor,

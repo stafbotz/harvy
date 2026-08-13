@@ -110,12 +110,17 @@ Grant publish mengikat interaction ID dan audience `workspace-private`;
 interaction group gagal sebelum approval. Detach saat project deletion hanya
 membersihkan ledger/selection credential-free lokal setelah receipt ambigu
 selesai dan tidak melakukan remote unlink atau menghapus repository GitHub.
+Receipt `unknown` kini dapat dipage sebagai locator content-free dan diamati
+worker bounded satu proses setelah restart tanpa scope pengguna atau replay
+branch/push/PR. Worker menerima authority historis exact saat installation sudah
+revoked, memerlukan ACK terminal fenced, dan hanya mencatat agregat; primitive
+ini belum dirangkai di `app.ts` atau membuktikan recovery multi-instance.
 Watchdog AgentHarness mengatribusikan `AbortError` ke owner deadline yang sudah
 dipilih sehingga tie invocation/RunBudget tidak berubah karena scheduler load.
 Semua capability baru default-off.
 
-Verified: `npm run check` PASS; tes terarah G–J/authority/HTTP PASS, 138 test
-dalam 15 suite; `npm test` PASS, 1.087 test dalam 134 suite, 0 gagal;
+Verified: `npm run check` PASS; tes terarah G–J/authority/HTTP PASS, 144 test
+dalam 16 suite; `npm test` PASS, 1.093 test dalam 135 suite, 0 gagal;
 `npm run context:check` PASS. Tes mencakup malicious
 archive, tamper/quota, tenant/admission/watchdog, writer/validator/commit race,
 stale zombie, structured guard/escaped source, strict HTTP proof/stream,

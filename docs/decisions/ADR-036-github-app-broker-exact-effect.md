@@ -63,6 +63,13 @@ Harvy, sandbox, prompt, metadata project, atau receipt.
 11. Project deletion hanya mem-purge connection, approval/receipt, dan
     repository selection credential-free lokal setelah receipt ambigu selesai.
     Ia tidak menghapus repository, branch, PR, atau installation GitHub remote.
+12. Receipt `unknown` dapat dienumerasi sebagai locator content-free dan
+    direkonsiliasi oleh worker observation-only tanpa scope pengguna. Worker
+    hanya memanggil endpoint reconcile, memproses satu page per siklus,
+    non-overlap, dan mencatat agregat. Authority historis exact boleh menerima
+    installation yang sudah revoked agar outcome efek terkirim dapat diketahui,
+    tetapi prepare/approve/execute baru tetap ditolak. ACK terminal harus exact
+    dan fenced; timeout, schema salah, atau CAS kontradiktif tidak membuka retry.
 
 ## Konsekuensi
 
@@ -70,6 +77,7 @@ Policy broker dapat menolak stale/replay/force dan bundle substitution tanpa
 melihat credential GitHub. Client transport tersedia default-off, tetapi belum
 ada daemon local-git/object store, GitHub App broker, provision secret identitas
 service + verifier server-side,
-atau confirmation controller produksi
+atau confirmation controller produksi. Worker rekonsiliasi lokal juga belum
+dirangkai pada startup aplikasi dan bukan lease/reconciler multi-instance,
 dan capability tetap default-off; boolean fence/fake test bukan bukti backend
 benar-benar linearizable atau publish live.
