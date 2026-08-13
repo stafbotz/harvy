@@ -14,6 +14,7 @@ import type {
   SandboxLeaseJournalRecord,
   SandboxResourceLimits,
   SandboxRunner,
+  SandboxRunnerLifecycle,
   SandboxSecurityAttestation,
   SandboxSnapshotResult,
 } from "../domain/sandbox.js";
@@ -54,7 +55,7 @@ const DEFAULT_ADMISSION_POLICY: Readonly<SandboxAdmissionPolicy> = Object.freeze
  * Policy/validation facade for an out-of-process isolation backend. It never
  * uses child_process and has no fallback to VirtualTerminal or host execution.
  */
-export class SandboxRunnerService implements SandboxRunner {
+export class SandboxRunnerService implements SandboxRunner, SandboxRunnerLifecycle {
   private readonly limits: SandboxResourceLimits;
   private readonly leases = new Map<string, SandboxLease>();
   private readonly records = new Map<string, SandboxLeaseJournalRecord>();
@@ -68,6 +69,15 @@ export class SandboxRunnerService implements SandboxRunner {
   private readonly admission: Readonly<SandboxAdmissionPolicy>;
   private recovered = false;
   private recovery: Promise<void> | null = null;
+  private acceptingOperations = true;
+  private maintenanceSealed = false;
+  private drained = false;
+  private closed = false;
+  private startPromise: Promise<SandboxHealth> | null = null;
+  private drainPromise: Promise<void> | null = null;
+  private closePromise: Promise<void> | null = null;
+  private readonly inFlightOperations = new Set<Promise<unknown>>();
+  private readonly inFlightControllers = new Set<AbortController>();
 
   constructor(
     private readonly transport: SandboxTransport,
@@ -80,9 +90,90 @@ export class SandboxRunnerService implements SandboxRunner {
     this.admission = validatedAdmission({ ...DEFAULT_ADMISSION_POLICY, ...admission });
   }
 
+  /**
+   * Explicit startup boundary for application composition. Recovery always
+   * fences every durable pre-existing lease before health can be returned.
+   */
+  async start(): Promise<SandboxHealth> {
+    if (this.closed) throw new Error("SandboxRunner sudah ditutup.");
+    if (!this.acceptingOperations) {
+      throw new Error("SandboxRunner sudah menghentikan admission.");
+    }
+    if (!this.startPromise) {
+      this.startPromise = this.trackOperation(
+        "start",
+        async () => {
+          await this.ensureRecovered();
+          return this.rawHealth();
+        },
+        true,
+      );
+    }
+    const pending = this.startPromise;
+    try {
+      const health = await pending;
+      if (!this.acceptingOperations) {
+        throw new Error("SandboxRunner berhenti sebelum startup selesai.");
+      }
+      return structuredClone(health);
+    } finally {
+      if (this.startPromise === pending) this.startPromise = null;
+    }
+  }
+
+  /** Stop admission synchronously; cleanup and exact backend fences happen in drain. */
+  stop(): void {
+    this.acceptingOperations = false;
+    for (const controller of this.inFlightControllers) {
+      controller.abort(new Error("SandboxRunner sedang dihentikan."));
+    }
+  }
+
+  /**
+   * Wait for admitted calls, seal maintenance admission, then fence every
+   * journaled allocation. A failed fence keeps its durable record and rejects.
+   */
+  async drain(): Promise<void> {
+    this.stop();
+    if (this.drained) return;
+    // Seal synchronously with the caller that starts drain. Waiting first
+    // would leave a microtask window where a new maintenance call could enter
+    // after the in-flight snapshot looked empty.
+    this.maintenanceSealed = true;
+    if (!this.drainPromise) {
+      this.drainPromise = this.drainInternal();
+    }
+    const pending = this.drainPromise;
+    try {
+      await pending;
+    } finally {
+      if (this.drainPromise === pending) this.drainPromise = null;
+    }
+  }
+
+  /** Close an owned journal only after every exact cancellation fence succeeds. */
+  async close(): Promise<void> {
+    if (this.closed) return;
+    if (!this.closePromise) {
+      this.closePromise = (async () => {
+        await this.drain();
+        await this.journal.close?.();
+        this.closed = true;
+      })();
+    }
+    const pending = this.closePromise;
+    try {
+      await pending;
+    } finally {
+      if (this.closePromise === pending) this.closePromise = null;
+    }
+  }
+
   async health(): Promise<SandboxHealth> {
-    await this.ensureRecovered();
-    return this.rawHealth();
+    return this.trackOperation("health", async () => {
+      await this.ensureRecovered();
+      return this.rawHealth();
+    }, true);
   }
 
   private async rawHealth(): Promise<SandboxHealth> {
@@ -95,6 +186,14 @@ export class SandboxRunnerService implements SandboxRunner {
   }
 
   async allocate(
+    bindingInput: SandboxBinding,
+    snapshotInput: SandboxInputSnapshotSource,
+  ): Promise<SandboxLease> {
+    return this.trackOperation("allocate", () =>
+      this.allocateInternal(bindingInput, snapshotInput));
+  }
+
+  private async allocateInternal(
     bindingInput: SandboxBinding,
     snapshotInput: SandboxInputSnapshotSource,
   ): Promise<SandboxLease> {
@@ -187,6 +286,19 @@ export class SandboxRunnerService implements SandboxRunner {
     requestInput: SandboxExecRequest,
     signal?: AbortSignal,
   ): Promise<SandboxExecResult> {
+    return this.trackOperation("execute", (lifecycleSignal) =>
+      this.executeInternal(
+        leaseInput,
+        requestInput,
+        anyAbortSignal(signal, lifecycleSignal),
+      ));
+  }
+
+  private async executeInternal(
+    leaseInput: SandboxLease,
+    requestInput: SandboxExecRequest,
+    signal?: AbortSignal,
+  ): Promise<SandboxExecResult> {
     await this.ensureRecovered();
     const initialLease = this.currentLease(leaseInput);
     const request = validateExecRequest(requestInput, initialLease.attestation.limits);
@@ -216,6 +328,13 @@ export class SandboxRunnerService implements SandboxRunner {
   }
 
   async captureSnapshot(
+    leaseInput: SandboxLease,
+  ): Promise<SandboxSnapshotResult> {
+    return this.trackOperation("captureSnapshot", () =>
+      this.captureSnapshotInternal(leaseInput));
+  }
+
+  private async captureSnapshotInternal(
     leaseInput: SandboxLease,
   ): Promise<SandboxSnapshotResult> {
     await this.ensureRecovered();
@@ -255,6 +374,14 @@ export class SandboxRunnerService implements SandboxRunner {
   }
 
   async readArtifact(
+    leaseInput: SandboxLease,
+    artifactInput: SandboxArtifactReference,
+  ): Promise<Uint8Array> {
+    return this.trackOperation("readArtifact", () =>
+      this.readArtifactInternal(leaseInput, artifactInput));
+  }
+
+  private async readArtifactInternal(
     leaseInput: SandboxLease,
     artifactInput: SandboxArtifactReference,
   ): Promise<Uint8Array> {
@@ -308,6 +435,10 @@ export class SandboxRunnerService implements SandboxRunner {
   }
 
   async dispose(leaseInput: SandboxLease): Promise<void> {
+    return this.trackOperation("dispose", () => this.disposeInternal(leaseInput), true);
+  }
+
+  private async disposeInternal(leaseInput: SandboxLease): Promise<void> {
     await this.ensureRecovered();
     const known = this.leases.get(leaseInput.leaseId);
     if (!known) throw new Error("Sandbox lease tidak dikenal.");
@@ -325,6 +456,17 @@ export class SandboxRunnerService implements SandboxRunner {
   }
 
   async fenceProjectRuns(input: {
+    ownerWorkspaceKey: string;
+    projectId: string;
+  }): Promise<void> {
+    return this.trackOperation(
+      "fenceProjectRuns",
+      () => this.fenceProjectRunsInternal(input),
+      true,
+    );
+  }
+
+  private async fenceProjectRunsInternal(input: {
     ownerWorkspaceKey: string;
     projectId: string;
   }): Promise<void> {
@@ -448,7 +590,7 @@ export class SandboxRunnerService implements SandboxRunner {
     );
     for (const lease of expired) {
       try {
-        await this.dispose(lease);
+        await this.disposeInternal(lease);
       } catch {
         // Failed cleanup remains admitted and blocks new work fail-closed.
       }
@@ -570,6 +712,91 @@ export class SandboxRunnerService implements SandboxRunner {
         failures,
         "Recovery SandboxRunner belum membuktikan semua cancellation fence.",
       );
+    }
+  }
+
+  private async drainInternal(): Promise<void> {
+    await this.waitForTrackedOperations();
+    await this.ensureRecovered();
+    const failures: unknown[] = [];
+    await this.exclusiveAdmission(async () => {
+      const durable = await this.journal.list();
+      this.replaceRecordsFromJournal(durable);
+      for (const initial of durable) {
+        try {
+          await this.exclusive(initial.leaseId, async () => {
+            const current = this.records.get(initial.leaseId);
+            if (!current) return;
+            const disposing = await this.transitionToDisposing(
+              current,
+              "shutdown_drain",
+            );
+            await this.fenceAndRemove(disposing, "shutdown drain dispose");
+          });
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+    });
+    const unresolved = await this.journal.list();
+    this.replaceRecordsFromJournal(unresolved);
+    if (failures.length > 0 || unresolved.length > 0) {
+      throw new AggregateError(
+        failures,
+        "Shutdown SandboxRunner belum membuktikan semua cancellation fence.",
+      );
+    }
+    this.drained = true;
+  }
+
+  private async waitForTrackedOperations(): Promise<void> {
+    while (this.inFlightOperations.size > 0) {
+      await Promise.allSettled([...this.inFlightOperations]);
+    }
+  }
+
+  private trackOperation<T>(
+    operationName: string,
+    operation: (signal: AbortSignal) => Promise<T>,
+    allowAfterStop = false,
+  ): Promise<T> {
+    if (this.closed) {
+      return Promise.reject(new Error("SandboxRunner sudah ditutup."));
+    }
+    if (this.maintenanceSealed) {
+      return Promise.reject(
+        new Error(`SandboxRunner drain menolak operasi ${operationName}.`),
+      );
+    }
+    if (!allowAfterStop && !this.acceptingOperations) {
+      return Promise.reject(
+        new Error(`SandboxRunner admission berhenti; operasi ${operationName} ditolak.`),
+      );
+    }
+    const controller = new AbortController();
+    this.inFlightControllers.add(controller);
+    const pending = Promise.resolve().then(() => operation(controller.signal));
+    this.inFlightOperations.add(pending);
+    pending.finally(() => {
+      this.inFlightOperations.delete(pending);
+      this.inFlightControllers.delete(controller);
+    }).catch(() => undefined);
+    return pending;
+  }
+
+  private replaceRecordsFromJournal(
+    records: readonly SandboxLeaseJournalRecord[],
+  ): void {
+    this.records.clear();
+    for (const record of records) this.records.set(record.leaseId, record);
+    for (const leaseId of [...this.leases.keys()]) {
+      if (!this.records.has(leaseId)) this.leases.delete(leaseId);
+    }
+    for (const leaseId of [...this.artifacts.keys()]) {
+      if (!this.records.has(leaseId)) this.artifacts.delete(leaseId);
+    }
+    for (const leaseId of [...this.volatileQuarantine]) {
+      if (!this.records.has(leaseId)) this.volatileQuarantine.delete(leaseId);
     }
   }
 
@@ -1411,4 +1638,11 @@ function abortError(): Error {
   const error = new Error("Eksekusi sandbox dibatalkan.");
   error.name = "AbortError";
   return error;
+}
+
+function anyAbortSignal(
+  input: AbortSignal | undefined,
+  lifecycle: AbortSignal,
+): AbortSignal {
+  return input ? AbortSignal.any([input, lifecycle]) : lifecycle;
 }

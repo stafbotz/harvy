@@ -7,10 +7,10 @@ Refreshed: 2026-08-13
 - Product capability baseline: working tree fondasi ProjectWorkspace/Coding
   Phase G–J di atas commit dasar `f29b143` (10 Agustus 2026), diverifikasi
   ulang 13 Agustus 2026.
-- Product gates: `npm run check` PASS; `npm test` PASS, 1.082 test dalam 134
+- Product gates: `npm run check` PASS; `npm test` PASS, 1.087 test dalam 134
   suite, 0 gagal.
-- Context system: `npm run context:check` PASS; output 5.332 byte dengan
-  estimasi 1.333 token.
+- Context system: `npm run context:check` PASS; output 5.462 byte dengan
+  estimasi 1.366 token.
 
 ## Recent material changes
 
@@ -18,7 +18,10 @@ Refreshed: 2026-08-13
   revision/rollback, quota+retention, ACL/CAS, project-memory lifecycle, serta
   tombstone-first deletion saga yang mem-fence run/sandbox dan menghapus
   evidence/run/GitHub-local/memory/payload secara resumable.
-- Sandbox policy dengan content-addressed snapshot/artifact protocol dan durable lease journal/recovery, CodingRun
+- Sandbox policy dengan content-addressed snapshot/artifact protocol, durable
+  lease journal/recovery, serta lifecycle eksplisit `start/stop/drain/close`
+  yang menutup admission dan mem-fence seluruh lease sebelum journal ditutup;
+  CodingRun
   single-writer dengan map/plan/task-review evidence dan commit recovery, serta
   local-git/GitHub exact-effect + Git object-bundle reconciliation tersedia
   sebagai service/policy default-off. Client HTTP strict yang mendukung

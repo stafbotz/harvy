@@ -51,6 +51,11 @@ container yang dapat membuktikan isolasi nyata.
    yang dikenal sensitif maupun menyerupai credential ditolak tanpa menyalin
    nama/nilai tersebut ke error. Ini defense-in-depth, bukan bukti bahwa semua
    bentuk secret arbitrer atau encoded dapat dikenali.
+10. Runtime memakai lifecycle eksplisit. `start` menuntaskan recovery journal
+    sebelum health/readiness; `stop` menutup admission sinkron; `drain` menunggu
+    operasi yang sudah diterima lalu mem-fence semua record; `close` baru
+    menutup journal setelah drain kosong. Kegagalan fence mempertahankan record
+    `disposing` dan menggagalkan shutdown bersih agar ID exact dapat di-retry.
 
 ## Konsekuensi
 

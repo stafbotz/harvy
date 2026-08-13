@@ -57,6 +57,10 @@ ACK; adapter SQLite memberi CAS lintas proses. Default tetap unavailable tanpa
 host fallback. Snapshot dialirkan sebagai bundle content-addressed tanpa host
 path; execute mengikat operation/request digest, dan artifact byte diverifikasi
 size+hash sebelum menjadi evidence.
+Lifecycle runtime eksplisit kini menuntaskan recovery sebelum readiness,
+menutup admission secara sinkron, menunggu operasi aktif saat drain, mem-fence
+seluruh record, dan baru menutup journal setelah semua ACK exact. Fence gagal
+mempertahankan record `disposing` agar shutdown tidak mengarang keberhasilan.
 Penghapusan project kini memakai tombstone durable sebelum cleanup. Semua
 jalur project/run gagal tertutup setelah request; saga yang dapat dilanjutkan
 memasang fence pada operasi provider dan seluruh lease sandbox project,
@@ -110,8 +114,8 @@ Watchdog AgentHarness mengatribusikan `AbortError` ke owner deadline yang sudah
 dipilih sehingga tie invocation/RunBudget tidak berubah karena scheduler load.
 Semua capability baru default-off.
 
-Verified: `npm run check` PASS; tes terarah G–J/authority/HTTP PASS, 133 test
-dalam 15 suite; `npm test` PASS, 1.082 test dalam 134 suite, 0 gagal;
+Verified: `npm run check` PASS; tes terarah G–J/authority/HTTP PASS, 138 test
+dalam 15 suite; `npm test` PASS, 1.087 test dalam 134 suite, 0 gagal;
 `npm run context:check` PASS. Tes mencakup malicious
 archive, tamper/quota, tenant/admission/watchdog, writer/validator/commit race,
 stale zombie, structured guard/escaped source, strict HTTP proof/stream,

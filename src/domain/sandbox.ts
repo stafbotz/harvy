@@ -169,6 +169,8 @@ export interface SandboxLeaseJournal {
     leaseId: string,
     expectedRevision: number,
   ): Promise<SandboxLeaseJournalRemoveResult>;
+  /** Optional lifecycle hook for adapters that own a database handle. */
+  close?(): void | Promise<void>;
 }
 
 export interface SandboxHealth {
@@ -203,6 +205,14 @@ export interface SandboxRunner {
     ownerWorkspaceKey: string;
     projectId: string;
   }): Promise<void>;
+}
+
+/** App-owned lifecycle; capability consumers only receive `SandboxRunner`. */
+export interface SandboxRunnerLifecycle {
+  start(): Promise<SandboxHealth>;
+  stop(): void;
+  drain(): Promise<void>;
+  close(): Promise<void>;
 }
 
 /** Dependency download is a different capability and never implicit egress. */

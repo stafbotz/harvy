@@ -20,7 +20,10 @@ Refreshed: 2026-08-13
   bundle snapshot content-addressed tanpa host path, operation/request digest,
   late-allocation cleanup, queued-abort guard, quarantine lease ambigu,
   artifact stream cap+hash verification, monotonic deadline, durable write-ahead lifecycle, startup
-  cancellation fence, ACK-lost reconciliation, adapter SQLite lintas proses,
+  cancellation fence, ACK-lost reconciliation, lifecycle eksplisit
+  `start/stop/drain/close` yang menutup admission, menunggu operasi aktif,
+  mem-fence seluruh record, dan baru menutup journal setelah ACK exact,
+  adapter SQLite lintas proses,
   opaque execution/artifact ID bebas credential, serta default transport yang
   gagal tertutup. Path/content snapshot dan argv yang sensitif atau menyerupai
   credential ditolak sebelum callback/transport. Client HTTP strict dan default-off mengikat protocol,
@@ -100,6 +103,6 @@ Refreshed: 2026-08-13
 ## Bukti
 
 - `npm run check` PASS.
-- Tes terarah G–J/authority/HTTP PASS, 133 test dalam 15 suite.
-- `npm test` PASS, 1.082 test dalam 134 suite, 0 gagal.
+- Tes terarah G–J/authority/HTTP PASS, 138 test dalam 15 suite.
+- `npm test` PASS, 1.087 test dalam 134 suite, 0 gagal.
 - Belum ada live isolation test, GitHub App test, provider test, atau kanal E2E.

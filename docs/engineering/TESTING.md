@@ -29,7 +29,7 @@ npm test
 Perintah dianggap lulus hanya jika exit code `0` dan tidak ada test gagal.
 
 Baseline working tree fondasi ProjectWorkspace/Coding Phase G–J pada 13 Agustus
-2026 adalah **1.082 test lulus dalam 134 suite**, diverifikasi dengan `npm test`
+2026 adalah **1.087 test lulus dalam 134 suite**, diverifikasi dengan `npm test`
 (build TypeScript ikut di dalamnya). Angka ini tidak mencakup provider
 embedding, runner isolation, GitHub App, atau kanal live.
 
@@ -207,7 +207,7 @@ npm run build
 node --test --test-concurrency=1 dist/tests/safe-zip.test.js dist/tests/project-workspace-service.test.js dist/tests/project-memory-service.test.js dist/tests/sandbox-runner-service.test.js dist/tests/coding-run-engine.test.js dist/tests/coding-run-coordinator.test.js dist/tests/coding-agent-executors.test.js dist/tests/workspace-coding-controller.test.js dist/tests/github-broker.test.js dist/tests/github-installation-service.test.js dist/tests/project-deletion-coordinator.test.js dist/tests/workspace-authority-service.test.js dist/tests/http-local-git-transport.test.js dist/tests/http-sandbox-transport.test.js dist/tests/http-github-broker-transport.test.js
 ```
 
-Pada 13 Agustus 2026, gate terarah ini lulus **133 test dalam 15 suite**.
+Pada 13 Agustus 2026, gate terarah ini lulus **138 test dalam 15 suite**.
 
 Tes ini wajib mengunci malicious ZIP/path/device/link/bomb/magic, immutable
 snapshot+tamper, quota fisik termasuk working copy, crash-recovery trash,
@@ -216,7 +216,9 @@ snapshot bundle content-addressed tanpa host path, exact operation/request
 digest, bounded artifact download+hash,
 late-allocation cleanup, queued abort, ambiguous-lease quarantine,
 write-ahead journal, SQLite cross-instance CAS, restart fence, ACK-lost
-reconciliation, monotonic watchdog, artifact/dispose fail-closed;
+reconciliation, explicit startup recovery, stop-admission, drain yang menunggu
+operasi aktif dan mem-fence seluruh lease, close-after-fence idempoten,
+monotonic watchdog, artifact/dispose fail-closed;
 strict trust-domain HTTP origin/protocol/audience/proof, response cap, no
 redirect, stream size+hash, early response, abort, exact echo, serta tidak ada
 Authorization/provider credential/host path;

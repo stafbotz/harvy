@@ -593,6 +593,13 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   ACK store yang hilang sesudah commit wajib di-reload; journal JSON Windows
   bukan bukti power-loss durability, sehingga jalur live memakai transactional
   journal seperti SQLite `synchronous=FULL`.
+- **Lifecycle runtime sandbox gagal tertutup.** `start` wajib menyelesaikan
+  recovery seluruh journal sebelum readiness diperiksa. `stop` menutup
+  admission secara sinkron; `drain` menolak operasi baru, menunggu operasi yang
+  sudah diterima, lalu memasang exact cancellation fence untuk setiap record.
+  Journal yang memiliki handle hanya boleh ditutup setelah drain kosong; fence
+  gagal mempertahankan record `disposing` dan membuat drain gagal agar retry
+  dapat memakai ID yang sama.
 - **Konten sandbox melewati protocol content-addressed, bukan mount host.**
   Allocation membawa descriptor snapshot versioned lalu mengonsumsi seluruh
   stream bundle yang ukuran dan hash-nya diverifikasi. Setiap eksekusi memakai

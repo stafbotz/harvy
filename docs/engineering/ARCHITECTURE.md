@@ -228,6 +228,11 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   berschema tertutup dan state-bound. Bundle hanya mengiklankan sandbox setelah
   health `isolated-linux` positif dan local-git setelah bounded positive health
   dari instance `LocalGitService` yang sama; GitHub tidak model-callable.
+  `SandboxRunnerService` sendiri menyediakan lifecycle
+  `start/stop/drain/close`: startup memulihkan journal tanpa reattach, shutdown
+  menutup admission dan mem-fence seluruh lease sebelum adapter journal
+  ditutup. Lifecycle ini belum dirangkai ke `app.ts`, sehingga tidak mengubah
+  capability default-off menjadi live.
   `agent-run-retention-worker.ts` menghapus record kedaluwarsa berkala dan
   dapat dihentikan/drain saat shutdown.
 

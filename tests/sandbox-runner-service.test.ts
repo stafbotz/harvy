@@ -798,7 +798,147 @@ describe("SandboxRunner Phase H policy boundary", () => {
     ]);
     await runner.dispose(foreign);
   });
+
+  it("memulai runtime dengan recovery fence sebelum health dinyatakan siap", async () => {
+    const transport = new FakeSandboxTransport();
+    const journal = new MemorySandboxLeaseJournal();
+    const allocating = journalRecord(
+      "sandbox-lease:startup-recovery",
+      "allocating",
+      { ...binding(), runId: "run-startup-recovery" },
+    );
+    await journal.create(allocating);
+    const active = journalRecord(
+      allocating.leaseId,
+      "active",
+      allocating.binding,
+      2,
+    );
+    await journal.save(active, 1);
+    transport.active.add(active.leaseId);
+    let releaseFence!: () => void;
+    transport.disposeGate = new Promise<void>((resolve) => {
+      releaseFence = resolve;
+    });
+
+    const runner = new SandboxRunnerService(transport, journal, {}, () => NOW);
+    let started = false;
+    const starting = runner.start().then((health) => {
+      started = true;
+      return health;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(started, false);
+    releaseFence();
+    const health = await starting;
+
+    assert.equal(health.available, true);
+    assert.deepEqual(transport.disposed, [active.leaseId]);
+    assert.deepEqual(await journal.list(), []);
+  });
+
+  it("memakai start hanya untuk coalescing dan membaca health baru pada retry", async () => {
+    const transport = new FakeSandboxTransport();
+    transport.healthAvailable = false;
+    const runner = new SandboxRunnerService(
+      transport,
+      new MemorySandboxLeaseJournal(),
+      {},
+      () => NOW,
+    );
+
+    assert.equal((await runner.start()).available, false);
+    transport.healthAvailable = true;
+    assert.equal((await runner.start()).available, true);
+  });
+
+  it("menghentikan admission lalu menunggu operasi aktif sebelum drain mem-fence lease", async () => {
+    const transport = new FakeSandboxTransport();
+    const journal = new MemorySandboxLeaseJournal();
+    const runner = new SandboxRunnerService(transport, journal, {}, () => NOW);
+    const lease = await runner.allocate(binding());
+    let releaseExecution!: () => void;
+    transport.executionGate = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    transport.disposeWaitsForExecutionGate = true;
+    const execution = runner.execute(lease, command());
+    const executionRejected = assert.rejects(execution, /dibatalkan/iu);
+    while (transport.commands.length === 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    runner.stop();
+    await assert.rejects(
+      runner.allocate({ ...binding(), runId: "run-after-stop" }),
+      /admission berhenti/iu,
+    );
+    await assert.rejects(
+      runner.captureSnapshot(lease),
+      /admission berhenti/iu,
+    );
+
+    let drained = false;
+    const draining = runner.drain().then(() => {
+      drained = true;
+    });
+    await assert.rejects(runner.dispose(lease), /drain menolak operasi dispose/iu);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(drained, false);
+    assert.equal(transport.disposed.includes(lease.leaseId), false);
+
+    releaseExecution();
+    await executionRejected;
+    await draining;
+    assert.equal(drained, true);
+    assert.equal(transport.disposed.includes(lease.leaseId), true);
+    assert.deepEqual(await journal.list(), []);
+  });
+
+  it("mempertahankan record disposing bila drain gagal dan dapat retry exact fence", async () => {
+    const transport = new FakeSandboxTransport();
+    const journal = new MemorySandboxLeaseJournal();
+    const runner = new SandboxRunnerService(transport, journal, {}, () => NOW);
+    const lease = await runner.allocate(binding());
+    transport.failDisposeIds.add(lease.leaseId);
+
+    await assert.rejects(runner.drain(), /cancellation fence/iu);
+    const retained = await journal.list();
+    assert.equal(retained.length, 1);
+    assert.equal(retained[0]?.state, "disposing");
+
+    transport.failDisposeIds.delete(lease.leaseId);
+    await runner.drain();
+    assert.deepEqual(await journal.list(), []);
+    assert.equal(transport.disposed.includes(lease.leaseId), true);
+  });
+
+  it("tidak menutup journal saat fence gagal lalu menggabungkan retry close concurrent", async () => {
+    const transport = new FakeSandboxTransport();
+    const journal = new ClosingMemorySandboxLeaseJournal();
+    const runner = new SandboxRunnerService(transport, journal, {}, () => NOW);
+    const lease = await runner.allocate(binding());
+    transport.failDisposeIds.add(lease.leaseId);
+
+    await assert.rejects(runner.close(), /cancellation fence/iu);
+    assert.equal(journal.closeCalls, 0);
+    transport.failDisposeIds.delete(lease.leaseId);
+
+    await Promise.all([runner.close(), runner.close()]);
+
+    assert.equal(transport.disposed.includes(lease.leaseId), true);
+    assert.equal(journal.closeCalls, 1);
+    await assert.rejects(runner.health(), /sudah ditutup/iu);
+  });
 });
+
+class ClosingMemorySandboxLeaseJournal extends MemorySandboxLeaseJournal {
+  closeCalls = 0;
+
+  close(): void {
+    this.closeCalls += 1;
+  }
+}
 
 class AckLostJournal extends MemorySandboxLeaseJournal {
   failOnState: SandboxLeaseJournalRecord["state"] | null = null;
@@ -839,10 +979,13 @@ class FakeSandboxTransport implements SandboxTransport {
   resultRequestDigestOverride: string | null = null;
   allocateDelayMs = 0;
   hangHealth = false;
+  healthAvailable = true;
   blockHealthMs = 0;
   blockExecuteMs = 0;
   allocationGate: Promise<void> | null = null;
   executionGate: Promise<void> | null = null;
+  disposeGate: Promise<void> | null = null;
+  disposeWaitsForExecutionGate = false;
   artifacts: SandboxArtifactReference[] = [];
   artifactContents = new Map<string, Buffer>();
   snapshotBytes = 0;
@@ -859,10 +1002,10 @@ class FakeSandboxTransport implements SandboxTransport {
       });
     }
     return {
-      available: true,
-      runtime: "isolated-linux",
+      available: this.healthAvailable,
+      runtime: this.healthAvailable ? "isolated-linux" : null,
       checkedAt: NOW.toISOString(),
-      reason: null,
+      reason: this.healthAvailable ? null : "runner unavailable",
     };
   }
 
@@ -976,6 +1119,8 @@ class FakeSandboxTransport implements SandboxTransport {
   }
 
   async cancelAndDispose(leaseId: string) {
+    await this.disposeGate;
+    if (this.disposeWaitsForExecutionGate) await this.executionGate;
     if (this.failDispose || this.failDisposeIds.has(leaseId)) {
       throw new Error("dispose failed");
     }
