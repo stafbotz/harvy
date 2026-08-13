@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHmac, randomUUID } from "node:crypto";
 import type {
   WorkspaceAuthorityState,
@@ -14,6 +15,21 @@ import type { WorkspaceAgentScope } from "../harness/scope.js";
 const MAX_NAME_CHARACTERS = 80;
 const MAX_KEY_CHARACTERS = 512;
 const MIN_PRINCIPAL_SECRET_CHARACTERS = 32;
+// File-backed authority is a single-process adapter. Sharing this queue across
+// service instances makes an authorized local effect linearizable with ACL
+// mutations in that supported scope.
+const WORKSPACE_AUTHORITY_QUEUES = new Map<string, Promise<void>>();
+const WORKSPACE_AUTHORITY_REALMS = new WeakMap<WorkspaceRepository, string>();
+let workspaceAuthorityRealmSequence = 0;
+interface HeldWorkspaceAuthority {
+  active: boolean;
+  children: Set<Promise<unknown>>;
+  scope: WorkspaceAgentScope;
+  permissions: ReadonlySet<WorkspacePermission>;
+}
+const WORKSPACE_AUTHORITY_CONTEXT = new AsyncLocalStorage<
+  ReadonlyMap<string, HeldWorkspaceAuthority>
+>();
 
 const ROLE_PERMISSIONS: Readonly<Record<WorkspaceRole, readonly WorkspacePermission[]>> =
   Object.freeze({
@@ -26,6 +42,17 @@ const ROLE_PERMISSIONS: Readonly<Record<WorkspaceRole, readonly WorkspacePermiss
       "run.cancel.any",
       "membership.manage",
       "workspace.manage",
+      "code.read",
+      "code.write",
+      "sandbox.execute",
+      "sandbox.network",
+      "git.commit",
+      "github.read",
+      "github.push",
+      "github.pr.create",
+      "github.pr.review",
+      "github.pr.merge",
+      "github.workflow.write",
     ]),
     admin: permissions([
       "workspace.view",
@@ -35,6 +62,14 @@ const ROLE_PERMISSIONS: Readonly<Record<WorkspaceRole, readonly WorkspacePermiss
       "run.cancel.own",
       "run.cancel.any",
       "membership.manage",
+      "code.read",
+      "code.write",
+      "sandbox.execute",
+      "git.commit",
+      "github.read",
+      "github.push",
+      "github.pr.create",
+      "github.pr.review",
     ]),
     editor: permissions([
       "workspace.view",
@@ -42,10 +77,17 @@ const ROLE_PERMISSIONS: Readonly<Record<WorkspaceRole, readonly WorkspacePermiss
       "artifact.write",
       "run.create",
       "run.cancel.own",
+      "code.read",
+      "code.write",
+      "sandbox.execute",
+      "git.commit",
+      "github.read",
     ]),
     viewer: permissions([
       "workspace.view",
       "artifact.read",
+      "code.read",
+      "github.read",
     ]),
   });
 
@@ -105,13 +147,16 @@ export function permissionsForWorkspaceRole(
  * authority.
  */
 export class WorkspaceAuthorityService {
-  private readonly queues = new Map<string, Promise<void>>();
+  private readonly queues = WORKSPACE_AUTHORITY_QUEUES;
+  private readonly realm: string;
 
   constructor(
     private readonly repository: WorkspaceRepository,
     private readonly now: () => Date = () => new Date(),
     private readonly makeId: () => string = randomUUID,
-  ) {}
+  ) {
+    this.realm = workspaceAuthorityRealm(repository);
+  }
 
   async createWorkspace(
     displayName: string,
@@ -178,6 +223,84 @@ export class WorkspaceAuthorityService {
   ): Promise<boolean> {
     const current = await this.currentMembership(scope);
     return current !== null && ROLE_PERMISSIONS[current.role].includes(permission);
+  }
+
+  async withPermission<T>(
+    scope: WorkspaceAgentScope,
+    permission: WorkspacePermission,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return this.withPermissions(scope, [permission], operation);
+  }
+
+  async withPermissions<T>(
+    scope: WorkspaceAgentScope,
+    permissionsInput: readonly WorkspacePermission[],
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const permissions = [...new Set(permissionsInput)];
+    if (permissions.length < 1) {
+      throw new Error("Guard authority workspace memerlukan sedikitnya satu permission.");
+    }
+    const contextKey = this.queueKey(scope.workspaceKey);
+    const held = WORKSPACE_AUTHORITY_CONTEXT.getStore()?.get(contextKey);
+    if (held?.active) {
+      if (
+        !sameScope(scope, held.scope) ||
+        permissions.some((permission) => !held.permissions.has(permission))
+      ) {
+        throw new Error("Guard authority workspace nested tidak cocok atau tidak berizin.");
+      }
+      const child = Promise.resolve().then(operation);
+      held.children.add(child);
+      void child.catch(() => undefined);
+      void child.then(
+        () => held.children.delete(child),
+        () => held.children.delete(child),
+      );
+      return child;
+    }
+    return this.exclusive(scope.workspaceKey, async () => {
+      const state = await this.repository.loadAuthorityState(scope.workspaceKey);
+      const membership = state && state.workspace.disabledAt === null
+        ? currentActor(state, scope)
+        : null;
+      const allowed = membership
+        ? new Set<WorkspacePermission>(ROLE_PERMISSIONS[membership.role])
+        : null;
+      const denied = permissions.find((permission) => !allowed?.has(permission));
+      if (!membership || !allowed || denied) {
+        throw new Error(`Izin workspace ${denied ?? permissions[0]} tidak tersedia atau basi.`);
+      }
+      const parent = WORKSPACE_AUTHORITY_CONTEXT.getStore();
+      const context = new Map(parent ?? []);
+      const lease: HeldWorkspaceAuthority = {
+        active: true,
+        children: new Set(),
+        scope: workspaceScope(state!.workspace, membership),
+        permissions: allowed,
+      };
+      context.set(contextKey, lease);
+      let value: T | undefined;
+      let failure: unknown;
+      let failed = false;
+      try {
+        value = await WORKSPACE_AUTHORITY_CONTEXT.run(context, operation);
+      } catch (error) {
+        failed = true;
+        failure = error;
+      } finally {
+        await drainAuthorityChildren(lease.children);
+        lease.active = false;
+        if (failed) {
+          // The root callback may have awaited and deliberately transformed a
+          // child failure. Preserve that domain error after every child has
+          // been drained; the lock-safety property is the drain itself.
+          throw failure;
+        }
+      }
+      return value as T;
+    });
   }
 
   async isCurrent(scope: WorkspaceAgentScope): Promise<boolean> {
@@ -320,22 +443,54 @@ export class WorkspaceAuthorityService {
     workspaceKey: string,
     operation: () => Promise<T>,
   ): Promise<T> {
-    const previous = this.queues.get(workspaceKey) ?? Promise.resolve();
+    const queueKey = this.queueKey(workspaceKey);
+    if (WORKSPACE_AUTHORITY_CONTEXT.getStore()?.get(queueKey)?.active) {
+      throw new Error("Mutasi authority tidak boleh dijalankan re-entrant di dalam guard effect.");
+    }
+    const previous = this.queues.get(queueKey) ?? Promise.resolve();
     let release: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const tail = previous.then(() => gate, () => gate);
-    this.queues.set(workspaceKey, tail);
+    this.queues.set(queueKey, tail);
     await previous.catch(() => undefined);
     try {
       return await operation();
     } finally {
       release?.();
-      if (this.queues.get(workspaceKey) === tail) {
-        this.queues.delete(workspaceKey);
+      if (this.queues.get(queueKey) === tail) {
+        this.queues.delete(queueKey);
       }
     }
+  }
+
+  private queueKey(workspaceKey: string): string {
+    return `${this.realm}\0${workspaceKey}`;
+  }
+}
+
+function workspaceAuthorityRealm(repository: WorkspaceRepository): string {
+  if (repository.coordinationKey !== undefined) {
+    if (!repository.coordinationKey || repository.coordinationKey.length > 2048 ||
+      /[\0\r\n]/u.test(repository.coordinationKey)) {
+      throw new Error("Coordination key WorkspaceRepository tidak sah.");
+    }
+    return `authority-store:${repository.coordinationKey}`;
+  }
+  const current = WORKSPACE_AUTHORITY_REALMS.get(repository);
+  if (current) return current;
+  workspaceAuthorityRealmSequence += 1;
+  const created = `authority-realm-${workspaceAuthorityRealmSequence}`;
+  WORKSPACE_AUTHORITY_REALMS.set(repository, created);
+  return created;
+}
+
+async function drainAuthorityChildren(
+  children: Set<Promise<unknown>>,
+): Promise<void> {
+  while (children.size > 0) {
+    await Promise.allSettled([...children]);
   }
 }
 

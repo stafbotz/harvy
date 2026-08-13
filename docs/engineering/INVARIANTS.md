@@ -543,6 +543,149 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   diretensi, dengan penarikan consent/penghapusan sebagai jalur hapus lebih
   cepat. Perubahan jenis serta horizon data ini terikat `CONSENT_VERSION` 7.
 
+## ProjectWorkspace dan archive
+
+- **Workspace ACL bukan project content.** `WorkspaceRecord` hanya authority;
+  `ProjectWorkspace` mengikat owner, source, revision, immutable snapshot, git
+  state, quota, dan namespace memory project. Setiap read/write harus
+  merevalidasi scope+ACL epoch dan project revision.
+- **Critical section authority dan project harus terstruktur.** Re-entrant
+  operation yang diterima wajib selesai sebelum root guard melepas antrean;
+  descendant async yang lolos sesudah guard ditutup harus masuk ulang dan
+  merevalidasi ACL/revision. Guard authority terikat repository realm, bukan
+  hanya `workspaceKey`, sehingga tidak dapat dipakai lintas store.
+- **Snapshot source bukan bearer capability.** Stream snapshot hanya boleh
+  dibuka sekali di dalam callback yang masih memegang guard ACL+project exact.
+  Source yang lolos dari callback, scope yang dicabut, dan disposal working
+  copy tanpa guard harus gagal tertutup.
+- **Archive adalah data tidak tepercaya dan tidak pernah dieksekusi.** Hanya ZIP
+  stored/deflate yang lolos parser internal boleh dipromosikan. Traversal,
+  absolute/ambiguous path, VCS metadata, Unicode/case/device collision,
+  link/special file, encryption/Zip64, nested archive, bomb, checksum/header
+  mismatch, atau limit aktual yang terlewati wajib gagal tertutup.
+- **Snapshot content-addressed tidak boleh berubah.** Sebelum working copy atau
+  sandbox materialization, tree+manifest+mode read-only harus di-hash ulang.
+  Commit/replacement/rollback membuat revision baru; base aktif tidak ditimpa.
+  Storage root harus terpisah dari root proses dan operasi terkelola menolak
+  parent symlink. Quota owner/project/revision/staged snapshot berlaku sebelum
+  pertumbuhan baru dan unreferenced snapshot dipangkas setelah commit.
+- **Penghapusan project dimulai dari tombstone durable.** Tombstone dibuat
+  sebelum cleanup, langsung menyembunyikan dan memblokir seluruh jalur publik,
+  serta dipertahankan setelah completion agar ID tidak dapat dihidupkan lagi.
+  Hanya coordinator dengan deletion ID, owner, project-created-at, revision,
+  dan urutan step exact yang boleh memakai jalur cleanup. Saga memasang fence
+  run/provider/sandbox, lalu menghapus seluruh evidence project, record run,
+  metadata GitHub lokal, memory, dan payload; pending commit atau receipt remote
+  `unknown` menahan cleanup. Penghapusan lokal tidak pernah menghapus remote.
+
+## Sandbox dan CodingRun
+
+- **VirtualTerminal bukan SandboxRunner.** Kode repository hanya boleh berjalan
+  melalui backend `isolated-linux` terpisah. Tidak ada host-shell fallback.
+  Binding owner+project+snapshot+revision+run, network-off, no-secret/no-host,
+  unprivileged/read-only root, syscall/capability policy, CPU/memory/disk/PID,
+  admission, lease, watchdog, output/artifact cap adalah code-owned. Capability
+  tetap unavailable sampai backend nyata membuktikannya.
+- **Lease sandbox adalah write-ahead lifecycle durable.** `allocating` disimpan
+  sebelum transport; timeout, output/snapshot invalid, atau hasil ambigu
+  mengarantina lalu memindahkan record ke `disposing`. Restart memasang exact
+  cancellation fence tanpa reattach dan baru menghapus record setelah ACK.
+  ACK store yang hilang sesudah commit wajib di-reload; journal JSON Windows
+  bukan bukti power-loss durability, sehingga jalur live memakai transactional
+  journal seperti SQLite `synchronous=FULL`.
+- **Konten sandbox melewati protocol content-addressed, bukan mount host.**
+  Allocation membawa descriptor snapshot versioned lalu mengonsumsi seluruh
+  stream bundle yang ukuran dan hash-nya diverifikasi. Setiap eksekusi memakai
+  operation ID dan request digest buatan Harvy yang wajib di-echo. Artifact
+  hanya dapat diunduh dari descriptor exact yang pernah diterbitkan lease,
+  dengan cap ukuran dan verifikasi SHA-256 sebelum menjadi evidence.
+- **Boundary sandbox menolak input sensitif sebelum transport.** Path atau isi
+  snapshot dan argv yang dikenal sensitif atau menyerupai credential gagal
+  tertutup sebelum callback bundle/execute. Scanner konservatif bukan bukti
+  semua secret arbitrer atau encoded sudah terdeteksi.
+- **Client HTTP bukan bukti trust domain.** Client sandbox/local-git/GitHub
+  memakai origin+audience tetap, proof service yang mengikat seluruh request,
+  schema/echo tertutup, AbortSignal, no-redirect, serta stream size+hash. Core
+  tetap memiliki deadline; mode
+  loopback hanya fixture dev dan tidak boleh mengaktifkan capability. Backend
+  tetap wajib membuktikan isolation/idempotency/quiescence sendiri; secret
+  proof service tidak boleh dipakai sebagai credential GitHub/provider.
+- **Satu project hanya mempunyai satu writer coding.** Patch hanya lewat engine
+  queue/CAS/budget dengan path+hash precondition. Worker mendapat view baca yang
+  terserialisasi terhadap patch multi-file. Semua revisi, patch, test, finalize,
+  dan cancel memerlukan `code.write`; viewer hanya boleh membaca. Project/
+  instruction revision basi hanya boleh diterminalkan sambil memegang
+  revalidasi `code.write` dalam antrean authority workspace yang sama pada
+  adapter lokal satu proses. Deployment multi-process memerlukan authority
+  transactional bersama. Revision basi
+  men-terminalkan atau men-stale-kan hasil; ia tidak boleh mengunci project
+  sebagai zombie.
+- **Completion berasal dari bukti exact.** Receipt validator mengikat task
+  brief/acceptance/constraints, command+policy, instruction revision, working
+  snapshot, sandbox execution, exit, dan artifact. Required validator yang
+  tidak dijalankan/gagal/stale/infrastructure error, diff kosong/berlebih,
+  binary/generated surprise, atau secret-like content mencegah completion.
+  Brief/constraint/plan/path/source yang menyerupai credential ditolak sebelum
+  persistence atau panggilan validator/reviewer. Execution/artifact ID dari
+  sandbox wajib opaque dan credential-free lalu divalidasi ulang oleh engine
+  serta repository; file teks besar tidak boleh lolos tanpa secret scan.
+- **Required validator evidence harus durable sebelum lease dibuang.** Byte
+  evidence disalin dan diverifikasi size+hash ke store content-addressed,
+  diikat ke exact run/execution/artifact, lalu diverifikasi ulang saat finalize
+  dan commit recovery. Referensi kosong, hilang, atau tampered mencegah
+  completion. Project deletion hanya menghapus evidence setelah operasi run dan
+  backend sandbox benar-benar fenced.
+- **Map, plan, dan task review juga evidence.** Completion wajib mengikat
+  repository-map, plan, request/objective/acceptance/constraint, diff, dan
+  receipt validator pada instruction revision serta snapshot yang sama.
+- **Coordinator coding berbatas secara durable.** Decision budget kumulatif
+  tidak reset antar invocation; `waiting_input` menghentikan active-time clock.
+  Setiap action memakai state revision exact, dan provider call diregistrasi
+  sebelum project lock dilepas agar deletion dapat abort lalu menunggu
+  quiescence dengan deadline fail-closed.
+- **Commit barrier menutup semua mutasi lain.** Pending workspace commit tidak
+  boleh ditimpa oleh patch/test/finalize kedua. Reconciliation menunggu writer
+  horizon dan hanya mengakui exact snapshot revision; hasil ambigu tidak
+  diulang otomatis.
+
+## Local git dan GitHub broker
+
+- **Commit lokal bukan push.** Local-git effect memakai operation ID
+  deterministik, exact binding, bot identity transparan, dan reconcile sebelum
+  retry. Diff/log/status wajib membawa provenance project yang sama. Commit
+  receipt wajib membawa descriptor object bundle Git content-addressed yang
+  mengikat commit, parent, dan tree; descriptor/byte stream tidak boleh membawa
+  host path atau credential.
+  Commit lanjutan pada branch Harvy memakai immediate parent/head remote branch
+  sebelumnya sebagai expected target dan tetap melakukan update non-force;
+  remote default-base freshness tetap diperiksa terpisah.
+- **Credential GitHub hanya berada di broker trust domain.** Harvy, sandbox,
+  project metadata, approval, receipt, prompt, dan log tidak boleh membawa App
+  key, installation token, atau PAT.
+- **Publish adalah irisan authority dan exact remote state.** ACL terkini,
+  installation repository access, project/run/instruction revision, base
+  commit, target ref head, capability policy, dan approval exact yang belum
+  kedaluwarsa harus semuanya cocok pada saat efek. Unknown field ditolak.
+- **Remote effect dipisah dan direkonsiliasi.** Branch create, exact non-force
+  push, workflow write, dan draft PR mempunyai approval/receipt sendiri.
+  Workflow memerlukan permission + approval terpisah dan App permission fresh.
+  Approval berasal dari confirmation controller exact-bound; proof tidak masuk
+  ledger. Effect ID deterministik; receipt `unknown` ditulis sebelum boundary
+  dan tidak dikirim ulang. `not_committed` hanya sah setelah worker lama
+  quiescent/fenced; AbortSignal client bukan bukti tersebut. Reconciliation
+  exact mengubahnya ke `committed`. V1 menolak default
+  branch, force, deletion/history rewrite, merge/settings/protection, dan
+  workflow write tanpa permission terpisah; PR selalu draft.
+  Exact push juga mengikat descriptor bundle di effect/approval dan broker harus
+  mengonsumsi seluruh stream dengan size+hash cocok sebelum receipt boleh
+  menjadi `committed`; ACK tanpa konsumsi penuh tetap `unknown`.
+- **Konfirmasi publish hanya dari interaction workspace privat.** Grant dan
+  digest approval mengikat interaction ID serta audience `workspace-private`;
+  interaction group atau replay lintas interaction gagal sebelum persistence
+  atau transport. Project deletion mem-purge ledger/selection lokal hanya
+  setelah seluruh receipt `unknown` terminal; remote unlink/delete tetap milik
+  broker credential-owning dan bukan efek saga lokal.
+
 ## Isolasi data
 
 - `ownerId` (Telegram `from.id`) adalah batas isolasi data privat lama. Setiap

@@ -202,7 +202,7 @@ lengkap tetap menjaga urutan dengan balasan yang sudah aktif.
 
 ## Menjalankan
 
-Syarat: Node.js 22 atau lebih baru, token bot dari
+Syarat: Node.js 22.16.0 atau lebih baru, token bot dari
 [@BotFather](https://t.me/BotFather), dan kunci model AI.
 
 ```bash

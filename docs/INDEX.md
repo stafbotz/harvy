@@ -25,6 +25,7 @@ keadaan aktual.
 | `src/whatsapp`, group turn/memory/authority | [`engineering/status/whatsapp.md`](engineering/status/whatsapp.md) |
 | task, reminder, check-in, session, tutoring, time | [`engineering/status/tasks.md`](engineering/status/tasks.md) |
 | memory, history, compaction, file data | [`engineering/status/memory.md`](engineering/status/memory.md) |
+| ProjectWorkspace, safe ZIP, sandbox, CodingRun, local git, GitHub broker | [`engineering/status/coding.md`](engineering/status/coding.md) |
 | triage, review, consent, export/delete, privacy | [`engineering/status/safety-privacy.md`](engineering/status/safety-privacy.md) |
 | Console, control plane, package, quota, cost | [`engineering/status/console.md`](engineering/status/console.md) |
 | provider/fallback, runtime lock, logs, dev runner | [`engineering/status/platform.md`](engineering/status/platform.md) |
@@ -94,6 +95,10 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 | [`ADR-030`](decisions/ADR-030-pencarian-leksikal-episode-lama.md) | FTS leksikal lokal episode lama, provenance, retensi vs attention, dan consent race |
 | [`ADR-031`](decisions/ADR-031-retrieval-memori-semantik-dan-context-pack.md) | semantic retrieval, query plan, Context Pack, consolidation, dan deletion lifecycle |
 | [`ADR-032`](decisions/ADR-032-graph-temporal-turunan.md) | graph temporal derived, provenance, traversal, isolation, dan cascade deletion |
+| [`ADR-033`](decisions/ADR-033-project-workspace-dan-ingestion-archive.md) | ProjectWorkspace, safe archive, immutable snapshot, quota, dan tombstone deletion lifecycle |
+| [`ADR-034`](decisions/ADR-034-sandbox-runner-trust-domain.md) | SandboxRunner trust domain terpisah dan fail-closed |
+| [`ADR-035`](decisions/ADR-035-coding-run-single-writer-dan-bukti.md) | CodingRun single writer, validator evidence, dan commit recovery |
+| [`ADR-036`](decisions/ADR-036-github-app-broker-exact-effect.md) | GitHub App broker, exact effect, approval, dan reconciliation |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.

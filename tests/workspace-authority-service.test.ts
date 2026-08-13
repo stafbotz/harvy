@@ -191,6 +191,123 @@ describe("workspace authority", () => {
     assert.equal(results.filter((result) => result.status === "updated").length, 1);
     assert.equal(results.filter((result) => result.status === "stale").length, 1);
   });
+
+  it("menahan child re-entrant dan merevalidasi descendant yang lolos dari guard", async () => {
+    const repository = new MemoryWorkspaceRepository();
+    let sequence = 0;
+    const serviceA = new WorkspaceAuthorityService(
+      repository,
+      () => NOW,
+      () => `structured-a:${sequence += 1}`,
+    );
+    const serviceB = new WorkspaceAuthorityService(
+      repository,
+      () => NOW,
+      () => `structured-b:${sequence += 1}`,
+    );
+    const ownerPrincipal = principal("structured-owner");
+    const editorPrincipal = principal("structured-editor");
+    const created = await serviceA.createWorkspace("Structured guard", ownerPrincipal);
+    const added = await serviceA.addMember(created.scope, editorPrincipal, "editor");
+    assert.equal(added.status, "updated");
+    if (added.status !== "updated") return;
+    const owner = await serviceA.resolveScope(created.workspace.workspaceKey, ownerPrincipal);
+    const editor = await serviceA.resolveScope(created.workspace.workspaceKey, editorPrincipal);
+    assert.ok(owner);
+    assert.ok(editor);
+
+    const admittedStarted = deferred<void>();
+    const releaseAdmitted = deferred<void>();
+    const releaseLate = deferred<void>();
+    let admitted: Promise<void> = Promise.resolve();
+    let late: Promise<void> = Promise.resolve();
+    let effects = 0;
+    const guarded = serviceA.withPermission(editor, "code.write", async () => {
+      admitted = serviceA.withPermission(editor, "code.write", async () => {
+        admittedStarted.resolve(undefined);
+        await releaseAdmitted.promise;
+        effects += 1;
+      });
+      late = (async () => {
+        await releaseLate.promise;
+        await serviceA.withPermission(editor, "code.write", async () => {
+          effects += 100;
+        });
+      })();
+      await admittedStarted.promise;
+    });
+    await admittedStarted.promise;
+
+    let revoked = false;
+    const revocation = serviceB.removeMember(owner, added.membership.membershipId).then(
+      (result) => {
+        revoked = true;
+        return result;
+      },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(revoked, false);
+
+    releaseAdmitted.resolve(undefined);
+    await guarded;
+    await admitted;
+    assert.equal(effects, 1);
+    assert.equal((await revocation).status, "updated");
+
+    releaseLate.resolve(undefined);
+    await assert.rejects(late, /tidak tersedia atau basi/iu);
+    assert.equal(effects, 1);
+  });
+
+  it("tidak memakai guard dari repository authority lain dengan workspace key sama", async () => {
+    const first = createService();
+    const secondRepository = new MemoryWorkspaceRepository();
+    const created = await first.service.createWorkspace("Realm A", principal("realm-owner"));
+    const second = new WorkspaceAuthorityService(secondRepository, () => NOW, () => "realm-b");
+
+    await assert.rejects(
+      first.service.withPermission(created.scope, "code.write", () =>
+        second.withPermission(created.scope, "code.write", async () => undefined)
+      ),
+      /tidak tersedia atau basi/iu,
+    );
+  });
+
+  it("memisahkan permission coding, sandbox, local git, dan GitHub per role", async () => {
+    const { service } = createService();
+    const ownerPrincipal = principal("coding-owner");
+    const created = await service.createWorkspace("Coding ACL", ownerPrincipal);
+    await service.addMember(created.scope, principal("coding-viewer"), "viewer");
+    const owner = await service.resolveScope(
+      created.workspace.workspaceKey,
+      ownerPrincipal,
+    );
+    const viewer = await service.resolveScope(
+      created.workspace.workspaceKey,
+      principal("coding-viewer"),
+    );
+    assert.ok(owner);
+    assert.ok(viewer);
+    const catalog = createHarvyCapabilityCatalog({
+      activeSurfaces: ["workspace:telegram"],
+      codingWorkspaceInstalled: true,
+      sandboxRunnerInstalled: true,
+      localGitInstalled: true,
+      githubBrokerInstalled: true,
+    });
+    const ownerSnapshot = catalog.snapshot(owner);
+    const viewerSnapshot = catalog.snapshot(viewer);
+
+    assert.equal(entry(ownerSnapshot, "workspace.apply_patch"), true);
+    assert.equal(entry(ownerSnapshot, "sandbox.exec"), true);
+    assert.equal(entry(ownerSnapshot, "git.commit"), true);
+    assert.equal(entry(ownerSnapshot, "github.push_branch"), true);
+    assert.equal(entry(viewerSnapshot, "workspace.tree"), true);
+    assert.equal(entry(viewerSnapshot, "workspace.apply_patch"), false);
+    assert.equal(entry(viewerSnapshot, "sandbox.exec"), false);
+    assert.equal(entry(viewerSnapshot, "git.commit"), false);
+    assert.equal(entry(viewerSnapshot, "github.push_branch"), false);
+  });
 });
 
 class MemoryWorkspaceRepository implements WorkspaceRepository {
@@ -238,4 +355,25 @@ function createService(): {
 
 function principal(id: string) {
   return workspacePrincipal(SECRET, "telegram", id);
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function entry(
+  snapshot: ReturnType<ReturnType<typeof createHarvyCapabilityCatalog>["snapshot"]>,
+  id: string,
+): boolean | undefined {
+  return snapshot.entries.find((candidate) => candidate.id === id)?.available;
 }

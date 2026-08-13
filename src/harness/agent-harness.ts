@@ -1694,12 +1694,17 @@ function abortReason(
   const budgetReason = runBudgetReason(error);
   if (budgetReason) return budgetReason;
   if (error instanceof AgentRunStaleError) return "stale";
+  // `boundedCall` memakai clock monotonic AbortSignal. Timer itu dapat menang
+  // beberapa mikrodetik sebelum wall clock `now()` membulat ke deadline. Pada
+  // AbortError, atribusikan ke owner deadline yang sudah dipilih, bukan pada
+  // pembacaan RunBudget berikutnya yang dapat berubah karena scheduling load.
+  if (error instanceof Error && error.name === "AbortError") {
+    return budgetOwnsDeadline ? "budget_deadline" : "deadline";
+  }
   const overage = runBudget.workOverageReason();
   if (overage) return overage;
   if (runBudget.isTimeExhausted()) return "budget_deadline";
-  return error instanceof Error && error.name === "AbortError"
-    ? "deadline"
-    : "invalid_planner_output";
+  return "invalid_planner_output";
 }
 
 async function boundedCall<T>(

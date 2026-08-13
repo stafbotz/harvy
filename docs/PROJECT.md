@@ -342,6 +342,62 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   pseudonim, membership/role/permission, `aclEpoch`, invalidasi scope lama,
   capability filter, dan adapter file atomik. Belum ada ingress, UI, artifact,
   atau wiring Workspace untuk pengguna; lihat `ADR-016`.
+- [x] Fondasi ProjectWorkspace Phase G: upload/GitHub archive masuk parser ZIP
+  aman tanpa shell, snapshot immutable content-addressed, revision/rollback,
+  quota+retention, memory namespace project, ACL/CAS, guard authority+revision
+  terstruktur, snapshot callback satu-kali, dan disposal working copy
+  terotorisasi. Penghapusan memakai tombstone durable sebelum cleanup,
+  menyembunyikan project, mem-fence run/sandbox, lalu menghapus evidence,
+  record run, metadata GitHub lokal, memory, dan payload secara resumable;
+  pending effect ambigu menahan saga. Tombstone tidak menghapus konten remote.
+  Belum ada ingress atau UI Workspace; lihat `ADR-033`.
+- [x] Kontrak SandboxRunner Phase H: trust domain Linux terpisah, binding exact,
+  network-off, quota/admission/watchdog/artifact cap, bundle snapshot
+  content-addressed tanpa host path, operation/request digest, download artifact
+  berbatas dengan verifikasi hash, durable lease journal + startup fence
+  (termasuk adapter SQLite), dan default fail-closed.
+  Path/content snapshot dan argv yang sensitif atau menyerupai credential
+  ditolak sebelum callback atau boundary transport.
+  Client HTTP strict yang mendukung service-auth proof tersedia default-off
+  untuk mengirim bundle exact tanpa host path; mode loopback hanya fixture dev,
+  bukan bukti isolasi.
+  Environment ini tidak mempunyai Docker/Podman/runner nyata; isolation live
+  belum terbukti dan capability tetap mati. Lihat `ADR-034`.
+- [x] Fondasi CodingRun Phase I: single writer, worker read-only terserialisasi,
+  structured patch, ChangeSet/freshness, validator evidence terikat task dan
+  command, repository-map/plan/task-review evidence, executor workspace
+  berbatas, `code.write` mutation gate termasuk stale-transition revalidation,
+  penolakan credential pada brief/constraint/plan/path/source sebelum provider,
+  diff/security gate termasuk file teks besar, commit barrier, recovery
+  tanpa retry efek, controller actor-tepercaya tanpa history/chat, dan
+  coordinator bounded dengan budget keputusan kumulatif, pause/resume,
+  state-fenced action, `sandbox.exec`, durable evidence sebelum sandbox dispose,
+  serta pending-commit recovery sebelum worker. Operasi provider diregistrasi
+  agar project deletion dapat abort dan menunggu quiescence secara berbatas.
+  Executor local-git hanya boleh diiklankan setelah health
+  positif dari service yang sama.
+  Worker driver/scheduler/surface produksi dan store multi-instance belum
+  dipasang; lihat `ADR-035`.
+- [x] Policy GitHub Phase J: local commit dipisah dari branch/push/draft PR;
+  exact effect, contract confirmation authority/grant, workflow approval terpisah,
+  ACL+App+remote-ref intersection, deterministic idempotency, pending receipt,
+  operation fence, reconciliation, serta descriptor+stream object bundle Git
+  content-addressed yang mengikat commit/parent/tree tersedia. Client HTTP
+  sandbox/local-git/GitHub broker memakai proof service exact dan tetap
+  default-off; push kedua pada branch Harvy melanjutkan head sebelumnya secara
+  non-force. Ledger installation/selection Harvy-side menulis WAL sebelum
+  browser/archive boundary, memakai confirmation private exact, operation ID
+  archive per selection, project ID deterministik, recovery crash, dan atomic
+  selection→binding; raw connect ID dinonaktifkan dan legacy fail-closed.
+  Grant publish mengikat interaction ID dan audience `workspace-private`.
+  Project deletion mem-purge ledger/selection lokal hanya setelah effect
+  `unknown` selesai; ia tidak menghapus repository atau installation remote.
+  Daemon local-git/object store, GitHub App broker, provision secret
+  identitas service + verifier server-side,
+  dan confirmation controller produksi belum ada; credential GitHub tidak
+  masuk project metadata, approval, receipt, prompt, atau sandbox, dan
+  capability default-off.
+  Lihat `ADR-036`.
 - [x] Matriks authority grup dan shared room memory eksplisit: anggota
   mengusulkan preview, admin terkini mengonfirmasi ID yang sama, delivery gagal
   me-rollback write, dan reset admin tidak mengambil member-local memory.

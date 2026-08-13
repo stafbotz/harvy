@@ -10,7 +10,18 @@ export type WorkspacePermission =
   | "run.cancel.own"
   | "run.cancel.any"
   | "membership.manage"
-  | "workspace.manage";
+  | "workspace.manage"
+  | "code.read"
+  | "code.write"
+  | "sandbox.execute"
+  | "sandbox.network"
+  | "git.commit"
+  | "github.read"
+  | "github.push"
+  | "github.pr.create"
+  | "github.pr.review"
+  | "github.pr.merge"
+  | "github.workflow.write";
 
 /**
  * Principal workspace selalu berasal dari ingress/account-link tepercaya.
@@ -49,6 +60,8 @@ export interface WorkspaceAuthorityState {
 }
 
 export interface WorkspaceRepository {
+  /** Stable identity for adapters that share one backing store in-process. */
+  readonly coordinationKey?: string;
   loadAuthorityState(
     workspaceKey: string,
   ): Promise<WorkspaceAuthorityState | null>;

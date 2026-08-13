@@ -59,6 +59,16 @@ export interface HarvyCapabilityCatalogOptions {
   virtualTerminalInstalled?: boolean;
   /** Fan-out read-only berbatas ke worker model cheap/efficient. */
   parallelDelegationInstalled?: boolean;
+  /** Project-bound repository readers and structured patch executor. */
+  codingWorkspaceInstalled?: boolean;
+  /** Separately isolated SandboxRunner; never inferred from VirtualTerminal. */
+  sandboxRunnerInstalled?: boolean;
+  /** Controlled dependency artifact broker, separate from sandbox egress. */
+  dependencyFetchInstalled?: boolean;
+  /** Local git service in the coding trust domain. */
+  localGitInstalled?: boolean;
+  /** Credential-owning GitHub App broker with exact-effect executors. */
+  githubBrokerInstalled?: boolean;
 }
 
 const DEFAULT_ACTIVE_SURFACES: readonly AgentSurface[] = [
@@ -212,6 +222,36 @@ export function createHarvyCapabilityCatalog(
         installed: configured.parallelDelegationInstalled === true,
       };
     }
+    if (CODING_WORKSPACE_IDS.has(definition.id)) {
+      return {
+        ...definition,
+        installed: configured.codingWorkspaceInstalled === true,
+      };
+    }
+    if (SANDBOX_IDS.has(definition.id)) {
+      return {
+        ...definition,
+        installed: configured.sandboxRunnerInstalled === true,
+      };
+    }
+    if (definition.id === "dependency.fetch") {
+      return {
+        ...definition,
+        installed: configured.dependencyFetchInstalled === true,
+      };
+    }
+    if (LOCAL_GIT_IDS.has(definition.id)) {
+      return {
+        ...definition,
+        installed: configured.localGitInstalled === true,
+      };
+    }
+    if (GITHUB_BROKER_IDS.has(definition.id)) {
+      return {
+        ...definition,
+        installed: configured.githubBrokerInstalled === true,
+      };
+    }
     return definition;
   });
   return new CapabilityCatalog(
@@ -226,6 +266,30 @@ const INTERNAL_TOOL_IDS = new Set([
   "session.status",
   "settings.time.get",
   "calendar.agenda",
+]);
+
+const CODING_WORKSPACE_IDS = new Set([
+  "workspace.tree",
+  "workspace.read",
+  "workspace.search",
+  "workspace.symbols",
+  "workspace.references",
+  "workspace.diff",
+  "workspace.apply_patch",
+]);
+
+const SANDBOX_IDS = new Set(["sandbox.exec", "sandbox.test"]);
+const LOCAL_GIT_IDS = new Set([
+  "git.status",
+  "git.diff",
+  "git.log",
+  "git.commit",
+]);
+const GITHUB_BROKER_IDS = new Set([
+  "github.branch.create",
+  "github.push_branch",
+  "github.workflow.write",
+  "github.pr.create",
 ]);
 
 const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
@@ -402,6 +466,259 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     channels: ["telegram"],
     installed: false,
     unavailableReason: "Koordinator sub-agent paralel belum dipasang.",
+  },
+  {
+    id: "workspace.tree",
+    version: "1",
+    title: "Struktur project",
+    description: "membaca struktur project terpilih secara iteratif dan berbatas",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.read"],
+    installed: false,
+    unavailableReason: "Executor ProjectWorkspace belum dipasang pada surface ini.",
+  },
+  {
+    id: "workspace.read",
+    version: "1",
+    title: "Baca file project",
+    description: "membaca rentang file teks dari snapshot project yang terikat run",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.read"],
+    installed: false,
+    unavailableReason: "Executor ProjectWorkspace belum dipasang pada surface ini.",
+  },
+  {
+    id: "workspace.search",
+    version: "1",
+    title: "Cari dalam project",
+    description: "mencari teks berbatas tanpa memasukkan seluruh repository ke konteks",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.read"],
+    installed: false,
+    unavailableReason: "Executor ProjectWorkspace belum dipasang pada surface ini.",
+  },
+  {
+    id: "workspace.symbols",
+    version: "1",
+    title: "Simbol project",
+    description: "memetakan deklarasi simbol dari snapshot project secara baca-saja",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.read"],
+    installed: false,
+    unavailableReason: "Executor ProjectWorkspace belum dipasang pada surface ini.",
+  },
+  {
+    id: "workspace.references",
+    version: "1",
+    title: "Referensi simbol",
+    description: "mencari penggunaan identifier dalam project secara baca-saja",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.read"],
+    installed: false,
+    unavailableReason: "Executor ProjectWorkspace belum dipasang pada surface ini.",
+  },
+  {
+    id: "workspace.diff",
+    version: "1",
+    title: "Diff project",
+    description: "membandingkan working snapshot dengan immutable base snapshot",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.read"],
+    installed: false,
+    unavailableReason: "Executor ProjectWorkspace belum dipasang pada surface ini.",
+  },
+  {
+    id: "workspace.apply_patch",
+    version: "1",
+    title: "Patch project",
+    description: "menerapkan patch teks terstruktur dengan hash precondition melalui single writer",
+    effect: "write",
+    confirmation: "contextual",
+    idempotency: "keyed",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.write"],
+    installed: false,
+    unavailableReason: "Executor single-writer ProjectWorkspace belum dipasang.",
+  },
+  {
+    id: "sandbox.exec",
+    version: "1",
+    title: "Eksekusi coding terisolasi",
+    description: "menjalankan argv di SandboxRunner disposable dengan network off dan quota",
+    effect: "write",
+    confirmation: "contextual",
+    idempotency: "keyed",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["sandbox.execute"],
+    installed: false,
+    unavailableReason: "Backend SandboxRunner terisolasi belum terverifikasi/terpasang.",
+  },
+  {
+    id: "sandbox.test",
+    version: "1",
+    title: "Test project terisolasi",
+    description: "menjalankan validator test/lint/typecheck/build di sandbox terikat snapshot",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "keyed",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["sandbox.execute"],
+    installed: false,
+    unavailableReason: "Backend SandboxRunner terisolasi belum terverifikasi/terpasang.",
+  },
+  {
+    id: "dependency.fetch",
+    version: "1",
+    title: "Ambil dependency terkontrol",
+    description: "mengambil artifact dependency dari lockfile melalui broker egress terpisah",
+    effect: "external",
+    confirmation: "contextual",
+    idempotency: "keyed",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["sandbox.network"],
+    installed: false,
+    unavailableReason: "Broker dependency terkontrol belum dipasang.",
+  },
+  {
+    id: "git.status",
+    version: "1",
+    title: "Status git lokal",
+    description: "membaca status git lokal yang terikat project tanpa remote credential",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.read"],
+    installed: false,
+    unavailableReason: "Service git lokal project belum dipasang.",
+  },
+  {
+    id: "git.diff",
+    version: "1",
+    title: "Diff git lokal",
+    description: "membaca diff git lokal tanpa menghubungi remote",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.read"],
+    installed: false,
+    unavailableReason: "Service git lokal project belum dipasang.",
+  },
+  {
+    id: "git.log",
+    version: "1",
+    title: "Log git lokal",
+    description: "membaca histori git lokal project secara berbatas",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["code.read"],
+    installed: false,
+    unavailableReason: "Service git lokal project belum dipasang.",
+  },
+  {
+    id: "git.commit",
+    version: "1",
+    title: "Commit git lokal",
+    description: "membuat commit lokal dengan identitas bot transparan tanpa melakukan push",
+    effect: "write",
+    confirmation: "always",
+    idempotency: "reconcile",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["git.commit"],
+    installed: false,
+    unavailableReason: "Service git lokal project belum dipasang.",
+  },
+  {
+    id: "github.branch.create",
+    version: "1",
+    title: "Buat branch GitHub",
+    description: "membuat branch harvy/* melalui GitHub App untuk exact base commit",
+    effect: "external",
+    confirmation: "always",
+    idempotency: "reconcile",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["github.push"],
+    installed: false,
+    unavailableReason: "GitHub App Broker belum dipasang.",
+  },
+  {
+    id: "github.push_branch",
+    version: "1",
+    title: "Push exact commit",
+    description: "mendorong exact commit ke branch harvy/* melalui broker tanpa credential sandbox",
+    effect: "external",
+    confirmation: "always",
+    idempotency: "reconcile",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["github.push"],
+    installed: false,
+    unavailableReason: "GitHub App Broker belum dipasang.",
+  },
+  {
+    id: "github.workflow.write",
+    version: "1",
+    title: "Push perubahan workflow GitHub",
+    description:
+      "mendorong exact commit yang mengubah .github/workflows melalui approval terpisah",
+    effect: "external",
+    confirmation: "always",
+    idempotency: "reconcile",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["github.push", "github.workflow.write"],
+    installed: false,
+    unavailableReason: "GitHub App Broker belum dipasang.",
+  },
+  {
+    id: "github.pr.create",
+    version: "1",
+    title: "Buat draft pull request",
+    description: "membuka draft PR untuk branch dan commit yang sudah disetujui persis",
+    effect: "external",
+    confirmation: "always",
+    idempotency: "reconcile",
+    spaces: ["workspace"],
+    channels: ["telegram", "whatsapp"],
+    requiredWorkspacePermissions: ["github.pr.create"],
+    installed: false,
+    unavailableReason: "GitHub App Broker belum dipasang.",
   },
   {
     id: "external.act",

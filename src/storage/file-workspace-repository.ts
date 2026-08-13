@@ -1,11 +1,12 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type {
   WorkspaceAuthorityState,
   WorkspaceMembership,
   WorkspaceRecord,
   WorkspaceRepository,
 } from "../domain/workspace.js";
+import { writeDurableFileAtomic } from "./durable-file.js";
 
 const FILE_QUEUES = new Map<string, Promise<void>>();
 
@@ -20,7 +21,16 @@ interface WorkspaceDatabase {
  * workspace atau durable run dibuka sebagai surface produksi.
  */
 export class FileWorkspaceRepository implements WorkspaceRepository {
-  constructor(private readonly filePath: string) {}
+  private readonly filePath: string;
+  readonly coordinationKey: string;
+
+  constructor(filePath: string) {
+    this.filePath = resolve(filePath);
+    const canonical = process.platform === "win32"
+      ? this.filePath.toLowerCase()
+      : this.filePath;
+    this.coordinationKey = `file-workspace:${canonical}`;
+  }
 
   async loadAuthorityState(
     workspaceKey: string,
@@ -104,14 +114,10 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   }
 
   private async writeDatabase(database: WorkspaceDatabase): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    const temporaryPath = `${this.filePath}.tmp`;
-    await writeFile(
-      temporaryPath,
+    await writeDurableFileAtomic(
+      this.filePath,
       `${JSON.stringify(database, null, 2)}\n`,
-      "utf8",
     );
-    await rename(temporaryPath, this.filePath);
   }
 
   private async exclusive<T>(operation: () => Promise<T>): Promise<T> {

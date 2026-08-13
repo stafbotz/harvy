@@ -4,8 +4,9 @@ Dokumen ini menjelaskan arsitektur modul Harvy secara lengkap. Baca ketika
 melakukan refactor besar, menambah modul baru, atau perlu memahami aliran
 data antar-komponen.
 
-Ringkasan satu baris: **aliran satu arah — adapter Telegram → layanan → port
-penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
+Ringkasan jalur percakapan: **aliran satu arah — adapter Telegram → layanan →
+port penyimpanan.** Logika percakapan inti tidak mengenal grammY maupun berkas;
+ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
 
 ---
 
@@ -18,6 +19,9 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   polling siap,
   meneruskan tombstone penghapusan sebelum bot menerima update, mendaftarkan
   command Telegram, dan menangani shutdown.
+  Modul ProjectWorkspace/Coding/Sandbox/GitHub belum dirangkai di composition
+  root; capability-nya tetap default-off sampai backend, provisioning,
+  conformance, dan composition live terverifikasi.
 
 ## Domain
 
@@ -32,11 +36,20 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   check-in), `agent-run.ts` (checkpoint `waiting_input` v1, active run v2,
   snapshot konteks, mailbox/ChangeSet/work unit/event/receipt, dan port CAS), serta
   `telemetry.ts` (schema event tertutup tanpa isi percakapan).
+  `project-workspace.ts`, `project-deletion.ts`, `project-transfer.ts`, `sandbox.ts`, `coding-run.ts`,
+  `local-git.ts`, dan
+  `github.ts` menambah snapshot/revision project, runner binding+quota, coding
+  evidence/commit barrier, local effect reconciliation, descriptor object
+  bundle Git content-addressed, serta GitHub exact-effect ports tanpa
+  credential atau host path.
   Inti bergantung pada antarmuka ini, bukan pada penyimpanan.
 
 ## Core
 
-- `src/core/` — bebas I/O dan bebas Telegram: `prioritizer.ts` (skor prioritas
+- `src/core/` — bebas Telegram. Layanan percakapan mengikuti port I/O, sedangkan
+  ProjectWorkspace/safe-ZIP secara eksplisit mengelola filesystem terkelola
+  yang terpisah dari root aplikasi, bukan boundary isolasi:
+  `prioritizer.ts` (skor prioritas
   murni), `task-service.ts`, `memory-policy.ts` (jenis sensitif, masa berlaku,
   pemilihan memori untuk prompt), `memory-service.ts`, `history-policy.ts`
   (jendela dan ambang pemadatan), `history-service.ts`, `profile-service.ts`
@@ -55,6 +68,19 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   recovery, dan lifecycle checkpoint klarifikasi),
   `run-mailbox-policy.ts` (routing lokal konservatif berdasarkan quote atau
   target eksplisit),
+  `project-workspace-service.ts` + `safe-zip.ts` + `project-files.ts`
+  (ingestion, immutable snapshot, quota/retention), `sandbox/snapshot-bundle.ts`
+  (transfer snapshot deterministik content-addressed),
+  `sandbox-runner-service.ts` (policy client trust-domain fail-closed,
+  request digest dan artifact-byte verification),
+  `coding-run-engine.ts` + `coding-run-coordinator.ts` (single writer,
+  bounded provider/action lifecycle, map/plan/task review, ChangeSet,
+  validator dan commit recovery), `project-deletion-coordinator.ts`
+  (tombstone-first cleanup run, sandbox, evidence, GitHub lokal, memory, dan
+  payload), `github-installation-service.ts` (WAL install/selection/
+  provisioning), `local-git-service.ts` (commit deterministic/reconcile + object
+  bundle receipt), dan `github-broker.ts` (ACL/App/ref freshness, approval,
+  exact receipt, dan verified bundle streaming),
   `run-budget.ts` (akun kumulatif root/retry/fallback/worker, reservation
   token+biaya, waktu aktif, dan codec checkpoint),
   `data-control-service.ts` (ekspor,
@@ -184,7 +210,9 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   utuh melalui input checkpoint kronologis atau ditolak sebelum revision naik
   bila envelope berbatas tidak cukup. Query mode `tools` dan workflow mutasi
   tugas/memori/sesi tetap sinkron/deterministik.
-  Workspace surface belum dipasang.
+  Catalog mendefinisikan capability `workspace.*`, `sandbox.*`, `git.*`, dan
+  `github.*`; semuanya unavailable kecuali executor serta surface konkret
+  dipasang. Workspace surface belum dipasang.
 
 ## Agent
 
@@ -196,8 +224,28 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   hanya root `ambitious` pada giliran kompleks yang dapat melakukan fan-out.
   Semaphore per-run dari RunBudget bekerja di samping semaphore provider global
   dan seluruh worker memakai object akun yang sama.
+  `coding-executors.ts` membentuk executor workspace/sandbox/local-git
+  berschema tertutup dan state-bound. Bundle hanya mengiklankan sandbox setelah
+  health `isolated-linux` positif dan local-git setelah bounded positive health
+  dari instance `LocalGitService` yang sama; GitHub tidak model-callable.
   `agent-run-retention-worker.ts` menghapus record kedaluwarsa berkala dan
   dapat dihentikan/drain saat shutdown.
+
+## Client trust-domain
+
+- `src/transport/trust-domain-http.ts` adalah codec/client HTTP strict untuk
+  service terpisah: origin dan audience tetap, path+method tertutup, redirect
+  dilarang, response fatal-UTF8 berbatas, upload/download di-hash selama
+  streaming, dan request/response wajib menggemakan ID/protocol exact.
+  `HmacTrustDomainRequestProofProvider` mengikat proof ke origin, audience,
+  request, envelope, media type, ukuran, hash konten, dan waktu. Secret proof
+  service bukan credential provider/GitHub dan harus diprovision dari luar
+  metadata/prompt/sandbox.
+- `HttpSandboxTransport`, `HttpLocalGitTransport`, dan
+  `HttpGitHubBrokerTransport` mengimplementasikan sisi client kontrak tersebut
+  tanpa retry efek. HTTP loopback eksplisit hanya fixture dev; client tidak
+  membuktikan isolasi Linux, operasi git, object retention, installation GitHub
+  App, ataupun idempotency server. Tidak satu pun dirangkai di `app.ts`.
 
 ## Bot (Telegram)
 
@@ -237,7 +285,18 @@ penyimpanan.** Logika inti tidak mengenal grammY maupun berkas.
   member-local memory, dan shared room memory yang terpisah per scope; reset
   state bersama tersedia atomik. `file-workspace-repository.ts` menyimpan
   authority state Workspace dengan CAS `aclEpoch`. Keduanya aman hanya untuk
-  satu proses saja. `file-agent-run-repository.ts` menyimpan checkpoint
+  satu proses saja. Adapter metadata baru
+  `file-project-workspace-repository.ts`, `file-coding-run-repository.ts`,
+  `file-coding-evidence-store.ts`, `file-project-deletion-repository.ts`,
+  `file-sandbox-lease-journal.ts`, dan
+  `file-github-connection-repository.ts` memakai CAS, validasi schema/transisi,
+  temp unik `wx`+rename, serta tidak menyimpan project bytes atau credential;
+  adapter file ini juga hanya untuk restart lokal satu proses.
+  `sqlite-sandbox-lease-journal.ts` memakai transaksi SQLite lintas proses,
+  WAL, dan `synchronous=FULL` untuk lifecycle lease; ia bukan pengganti backend
+  isolation. Project bytes berada di root terkelola yang terpisah dari root
+  aplikasi, tetapi tetap diakses oleh service Harvy in-process.
+  `file-agent-run-repository.ts` menyimpan checkpoint
   `waiting_input` v1 atau satu active/terminal v2 terbaru per scope. Read/write
   diserialkan dalam queue statik per path, revision CAS
   menjaga identity scope, codec/record divalidasi, expiry diterapkan, dan `.tmp`

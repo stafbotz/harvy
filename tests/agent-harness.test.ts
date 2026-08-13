@@ -906,6 +906,24 @@ describe("agent harness", () => {
     assert.equal(result.status, "stopped");
     if (result.status === "stopped") assert.equal(result.reason, "deadline");
   });
+
+  it("mengatribusikan watchdog planner ke deadline RunBudget yang lebih ketat", async () => {
+    const base = new Date("2026-07-31T10:00:00.000Z");
+    const result = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "tes budget watchdog",
+      planner: async () => new Promise<never>(() => undefined),
+      limits: { deadlineMs: 1_000 },
+      runBudget: { limits: { deadlineMs: 10 } },
+      // Clock wall sengaja tidak maju; AbortSignal memakai clock monotonic.
+      now: () => base,
+    });
+
+    assert.equal(result.status, "stopped");
+    if (result.status === "stopped") {
+      assert.equal(result.reason, "budget_deadline");
+    }
+  });
 });
 
 function harness(): AgentHarness {

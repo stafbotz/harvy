@@ -17,7 +17,7 @@
     "eval:group:direct": "tsx scripts/evaluasi-grup-direct.ts"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.16.0"
   },
   "dependencies": {
     "baileys": "7.0.0-rc14",

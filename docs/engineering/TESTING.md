@@ -9,7 +9,8 @@ sebenarnya belum tersambung jauh lebih berbahaya lagi.
 
 ## Lingkungan
 
-- Node.js 22 atau lebih baru.
+- Node.js 22.16.0 atau lebih baru. Minimum ini diperlukan oleh adapter journal
+  SQLite (`node:sqlite` tanpa flag dan opsi timeout).
 - Instal dependency dari lockfile dengan `npm ci` jika `node_modules/` belum
   tersedia.
 - Secret hanya berada di `.env` lokal. Gunakan `.env.example` sebagai daftar
@@ -27,9 +28,10 @@ npm test
 `npm test` membangun TypeScript dan menjalankan seluruh `dist/tests/*.test.js`.
 Perintah dianggap lulus hanya jika exit code `0` dan tidak ada test gagal.
 
-Baseline working tree fondasi Phase E/F pada 10 Agustus 2026 adalah **953 test
-lulus dalam 120 suite**, diverifikasi dengan `npm test` (build TypeScript ikut
-di dalamnya). Angka ini tidak mencakup provider embedding atau kanal live.
+Baseline working tree fondasi ProjectWorkspace/Coding Phase G–J pada 13 Agustus
+2026 adalah **1.082 test lulus dalam 134 suite**, diverifikasi dengan `npm test`
+(build TypeScript ikut di dalamnya). Angka ini tidak mencakup provider
+embedding, runner isolation, GitHub App, atau kanal live.
 
 Corpus model nyata dijalankan terpisah karena memakai jaringan:
 
@@ -195,6 +197,60 @@ dibuktikan lewat pengujian manual dengan kunci API sungguhan.
 `npm run build` tidak membersihkan `dist/`. Setelah berkas sumber dihapus atau
 diganti nama, jalankan `rm -rf dist` sebelum `npm test`; kalau tidak, tes lama
 hasil build sebelumnya ikut dijalankan dan hasilnya menyesatkan.
+
+### ProjectWorkspace, Sandbox, CodingRun, dan GitHub
+
+Gate terarah tanpa jaringan:
+
+```bash
+npm run build
+node --test --test-concurrency=1 dist/tests/safe-zip.test.js dist/tests/project-workspace-service.test.js dist/tests/project-memory-service.test.js dist/tests/sandbox-runner-service.test.js dist/tests/coding-run-engine.test.js dist/tests/coding-run-coordinator.test.js dist/tests/coding-agent-executors.test.js dist/tests/workspace-coding-controller.test.js dist/tests/github-broker.test.js dist/tests/github-installation-service.test.js dist/tests/project-deletion-coordinator.test.js dist/tests/workspace-authority-service.test.js dist/tests/http-local-git-transport.test.js dist/tests/http-sandbox-transport.test.js dist/tests/http-github-broker-transport.test.js
+```
+
+Pada 13 Agustus 2026, gate terarah ini lulus **133 test dalam 15 suite**.
+
+Tes ini wajib mengunci malicious ZIP/path/device/link/bomb/magic, immutable
+snapshot+tamper, quota fisik termasuk working copy, crash-recovery trash,
+revision/rollback/CAS/isolation owner; sandbox network-off binding/admission,
+snapshot bundle content-addressed tanpa host path, exact operation/request
+digest, bounded artifact download+hash,
+late-allocation cleanup, queued abort, ambiguous-lease quarantine,
+write-ahead journal, SQLite cross-instance CAS, restart fence, ACK-lost
+reconciliation, monotonic watchdog, artifact/dispose fail-closed;
+strict trust-domain HTTP origin/protocol/audience/proof, response cap, no
+redirect, stream size+hash, early response, abort, exact echo, serta tidak ada
+Authorization/provider credential/host path;
+single-writer/read-only
+worker/path+hash patch, rollback state, post-read freshness,
+ChangeSet/stale/validator digest/commit recovery/rolling event ledger,
+penolakan mutasi viewer termasuk race revocation, credential pada
+brief/constraint/plan/path/source maupun execution/artifact ID trust-domain,
+termasuk pola AWS/encrypted private key, dan secret pada file teks besar;
+durable validator evidence sebelum sandbox disposal dan re-verifikasi recovery;
+coordinator decision budget, pause/resume, sandbox action, stale state, provider
+abort/quiescence; tombstone deletion, exact step/replay/permission, active dan
+historical run, orphan lease/evidence, pending barrier, serta GitHub unknown;
+serta
+GitHub exact schema/ACL/App/base+target-ref/non-force, confirmation
+authority/grant contract yang terikat interaction `workspace-private`, workflow permission/approval, result ID+operation
+fence, attempt sequencing,
+deterministic unknown reconciliation, draft-only PR, dan
+penolakan credential-like key/value pada metadata, termasuk binding object
+bundle Git, ACK push tanpa konsumsi penuh, dan push CodingRun kedua non-force
+dari head branch Harvy sebelumnya.
+
+Fake transport dan mocked-fetch HTTP hanya membuktikan policy/client contract.
+Acceptance Phase H memerlukan
+runner Linux nyata dengan fixture negatif untuk host root, Harvy data, secrets,
+Docker socket, network, CPU/memory/PID/disk, timeout/reap, dan output streaming.
+Acceptance Phase J memerlukan GitHub App broker nyata, confirmation controller
+produksi, daemon local-git/object store, provision secret identitas service +
+verifier server-side,
+installation terbatas, dan
+repository sintetis. Sampai dua gate live
+itu ada, capability
+harus tetap `installed: false` dan hasil otomatis tidak boleh disebut publish
+atau isolation live.
 
 ### Agent Runtime internal
 
