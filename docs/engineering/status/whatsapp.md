@@ -1,8 +1,8 @@
 # Status — WhatsApp Grup
 
-Verified: 9 Agustus 2026 pada working tree Phase B di atas `b5e54c6`;
-`npm run check` dan `npm run context:check` PASS; `npm test` PASS 755 test / 100
-suite, 0 gagal. Bukti kanal nyata tetap sempit.
+Verified: 13 Agustus 2026 pada working tree fondasi Group AgentRun Phase K di
+atas `e6d7fbf`; hasil gerbang terbaru dicatat di `docs/LOG.md`. Bukti kanal
+nyata tetap sempit.
 
 ## Keadaan saat ini
 
@@ -45,6 +45,13 @@ suite, 0 gagal. Bukti kanal nyata tetap sempit.
 - Member-local memory dan shared room memory ada di core dengan authority guard,
   preview/confirmation, retensi, dan kontrol member/admin. Rollback delivery
   lengkap hanya untuk record member/room yang baru dibuat.
+- Fondasi core Group AgentRun terpisah menyimpan scope+account, initiator,
+  participant/audience group-safe, anchor/question reference, input
+  teratribusi, ChangeSet, event, revision, dan expiry. Policy lokal menolak
+  ambient serta mixed bubble, membedakan self-info/proposal/control, mengikat
+  assigned answer dan override admin eksplisit, menyisakan slot cancel, serta
+  menegakkan satu foreground per grup melalui CAS serta menolak replay lintas
+  account. Anchor tidak auto-pin.
 - `WHATSAPP_ACCOUNTS` mendukung beberapa alias account satu proses, masing-masing
   dengan auth folder, socket, cache, reconnect, generation, dan queue sendiri.
 - Satu nomor nyata pernah QR/login/`open` dan membalas satu jalur dasar.
@@ -56,6 +63,11 @@ suite, 0 gagal. Bukti kanal nyata tetap sempit.
 - Dua nomor nyata sekaligus belum diuji. Tidak ada failover atau rebind otomatis
   antar-account.
 - Pending confirmation dan authority epoch grup tidak durable lintas restart.
+- Group AgentRun belum dirangkai ke `GroupTurnService`, Baileys, notice,
+  entitlement, model/work lane, startup/shutdown, atau transport. Adapter file
+  hanya satu proses; anchor/question belum mempunyai outbox/receipt sehingga
+  crash antara delivery dan binding belum dapat direkonsiliasi. Purge expiry
+  tersedia tetapi belum dijadwalkan pada composition root.
 - Edit, delete, reset, alias, dan self-delete belum mempunyai kompensasi generik
   bila acknowledgment gagal sesudah mutasi commit.
 - Store sosial legacy masih memakai PN/LID mentah untuk bridging; semantic
@@ -69,10 +81,14 @@ suite, 0 gagal. Bukti kanal nyata tetap sempit.
 
 - Kode: `src/whatsapp/`, `src/core/group-turn-service.ts`,
   `src/core/group-memory-service.ts`, `src/core/group-authority-policy.ts`,
-  `src/ai/group-ingress.ts`, `src/core/group-runtime-policy.ts`,
-  `src/whatsapp/group-message-batcher.ts`.
+  `src/core/group-agent-run-service.ts`, `src/core/group-agent-run-policy.ts`,
+  `src/domain/group-agent-run.ts`, `src/storage/file-group-agent-run-repository.ts`,
+  `src/bot/group-run-anchor.ts`, `src/ai/group-ingress.ts`,
+  `src/core/group-runtime-policy.ts`, `src/whatsapp/group-message-batcher.ts`.
 - Tes: `tests/baileys-account-manager.test.ts`,
   `tests/group-conversation.test.ts`, `tests/group-turn-service.test.ts`,
   `tests/group-memory-service.test.ts`, `tests/group-ingress.test.ts`,
-  `tests/group-runtime-policy.test.ts`, `tests/group-message-batcher.test.ts`.
-- Keputusan: ADR-009, ADR-011, ADR-016, ADR-023, ADR-024.
+  `tests/group-runtime-policy.test.ts`, `tests/group-message-batcher.test.ts`,
+  `tests/group-agent-run-policy.test.ts`, `tests/group-agent-run-service.test.ts`,
+  dan `tests/group-run-anchor.test.ts`.
+- Keputusan: ADR-009, ADR-011, ADR-016, ADR-023, ADR-024, ADR-037.

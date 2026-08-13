@@ -119,6 +119,10 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   delivery, matriks authority member/admin, dan shared room memory eksplisit
   dengan preview+konfirmasi admin. Ia tidak menerima dependency memori/profil/
   sesi pribadi.
+  Fondasi Phase K terpisah berada di `group-agent-run-service.ts` dan
+  `group-agent-run-policy.ts`: aggregate group-safe, satu foreground CAS,
+  routing thread closed-set, atribusi participant, assigned input, dan guard
+  authority commit. Ia belum dirangkai ke pipeline grup, model, atau transport.
 
 ## AI
 
@@ -319,6 +323,9 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   menjaga identity scope, codec/record divalidasi, expiry diterapkan, dan `.tmp`
   yatim dibuang. Adapter ini hanya menjamin restart lokal satu proses, bukan
   durability atau koordinasi multi-instance.
+  `file-group-agent-run-repository.ts` menyimpan aggregate Phase K tersendiri
+  dengan schema/transisi tertutup, CAS, satu foreground per grup, expiry, dan
+  guard authority tepat sebelum write; ia juga hanya adapter lokal satu proses.
 
 ## WhatsApp
 

@@ -9,6 +9,7 @@ docs/log`. Baca maksimal tiga entri yang terkait task. Arsip histori dan fakta
 material lama berada di:
 
 - [`log/2026-08-08.md`](log/2026-08-08.md)
+- [`log/2026-08-09.md`](log/2026-08-09.md)
 - [`log/2026-08-07.md`](log/2026-08-07.md)
 - [`log/2026-08-02-sampai-2026-08-06.md`](log/2026-08-02-sampai-2026-08-06.md)
 - [`log/2026-07-25-sampai-2026-08-02.md`](log/2026-07-25-sampai-2026-08-02.md)
@@ -36,6 +37,22 @@ Next: hanya bila ada tindak lanjut material.
 Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
+
+## 2026-08-13 — Fondasi core Group AgentRun Phase K
+
+Scope: aggregate, policy, service, repository, Run Anchor, dan kontrak WhatsApp.
+
+Changed: core kini memiliki run grup group-safe dengan thread closed-set, satu
+foreground CAS, assigned answer+watermark, guard authority, expiry/retensi,
+dan pin manual-only. Ia default-off dan belum wiring kanal.
+
+Verified: tes terarah PASS 22 test/4 suite; `npm run check`, `npm run build`, dan
+`npm run context:check` PASS; `npm test` PASS 1.142 test/142 suite, 0 gagal.
+
+Not verified: WhatsApp/model live, wiring GroupTurnService, delivery/outbox,
+startup lifecycle, serta storage multi-process.
+
+Next: pasang receipt/outbox dan lifecycle sebelum wiring ingress/work lane.
 
 ## 2026-08-13 — Fondasi ProjectWorkspace dan coding Phase G–J
 
@@ -398,27 +415,3 @@ aktual, serta kualitas split bubble produksi.
 Next: ukur false-positive/false-negative safety pada corpus model aktual dan
 validasi latency/split-bubble kanal nyata; Phase C provider/execution policy
 tetap change set terpisah.
-
-## 2026-08-09 — Adaptive debounce per subjek
-
-Scope: batching Telegram privat dan WhatsApp grup, pure timing policy,
-kontrak arsitektur, serta tes regresinya.
-
-Changed: debounce kini belajar p90 gap antar-arrival content-free berbatas per
-pemilik atau `scope+account+participant`, termasuk lintas batch yang sudah
-ter-flush. Speaker switch memutus sampel grup A→B→A; fallback lama tetap sampai
-tiga sampel dan state RAM dibersihkan lewat TTL yang tidak diperpanjang akses,
-eviction, invalidasi, serta shutdown. Estimasi mengubah settle awal dan ruang
-multi-bubble lengkap; window semantik open/incomplete tetap 7/12 detik.
-Perubahan tidak menambah model call, persistensi, isi telemetry/log, atau
-authority baru. ADR-023 mengikat policy.
-
-Verified: `npm run check` PASS; tes terarah policy/batcher/turn-taking PASS;
-`npm test` PASS, 755 test dalam 100 suite, 0 gagal; `npm run context:check` PASS
-dengan output bootstrap 3.742 byte (estimasi 936 token).
-
-Not verified: Telegram live, WhatsApp live, latency jaringan nyata, dan kualitas
-split bubble produksi.
-
-Next: validasi latency dan kualitas split-bubble pada kanal nyata; Phase C
-provider/execution policy tetap change set terpisah.

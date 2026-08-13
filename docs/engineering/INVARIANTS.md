@@ -503,6 +503,13 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   Store hanya mempertahankan record v1 atau v2 terbaru per scope; memulai run
   baru boleh mengganti terminal lama agar tidak ada data tertahan di luar
   bentuk ekspor tunggal.
+- **Group AgentRun tidak menyamar sebagai run privat.** Fondasi Phase K memakai
+  aggregate dan repository tersendiri yang dikunci ke kanal+grup+account,
+  initiator, participant teratribusi, serta audience `group-safe`. Ia tidak
+  mempunyai field private memory/history. CAS menegakkan satu foreground
+  mutable per grup fisik; account merupakan binding dan account lain gagal
+  tertutup tanpa menerima record milik binding aktif. Service ini belum
+  terhubung ke kanal atau work lane.
 - **Tidak ada semantik “pesan berikutnya adalah jawaban”.** Answer/update/cancel
   harus terikat ke Run Anchor, pesan pertanyaan, atau target run closed-set yang
   eksplisit. Answer juga wajib cocok dengan `runId`, `questionId`, dan watermark
@@ -747,6 +754,20 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   participant yang sama pada dua grup tidak boleh digabung. `GroupTurnService`
   tidak boleh menerima `MemoryService`, `ProfileService`, `InsightService`,
   `SessionService`, tugas, atau history pribadi sebagai dependency.
+- **Ambient tidak pernah menjadi authority Group AgentRun.** Input run harus
+  menargetkan anchor/assigned question atau memakai mention+referensi run dan
+  command closed-set. Batch yang mencampur bubble target dengan ambient gagal
+  tertutup sampai adapter merutekan bubble sebelum merge. Setiap input menyimpan
+  source message, aktor, alias berscope, epoch authority, dan disposition.
+  Self-availability sempit boleh diterapkan; constraint anggota lain hanya
+  proposal. Initiator/admin mengontrol objective/cancel. Assigned answer hanya
+  sah dari assignee atau override admin eksplisit. Guard authority berjalan di
+  dalam antrean repository tepat sebelum commit.
+- **Group Run Anchor adalah status shared yang hemat ruang.** Audience v1 selalu
+  `group-safe`, pin policy `manual-only`, dan copy hanya berasal dari state
+  code-owned. Satu pertanyaan terbuka memiliki horizon maksimal sepuluh menit;
+  cancel/expiry menutupnya tanpa membuat jawaban palsu. Record diretensi paling
+  lama tujuh hari dan purge lifecycle wajib dirangkai sebelum surface aktif.
 - **Notice grup harus terkirim sebelum pesan diproses.** Binding menyimpan
   `joinedAt`, notice version, account, dan status disable. `append`/history,
   echo sendiri, pesan tanpa teks, serta timestamp sebelum `joinedAt` diabaikan.

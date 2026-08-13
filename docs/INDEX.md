@@ -99,6 +99,7 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 | [`ADR-034`](decisions/ADR-034-sandbox-runner-trust-domain.md) | SandboxRunner trust domain terpisah dan fail-closed |
 | [`ADR-035`](decisions/ADR-035-coding-run-single-writer-dan-bukti.md) | CodingRun single writer, validator evidence, dan commit recovery |
 | [`ADR-036`](decisions/ADR-036-github-app-broker-exact-effect.md) | GitHub App broker, exact effect, approval, dan reconciliation |
+| [`ADR-037`](decisions/ADR-037-group-agentrun-admission-dan-thread.md) | Group AgentRun, explicit thread targeting, participant authority, dan assigned input |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.

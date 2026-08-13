@@ -18,8 +18,7 @@ ini, bukan menyalin aturannya.
   pada batas tersebut wajib membaca kontrak terkait dan gagal tertutup.
 - Dokumentasi dan LOG hanya diperbarui bila fakta, perilaku, kontrak, keputusan
   durable, bukti live, defect, atau prosedur proyek berubah secara material.
-- Satu penulis aktif per working tree. Review dan diskusi tidak mengedit. Jangan
-  push, merge, rebase, atau membuat PR kecuali diminta.
+- Jangan push, merge, rebase, atau membuat PR kecuali diminta.
 <!-- SESSION_CONTEXT_END -->
 
 ## Pilih kelas kerja lebih dulu
@@ -130,8 +129,7 @@ Detail panjang berada di issue, PR, ADR, atau evidence, bukan LOG.
 ## Kepemilikan, keselamatan, dan “Jangan lakukan”
 
 - Pengguna menguasai tujuan, scope, dan penerimaan akhir.
-- Satu pihak menulis pada satu working tree; agent lain boleh audit/QA
-  baca-saja. Pertahankan perubahan pengguna yang sudah ada.
+- Pertahankan perubahan pengguna yang sudah ada.
 - Review melaporkan temuan tanpa memperbaiki; diskusi tidak membuat perubahan
   kecuali pengguna meminta implementasi.
 - Jangan menaruh `.env`, token, API key, credential, identifier pengguna nyata,
