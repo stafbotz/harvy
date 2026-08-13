@@ -56,9 +56,26 @@ campuran. Exit code saja juga tidak cukup bila command atau instruksi berubah.
     `waiting_input`, exact state fence, dan registri provider in-flight;
     deletion meng-abort lalu menunggu quiescence berbatas sebelum menghapus
     evidence atau record run.
+11. Admission coordinator aplikasi adalah immediate dan berbatas; ia tidak
+    mengantre `WorkspaceAgentScope` yang dapat menjadi basi. Command membawa
+    `expectedStateRevision` yang dicadangkan lewat CAS durable sebelum loop,
+    concurrency dibatasi global+per-workspace, dan stop menutup admission serta
+    meng-abort invocation aktif. Slot baru dilepas setelah provider asli
+    quiescent, bukan ketika client-side abort race selesai. Admission hanya
+    boleh dibuka dengan conformance receipt deployment yang masih berlaku;
+    health transport saja tidak cukup. Jalur scheduler menahan pending commit
+    secara fail-closed; reconciliation barrier tetap memerlukan authority
+    recovery terpisah, sedangkan coordinator langsung yang berscope pengguna
+    tetap dapat menjalankannya.
+12. Supervisor maintenance menjalankan urutan sandbox recovery → satu initial
+    pass GitHub unknown → satu initial pass deletion, lalu tetap melaporkan
+    coding admission tertutup. Shutdown menyegel scheduler/worker/sandbox,
+    men-drain semua caller, lalu men-drain dan menutup sandbox paling akhir.
+    Primitive ini single-process dan belum menjadi composition aplikasi.
 
 ## Konsekuensi
 
-Fondasi coordinator, loop tool iteratif, dan bukti completion ada, tetapi belum
-ada worker driver/scheduler/composition/surface Workspace produksi, kalibrasi
-model/cost budget coding, atau store/lease run multi-instance.
+Fondasi coordinator, scheduler lifecycle, supervisor maintenance, loop tool
+iteratif, dan bukti completion ada, tetapi belum ada worker driver,
+composition/surface Workspace produksi, verifier conformance deployment,
+kalibrasi model/cost budget coding, atau store/lease run multi-instance.

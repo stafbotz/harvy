@@ -90,6 +90,16 @@ dibuang dan diverifikasi lagi saat completion/recovery. Coordinator memiliki
 budget keputusan kumulatif, pause/resume `waiting_input`, state fence per
 action, `sandbox.exec`, serta registri operasi provider yang dapat di-abort dan
 ditunggu secara berbatas oleh deletion fence.
+Scheduler immediate-admission membatasi concurrency global+workspace tanpa
+mengantre scope basi, mencadangkan state revision melalui CAS, dan baru melepas
+slot setelah provider asli quiescent. Receipt conformance deployment wajib
+diverifikasi ulang pada setiap admission; health saja tidak membuka coding.
+Pending commit terjadwal tetap fail-closed sampai recovery authority terpisah
+melakukan reconciliation; jalur coordinator langsung tetap berscope pengguna.
+Supervisor maintenance mengurutkan sandbox recovery, GitHub unknown initial
+pass, lalu deletion initial pass dengan admission tetap tertutup. Shutdown
+menyegel seluruh caller, men-drain mereka, lalu men-drain/menutup sandbox paling
+akhir; failure stop/quiescence tetap fail-closed dan dapat di-retry.
 Local git
 dan GitHub publish dipisah; broker menolak schema asing, memeriksa
 ACL+App+base/target ref, memakai effect ID deterministik, canonical pending
@@ -122,8 +132,8 @@ Watchdog AgentHarness mengatribusikan `AbortError` ke owner deadline yang sudah
 dipilih sehingga tie invocation/RunBudget tidak berubah karena scheduler load.
 Semua capability baru default-off.
 
-Verified: `npm run check` PASS; tes terarah G–J/authority/HTTP PASS, 152 test
-dalam 17 suite; `npm test` PASS, 1.101 test dalam 136 suite, 0 gagal;
+Verified: `npm run check` PASS; tes terarah G–J/authority/HTTP PASS, 171 test
+dalam 19 suite; `npm test` PASS, 1.120 test dalam 138 suite, 0 gagal;
 `npm run context:check` PASS. Tes mencakup malicious
 archive, tamper/quota, tenant/admission/watchdog, writer/validator/commit race,
 stale zombie, structured guard/escaped source, strict HTTP proof/stream,
@@ -412,33 +422,3 @@ split bubble produksi.
 
 Next: validasi latency dan kualitas split-bubble pada kanal nyata; Phase C
 provider/execution policy tetap change set terpisah.
-
-## 2026-08-08 — Selective safety routing dan privacy memory privat
-
-Scope: compiler/triage/reviewer percakapan privat, izin tindakan per efek,
-classifier privacy memory, fast path pending/acknowledgment, telemetry usage,
-runner evaluasi, kontrak arsitektur, serta tes regresinya.
-
-Changed: compiler kini menghasilkan `RiskHint` dan acute triage hanya dipanggil
-ketika hint, emergency lokal, atau kegagalan compiler membutuhkannya. Outage
-memiliki disposition `unavailable` yang terpisah dari krisis; disagreement
-berisiko ditangani konservatif; support pasti tidak selalu direview; dan izin
-dinilai per efek sehingga tugas aman serta hak kontrol data tidak diblokir oleh
-emosi support biasa. Privacy memory dipisahkan dari acute risk, hanya menilai
-kandidat memori, gagal tertutup ke consent, dan menjadi overhead non-billable.
-Fast path baru dibatasi pada acknowledgment dingin dan jawaban pending dengan
-bentuk terikat; `agent-input` terbuka tetap memakai compiler. Telemetry kini
-mengukur safe-action-blocked tanpa isi percakapan. ADR-022 menyupersesi kontrak
-global gate privat pada ADR/invariant lama.
-
-Verified: `npm run check` PASS. Build dan tes terarah PASS, 138 test dalam 13
-suite. `npm test` PASS, 695 test dalam 97 suite, 0 gagal. `npm run
-context:check` PASS dengan output bootstrap 3.627 byte (estimasi 907 token).
-Audit read-only terpisah tidak menemukan temuan P0/P1/P2 tersisa.
-
-Not verified: provider/model live, Telegram live, WhatsApp live, kualitas
-corpus produksi, latency jaringan nyata, dan perilaku multi-instance tidak
-dijalankan.
-
-Next: selesaikan selective routing grup dan debounce adaptif sebagai slice
-Phase B terpisah; lanjutkan Phase C provider/execution policy setelahnya.

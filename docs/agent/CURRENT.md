@@ -7,36 +7,36 @@ Refreshed: 2026-08-13
 - Product capability baseline: working tree fondasi ProjectWorkspace/Coding
   Phase G–J di atas commit dasar `f29b143` (10 Agustus 2026), diverifikasi
   ulang 13 Agustus 2026.
-- Product gates: `npm run check` PASS; `npm test` PASS, 1.101 test dalam 136
+- Product gates: `npm run check` PASS; `npm test` PASS, 1.120 test dalam 138
   suite, 0 gagal.
-- Context system: `npm run context:check` PASS; output 6.024 byte dengan
-  estimasi 1.506 token.
+- Context system: `npm run context:check` PASS; output 5.817 byte dengan
+  estimasi 1.455 token.
 
 ## Recent material changes
 
-- ProjectWorkspace kini mempunyai safe ZIP ingestion, immutable snapshot,
-  revision/rollback, quota+retention, ACL/CAS, project-memory lifecycle, serta
-  tombstone-first deletion saga yang mem-fence run/sandbox dan menghapus
-  evidence/run/GitHub-local/memory/payload secara resumable. Tombstone belum
-  selesai dapat dipage sebagai locator content-free dan dilanjutkan worker
-  bounded tanpa membentuk scope pengguna.
+- ProjectWorkspace mempunyai safe ZIP, immutable snapshot, revision/rollback,
+  quota, ACL/CAS, serta tombstone deletion resumable. Tombstone belum selesai
+  dipage sebagai locator content-free dan dilanjutkan tanpa scope pengguna.
 - Sandbox policy dengan content-addressed snapshot/artifact protocol, durable
   lease journal/recovery, serta lifecycle eksplisit `start/stop/drain/close`
-  yang menutup admission dan mem-fence seluruh lease sebelum journal ditutup;
-  CodingRun
-  single-writer dengan map/plan/task-review evidence dan commit recovery, serta
+  yang mem-fence lease sebelum journal ditutup; CodingRun single-writer dengan
+  map/plan/task-review evidence dan commit recovery, serta
   local-git/GitHub exact-effect + Git object-bundle reconciliation tersedia
   sebagai service/policy default-off. Client HTTP strict yang mendukung
   service-auth proof untuk tiga trust domain ada, tetapi belum dirangkai atau
   didukung backend live.
 - Validator artifact kini durable sebelum sandbox dispose; coordinator coding
   mempunyai budget keputusan kumulatif, pause/resume, state fence, sandbox
-  action, dan provider-deletion fence. Publish grant terikat interaction
+  action, dan provider-deletion fence. Scheduler local immediate-admission
+  mengikat revision lewat CAS, membatasi concurrency, dan drain baru selesai
+  setelah provider asli quiescent; receipt+verifier conformance deployment wajib,
+  pending commit terjadwal tetap menunggu recovery authority terpisah.
+  Supervisor maintenance mengurutkan sandbox→GitHub unknown→deletion initial
+  pass tetapi tidak membuka coding admission. Publish grant terikat interaction
   `workspace-private`; deletion tidak menghapus konten GitHub remote.
 - Receipt GitHub `unknown` dan tombstone project yang belum selesai kini dapat
   ditemukan lewat locator content-free dan diproses worker bounded satu proses.
-  Worker GitHub hanya mengamati reconcile tanpa replay branch/push/PR; worker
-  deletion hanya melanjutkan cleanup lokal exact tanpa scope pengguna.
+  Worker GitHub hanya mengamati reconcile; deletion hanya cleanup lokal exact.
 - Capability coding/GitHub dan permission granular terdaftar; tidak ada
   surface yang diam-diam aktif tanpa executor live.
 
@@ -52,15 +52,10 @@ Refreshed: 2026-08-13
   trusted confirmation controller, dan Workspace ingress/UI belum ada. GitHub
   capability tetap mati; credential GitHub tidak boleh masuk metadata project,
   prompt, atau sandbox.
-- Storage/checkpoints/log/authority dan adapter metadata project/run/evidence/
-  deletion/GitHub
-  masih single-process/file. Journal lease SQLite memberi CAS lintas proses,
-  tetapi produksi tetap memerlukan distributed admission, implementasi
-  transport/object store live dan outbox/reconciler terdistribusi. Worker
-  recovery GitHub/deletion lokal sudah ada, tetapi belum dirangkai di `app.ts`.
-- Deletion/evidence coordinator dan worker recovery belum dirangkai pada
-  startup/composition produksi; local detach tidak sama dengan remote GitHub
-  unlink/delete.
+- Metadata project/run/evidence/deletion/GitHub masih file/single-process;
+  produksi perlu distributed admission, transport/object store, dan outbox.
+  Supervisor/worker lokal belum dirangkai di `app.ts`; local detach bukan
+  remote GitHub unlink/delete.
 - Dual model misclassification can still miss pre-save consent for sensitive
   memory. Do not claim this privacy gap is closed.
 - False-positive/false-negative safety pada corpus model aktual belum diukur;

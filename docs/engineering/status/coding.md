@@ -49,7 +49,14 @@ Refreshed: 2026-08-13
   `sandbox.exec`, dan registri provider in-flight membuat deletion dapat
   abort/join secara berbatas sebelum record dihapus,
   post-read freshness, rolling event ledger, diff/security gate, commit barrier,
-  dan recovery tanpa mengulang efek.
+  dan recovery tanpa mengulang efek. Scheduler immediate-admission membatasi
+  concurrency global+workspace, mencadangkan state revision lewat CAS,
+  dan drain baru selesai setelah provider asli quiescent; receipt+verifier
+  conformance deployment yang masih berlaku. Jalur terjadwal menolak pending
+  commit sampai recovery authority terpisah merekonsiliasinya; jalur coordinator
+  langsung yang berscope pengguna tetap dapat recovery. Supervisor maintenance
+  mengurutkan sandbox recovery → GitHub unknown initial pass → deletion initial
+  pass, tetapi selalu melaporkan coding admission tertutup.
 - Phase J: local-git effect id/reconcile terpisah dari remote; GitHub broker
   policy/client tanpa credential GitHub/provider, dengan service-identity proof,
   exact schema, ACL/App/ref-head intersection,
@@ -89,8 +96,9 @@ Refreshed: 2026-08-13
   server-side, maupun confirmation
   controller produksi. Client HTTP saja tidak membuktikan backend tersebut;
   Harvy dan sandbox tidak menyimpan credential GitHub.
-- Boundary controller Workspace sudah ada tetapi belum ada actor resolver,
-  ingress/UI/composition-root, worker driver, atau scheduler produksi. Adapter metadata
+- Boundary controller Workspace dan scheduler lifecycle lokal sudah ada, tetapi
+  belum ada actor resolver, ingress/UI/composition-root, worker driver, atau
+  verifier conformance produksi. Adapter metadata
   project/run/evidence/deletion/GitHub file hanya untuk restart lokal satu proses; journal lease
   SQLite sudah transactional lintas proses, tetapi produksi tetap memerlukan
   distributed admission, implementasi object store/transport live, dan outbox/
@@ -105,14 +113,15 @@ Refreshed: 2026-08-13
   tidak boleh membuat capability `installed`; produksi memerlukan endpoint
   dengan verifier service-auth, backend live, dan conformance positif dari
   service yang sama.
-- Coordinator deletion, store evidence/deletion, dan worker recovery lokal
-  belum dirangkai pada startup/composition produksi. Tombstone lokal bukan
+- Supervisor maintenance, coordinator deletion, store evidence/deletion, dan
+  worker recovery lokal belum dirangkai pada startup/composition produksi.
+  Initial pass hanya satu page dan bukan bukti backlog habis. Tombstone lokal bukan
   bukti remote GitHub sudah
   di-unlink atau konten remote terhapus.
 
 ## Bukti
 
 - `npm run check` PASS.
-- Tes terarah G–J/authority/HTTP PASS, 152 test dalam 17 suite.
-- `npm test` PASS, 1.101 test dalam 136 suite, 0 gagal.
+- Tes terarah G–J/authority/HTTP PASS, 171 test dalam 19 suite.
+- `npm test` PASS, 1.120 test dalam 138 suite, 0 gagal.
 - Belum ada live isolation test, GitHub App test, provider test, atau kanal E2E.

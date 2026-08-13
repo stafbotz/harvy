@@ -1208,6 +1208,139 @@ describe("CodingRunEngine Phase I", () => {
     await assert.rejects(staleTools().symbols(0), /revision became stale/iu);
     await assert.rejects(staleTools().diff(0), /revision became stale/iu);
   });
+
+  it("tidak meluncurkan provider bila lifecycle abort terjadi saat menunggu project lock", async () => {
+    const fixture = await createFixture();
+    const run = await fixture.engine.start(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      brief(),
+    );
+    const lockEntered = deferred<void>();
+    const releaseLock = deferred<void>();
+    const locked = fixture.projects.withFreshProject(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      "code.write",
+      async () => {
+        lockEntered.resolve(undefined);
+        await releaseLock.promise;
+      },
+    );
+    await lockEntered.promise;
+
+    let providerCalls = 0;
+    const controller = new AbortController();
+    const decision = fixture.engine.runCoordinatorDecision(
+      fixture.scope,
+      run.runId,
+      run.stateRevision,
+      5_000,
+      controller.signal,
+      async () => {
+        providerCalls += 1;
+        return "unexpected";
+      },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    releaseLock.resolve(undefined);
+    await locked;
+
+    await assert.rejects(decision, { name: "AbortError" });
+    assert.equal(providerCalls, 0);
+  });
+
+  it("quiescence lifecycle menunggu promise provider asli sesudah abort race", async () => {
+    const fixture = await createFixture();
+    const run = await fixture.engine.start(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      brief(),
+    );
+    const providerEntered = deferred<void>();
+    const releaseProvider = deferred<void>();
+    const controller = new AbortController();
+    const decision = fixture.engine.runCoordinatorDecision(
+      fixture.scope,
+      run.runId,
+      run.stateRevision,
+      5_000,
+      controller.signal,
+      async () => {
+        providerEntered.resolve(undefined);
+        await releaseProvider.promise;
+        return "late-result";
+      },
+    );
+    await providerEntered.promise;
+    controller.abort();
+    await assert.rejects(decision, { name: "AbortError" });
+
+    let quiesced = false;
+    const waiting = fixture.engine.waitForRunQuiescence(run.runId).then(() => {
+      quiesced = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(quiesced, false);
+    releaseProvider.resolve(undefined);
+    await waiting;
+    assert.equal(quiesced, true);
+  });
+
+  it("reservasi invocation coordinator menolak revision stale lewat CAS durable", async () => {
+    const fixture = await createFixture();
+    const run = await fixture.engine.start(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      brief(),
+    );
+    const reserved = await fixture.engine.reserveCoordinatorInvocation(
+      fixture.scope,
+      run.runId,
+      run.stateRevision,
+    );
+    assert.equal(reserved.stateRevision, run.stateRevision + 1);
+    await assert.rejects(
+      fixture.engine.reserveCoordinatorInvocation(
+        fixture.scope,
+        run.runId,
+        run.stateRevision,
+      ),
+      /state revision.*basi/iu,
+    );
+  });
+
+  it("reservasi invocation yang melewati active budget tidak memutasi state", async () => {
+    let now = new Date("2026-08-13T01:00:00.000Z");
+    const fixture = await createFixture({
+      now: () => now,
+      limits: { maxActiveMs: 1_000 },
+    });
+    const run = await fixture.engine.start(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      brief(),
+    );
+    now = new Date(now.getTime() + 1_001);
+
+    await assert.rejects(
+      fixture.engine.reserveCoordinatorInvocation(
+        fixture.scope,
+        run.runId,
+        run.stateRevision,
+      ),
+      /active-time budget habis/iu,
+    );
+    const durable = await fixture.baseCodingRepository.load(run.runId);
+    assert.equal(durable?.stateRevision, run.stateRevision);
+    assert.equal(durable?.writer.writerId, run.writer.writerId);
+  });
 });
 
 async function createFixture(options: {

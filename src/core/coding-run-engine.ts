@@ -316,6 +316,25 @@ export class CodingRunEngine {
     });
   }
 
+  /**
+   * Durable CAS admission for one externally scheduled coordinator invocation.
+   * Renewing the writer lease advances stateRevision, so a stale command cannot
+   * slip through a read/read window before the first coordinator action.
+   */
+  async reserveCoordinatorInvocation(
+    scope: WorkspaceAgentScope,
+    runId: string,
+    expectedStateRevision: number,
+  ): Promise<CodingRun> {
+    return this.authorizedExclusive(scope, runId, ["code.write"], async () => {
+      let run = await this.requireMutableRun(scope, runId, "code.write", true);
+      assertStateRevision(run, expectedStateRevision);
+      this.assertActiveBudget(run, "work");
+      run = await this.claimOrRenewWriter(run);
+      return run;
+    });
+  }
+
   async reserveCoordinatorDecision(
     scope: WorkspaceAgentScope,
     runId: string,
@@ -378,6 +397,7 @@ export class CodingRunEngine {
       initial.binding.workspaceRevision,
       ["code.write"],
       async () => this.exclusive(runId, async () => {
+        if (signal?.aborted) throw abortError();
         const current = await this.requireMutableRun(scope, runId);
         assertStateRevision(current, expectedStateRevision);
         this.assertActiveBudget(current, "work");
@@ -387,6 +407,10 @@ export class CodingRunEngine {
           launch.tracked.signal,
           timeoutAbort.signal,
         ]);
+        if (effectiveSignal.aborted) {
+          launch.tracked.finish();
+          throw abortError();
+        }
         const deadline = performance.now() + timeoutMs;
         let timedOut = false;
         try {
@@ -440,6 +464,19 @@ export class CodingRunEngine {
       throw new Error("Coding worker decision tidak berhasil diluncurkan.");
     }
     return launched;
+  }
+
+  /**
+   * App-owned quiescence fence. It exposes no run data and only resolves once
+   * every provider/sandbox operation already registered for this run settles.
+   */
+  async waitForRunQuiescence(runIdInput: string): Promise<void> {
+    const runId = boundedText(runIdInput, 512, "runId");
+    while (true) {
+      const operations = [...(this.inFlightOperations.get(runId) ?? [])];
+      if (operations.length === 0) return;
+      await Promise.all(operations.map((entry) => entry.done));
+    }
   }
 
   async pauseCoordinator(

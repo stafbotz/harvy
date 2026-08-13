@@ -101,6 +101,11 @@ export type CodingCoordinatorRepositoryTools = Pick<
 
 export interface CodingCoordinatorEngine {
   get(scope: WorkspaceAgentScope, runId: string): Promise<CodingRun | null>;
+  reserveCoordinatorInvocation(
+    scope: WorkspaceAgentScope,
+    runId: string,
+    expectedStateRevision: number,
+  ): Promise<CodingRun>;
   writerTools(
     scope: WorkspaceAgentScope,
     runId: string,
@@ -237,17 +242,40 @@ export class CodingRunCoordinator {
     scope: WorkspaceAgentScope,
     runIdInput: string,
     signal?: AbortSignal,
+    expectedStateRevision?: number,
   ): Promise<CodingCoordinatorResult> {
     const runId = safeOpaque(runIdInput, "runId", 512);
+    if (
+      expectedStateRevision !== undefined &&
+      (!Number.isSafeInteger(expectedStateRevision) || expectedStateRevision < 0)
+    ) {
+      throw new Error("expectedStateRevision CodingRun tidak sah.");
+    }
     const admissionKey = `${scope.workspaceKey}\0${runId}`;
     if (ACTIVE_COORDINATOR_RUNS.has(admissionKey)) {
       throw new Error("CodingRun coordinator untuk run ini sudah aktif.");
     }
     ACTIVE_COORDINATOR_RUNS.add(admissionKey);
+    let invocationAdmitted = false;
     try {
-      return await this.runLoop(scope, runId, signal);
+      if (expectedStateRevision !== undefined) {
+        await this.engine.reserveCoordinatorInvocation(
+          scope,
+          runId,
+          expectedStateRevision,
+        );
+      }
+      invocationAdmitted = true;
+      return await this.runLoop(
+        scope,
+        runId,
+        signal,
+        expectedStateRevision === undefined,
+      );
     } catch (error) {
-      await this.pauseAfterFailure(scope, runId, error).catch(() => undefined);
+      if (invocationAdmitted) {
+        await this.pauseAfterFailure(scope, runId, error).catch(() => undefined);
+      }
       throw error;
     } finally {
       ACTIVE_COORDINATOR_RUNS.delete(admissionKey);
@@ -258,6 +286,7 @@ export class CodingRunCoordinator {
     scope: WorkspaceAgentScope,
     runId: string,
     signal?: AbortSignal,
+    allowPendingCommitRecovery = true,
   ): Promise<CodingCoordinatorResult> {
     let previousObservation: CodingWorkerObservation | null = null;
     for (let actions = 0; actions < this.maxActions; actions += 1) {
@@ -268,6 +297,11 @@ export class CodingRunCoordinator {
         run = await this.engine.resumeCoordinator(scope, runId);
       }
       if (run.status === "validating" && run.pendingCommit) {
+        if (!allowPendingCommitRecovery) {
+          throw new Error(
+            "CodingRun commit barrier memerlukan recovery authority terpisah.",
+          );
+        }
         run = await this.engine.recoverPendingCommit(scope, runId);
         if (terminal(run)) return { outcome: "terminal", actions, run };
         if (run.status === "validating" && run.pendingCommit) {

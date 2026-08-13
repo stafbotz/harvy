@@ -204,10 +204,10 @@ Gate terarah tanpa jaringan:
 
 ```bash
 npm run build
-node --test --test-concurrency=1 dist/tests/safe-zip.test.js dist/tests/project-workspace-service.test.js dist/tests/project-memory-service.test.js dist/tests/sandbox-runner-service.test.js dist/tests/coding-run-engine.test.js dist/tests/coding-run-coordinator.test.js dist/tests/coding-agent-executors.test.js dist/tests/workspace-coding-controller.test.js dist/tests/github-broker.test.js dist/tests/github-reconciliation-worker.test.js dist/tests/github-installation-service.test.js dist/tests/project-deletion-coordinator.test.js dist/tests/project-deletion-recovery-worker.test.js dist/tests/workspace-authority-service.test.js dist/tests/http-local-git-transport.test.js dist/tests/http-sandbox-transport.test.js dist/tests/http-github-broker-transport.test.js
+node --test --test-concurrency=1 dist/tests/safe-zip.test.js dist/tests/project-workspace-service.test.js dist/tests/project-memory-service.test.js dist/tests/sandbox-runner-service.test.js dist/tests/coding-run-engine.test.js dist/tests/coding-run-coordinator.test.js dist/tests/coding-run-scheduler.test.js dist/tests/coding-runtime-supervisor.test.js dist/tests/coding-agent-executors.test.js dist/tests/workspace-coding-controller.test.js dist/tests/github-broker.test.js dist/tests/github-reconciliation-worker.test.js dist/tests/github-installation-service.test.js dist/tests/project-deletion-coordinator.test.js dist/tests/project-deletion-recovery-worker.test.js dist/tests/workspace-authority-service.test.js dist/tests/http-local-git-transport.test.js dist/tests/http-sandbox-transport.test.js dist/tests/http-github-broker-transport.test.js
 ```
 
-Pada 13 Agustus 2026, gate terarah ini lulus **152 test dalam 17 suite**.
+Pada 13 Agustus 2026, gate terarah ini lulus **171 test dalam 19 suite**.
 
 Tes ini wajib mengunci malicious ZIP/path/device/link/bomb/magic, immutable
 snapshot+tamper, quota fisik termasuk working copy, crash-recovery trash,
@@ -230,7 +230,12 @@ brief/constraint/plan/path/source maupun execution/artifact ID trust-domain,
 termasuk pola AWS/encrypted private key, dan secret pada file teks besar;
 durable validator evidence sebelum sandbox disposal dan re-verifikasi recovery;
 coordinator decision budget, pause/resume, sandbox action, stale state, provider
-abort/quiescence; tombstone deletion, exact step/replay/permission, active dan
+abort/quiescence; immediate scheduler global/workspace admission, CAS revision,
+conformance verifier+expiry, pending-commit scheduled denial, stop/drain dan
+latched quiescence failure;
+maintenance startup sandbox→GitHub→deletion, admission-closed report,
+partial-start cleanup, stop exception, caller-before-sandbox drain; tombstone
+deletion, exact step/replay/permission, active dan
 historical run, orphan lease/evidence, pending barrier, GitHub unknown, locator
 content-free, scope requester basi, exact-project trash, serta worker recovery
 immediate/non-overlap/satu-page/stop-drain/log agregat;

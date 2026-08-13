@@ -357,6 +357,33 @@ describe("CodingRunCoordinator", () => {
     assert.equal(result.run.status, "validating");
     assert.equal(driver.inputs.length, 0);
   });
+
+  it("scheduled invocation menolak commit barrier sebelum meminta recovery user-scope", async () => {
+    const pending = new FakeCoordinatorEngine();
+    pending.run.status = "validating";
+    pending.run.phase = "finalizing";
+    pending.run.pendingCommit = {
+      effectId: "pending-scheduled-commit",
+      instructionRevision: 0,
+      sourceWorkspaceRevision: 1,
+      workingSnapshot: "b".repeat(64),
+      validatorEvidence: [],
+      preparedAt: NOW,
+    };
+    const driver = new QueueDriver([{ kind: "yield", reasonCode: "must_not_run" }]);
+
+    await assert.rejects(
+      new CodingRunCoordinator(pending, driver).run(
+        SCOPE,
+        pending.run.runId,
+        undefined,
+        pending.run.stateRevision,
+      ),
+      /commit barrier.*recovery authority/iu,
+    );
+    assert.equal(pending.recoveries, 0);
+    assert.equal(driver.inputs.length, 0);
+  });
 });
 
 class QueueDriver implements CodingWorkerDriver {
@@ -423,6 +450,19 @@ class FakeCoordinatorEngine implements CodingCoordinatorEngine {
       references: async () => ({ items: [], truncated: false }),
       diff: async () => structuredClone(this.run.diff ?? emptyDiff()),
     };
+  }
+
+  async reserveCoordinatorInvocation(
+    _scope: WorkspaceAgentScope,
+    _runId: string,
+    expectedStateRevision: number,
+  ): Promise<CodingRun> {
+    assert.equal(expectedStateRevision, this.run.stateRevision);
+    this.run = {
+      ...this.run,
+      stateRevision: this.run.stateRevision + 1,
+    };
+    return structuredClone(this.run);
   }
 
   async reserveCoordinatorDecision(

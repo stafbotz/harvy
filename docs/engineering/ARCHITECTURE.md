@@ -73,9 +73,13 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   (transfer snapshot deterministik content-addressed),
   `sandbox-runner-service.ts` (policy client trust-domain fail-closed,
   request digest dan artifact-byte verification),
-  `coding-run-engine.ts` + `coding-run-coordinator.ts` (single writer,
-  bounded provider/action lifecycle, map/plan/task review, ChangeSet,
-  validator dan commit recovery), `project-deletion-coordinator.ts`
+  `coding-run-engine.ts` + `coding-run-coordinator.ts` +
+  `coding-run-scheduler.ts` (single writer, immediate bounded admission,
+  durable revision reservation, provider quiescence),
+  `coding-runtime-supervisor.ts` (startup maintenance berurutan dan shutdown
+  caller-before-sandbox yang tetap menutup coding admission); rangkaian ini
+  memiliki bounded provider/action lifecycle, map/plan/task review, ChangeSet,
+  validator, serta commit recovery. `project-deletion-coordinator.ts`
   (tombstone-first cleanup run, sandbox, evidence, GitHub lokal, memory, dan
   payload), `project-deletion-recovery-worker.ts` (enumerasi locator
   content-free dan cleanup scope-free satu page per siklus),
@@ -235,7 +239,11 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   `SandboxRunnerService` sendiri menyediakan lifecycle
   `start/stop/drain/close`: startup memulihkan journal tanpa reattach, shutdown
   menutup admission dan mem-fence seluruh lease sebelum adapter journal
-  ditutup. Lifecycle ini belum dirangkai ke `app.ts`, sehingga tidak mengubah
+  ditutup. `CodingRuntimeSupervisor` mengurutkan recovery sandbox → GitHub
+  unknown initial pass → deletion initial pass dan menutup caller sebelum
+  sandbox drain/close. Scheduler hanya dapat dimulai dengan conformance receipt
+  deployment exact; supervisor maintenance sendiri selalu melaporkan admission
+  tertutup. Keduanya belum dirangkai ke `app.ts`, sehingga tidak mengubah
   capability default-off menjadi live.
   `agent-run-retention-worker.ts` menghapus record kedaluwarsa berkala dan
   dapat dihentikan/drain saat shutdown.

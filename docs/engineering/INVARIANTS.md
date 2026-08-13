@@ -656,6 +656,24 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   Setiap action memakai state revision exact, dan provider call diregistrasi
   sebelum project lock dilepas agar deletion dapat abort lalu menunggu
   quiescence dengan deadline fail-closed.
+- **Scheduler tidak menyimpan scope basi dan tidak menyamakan abort dengan
+  quiescence.** Admission coordinator bersifat immediate, dibatasi global dan
+  per-workspace, serta mengikat `expectedStateRevision` melalui reservasi CAS
+  durable. Duplicate run ditolak; tidak ada antrean `WorkspaceAgentScope`.
+  `stop` meng-abort invocation aktif, tetapi drain baru berhasil setelah
+  registri provider/sandbox asli kosong. Kegagalan quiescence tetap dilatch dan
+  mencegah sandbox ditutup. Scheduler hanya dapat dibuka dengan conformance
+  receipt deployment exact yang belum kedaluwarsa; health tidak cukup. Pending
+  commit tidak direkonsiliasi dengan admission terjadwal: barrier itu memerlukan
+  recovery authority terpisah dan tetap fail-closed sampai tersedia.
+- **Supervisor runtime menutup capability sambil memulihkan maintenance.**
+  Startup menuntaskan sandbox journal recovery, lalu mengamati tepat satu page
+  GitHub unknown sebelum tepat satu page deletion recovery. Report content-free
+  bersifat initial pass, bukan klaim backlog habis, dan coding admission tetap
+  `closed`. Shutdown menyegel scheduler, kedua worker, serta sandbox secara
+  sinkron; men-drain caller lebih dulu; lalu memanggil sandbox `drain` dan
+  `close` paling akhir. Failure stop/drain dilaporkan fail-closed dan dapat
+  di-retry; tidak ada scope pengguna sintetis saat startup.
 - **Commit barrier menutup semua mutasi lain.** Pending workspace commit tidak
   boleh ditimpa oleh patch/test/finalize kedua. Reconciliation menunggu writer
   horizon dan hanya mengakui exact snapshot revision; hasil ambigu tidak

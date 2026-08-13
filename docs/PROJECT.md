@@ -379,7 +379,13 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   agar project deletion dapat abort dan menunggu quiescence secara berbatas.
   Executor local-git hanya boleh diiklankan setelah health
   positif dari service yang sama.
-  Worker driver/scheduler/surface produksi dan store multi-instance belum
+  Scheduler immediate-admission berbatas kini mengikat state revision lewat CAS,
+  menunggu provider asli quiescent saat shutdown, dan hanya dapat dibuka dengan
+  conformance receipt deployment exact. Invocation terjadwal menahan pending
+  commit sampai recovery authority terpisah merekonsiliasinya. Supervisor maintenance mengurutkan
+  sandbox recovery, GitHub unknown initial pass, dan deletion initial pass,
+  tetapi selalu menjaga coding admission tertutup. Worker driver, verifier
+  conformance, composition/surface produksi, dan store multi-instance belum
   dipasang; lihat `ADR-035`.
 - [x] Policy GitHub Phase J: local commit dipisah dari branch/push/draft PR;
   exact effect, contract confirmation authority/grant, workflow approval terpisah,
