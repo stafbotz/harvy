@@ -350,6 +350,9 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   menyembunyikan project, mem-fence run/sandbox, lalu menghapus evidence,
   record run, metadata GitHub lokal, memory, dan payload secara resumable;
   pending effect ambigu menahan saga. Tombstone tidak menghapus konten remote.
+  Tombstone incomplete memiliki locator content-free exact-bound dan worker
+  bounded dapat melanjutkan cleanup lokal tanpa membuat scope pengguna; worker
+  ini masih single-process dan belum dirangkai ke startup aplikasi.
   Belum ada ingress atau UI Workspace; lihat `ADR-033`.
 - [x] Kontrak SandboxRunner Phase H: trust domain Linux terpisah, binding exact,
   network-off, quota/admission/watchdog/artifact cap, bundle snapshot

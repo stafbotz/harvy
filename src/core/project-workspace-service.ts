@@ -48,7 +48,10 @@ import {
   createSandboxSnapshotSource as buildSandboxSnapshotSource,
 } from "../sandbox/snapshot-bundle.js";
 import type { WorkspaceAuthorityService } from "./workspace-authority-service.js";
-import type { ProjectDeletionAuthority } from "../domain/project-deletion.js";
+import type {
+  ProjectDeletionAuthority,
+  ProjectDeletionReference,
+} from "../domain/project-deletion.js";
 
 export interface ProjectMemoryLifecycle {
   forgetAll(namespace: ReturnType<typeof projectMemoryNamespace>): Promise<void>;
@@ -762,24 +765,34 @@ export class ProjectWorkspaceService {
     return this.authority.withPermissions(
       scope,
       ["workspace.manage", "code.write"],
-      () =>
-      this.exclusive(projectId, async () => {
+      async () => {
         const binding = await this.requireDeletionBinding(
           scope.workspaceKey,
           projectId,
           deletionId,
         );
-        const project = await this.repository.load(projectId);
-        if (
-          !project ||
-          project.ownerWorkspaceKey !== scope.workspaceKey ||
-          project.createdAt !== binding.projectCreatedAt ||
-          project.revision !== binding.expectedProjectRevision
-        ) {
-          throw new Error("ProjectWorkspace deletion binding sudah basi.");
-        }
-        return operation(structuredClone(project));
-      }),
+        return this.withDurableDeletionProject(
+          deletionReferenceFromBinding(binding),
+          operation,
+        );
+      },
+    );
+  }
+
+  /** Cleanup-only check backed by an already-authorized durable tombstone. */
+  async assertDurableDeletionProject(
+    reference: ProjectDeletionReference,
+  ): Promise<void> {
+    await this.withDurableDeletionProject(reference, async () => undefined);
+  }
+
+  async hasDurableDeletionProjectEffect(
+    reference: ProjectDeletionReference,
+    effectIdInput: string,
+  ): Promise<boolean> {
+    const effectId = safeMetadata(effectIdInput, "deletion effectId");
+    return this.withDurableDeletionProject(reference, async (project) =>
+      project.snapshotHistory.some((entry) => entry.effectId === effectId)
     );
   }
 
@@ -1482,10 +1495,11 @@ export class ProjectWorkspaceService {
     input: Omit<ProjectWorkingCopy, "internalPath">,
   ): Promise<void> {
     await this.requirePermissions(scope, ["code.write"]);
-    if (input.ownerWorkspaceKey !== scope.workspaceKey) {
+    const working = validWorkingCopyReference(input);
+    if (working.ownerWorkspaceKey !== scope.workspaceKey) {
       throw new Error("Working copy berada di workspace lain.");
     }
-    const cleanProjectId = safeMetadata(input.projectId, "projectId");
+    const cleanProjectId = working.projectId;
     await this.guardedExclusive(scope, ["code.write"], cleanProjectId, async () => {
       await this.assertNotDeleting(scope.workspaceKey, cleanProjectId);
       const project = await this.repository.load(cleanProjectId);
@@ -1494,19 +1508,19 @@ export class ProjectWorkspaceService {
       }
       const bindingExists = project.snapshotHistory.some(
         (entry) =>
-          entry.revision === input.workspaceRevision &&
-          entry.snapshotId === input.baseSnapshot,
+          entry.revision === working.workspaceRevision &&
+          entry.snapshotId === working.baseSnapshot,
       );
       if (!bindingExists) {
         throw new Error("Binding working copy tidak pernah dimiliki ProjectWorkspace ini.");
       }
       await this.disposeWorkingCopyUnsafe({
-        ...input,
+        ...working,
         projectId: cleanProjectId,
         internalPath: this.workingPath(
-          input.ownerWorkspaceKey,
+          working.ownerWorkspaceKey,
           cleanProjectId,
-          input.workingCopyId,
+          working.workingCopyId,
         ),
       });
     });
@@ -1517,32 +1531,55 @@ export class ProjectWorkspaceService {
     input: Omit<ProjectWorkingCopy, "internalPath">,
     deletionId: string,
   ): Promise<void> {
-    if (input.ownerWorkspaceKey !== scope.workspaceKey) {
+    const working = validWorkingCopyReference(input);
+    if (working.ownerWorkspaceKey !== scope.workspaceKey) {
       throw new Error("Working copy deletion berada di workspace lain.");
     }
-    await this.withDeletionProject(
+    await this.authority.withPermissions(
       scope,
-      input.projectId,
-      deletionId,
-      async (project) => {
-        const bindingExists = project.snapshotHistory.some(
-          (entry) =>
-            entry.revision === input.workspaceRevision &&
-            entry.snapshotId === input.baseSnapshot,
+      ["workspace.manage", "code.write"],
+      async () => {
+        const binding = await this.requireDeletionBinding(
+          scope.workspaceKey,
+          working.projectId,
+          deletionId,
         );
-        if (!bindingExists) {
-          throw new Error("Binding working copy deletion tidak dimiliki project.");
-        }
-        await this.disposeWorkingCopyUnsafe({
-          ...input,
-          internalPath: this.workingPath(
-            input.ownerWorkspaceKey,
-            input.projectId,
-            input.workingCopyId,
-          ),
-        });
+        await this.disposeWorkingCopyReferenceForDurableDeletion(
+          deletionReferenceFromBinding(binding),
+          working,
+        );
       },
     );
+  }
+
+  async disposeWorkingCopyReferenceForDurableDeletion(
+    reference: ProjectDeletionReference,
+    input: Omit<ProjectWorkingCopy, "internalPath">,
+  ): Promise<void> {
+    const validReference = validProjectDeletionReference(reference);
+    const working = validWorkingCopyReference(input);
+    if (
+      working.ownerWorkspaceKey !== validReference.ownerWorkspaceKey ||
+      working.projectId !== validReference.projectId
+    ) throw new Error("Working copy deletion berada di project lain.");
+    await this.withDurableDeletionProject(validReference, async (project) => {
+      const bindingExists = project.snapshotHistory.some(
+        (entry) =>
+          entry.revision === working.workspaceRevision &&
+          entry.snapshotId === working.baseSnapshot,
+      );
+      if (!bindingExists) {
+        throw new Error("Binding working copy deletion tidak dimiliki project.");
+      }
+      await this.disposeWorkingCopyUnsafe({
+        ...working,
+        internalPath: this.workingPath(
+          working.ownerWorkspaceKey,
+          working.projectId,
+          working.workingCopyId,
+        ),
+      });
+    });
   }
 
   async pruneUnreferencedSnapshots(
@@ -1632,8 +1669,7 @@ export class ProjectWorkspaceService {
     await this.requirePermissions(scope, ["workspace.manage"]);
     const projectId = safeMetadata(projectIdInput, "projectId");
     const deletionId = safeMetadata(deletionIdInput, "deletionId");
-    return this.guardedExclusive(scope, ["workspace.manage"], projectId, async () =>
-      this.exclusive("__storage-quota__", async () => {
+    return this.authority.withPermission(scope, "workspace.manage", async () => {
         const binding = await this.requireDeletionBinding(
           scope.workspaceKey,
           projectId,
@@ -1642,6 +1678,19 @@ export class ProjectWorkspaceService {
         if (binding.expectedProjectRevision !== expectedRevision) {
           throw new Error("Revision deletion ProjectWorkspace tidak cocok ledger.");
         }
+        return this.removeForDurableDeletion(deletionReferenceFromBinding(binding));
+      });
+  }
+
+  async removeForDurableDeletion(
+    reference: ProjectDeletionReference,
+  ): Promise<"removed" | "missing"> {
+    await this.ensureStorageIsolation();
+    const validReference = validProjectDeletionReference(reference);
+    const projectId = validReference.projectId;
+    return this.exclusive(projectId, async () =>
+      this.exclusive("__storage-quota__", async () => {
+        const binding = await this.requireExactDeletionBinding(validReference);
         if (
           JSON.stringify(binding.completedSteps) !== JSON.stringify([
             "runs_fenced",
@@ -1658,21 +1707,18 @@ export class ProjectWorkspaceService {
             throw new Error("Lifecycle memory project belum dikonfigurasi; penghapusan gagal tertutup.");
           }
           await this.memoryLifecycle.forgetAll(
-            projectMemoryNamespace(scope.workspaceKey, projectId),
+            projectMemoryNamespace(validReference.ownerWorkspaceKey, projectId),
           );
-          await this.reapTrashForOwner(scope.workspaceKey);
-          await this.assertProjectPayloadAbsent(scope.workspaceKey, projectId);
+          await this.reapTrashForProject(
+            validReference.ownerWorkspaceKey,
+            projectId,
+          );
+          await this.assertProjectPayloadAbsent(validReference.ownerWorkspaceKey, projectId);
           return "missing";
         }
-        if (
-          project.ownerWorkspaceKey !== scope.workspaceKey ||
-          project.createdAt !== binding.projectCreatedAt ||
-          project.revision !== expectedRevision
-        ) {
-          throw new Error("ProjectWorkspace deletion binding sudah basi.");
-        }
+        assertProjectMatchesDeletionReference(project, validReference);
         assertNoPendingLocalGit(project, "menghapus project");
-        return this.removeProjectLocked(scope.workspaceKey, project);
+        return this.removeProjectLocked(validReference.ownerWorkspaceKey, project);
       })
     );
   }
@@ -1993,8 +2039,13 @@ export class ProjectWorkspaceService {
     projectId: string,
     deletionId: string,
   ): Promise<{
+    version: 1;
+    deletionId: string;
+    ownerWorkspaceKey: string;
+    projectId: string;
     expectedProjectRevision: number;
     projectCreatedAt: string;
+    projectSource: "upload" | "github";
     status: "requested" | "cleanup_required" | "completed";
     completedSteps: import("../domain/project-deletion.js").ProjectDeletionStep[];
   }> {
@@ -2010,6 +2061,45 @@ export class ProjectWorkspaceService {
       throw new Error("Deletion binding ProjectWorkspace tidak tersedia.");
     }
     return binding;
+  }
+
+  private async requireExactDeletionBinding(
+    referenceInput: ProjectDeletionReference,
+  ): Promise<Awaited<ReturnType<ProjectWorkspaceService["requireDeletionBinding"]>>> {
+    const reference = validProjectDeletionReference(referenceInput);
+    const binding = await this.requireDeletionBinding(
+      reference.ownerWorkspaceKey,
+      reference.projectId,
+      reference.deletionId,
+    );
+    if (
+      binding.version !== reference.version ||
+      binding.ownerWorkspaceKey !== reference.ownerWorkspaceKey ||
+      binding.projectId !== reference.projectId ||
+      binding.projectCreatedAt !== reference.projectCreatedAt ||
+      binding.projectSource !== reference.projectSource ||
+      binding.expectedProjectRevision !== reference.expectedProjectRevision
+    ) {
+      throw new Error("ProjectWorkspace deletion locator tidak cocok ledger.");
+    }
+    return binding;
+  }
+
+  private async withDurableDeletionProject<T>(
+    referenceInput: ProjectDeletionReference,
+    operation: (project: ProjectWorkspace) => Promise<T>,
+  ): Promise<T> {
+    await this.ensureStorageIsolation();
+    const reference = validProjectDeletionReference(referenceInput);
+    return this.exclusive(reference.projectId, async () => {
+      await this.requireExactDeletionBinding(reference);
+      const project = await this.repository.load(reference.projectId);
+      if (!project) {
+        throw new Error("ProjectWorkspace deletion binding sudah hilang.");
+      }
+      assertProjectMatchesDeletionReference(project, reference);
+      return operation(structuredClone(project));
+    });
   }
 
   private async isDeletionPending(
@@ -2190,21 +2280,53 @@ export class ProjectWorkspaceService {
   }
 
   private async reapTrashForOwner(ownerWorkspaceKey: string): Promise<void> {
+    return this.reapTrash(ownerWorkspaceKey, null);
+  }
+
+  private async reapTrashForProject(
+    ownerWorkspaceKey: string,
+    projectId: string,
+  ): Promise<void> {
+    return this.reapTrash(
+      ownerWorkspaceKey,
+      safeMetadata(projectId, "trash projectId"),
+    );
+  }
+
+  private async reapTrash(
+    ownerWorkspaceKey: string,
+    onlyProjectId: string | null,
+  ): Promise<void> {
     const ownerPart = ownerDirectory(ownerWorkspaceKey);
     const ownerTrash = resolve(this.storageRoot, "trash", ownerPart);
     await assertNoManagedSymlink(this.storageRoot, ownerTrash);
-    let projectEntries: Dirent[];
-    try {
-      projectEntries = await readdir(ownerTrash, { withFileTypes: true });
-    } catch (error) {
-      if (isNodeError(error) && error.code === "ENOENT") return;
-      throw error;
-    }
-    for (const projectEntry of projectEntries) {
-      if (!projectEntry.isDirectory() || projectEntry.isSymbolicLink()) {
-        throw new Error("Trash ProjectWorkspace memuat entry project tidak sah.");
+    let projectIds: string[];
+    if (onlyProjectId !== null) {
+      const exactTrash = resolve(ownerTrash, onlyProjectId);
+      await assertNoManagedSymlink(this.storageRoot, exactTrash);
+      try {
+        await readdir(exactTrash, { withFileTypes: true });
+      } catch (error) {
+        if (isNodeError(error) && error.code === "ENOENT") return;
+        throw error;
       }
-      const projectId = safeMetadata(projectEntry.name, "trash projectId");
+      projectIds = [onlyProjectId];
+    } else {
+      let projectEntries: Dirent[];
+      try {
+        projectEntries = await readdir(ownerTrash, { withFileTypes: true });
+      } catch (error) {
+        if (isNodeError(error) && error.code === "ENOENT") return;
+        throw error;
+      }
+      projectIds = projectEntries.map((projectEntry) => {
+        if (!projectEntry.isDirectory() || projectEntry.isSymbolicLink()) {
+          throw new Error("Trash ProjectWorkspace memuat entry project tidak sah.");
+        }
+        return safeMetadata(projectEntry.name, "trash projectId");
+      });
+    }
+    for (const projectId of projectIds) {
       const projectTrash = resolve(ownerTrash, projectId);
       for (const batch of await readdir(projectTrash, { withFileTypes: true })) {
         if (!batch.isDirectory() || batch.isSymbolicLink()) {
@@ -3030,6 +3152,105 @@ function opaqueId(prefix: string, value: string): string {
   const clean = value.replace(/[^a-z0-9_-]/giu, "").slice(0, 80);
   if (!clean) throw new Error("Generator ID ProjectWorkspace tidak sah.");
   return `${prefix}-${clean}`;
+}
+
+function validProjectDeletionReference(
+  input: ProjectDeletionReference,
+): ProjectDeletionReference {
+  if (
+    !input || typeof input !== "object" || Array.isArray(input) ||
+    JSON.stringify(Object.keys(input).sort()) !== JSON.stringify([
+      "deletionId",
+      "expectedProjectRevision",
+      "ownerWorkspaceKey",
+      "projectCreatedAt",
+      "projectId",
+      "projectSource",
+      "version",
+    ])
+  ) throw new Error("Locator project deletion memuat field asing atau hilang.");
+  if (input.version !== 1) throw new Error("Versi locator project deletion tidak sah.");
+  if (
+    input.projectSource !== "upload" && input.projectSource !== "github"
+  ) throw new Error("Source locator project deletion tidak sah.");
+  if (
+    !Number.isSafeInteger(input.expectedProjectRevision) ||
+    input.expectedProjectRevision < 1
+  ) throw new Error("Revision locator project deletion tidak sah.");
+  if (
+    !Number.isFinite(Date.parse(input.projectCreatedAt)) ||
+    new Date(input.projectCreatedAt).toISOString() !== input.projectCreatedAt
+  ) throw new Error("CreatedAt locator project deletion tidak sah.");
+  return Object.freeze({
+    version: 1,
+    deletionId: safeMetadata(input.deletionId, "deletionId"),
+    ownerWorkspaceKey: safeMetadata(
+      input.ownerWorkspaceKey,
+      "deletion ownerWorkspaceKey",
+    ),
+    projectId: safeMetadata(input.projectId, "deletion projectId"),
+    projectCreatedAt: input.projectCreatedAt,
+    projectSource: input.projectSource,
+    expectedProjectRevision: input.expectedProjectRevision,
+  });
+}
+
+function validWorkingCopyReference(
+  input: Omit<ProjectWorkingCopy, "internalPath">,
+): Omit<ProjectWorkingCopy, "internalPath"> {
+  const snapshot = structuredClone(input);
+  if (
+    !snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) ||
+    JSON.stringify(Object.keys(snapshot).sort()) !== JSON.stringify([
+      "baseSnapshot",
+      "ownerWorkspaceKey",
+      "projectId",
+      "workingCopyId",
+      "workspaceRevision",
+    ])
+  ) throw new Error("Referensi working copy memuat field asing atau hilang.");
+  if (
+    !Number.isSafeInteger(snapshot.workspaceRevision) ||
+    snapshot.workspaceRevision < 1
+  ) throw new Error("Revision working copy tidak sah.");
+  return Object.freeze({
+    projectId: safeMetadata(snapshot.projectId, "projectId"),
+    ownerWorkspaceKey: safeMetadata(
+      snapshot.ownerWorkspaceKey,
+      "working ownerWorkspaceKey",
+    ),
+    workingCopyId: safeMetadata(snapshot.workingCopyId, "workingCopyId"),
+    workspaceRevision: snapshot.workspaceRevision,
+    baseSnapshot: sha256(snapshot.baseSnapshot, "baseSnapshot"),
+  });
+}
+
+function deletionReferenceFromBinding(
+  binding: Awaited<ReturnType<ProjectDeletionAuthority["cleanupBinding"]>> & object,
+): ProjectDeletionReference {
+  if (!binding) throw new Error("ProjectWorkspace deletion binding tidak tersedia.");
+  return {
+    version: binding.version,
+    deletionId: binding.deletionId,
+    ownerWorkspaceKey: binding.ownerWorkspaceKey,
+    projectId: binding.projectId,
+    projectCreatedAt: binding.projectCreatedAt,
+    projectSource: binding.projectSource,
+    expectedProjectRevision: binding.expectedProjectRevision,
+  };
+}
+
+function assertProjectMatchesDeletionReference(
+  project: ProjectWorkspace,
+  reference: ProjectDeletionReference,
+): void {
+  if (
+    project.ownerWorkspaceKey !== reference.ownerWorkspaceKey ||
+    project.id !== reference.projectId ||
+    project.createdAt !== reference.projectCreatedAt ||
+    project.source.type !== reference.projectSource ||
+    project.revision !== reference.expectedProjectRevision
+  ) throw new Error("ProjectWorkspace deletion binding sudah basi.");
 }
 
 function safeMetadata(value: string, field: string): string {

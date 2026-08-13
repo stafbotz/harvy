@@ -15,6 +15,9 @@ Refreshed: 2026-08-13
   publik, lalu secara resumable mem-fence run/sandbox dan menghapus evidence,
   record run, metadata GitHub lokal, memory, serta payload. Pending commit atau
   effect ambigu menahan saga; tombstone completed mencegah ID hidup kembali.
+  Tombstone incomplete dipage sebagai locator content-free exact-bound dan
+  worker bounded dapat melanjutkan cleanup tanpa menyintesis scope pengguna,
+  membuat efek coding/publish non-cleanup baru, atau menyentuh trash project lain.
 - Phase H: kontrak `SandboxRunner` ke trust domain `isolated-linux`, binding
   owner+project+snapshot+revision+run, network-off, quota/admission, watchdog,
   bundle snapshot content-addressed tanpa host path, operation/request digest,
@@ -102,13 +105,14 @@ Refreshed: 2026-08-13
   tidak boleh membuat capability `installed`; produksi memerlukan endpoint
   dengan verifier service-auth, backend live, dan conformance positif dari
   service yang sama.
-- Coordinator deletion dan store evidence/deletion belum dirangkai pada
-  startup/composition produksi. Tombstone lokal bukan bukti remote GitHub sudah
+- Coordinator deletion, store evidence/deletion, dan worker recovery lokal
+  belum dirangkai pada startup/composition produksi. Tombstone lokal bukan
+  bukti remote GitHub sudah
   di-unlink atau konten remote terhapus.
 
 ## Bukti
 
 - `npm run check` PASS.
-- Tes terarah G–J/authority/HTTP PASS, 144 test dalam 16 suite.
-- `npm test` PASS, 1.093 test dalam 135 suite, 0 gagal.
+- Tes terarah G–J/authority/HTTP PASS, 152 test dalam 17 suite.
+- `npm test` PASS, 1.101 test dalam 136 suite, 0 gagal.
 - Belum ada live isolation test, GitHub App test, provider test, atau kanal E2E.

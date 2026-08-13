@@ -67,7 +67,10 @@ memasang fence pada operasi provider dan seluruh lease sandbox project,
 menghapus evidence termasuk orphan, record run, metadata GitHub lokal, memory,
 serta payload project secara berurutan. Pending commit atau receipt GitHub
 `unknown` menahan cleanup; tombstone completed dipertahankan agar ID tidak
-hidup kembali. Penghapusan ini tidak pernah menghapus repository remote.
+hidup kembali. Tombstone incomplete kini dipage sebagai locator content-free;
+worker bounded melanjutkan cleanup lokal exact tanpa scope pengguna, efek
+coding/publish non-cleanup baru, atau sapuan trash project lain. Penghapusan ini tidak pernah menghapus
+repository remote.
 Authority dan antrean project sekarang menjadi critical section terstruktur:
 child re-entrant ikut ditunggu, descendant yang lolos wajib revalidasi, dan
 guard tidak dapat dipakai lintas repository realm. Snapshot hanya keluar lewat
@@ -119,8 +122,8 @@ Watchdog AgentHarness mengatribusikan `AbortError` ke owner deadline yang sudah
 dipilih sehingga tie invocation/RunBudget tidak berubah karena scheduler load.
 Semua capability baru default-off.
 
-Verified: `npm run check` PASS; tes terarah G–J/authority/HTTP PASS, 144 test
-dalam 16 suite; `npm test` PASS, 1.093 test dalam 135 suite, 0 gagal;
+Verified: `npm run check` PASS; tes terarah G–J/authority/HTTP PASS, 152 test
+dalam 17 suite; `npm test` PASS, 1.101 test dalam 136 suite, 0 gagal;
 `npm run context:check` PASS. Tes mencakup malicious
 archive, tamper/quota, tenant/admission/watchdog, writer/validator/commit race,
 stale zombie, structured guard/escaped source, strict HTTP proof/stream,

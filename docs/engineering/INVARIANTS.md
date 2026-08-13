@@ -576,7 +576,13 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   dan urutan step exact yang boleh memakai jalur cleanup. Saga memasang fence
   run/provider/sandbox, lalu menghapus seluruh evidence project, record run,
   metadata GitHub lokal, memory, dan payload; pending commit atau receipt remote
-  `unknown` menahan cleanup. Penghapusan lokal tidak pernah menghapus remote.
+  `unknown` menahan cleanup. Recovery background memakai locator content-free
+  yang dicocokkan exact ke ledger; tombstone hanya memberi authority cleanup
+  monotonik, tidak pernah membentuk scope pengguna, membuat efek coding/publish
+  non-cleanup, atau menyapu trash project lain. Worker memproses satu page secara non-overlap, mendukung
+  stop/drain, dan hanya mencatat agregat. Primitive ini masih single-process dan
+  belum dirangkai di startup aplikasi. Penghapusan lokal tidak pernah menghapus
+  remote.
 
 ## Sandbox dan CodingRun
 

@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  rename,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -116,6 +123,140 @@ describe("Project deletion saga", () => {
     );
   });
 
+  it("melanjutkan tombstone durable setelah scope peminta menjadi basi", async () => {
+    const fixture = await createFixture();
+    const project = await fixture.projects.createFromUpload(
+      fixture.ownerScope,
+      zip("export const value = 1;\n"),
+    );
+    const deletion = await fixture.coordinator.request(
+      fixture.ownerScope,
+      project.id,
+      project.revision,
+    );
+    const viewer = workspacePrincipal(SECRET, "telegram", "acl-epoch-bump");
+    const added = await fixture.authority.addMember(
+      fixture.ownerScope,
+      viewer,
+      "viewer",
+    );
+    assert.equal(added.status, "updated");
+
+    await assert.rejects(
+      fixture.coordinator.resume(fixture.ownerScope, deletion.deletionId),
+      /workspace\.manage/u,
+    );
+    const restartedRepository = new FileProjectDeletionRepository(
+      join(fixture.root, "deletions.json"),
+    );
+    const restartedAuthority = new WorkspaceAuthorityService(
+      new FileWorkspaceRepository(join(fixture.root, "authority.json")),
+      () => NOW,
+      () => "restart-id",
+    );
+    const restartedProjects = new ProjectWorkspaceService(
+      new FileProjectWorkspaceRepository(join(fixture.root, "projects.json")),
+      restartedAuthority,
+      { root: join(fixture.root, "project-data") },
+      { async forgetAll() {} },
+      () => NOW,
+      () => "restart-id",
+      undefined,
+      restartedRepository,
+    );
+    const restartedRuns = new FileCodingRunRepository(join(fixture.root, "runs.json"));
+    const restartedEvidence = new FileCodingEvidenceStore(join(fixture.root, "evidence"));
+    const restartedEngine = new CodingRunEngine(
+      restartedRuns,
+      restartedProjects,
+      new DeletionSandbox(),
+      VALIDATOR_POLICY,
+      { evidenceStore: restartedEvidence },
+      () => NOW,
+      () => "restart-id",
+    );
+    const restartedCoordinator = new ProjectDeletionCoordinator(
+      restartedRepository,
+      restartedProjects,
+      restartedRuns,
+      restartedEngine,
+      restartedEvidence,
+      undefined,
+      () => NOW,
+      () => "restart-id",
+    );
+    const page = await restartedRepository.listIncomplete({ cursor: null, limit: 10 });
+    assert.equal(page.references.length, 1);
+    assert.equal(
+      await restartedCoordinator.resumeDurable(page.references[0]!),
+      "completed",
+    );
+    assert.equal(await fixture.projectRepository.load(project.id), null);
+  });
+
+  it("menolak locator durable forged sebelum cleanup dan mem-page metadata content-free", async () => {
+    const fixture = await createFixture();
+    const project = await fixture.projects.createFromUpload(
+      fixture.ownerScope,
+      zip("export const value = 1;\n"),
+    );
+    await fixture.coordinator.request(
+      fixture.ownerScope,
+      project.id,
+      project.revision,
+    );
+    const secondProject = await fixture.projects.createFromUpload(
+      fixture.ownerScope,
+      zip("export const second = 2;\n"),
+    );
+    await fixture.coordinator.request(
+      fixture.ownerScope,
+      secondProject.id,
+      secondProject.revision,
+    );
+    const page = await fixture.deletions.listIncomplete({ cursor: null, limit: 1 });
+    assert.ok(page.nextCursor);
+    const nextPage = await fixture.deletions.listIncomplete({
+      cursor: page.nextCursor,
+      limit: 1,
+    });
+    assert.equal(nextPage.references.length, 1);
+    assert.equal(nextPage.nextCursor, null);
+    assert.deepEqual(
+      new Set([...page.references, ...nextPage.references].map((entry) => entry.projectId)),
+      new Set([project.id, secondProject.id]),
+    );
+    const reference = page.references[0]!;
+    assert.deepEqual(Object.keys(reference).sort(), [
+      "deletionId",
+      "expectedProjectRevision",
+      "ownerWorkspaceKey",
+      "projectCreatedAt",
+      "projectId",
+      "projectSource",
+      "version",
+    ]);
+    assert.equal(JSON.stringify(page).includes("runIds"), false);
+    assert.equal(JSON.stringify(page).includes("lastError"), false);
+    await assert.rejects(
+      fixture.coordinator.resumeDurable({
+        ...reference,
+        projectCreatedAt: "2026-08-13T03:00:01.000Z",
+      }),
+      /tidak cocok/u,
+    );
+    assert.equal(fixture.sandbox.fenceCalls, 0);
+    assert.ok(await fixture.projectRepository.load(reference.projectId));
+    await assert.rejects(
+      fixture.deletions.listIncomplete({ cursor: "%%%", limit: 1 }),
+      /cursor/iu,
+    );
+    await assert.rejects(
+      fixture.deletions.listIncomplete({ cursor: null, limit: 0 }),
+      /limit/iu,
+    );
+  });
+
   it("mempertahankan tombstone cleanup_required sampai metadata GitHub aman dilepas", async () => {
     let blocked = true;
     const fixture = await createFixture({
@@ -143,22 +284,83 @@ describe("Project deletion saga", () => {
       project.id,
       project.revision,
     );
-    const pending = await fixture.coordinator.resume(
-      fixture.ownerScope,
-      deletion.deletionId,
-    );
-    assert.equal(pending.status, "cleanup_required");
-    assert.equal(pending.lastError?.code, "github_effect_unknown");
+    const reference = (await fixture.deletions.listIncomplete({
+      cursor: null,
+      limit: 1,
+    })).references[0]!;
+    assert.equal(await fixture.coordinator.resumeDurable(reference), "cleanup_required");
+    const pending = await fixture.deletions.load(deletion.deletionId);
+    assert.equal(pending?.status, "cleanup_required");
+    assert.equal(pending?.lastError?.code, "github_effect_unknown");
     assert.ok(await fixture.projectRepository.load(project.id));
     assert.equal(await fixture.projects.get(fixture.ownerScope, project.id), null);
 
     blocked = false;
-    const completed = await fixture.coordinator.resume(
+    assert.equal(await fixture.coordinator.resumeDurable(reference), "completed");
+    assert.equal(await fixture.projectRepository.load(project.id), null);
+  });
+
+  it("menserialkan resume pengguna dan recovery durable pada deletion yang sama", async () => {
+    let detachCalls = 0;
+    let enteredResolve!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enteredResolve = resolve;
+    });
+    let releaseResolve!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseResolve = resolve;
+    });
+    const fixture = await createFixture({
+      github: {
+        async detachLocalProject() {
+          detachCalls += 1;
+          enteredResolve();
+          await release;
+          return "detached" as const;
+        },
+      },
+    });
+    const project = await fixture.projects.createFromGitHubArchive(
+      fixture.ownerScope,
+      {
+        repositoryId: "repo-serialized",
+        installationId: "installation-serialized",
+        archive: zip("export const value = 1;\n"),
+        git: {
+          baseCommit: "b".repeat(40),
+          branch: "main",
+          headCommit: "b".repeat(40),
+        },
+      },
+    );
+    const deletion = await fixture.coordinator.request(
+      fixture.ownerScope,
+      project.id,
+      project.revision,
+    );
+    const reference = (await fixture.deletions.listIncomplete({
+      cursor: null,
+      limit: 1,
+    })).references[0]!;
+
+    const interactive = fixture.coordinator.resume(
       fixture.ownerScope,
       deletion.deletionId,
     );
-    assert.equal(completed.status, "completed", JSON.stringify(completed.lastError));
-    assert.equal(await fixture.projectRepository.load(project.id), null);
+    await entered;
+    let durableSettled = false;
+    const durable = fixture.coordinator.resumeDurable(reference).then((status) => {
+      durableSettled = true;
+      return status;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(durableSettled, false);
+    assert.equal(detachCalls, 1);
+    releaseResolve();
+
+    assert.equal((await interactive).status, "completed");
+    assert.equal(await durable, "completed");
+    assert.equal(detachCalls, 1);
   });
 
   it("membatalkan run aktif, memasang sandbox fence, dan menghapus histori serta evidence", async () => {
@@ -301,6 +503,112 @@ describe("Project deletion saga", () => {
       }),
       /awal|canonical/iu,
     );
+
+    let sequential = deletion;
+    for (const step of [
+      "runs_fenced",
+      "evidence_removed",
+      "runs_removed",
+      "github_detached",
+    ] as const) {
+      const { revision: currentRevision, ...current } = sequential;
+      const saved = await fixture.deletions.save({
+        ...current,
+        completedSteps: [...current.completedSteps, step],
+      }, currentRevision);
+      assert.equal(saved.status, "saved");
+      if (saved.status !== "saved") throw new Error("Fixture transition gagal.");
+      sequential = saved.record;
+    }
+    const { revision: sequentialRevision, ...sequentialRecord } = sequential;
+    await assert.rejects(
+      fixture.deletions.save({
+        ...sequentialRecord,
+        completedSteps: [...sequentialRecord.completedSteps, "project_removed"],
+      }, sequentialRevision),
+      /completion|canonical/iu,
+    );
+  });
+
+  it("cleanup durable project exact tidak menyapu trash project lain", async () => {
+    const fixture = await createFixture();
+    const first = await fixture.projects.createFromUpload(
+      fixture.ownerScope,
+      zip("export const first = 1;\n"),
+    );
+    const second = await fixture.projects.createFromUpload(
+      fixture.ownerScope,
+      zip("export const second = 2;\n"),
+    );
+    const secondSnapshot = await fixture.projects.getSnapshotHandle(
+      fixture.ownerScope,
+      second.id,
+      second.revision,
+    );
+    const deletion = await fixture.coordinator.request(
+      fixture.ownerScope,
+      first.id,
+      first.revision,
+    );
+    let durable = deletion;
+    for (const step of [
+      "runs_fenced",
+      "evidence_removed",
+      "runs_removed",
+      "github_detached",
+    ] as const) {
+      const { revision, ...record } = durable;
+      const saved = await fixture.deletions.save({
+        ...record,
+        completedSteps: [...record.completedSteps, step],
+      }, revision);
+      assert.equal(saved.status, "saved");
+      if (saved.status !== "saved") throw new Error("Fixture transition gagal.");
+      durable = saved.record;
+    }
+    assert.equal(
+      await fixture.projectRepository.remove(first.id, first.revision),
+      "removed",
+    );
+
+    const ownerPart = createHash("sha256")
+      .update("harvy-project-owner-v1\0", "utf8")
+      .update(second.ownerWorkspaceKey, "utf8")
+      .digest("hex");
+    const secondTrash = join(
+      fixture.root,
+      "project-data",
+      "trash",
+      ownerPart,
+      second.id,
+      "foreign-prune",
+    );
+    await mkdir(secondTrash, { recursive: true });
+    await writeFile(join(secondTrash, ".harvy-trash.json"), `${JSON.stringify({
+      version: 1,
+      kind: "snapshot-prune",
+      ownerPart,
+      projectId: second.id,
+      projectCreatedAt: second.createdAt,
+      snapshotId: second.baseSnapshot,
+    })}\n`, "utf8");
+    await rename(secondSnapshot.internalPath, join(secondTrash, "snapshot"));
+
+    const reference = {
+      version: 1 as const,
+      deletionId: durable.deletionId,
+      ownerWorkspaceKey: durable.ownerWorkspaceKey,
+      projectId: durable.projectId,
+      projectCreatedAt: durable.projectCreatedAt,
+      projectSource: durable.projectSource,
+      expectedProjectRevision: durable.expectedProjectRevision,
+    };
+    await assert.rejects(
+      fixture.projects.removeForDurableDeletion(reference),
+      /payload|masih tersisa/iu,
+    );
+    await assert.rejects(access(secondSnapshot.internalPath));
+    await access(secondTrash);
   });
 
   it("tidak meluncurkan provider setelah tombstone dan mem-fence call yang sudah aktif", async () => {

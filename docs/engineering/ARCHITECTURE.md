@@ -77,7 +77,9 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   bounded provider/action lifecycle, map/plan/task review, ChangeSet,
   validator dan commit recovery), `project-deletion-coordinator.ts`
   (tombstone-first cleanup run, sandbox, evidence, GitHub lokal, memory, dan
-  payload), `github-installation-service.ts` (WAL install/selection/
+  payload), `project-deletion-recovery-worker.ts` (enumerasi locator
+  content-free dan cleanup scope-free satu page per siklus),
+  `github-installation-service.ts` (WAL install/selection/
   provisioning), `local-git-service.ts` (commit deterministic/reconcile + object
   bundle receipt), dan `github-broker.ts` (ACL/App/ref freshness, approval,
   exact receipt, dan verified bundle streaming),

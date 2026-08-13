@@ -2,7 +2,9 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type {
   ProjectDeletionAuthority,
+  ProjectDeletionPage,
   ProjectDeletionRecord,
+  ProjectDeletionReference,
   ProjectDeletionRepository,
   ProjectDeletionSaveResult,
   ProjectDeletionStep,
@@ -53,10 +55,33 @@ export class FileProjectDeletionRepository
     return found ? structuredClone(found) : null;
   }
 
-  async listIncomplete(): Promise<ProjectDeletionRecord[]> {
-    return structuredClone((await this.readDatabase()).records
+  async listIncomplete(input: {
+    cursor: string | null;
+    limit: number;
+  }): Promise<ProjectDeletionPage> {
+    exactKeys(input, ["cursor", "limit"], "project deletion query");
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+      throw new Error("Limit recovery project deletion harus 1..100.");
+    }
+    const after = input.cursor === null ? null : decodeDeletionCursor(input.cursor);
+    const references = (await this.readDatabase()).records
       .filter((record) => record.status !== "completed")
-      .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt)));
+      .map(referenceFromRecord)
+      .sort(compareDeletionReferences);
+    const pending = after === null
+      ? references
+      : references.filter((reference) =>
+          compareDeletionReferences(reference, after) > 0
+        );
+    const selected = pending.slice(0, input.limit).map((reference) =>
+      structuredClone(reference)
+    );
+    return {
+      references: selected,
+      nextCursor: pending.length > selected.length && selected.length > 0
+        ? encodeDeletionCursor(selected[selected.length - 1]!)
+        : null,
+    };
   }
 
   async isDeletionPending(
@@ -71,8 +96,13 @@ export class FileProjectDeletionRepository
     projectId: string,
     deletionId: string,
   ): Promise<{
+    version: 1;
+    deletionId: string;
+    ownerWorkspaceKey: string;
+    projectId: string;
     expectedProjectRevision: number;
     projectCreatedAt: string;
+    projectSource: ProjectDeletionRecord["projectSource"];
     status: ProjectDeletionRecord["status"];
     completedSteps: ProjectDeletionStep[];
   } | null> {
@@ -81,8 +111,13 @@ export class FileProjectDeletionRepository
       return null;
     }
     return {
+      version: 1,
+      deletionId: record.deletionId,
+      ownerWorkspaceKey: record.ownerWorkspaceKey,
+      projectId: record.projectId,
       expectedProjectRevision: record.expectedProjectRevision,
       projectCreatedAt: record.projectCreatedAt,
+      projectSource: record.projectSource,
       status: record.status,
       completedSteps: structuredClone(record.completedSteps),
     };
@@ -235,6 +270,8 @@ function validateRecord(value: ProjectDeletionRecord): void {
   if (
     (value.status === "completed") !== (value.completedAt !== null) ||
     (value.status === "cleanup_required") !== (value.lastError !== null) ||
+    (value.status === "completed") !==
+      (value.completedSteps.length === STEP_ORDER.length) ||
     (value.status === "completed" &&
       value.completedSteps.at(-1) !== "project_removed")
   ) throw new Error("Completion project deletion tidak canonical.");
@@ -293,6 +330,76 @@ function exactKeys(value: object, expected: readonly string[], label: string): v
   if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...expected].sort())) {
     throw new Error(`${label} memuat field asing atau hilang.`);
   }
+}
+
+function referenceFromRecord(
+  record: ProjectDeletionRecord,
+): ProjectDeletionReference {
+  return {
+    version: 1,
+    deletionId: record.deletionId,
+    ownerWorkspaceKey: record.ownerWorkspaceKey,
+    projectId: record.projectId,
+    projectCreatedAt: record.projectCreatedAt,
+    projectSource: record.projectSource,
+    expectedProjectRevision: record.expectedProjectRevision,
+  };
+}
+
+type ProjectDeletionCursor = Pick<
+  ProjectDeletionReference,
+  "ownerWorkspaceKey" | "projectId" | "deletionId"
+>;
+
+function compareDeletionReferences(
+  left: ProjectDeletionCursor,
+  right: ProjectDeletionCursor,
+): number {
+  const leftKey = JSON.stringify([
+    left.ownerWorkspaceKey,
+    left.projectId,
+    left.deletionId,
+  ]);
+  const rightKey = JSON.stringify([
+    right.ownerWorkspaceKey,
+    right.projectId,
+    right.deletionId,
+  ]);
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+}
+
+function encodeDeletionCursor(reference: ProjectDeletionCursor): string {
+  return Buffer.from(JSON.stringify([
+    1,
+    reference.ownerWorkspaceKey,
+    reference.projectId,
+    reference.deletionId,
+  ]), "utf8").toString("base64url");
+}
+
+function decodeDeletionCursor(cursor: string): ProjectDeletionCursor {
+  if (
+    cursor.length < 1 || cursor.length > 4_096 ||
+    !/^[A-Za-z0-9_-]+$/u.test(cursor)
+  ) throw new Error("Cursor recovery project deletion tidak sah.");
+  let parsed: unknown;
+  try {
+    const bytes = Buffer.from(cursor, "base64url");
+    if (bytes.toString("base64url") !== cursor) {
+      throw new Error("non-canonical cursor");
+    }
+    parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    throw new Error("Cursor recovery project deletion tidak sah.");
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 4 || parsed[0] !== 1) {
+    throw new Error("Cursor recovery project deletion tidak sah.");
+  }
+  return {
+    ownerWorkspaceKey: safeKey(parsed[1], "cursor ownerWorkspaceKey"),
+    projectId: safeKey(parsed[2], "cursor projectId"),
+    deletionId: safeKey(parsed[3], "cursor deletionId"),
+  };
 }
 
 function safeKey(value: unknown, field: string): string {

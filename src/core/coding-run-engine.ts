@@ -31,6 +31,7 @@ import type {
   SandboxRunner,
 } from "../domain/sandbox.js";
 import type { WorkspacePermission } from "../domain/workspace.js";
+import type { ProjectDeletionReference } from "../domain/project-deletion.js";
 import type { WorkspaceAgentScope } from "../harness/scope.js";
 import {
   RepositoryTools,
@@ -1283,108 +1284,95 @@ export class CodingRunEngine {
   }
 
   async cancelAndFenceForDeletion(
-    scope: WorkspaceAgentScope,
-    projectIdInput: string,
-    deletionIdInput: string,
+    reference: ProjectDeletionReference,
   ): Promise<{
     runIds: string[];
     totalRunCount: number;
     blockedRunId: string | null;
   }> {
-    const projectId = boundedText(projectIdInput, 512, "deletion projectId");
-    const deletionId = boundedText(deletionIdInput, 512, "deletionId");
-    return this.projects.withWorkspacePermissions(
-      scope,
-      ["workspace.manage", "code.write"],
-      async () => {
-      await this.projects.withDeletionProject(
-        scope,
-        projectId,
-        deletionId,
-        async () => undefined,
+    const durableReference = structuredClone(reference);
+    await this.projects.assertDurableDeletionProject(durableReference);
+    const projectId = durableReference.projectId;
+    const ownerWorkspaceKey = durableReference.ownerWorkspaceKey;
+    const initial = await this.repository.listByProject(projectId);
+    for (const run of initial) {
+      if (
+        run.binding.ownerWorkspaceKey !== ownerWorkspaceKey ||
+        run.binding.projectId !== projectId
+      ) {
+        throw new Error("CodingRun deletion berada di workspace lain.");
+      }
+    }
+    const totalRunCount = initial.length;
+    const runIds = initial.map((run) => run.runId);
+    for (const runId of runIds) {
+      const operations = [...(this.inFlightOperations.get(runId) ?? [])];
+      operations.forEach((entry) => entry.abort.abort());
+      await callTransportWithDeadline(
+        "CodingRun project deletion quiescence",
+        this.deletionQuiescenceMs,
+        async () => {
+          await Promise.all(operations.map((entry) => entry.done));
+        },
       );
-      const initial = await this.repository.listByProject(projectId);
-      for (const run of initial) {
+    }
+    await this.sandbox.fenceProjectRuns({
+      ownerWorkspaceKey,
+      projectId,
+    });
+    for (const runId of runIds) {
+      const blocked = await this.exclusive(runId, async () => {
+        const current = await this.repository.load(runId);
+        if (!current) return false;
         if (
-          run.binding.ownerWorkspaceKey !== scope.workspaceKey ||
-          run.binding.projectId !== projectId
-        ) {
-          throw new Error("CodingRun deletion berada di workspace lain.");
+          current.binding.ownerWorkspaceKey !== ownerWorkspaceKey ||
+          current.binding.projectId !== projectId
+        ) throw new Error("CodingRun deletion berada di workspace lain.");
+        const refreshed = await this.repository.load(runId);
+        if (!refreshed) return false;
+        if (refreshed.pendingCommit) {
+          const observed = await this.projects.hasDurableDeletionProjectEffect(
+            durableReference,
+            refreshed.pendingCommit.effectId,
+          );
+          if (observed) return true;
         }
-      }
-      const totalRunCount = initial.length;
-      const runIds = initial.map((run) => run.runId);
-      for (const runId of runIds) {
-        const operations = [...(this.inFlightOperations.get(runId) ?? [])];
-        operations.forEach((entry) => entry.abort.abort());
-        await callTransportWithDeadline(
-          "CodingRun project deletion quiescence",
-          this.deletionQuiescenceMs,
-          async () => {
-            await Promise.all(operations.map((entry) => entry.done));
-          },
-        );
-      }
-      await this.sandbox.fenceProjectRuns({
-        ownerWorkspaceKey: scope.workspaceKey,
-        projectId,
-      });
-      for (const runId of runIds) {
-        const blocked = await this.exclusive(runId, async () => {
-          const current = await this.repository.load(runId);
-          if (!current) return false;
-          if (
-            current.binding.ownerWorkspaceKey !== scope.workspaceKey ||
-            current.binding.projectId !== projectId
-          ) throw new Error("CodingRun deletion berada di workspace lain.");
-          const refreshed = await this.repository.load(runId);
-          if (!refreshed) return false;
-          if (refreshed.pendingCommit) {
-            const observed = await this.projects.withDeletionProject(
-              scope,
-              projectId,
-              deletionId,
-              async (project) => project.snapshotHistory.some(
-                (entry) => entry.effectId === refreshed.pendingCommit!.effectId,
+        if (!terminal(refreshed.status)) {
+          const at = this.now().toISOString();
+          await this.saveRun(refreshed, {
+            status: "cancelled",
+            phase: "cancelled",
+            pendingCommit: null,
+            events: appendEvent(
+              refreshed.events,
+              makeEvent(
+                this.makeId,
+                "run.cancelled",
+                refreshed.instructionRevision,
+                "project_deletion_fence",
+                at,
               ),
-            );
-            if (observed) return true;
-          }
-          if (!terminal(refreshed.status)) {
-            const at = this.now().toISOString();
-            await this.saveRun(refreshed, {
-              status: "cancelled",
-              phase: "cancelled",
-              pendingCommit: null,
-              events: appendEvent(
-                refreshed.events,
-                makeEvent(
-                  this.makeId,
-                  "run.cancelled",
-                  refreshed.instructionRevision,
-                  "project_deletion_fence",
-                  at,
-                ),
-              ),
-              completedAt: at,
-              updatedAt: at,
-            });
-          }
-          await this.projects.disposeWorkingCopyReferenceForDeletion(scope, {
+            ),
+            completedAt: at,
+            updatedAt: at,
+          });
+        }
+        await this.projects.disposeWorkingCopyReferenceForDurableDeletion(
+          durableReference,
+          {
             projectId: refreshed.binding.projectId,
             ownerWorkspaceKey: refreshed.binding.ownerWorkspaceKey,
             workingCopyId: refreshed.workingCopyId,
             workspaceRevision: refreshed.binding.workspaceRevision,
             baseSnapshot: refreshed.binding.baseSnapshot,
-          }, deletionId);
-          this.runtimes.delete(runId);
-          return false;
-        });
-        if (blocked) return { runIds, totalRunCount, blockedRunId: runId };
-      }
-      return { runIds, totalRunCount, blockedRunId: null };
-      },
-    );
+          },
+        );
+        this.runtimes.delete(runId);
+        return false;
+      });
+      if (blocked) return { runIds, totalRunCount, blockedRunId: runId };
+    }
+    return { runIds, totalRunCount, blockedRunId: null };
   }
 
   /**

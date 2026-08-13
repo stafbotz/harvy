@@ -28,13 +28,39 @@ export type ProjectDeletionSaveResult =
   | { status: "saved"; record: ProjectDeletionRecord }
   | { status: "conflict" };
 
+/** Content-free locator for monotonic cleanup of an existing tombstone. */
+export interface ProjectDeletionReference {
+  version: 1;
+  deletionId: string;
+  ownerWorkspaceKey: string;
+  projectId: string;
+  projectCreatedAt: string;
+  projectSource: ProjectDeletionRecord["projectSource"];
+  expectedProjectRevision: number;
+}
+
+export interface ProjectDeletionPage {
+  references: ProjectDeletionReference[];
+  nextCursor: string | null;
+}
+
+export interface ProjectDeletionReconciler {
+  /** Cleanup-only; never synthesize a user scope or create non-cleanup effects. */
+  resumeDurable(
+    reference: ProjectDeletionReference,
+  ): Promise<"completed" | "cleanup_required" | "missing">;
+}
+
 export interface ProjectDeletionRepository {
   loadByProject(
     ownerWorkspaceKey: string,
     projectId: string,
   ): Promise<ProjectDeletionRecord | null>;
   load(deletionId: string): Promise<ProjectDeletionRecord | null>;
-  listIncomplete(): Promise<ProjectDeletionRecord[]>;
+  listIncomplete(input: {
+    cursor: string | null;
+    limit: number;
+  }): Promise<ProjectDeletionPage>;
   create(
     record: Omit<ProjectDeletionRecord, "revision">,
   ): Promise<ProjectDeletionSaveResult>;
@@ -51,8 +77,13 @@ export interface ProjectDeletionAuthority {
     projectId: string,
     deletionId: string,
   ): Promise<{
+    version: 1;
+    deletionId: string;
+    ownerWorkspaceKey: string;
+    projectId: string;
     expectedProjectRevision: number;
     projectCreatedAt: string;
+    projectSource: ProjectDeletionRecord["projectSource"];
     status: ProjectDeletionRecord["status"];
     completedSteps: ProjectDeletionStep[];
   } | null>;
@@ -60,9 +91,7 @@ export interface ProjectDeletionAuthority {
 
 export interface ProjectDeletionRunFence {
   cancelAndFenceForDeletion(
-    scope: import("../harness/scope.js").WorkspaceAgentScope,
-    projectId: string,
-    deletionId: string,
+    reference: ProjectDeletionReference,
   ): Promise<{
     runIds: string[];
     totalRunCount: number;

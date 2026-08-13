@@ -7,17 +7,19 @@ Refreshed: 2026-08-13
 - Product capability baseline: working tree fondasi ProjectWorkspace/Coding
   Phase G–J di atas commit dasar `f29b143` (10 Agustus 2026), diverifikasi
   ulang 13 Agustus 2026.
-- Product gates: `npm run check` PASS; `npm test` PASS, 1.093 test dalam 135
+- Product gates: `npm run check` PASS; `npm test` PASS, 1.101 test dalam 136
   suite, 0 gagal.
-- Context system: `npm run context:check` PASS; output 5.850 byte dengan
-  estimasi 1.463 token.
+- Context system: `npm run context:check` PASS; output 6.024 byte dengan
+  estimasi 1.506 token.
 
 ## Recent material changes
 
 - ProjectWorkspace kini mempunyai safe ZIP ingestion, immutable snapshot,
   revision/rollback, quota+retention, ACL/CAS, project-memory lifecycle, serta
   tombstone-first deletion saga yang mem-fence run/sandbox dan menghapus
-  evidence/run/GitHub-local/memory/payload secara resumable.
+  evidence/run/GitHub-local/memory/payload secara resumable. Tombstone belum
+  selesai dapat dipage sebagai locator content-free dan dilanjutkan worker
+  bounded tanpa membentuk scope pengguna.
 - Sandbox policy dengan content-addressed snapshot/artifact protocol, durable
   lease journal/recovery, serta lifecycle eksplisit `start/stop/drain/close`
   yang menutup admission dan mem-fence seluruh lease sebelum journal ditutup;
@@ -31,10 +33,10 @@ Refreshed: 2026-08-13
   mempunyai budget keputusan kumulatif, pause/resume, state fence, sandbox
   action, dan provider-deletion fence. Publish grant terikat interaction
   `workspace-private`; deletion tidak menghapus konten GitHub remote.
-- Receipt GitHub `unknown` kini dapat ditemukan lewat locator content-free dan
-  diamati oleh worker bounded satu proses setelah restart. Worker hanya
-  memanggil endpoint reconcile, menerima authority historis exact termasuk
-  installation yang sudah revoked, dan tidak me-replay branch/push/PR.
+- Receipt GitHub `unknown` dan tombstone project yang belum selesai kini dapat
+  ditemukan lewat locator content-free dan diproses worker bounded satu proses.
+  Worker GitHub hanya mengamati reconcile tanpa replay branch/push/PR; worker
+  deletion hanya melanjutkan cleanup lokal exact tanpa scope pengguna.
 - Capability coding/GitHub dan permission granular terdaftar; tidak ada
   surface yang diam-diam aktif tanpa executor live.
 
@@ -55,9 +57,10 @@ Refreshed: 2026-08-13
   masih single-process/file. Journal lease SQLite memberi CAS lintas proses,
   tetapi produksi tetap memerlukan distributed admission, implementasi
   transport/object store live dan outbox/reconciler terdistribusi. Worker
-  observasi GitHub lokal sudah ada, tetapi belum dirangkai di `app.ts`.
-- Deletion/evidence coordinator belum dirangkai pada startup/composition
-  produksi; local detach tidak sama dengan remote GitHub unlink/delete.
+  recovery GitHub/deletion lokal sudah ada, tetapi belum dirangkai di `app.ts`.
+- Deletion/evidence coordinator dan worker recovery belum dirangkai pada
+  startup/composition produksi; local detach tidak sama dengan remote GitHub
+  unlink/delete.
 - Dual model misclassification can still miss pre-save consent for sensitive
   memory. Do not claim this privacy gap is closed.
 - False-positive/false-negative safety pada corpus model aktual belum diukur;

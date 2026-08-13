@@ -5,7 +5,9 @@ import type {
 } from "../domain/coding-run.js";
 import type {
   ProjectDeletionGitHubLifecycle,
+  ProjectDeletionReconciler,
   ProjectDeletionRecord,
+  ProjectDeletionReference,
   ProjectDeletionRepository,
   ProjectDeletionRunFence,
   ProjectDeletionStep,
@@ -21,9 +23,10 @@ const STEPS: readonly ProjectDeletionStep[] = [
   "github_detached",
   "project_removed",
 ];
+const PROJECT_DELETION_RESUME_QUEUES = new Map<string, Promise<void>>();
 
 /** Crash-resumable local deletion saga. Remote GitHub content is never deleted. */
-export class ProjectDeletionCoordinator {
+export class ProjectDeletionCoordinator implements ProjectDeletionReconciler {
   constructor(
     private readonly repository: ProjectDeletionRepository,
     private readonly projects: ProjectWorkspaceService,
@@ -116,93 +119,107 @@ export class ProjectDeletionCoordinator {
   ): Promise<ProjectDeletionRecord> {
     const deletionId = safeKey(deletionIdInput, "deletionId");
     return this.projects.withWorkspacePermission(scope, "workspace.manage", async () => {
-      let record = await this.repository.load(deletionId);
-      if (!record || record.ownerWorkspaceKey !== scope.workspaceKey) {
-        throw new Error("Project deletion tidak ditemukan pada workspace ini.");
-      }
-      if (record.status === "completed") return record;
-      try {
-        if (!hasStep(record, "runs_fenced")) {
-          const fenced = await this.runFence.cancelAndFenceForDeletion(
-            scope,
-            record.projectId,
-            record.deletionId,
-          );
-          record = await this.save(record, {
-            runIds: mergeIds(record.runIds, fenced.runIds),
-            fencedRunCount: fenced.totalRunCount,
-          });
-          if (fenced.blockedRunId) {
-            return this.fail(record, "runs_fenced", "commit_barrier");
-          }
-          record = await this.completeStep(record, "runs_fenced");
+      return this.exclusive(deletionId, async () => {
+        const record = await this.repository.load(deletionId);
+        if (!record || record.ownerWorkspaceKey !== scope.workspaceKey) {
+          throw new Error("Project deletion tidak ditemukan pada workspace ini.");
         }
-        if (!hasStep(record, "evidence_removed")) {
-          for (const runId of record.runIds) {
-            await this.evidence.removeRun({
-              ownerWorkspaceKey: record.ownerWorkspaceKey,
-              projectId: record.projectId,
-              runId,
-            });
-          }
-          await this.evidence.removeProject({
+        return this.resumeRecord(record);
+      });
+    });
+  }
+
+  async resumeDurable(
+    referenceInput: ProjectDeletionReference,
+  ): Promise<"completed" | "cleanup_required" | "missing"> {
+    const reference = validDeletionReference(referenceInput);
+    return this.exclusive(reference.deletionId, async () => {
+      const record = await this.repository.load(reference.deletionId);
+      if (!record) return "missing";
+      assertDeletionReference(record, reference);
+      const resumed = await this.resumeRecord(record);
+      return resumed.status === "completed" ? "completed" : "cleanup_required";
+    });
+  }
+
+  private async resumeRecord(
+    initial: ProjectDeletionRecord,
+  ): Promise<ProjectDeletionRecord> {
+    let record = initial;
+    if (record.status === "completed") return record;
+    const reference = referenceFromRecord(record);
+    try {
+      if (!hasStep(record, "runs_fenced")) {
+        const fenced = await this.runFence.cancelAndFenceForDeletion(reference);
+        record = await this.save(record, {
+          runIds: mergeIds(record.runIds, fenced.runIds),
+          fencedRunCount: fenced.totalRunCount,
+        });
+        if (fenced.blockedRunId) {
+          return this.fail(record, "runs_fenced", "commit_barrier");
+        }
+        record = await this.completeStep(record, "runs_fenced");
+      }
+      if (!hasStep(record, "evidence_removed")) {
+        for (const runId of record.runIds) {
+          await this.evidence.removeRun({
             ownerWorkspaceKey: record.ownerWorkspaceKey,
             projectId: record.projectId,
+            runId,
           });
-          record = await this.completeStep(record, "evidence_removed");
         }
-        if (!hasStep(record, "runs_removed")) {
-          for (const runId of record.runIds) {
-            const run = await this.runs.load(runId);
-            if (!run) continue;
-            if (
-              run.binding.ownerWorkspaceKey !== record.ownerWorkspaceKey ||
-              run.binding.projectId !== record.projectId
-            ) {
-              throw new Error("Run project deletion berada di workspace lain.");
-            }
-            if (run.pendingCommit || !terminal(run.status)) {
-              return this.fail(record, "runs_removed", "run_not_terminal");
-            }
-            if (!await this.runs.remove(runId, run.stateRevision)) {
-              throw new Error("Run berubah selama project deletion.");
-            }
+        await this.evidence.removeProject({
+          ownerWorkspaceKey: record.ownerWorkspaceKey,
+          projectId: record.projectId,
+        });
+        record = await this.completeStep(record, "evidence_removed");
+      }
+      if (!hasStep(record, "runs_removed")) {
+        for (const runId of record.runIds) {
+          const run = await this.runs.load(runId);
+          if (!run) continue;
+          if (
+            run.binding.ownerWorkspaceKey !== record.ownerWorkspaceKey ||
+            run.binding.projectId !== record.projectId
+          ) {
+            throw new Error("Run project deletion berada di workspace lain.");
           }
-          record = await this.completeStep(record, "runs_removed");
-        }
-        if (!hasStep(record, "github_detached")) {
-          if (record.projectSource === "github") {
-            if (!this.github) {
-              return this.fail(record, "github_detached", "github_lifecycle_missing");
-            }
-            const detached = await this.github.detachLocalProject(
-              record.ownerWorkspaceKey,
-              record.projectId,
-              record.deletionId,
-            );
-            if (detached === "blocked_unknown") {
-              return this.fail(record, "github_detached", "github_effect_unknown");
-            }
+          if (run.pendingCommit || !terminal(run.status)) {
+            return this.fail(record, "runs_removed", "run_not_terminal");
           }
-          record = await this.completeStep(record, "github_detached");
+          if (!await this.runs.remove(runId, run.stateRevision)) {
+            throw new Error("Run berubah selama project deletion.");
+          }
         }
-        if (!hasStep(record, "project_removed")) {
-          await this.projects.removeForDeletion(
-            scope,
+        record = await this.completeStep(record, "runs_removed");
+      }
+      if (!hasStep(record, "github_detached")) {
+        if (record.projectSource === "github") {
+          if (!this.github) {
+            return this.fail(record, "github_detached", "github_lifecycle_missing");
+          }
+          const detached = await this.github.detachLocalProject(
+            record.ownerWorkspaceKey,
             record.projectId,
-            record.expectedProjectRevision,
             record.deletionId,
           );
-          record = await this.completeStep(record, "project_removed", true);
+          if (detached === "blocked_unknown") {
+            return this.fail(record, "github_detached", "github_effect_unknown");
+          }
         }
-        return record;
-      } catch (error) {
-        const durable = await this.repository.load(deletionId).catch(() => null);
-        if (durable) record = durable;
-        if (record.status === "completed") return record;
-        return this.fail(record, nextStep(record), errorCode(error));
+        record = await this.completeStep(record, "github_detached");
       }
-    });
+      if (!hasStep(record, "project_removed")) {
+        await this.projects.removeForDurableDeletion(reference);
+        record = await this.completeStep(record, "project_removed", true);
+      }
+      return record;
+    } catch (error) {
+      const durable = await this.repository.load(record.deletionId).catch(() => null);
+      if (durable) record = durable;
+      if (record.status === "completed") return record;
+      return this.fail(record, nextStep(record), errorCode(error));
+    }
   }
 
   private async completeStep(
@@ -250,6 +267,86 @@ export class ProjectDeletionCoordinator {
       throw new Error("Project deletion berubah bersamaan.");
     }
     return saved.record;
+  }
+
+  private async exclusive<T>(
+    deletionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = PROJECT_DELETION_RESUME_QUEUES.get(deletionId) ?? Promise.resolve();
+    const next = previous.then(operation, operation);
+    const tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    PROJECT_DELETION_RESUME_QUEUES.set(deletionId, tail);
+    try {
+      return await next;
+    } finally {
+      if (PROJECT_DELETION_RESUME_QUEUES.get(deletionId) === tail) {
+        PROJECT_DELETION_RESUME_QUEUES.delete(deletionId);
+      }
+    }
+  }
+}
+
+function referenceFromRecord(record: ProjectDeletionRecord): ProjectDeletionReference {
+  return {
+    version: 1,
+    deletionId: record.deletionId,
+    ownerWorkspaceKey: record.ownerWorkspaceKey,
+    projectId: record.projectId,
+    projectCreatedAt: record.projectCreatedAt,
+    projectSource: record.projectSource,
+    expectedProjectRevision: record.expectedProjectRevision,
+  };
+}
+
+function validDeletionReference(
+  input: ProjectDeletionReference,
+): ProjectDeletionReference {
+  if (
+    !input || typeof input !== "object" || Array.isArray(input) ||
+    JSON.stringify(Object.keys(input).sort()) !== JSON.stringify([
+      "deletionId",
+      "expectedProjectRevision",
+      "ownerWorkspaceKey",
+      "projectCreatedAt",
+      "projectId",
+      "projectSource",
+      "version",
+    ])
+  ) throw new Error("Locator project deletion memuat field asing atau hilang.");
+  if (input.version !== 1) throw new Error("Versi locator project deletion tidak sah.");
+  if (input.projectSource !== "upload" && input.projectSource !== "github") {
+    throw new Error("Source locator project deletion tidak sah.");
+  }
+  if (
+    !Number.isSafeInteger(input.expectedProjectRevision) ||
+    input.expectedProjectRevision < 1
+  ) throw new Error("Revision locator project deletion tidak sah.");
+  if (
+    !Number.isFinite(Date.parse(input.projectCreatedAt)) ||
+    new Date(input.projectCreatedAt).toISOString() !== input.projectCreatedAt
+  ) throw new Error("CreatedAt locator project deletion tidak sah.");
+  return Object.freeze({
+    version: 1,
+    deletionId: safeKey(input.deletionId, "deletionId"),
+    ownerWorkspaceKey: safeKey(input.ownerWorkspaceKey, "ownerWorkspaceKey"),
+    projectId: safeKey(input.projectId, "projectId"),
+    projectCreatedAt: input.projectCreatedAt,
+    projectSource: input.projectSource,
+    expectedProjectRevision: input.expectedProjectRevision,
+  });
+}
+
+function assertDeletionReference(
+  record: ProjectDeletionRecord,
+  reference: ProjectDeletionReference,
+): void {
+  const expected = referenceFromRecord(record);
+  if (JSON.stringify(expected) !== JSON.stringify(reference)) {
+    throw new Error("Locator project deletion tidak cocok ledger.");
   }
 }
 

@@ -35,9 +35,15 @@ base yang sedang dipakai run.
    Saga resumable mem-fence run/provider/sandbox, lalu menghapus evidence,
    record run, metadata GitHub lokal, memory, dan payload dengan urutan exact.
    Pending commit atau efek ambigu menahan cleanup; remote GitHub tidak dihapus.
+7. Tombstone incomplete diekspos ke recovery internal hanya sebagai locator
+   content-free yang exact-bound. Locator memberi authority untuk melanjutkan
+   cleanup lokal monotonik, bukan membentuk scope pengguna, membaca isi,
+   membuat efek coding/publish non-cleanup, atau mem-publish. Worker memproses satu page secara
+   non-overlap, mendukung stop/drain, dan mencatat agregat saja.
 
 ## Konsekuensi
 
 Project archive dapat dipakai sebagai input data tanpa shell extractor atau
 trust pada repository content. Adapter file tetap hanya satu proses; storage
-object/transactional production dan ingress pengguna belum dipasang.
+object/transactional production dan ingress pengguna belum dipasang. Worker
+recovery deletion masih satu proses dan belum dirangkai pada startup aplikasi.
