@@ -478,6 +478,14 @@ export class GroupTurnService {
     return { ...message, mentionsHarvy: true };
   }
 
+  /**
+   * Watermark content-free sesudah delivery pertanyaan GroupAgentRun. Jawaban
+   * hanya sah pada revision yang lebih baru dari nilai ini.
+   */
+  currentIngressRevision(scopeKey: string, accountId: string): number {
+    return this.observations.get(groupRuntimeKey(scopeKey, accountId)) ?? 0;
+  }
+
   /** Menutup watermark observasi yang sengaja ditolak sebelum full turn. */
   settleRejectedObservation(message: GroupMessage): void {
     const revision = message.ingressRevision ?? 0;

@@ -18,7 +18,10 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   check-in, dan retensi record agent, memulai recovery active AgentRun sesudah
   polling siap,
   meneruskan tombstone penghapusan sebelum bot menerima update, mendaftarkan
-  command Telegram, dan menangani shutdown.
+  command Telegram, serta menangani shutdown. Saat flag GroupAgentRun aktif,
+  composition yang sama merutekan observation grup authorized sebelum batching
+  ke controller, executor/processor, worker, delivery Baileys fenced, recovery,
+  dan drain.
   Modul ProjectWorkspace/Coding/Sandbox/GitHub belum dirangkai di composition
   root; capability-nya tetap default-off sampai backend, provisioning,
   conformance, dan composition live terverifikasi.
@@ -120,9 +123,13 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   dengan preview+konfirmasi admin. Ia tidak menerima dependency memori/profil/
   sesi pribadi.
   Fondasi Phase K terpisah berada di `group-agent-run-service.ts` dan
-  `group-agent-run-policy.ts`: aggregate group-safe, satu foreground CAS,
-  routing thread closed-set, atribusi participant, assigned input, dan guard
-  authority commit. Ia belum dirangkai ke pipeline grup, model, atau transport.
+  `group-agent-run-policy.ts`, dengan adapter composition
+  `group-agent-run-runtime.ts`: aggregate group-safe, satu foreground CAS,
+  routing thread closed-set, atribusi participant, assigned input, guard
+  authority commit, checkpoint/model work, dan final receipt. `app.ts`
+  memasangnya sesudah observation authority dan sebelum batch chat hanya ketika
+  flag eksplisit aktif; admission binding/mode/cleanup serta transport fence
+  tetap diperiksa pada claim dan send.
 
 ## AI
 

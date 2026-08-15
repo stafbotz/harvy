@@ -1,7 +1,7 @@
 # Status — Platform dan Operasi Runtime
 
-Verified: 9 Agustus 2026 pada working tree fondasi Phase C di atas `3b13bdc`;
-`npm run check` PASS dan `npm test` PASS, 789 test dalam 103 suite, 0 gagal;
+Verified: 15 Agustus 2026 pada working tree composition GroupAgentRun dan
+startup cancellation; `npm test` PASS, 1.348 test dalam 169 suite, 0 gagal;
 smoke provider baru belum dijalankan.
 
 ## Keadaan saat ini
@@ -17,6 +17,10 @@ smoke provider baru belum dijalankan.
   identity, credential, dan object mentah tidak boleh masuk.
 - Runtime, probe, dan evaluator memakai local file lock yang sama. Dev runner
   meminta shutdown child lewat IPC dan menunggu lock dilepas sebelum restart.
+  Control IPC kini aktif sebelum request jaringan Telegram pertama; stop saat
+  startup mengabort request itu, mencegah polling baru menjadi ready, dan
+  melepas lock melalui cleanup normal. Smoke konfigurasi lokal mencapai
+  `application_ready` lalu `shutdown_completed`, exit 0, tanpa lock tersisa.
 - Context manifest dan token estimate tersedia sebagai metadata lokal; usage
   provider dipakai bila ada.
 - Registry capability mengikat exact provider+model. Default compatibility
@@ -38,8 +42,6 @@ smoke provider baru belum dijalankan.
   collector terpusat, alerting, immutable audit, atau deployment hardening.
 - Force stop/crash dapat meninggalkan runtime lock stale. Hapus hanya setelah
   PID pemilik di payload diverifikasi sudah mati.
-- Startup pernah melanjutkan sampai ready setelah menerima `dev-restart`, lalu
-  meninggalkan lock stale. Race startup-cancel itu belum diperbaiki.
 - Native tool calling masih primary-only; compatibility fallback belum terbukti.
 - Capability explicit provider fallback sengaja ditolak sampai execution plan
   dapat dihitung ulang secara aman untuk provider/model fallback.
@@ -55,6 +57,6 @@ smoke provider baru belum dijalankan.
   `src/observability/`, `scripts/dev-runner.ts`.
 - Tes: `tests/client.test.ts`, `tests/key-pool.test.ts`,
   `tests/local-runtime-lock.test.ts`, `tests/operational-logger.test.ts`,
-  `tests/dev-runner.test.ts`.
+  `tests/dev-runner.test.ts`, `tests/app-startup-shutdown.test.ts`.
 - Keputusan: ADR-003, ADR-010, ADR-025. Setup:
   `docs/engineering/DEVELOPMENT.md`.

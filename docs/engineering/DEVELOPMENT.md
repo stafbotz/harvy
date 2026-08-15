@@ -14,6 +14,10 @@ Perintah ringkas ada di `AGENTS.md` bagian **Quick ref**.
 runner meminta shutdown lewat IPC dan menunggu child melepas runtime lock
 sebelum memulai proses baru. Pada Windows ini wajib: `tsx watch` mematikan child
 dengan sinyal proses yang melewati handler shutdown Harvy.
+Control IPC dipasang sebelum aktivitas jaringan Telegram pertama. Bila stop
+atau reload tiba selama startup, request startup dibatalkan, polling yang baru
+hidup langsung dihentikan, dan aplikasi tidak boleh mengumumkan ready sebelum
+lock dilepas.
 
 Tidak ada linter atau formatter terpasang; `npm run check` adalah satu-satunya
 gerbang statis. Tes dijalankan dari hasil build, bukan dari `tests/*.ts`, jadi
@@ -96,7 +100,11 @@ wajib loopback dan bukan server internet-ready. Cadangan mode uji memakai
 `AI_TESTING_FALLBACK_COOLDOWN_MS`; tiga nilai
 pertama wajib diisi bersama. WhatsApp beta memakai `WHATSAPP_ENABLED`,
 `WHATSAPP_PAIRING_MODE`, `WHATSAPP_ACCOUNTS`, `WHATSAPP_AUTH_FOLDER`,
-`WHATSAPP_GROUP_FILE`, serta batas reconnect. Pairing QR lokal adalah default
+`WHATSAPP_GROUP_FILE`, serta batas reconnect. GroupAgentRun tetap opt-in melalui
+`WHATSAPP_GROUP_AGENT_RUN_ENABLED`; state run dan intent cleanup wajib memakai
+`WHATSAPP_GROUP_AGENT_RUN_FILE` dan
+`WHATSAPP_GROUP_AGENT_RUN_CLEANUP_FILE` yang terpisah. Flag tidak melewati
+enrollment, binding, mode runtime, cleanup, atau authority fence. Pairing QR lokal adalah default
 pengembangan hanya pada terminal interaktif dan tidak pernah ditampilkan saat
 `APP_ENV=production`; mode pairing code hanya opsi karena masih mempunyai
 kegagalan upstream Baileys. Log operasional memakai `APP_ENV`, `RELEASE_SHA`, `LOG_LEVEL`,

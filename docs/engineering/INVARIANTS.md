@@ -508,8 +508,10 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   initiator, participant teratribusi, serta audience `group-safe`. Ia tidak
   mempunyai field private memory/history. CAS menegakkan satu foreground
   mutable per grup fisik; account merupakan binding dan account lain gagal
-  tertutup tanpa menerima record milik binding aktif. Service ini belum
-  terhubung ke kanal atau work lane.
+  tertutup tanpa menerima record milik binding aktif. Composition kanal hanya
+  tersedia di balik flag eksplisit dan tetap harus melewati observation
+  authority, admission binding/mode/cleanup, authority-on-claim, serta fence
+  transport sebelum work atau delivery.
 - **Tidak ada semantik “pesan berikutnya adalah jawaban”.** Answer/update/cancel
   harus terikat ke Run Anchor, pesan pertanyaan, atau target run closed-set yang
   eksplisit. Answer juga wajib cocok dengan `runId`, `questionId`, dan watermark
@@ -530,8 +532,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   `pendingEffect`, kemudian adapter mengirim, baru receipt `committed` ditulis.
   Effect in-flight saat crash atau kegagalan setelah boundary delivery menjadi
   receipt `unknown` dan status `partial`; recovery tidak boleh mengirim ulang
-  otomatis. Kontrak ini baru mencakup outbound Telegram dan adapter file satu
-  proses, bukan exactly-once multi-instance atau izin membuka tool write.
+  otomatis. Kontrak ini mencakup outbound Telegram privat serta anchor,
+  pertanyaan, dan hasil final GroupAgentRun WhatsApp pada adapter file satu
+  proses; ia bukan exactly-once multi-instance atau izin membuka tool write.
 - **Run Anchor hanya merender fakta runtime.** Status/fase/work summary berasal
   dari record/event code-owned; nama model/tool/worker, persentase, dan ETA
   rekaan dilarang. Waiting input tidak boleh tampak sebagai spinner. Anchor

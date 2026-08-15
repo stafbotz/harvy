@@ -1413,6 +1413,19 @@ function validExecutionCheckpointTransition(
     ) && sameCheckpointExceptWaitingAndUpdatedAt(before, after)
   ) return true;
 
+  // Work processor mempersist hasil sampling lebih dulu, lalu menambahkan
+  // questionId pada checkpoint yang sama tepat sebelum delivery. Ini bukan
+  // sampling/model step baru, jadi sequence dan budget wajib tetap identik.
+  const bindsPreparedQuestion = before !== null &&
+    before.waitingQuestionId === null && after.waitingQuestionId !== null &&
+    after.updatedAt === next.updatedAt &&
+    current.pendingEffect === null &&
+    next.pendingEffect?.purpose === "assigned_question" &&
+    next.pendingEffect.workAttemptId === before.attemptId &&
+    next.pendingEffect.question?.questionId === after.waitingQuestionId &&
+    sameCheckpointExceptWaitingAndUpdatedAt(before, after);
+  if (bindsPreparedQuestion) return true;
+
   const active = current.workAttempts?.find((attempt) =>
     attempt.status === "running"
   );

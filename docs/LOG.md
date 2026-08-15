@@ -38,6 +38,34 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-15 — GroupAgentRun menjadi reachable dan startup dapat dibatalkan
+
+Scope: composition WhatsApp GroupAgentRun, checkpoint/delivery repository,
+startup/shutdown runtime, konfigurasi lokal, status, dan ADR-037.
+
+Changed: bubble GroupAgentRun authorized kini dipisahkan sebelum batch chat dan
+masuk ke guarded controller, executor/processor, worker durable, usage, serta
+Baileys delivery fence. Claim/final/question memakai repository dan receipt
+nyata; watermark jawaban dibaca setelah question delivery, startup/periodic
+resume serta stop/drain dirangkai, dan flag tetap opt-in. Transisi repository
+sekarang mengizinkan pengikatan question ID pada checkpoint sampling yang sama.
+Control IPC dipasang sebelum network startup Telegram; dev-stop mengabort
+request startup, mencegah polling terlambat menjadi ready, dan melepas lock.
+`.env` lokal dikonfigurasi dengan state GroupAgentRun terpisah.
+
+Verified: suite terarah PASS 40/40; `npm test` PASS 1.348/1.348 dalam 169 suite;
+`npm run check` dan `npm run context:check` PASS (5.125 byte, estimasi 1.282
+token); smoke dev mencapai `application_ready`→`shutdown_completed`, exit 0,
+tanpa `runtime_failed` atau lock tersisa; `git diff --check` PASS selain
+peringatan line-ending.
+
+Not verified: GroupAgentRun/notice/reconnect/fault delivery di WhatsApp nyata,
+provider live, multi-process storage/outbox, runner Linux terisolasi, daemon
+local-git, atau GitHub App broker nyata. Coding/GitHub tetap fail-closed.
+
+Next: lakukan acceptance WhatsApp dengan akun/grup uji nonkritis; provision
+backend isolated-linux dan GitHub App terpisah sebelum membuka surface coding.
+
 ## 2026-08-15 — Fondasi arsitektur agent mencapai Phase M
 
 Scope: completion GroupAgentRun Phase K, group-coding Phase L, escalation
@@ -407,24 +435,3 @@ live, serta kualitas/biaya reasoning pada model produksi exact.
 Next: tambahkan cumulative RunBudget sebelum melonggarkan output ceiling, lalu
 context-pressure compaction, recovery truncation, visible verbosity,
 validator-driven escalation, dan K3/toughest sebagai change set terpisah.
-
-## 2026-08-09 — Sinyal safety privat bertahan melewati batching
-
-Scope: MessageBatcher Telegram, onboarding/held messages, adapter private,
-serta regresi safety per bubble.
-
-Changed: emergency lokal per bubble dan hasil boundary `urgent` kini dibawa
-sebagai metadata terpisah sampai handler sehingga penggabungan teks tidak
-menghilangkan kewajiban acute triage. Hanya pesan pertama boleh dinilai sebelum
-consent; bubble lain tetap ditahan lokal dengan batas aslinya, lalu baru
-diperiksa per bubble setelah consent agar marker konteks lama tidak memveto
-emergency baru.
-
-Verified: `npm run check` PASS; `npm test` PASS, 755 test dalam 100 suite, 0
-gagal; `npm run context:check` PASS dengan output bootstrap 3.742 byte (estimasi
-936 token).
-
-Not verified: Telegram/model live, latency ACK jaringan nyata, dan akurasi
-false-positive/false-negative pada corpus model aktual.
-
-Next: ukur corpus safety aktual dan uji split-bubble/ACK lewat Telegram nyata.

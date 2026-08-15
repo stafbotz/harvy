@@ -384,7 +384,12 @@ npm test
   request model sintetis, bukan delivery WhatsApp nyata. Rollback delivery
   sudah ada untuk record memori baru, tetapi edit/delete/reset/alias belum
   mempunyai transaksi kompensasi generik bila acknowledgment gagal setelah
-  commit.
+  commit. GroupAgentRun kini dapat diaktifkan eksplisit pada composition lokal;
+  start/update/assigned question/final result melewati thread targeting,
+  authority, checkpoint, receipt, dan worker durable. Jalur ini baru lulus tes
+  otomatis dan belum merupakan acceptance GroupAgentRun di WhatsApp nyata.
+  Start v1 memakai satu bubble mention exact:
+  `Harvy, mulai pekerjaan: <permintaan>`.
 - Harvy Core dan capability catalog sudah channel-neutral, tetapi kesetaraan
   surface belum tercapai: chat privat masih hanya Telegram dan grup yang aktif
   masih hanya WhatsApp. Registry sengaja menandai Telegram grup dan WhatsApp

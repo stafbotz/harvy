@@ -1,7 +1,7 @@
 # Status — WhatsApp Grup
 
-Refreshed: 15 Agustus 2026 pada working tree Group AgentRun Phase K/L; build dan
-tes terarah terbaru dicatat di `docs/LOG.md`. Bukti kanal nyata tetap sempit.
+Refreshed: 15 Agustus 2026 pada working tree composition GroupAgentRun;
+`npm test` PASS 1.348/1.348 dalam 169 suite. Bukti kanal nyata tetap sempit.
 
 ## Keadaan saat ini
 
@@ -85,23 +85,24 @@ tes terarah terbaru dicatat di `docs/LOG.md`. Bukti kanal nyata tetap sempit.
   pada service dan repository. Migrasi v1/v2 tanpa ledger work menormalkan
   state aktif ke `queued|waiting_input`; legacy `completed` tanpa bukti final
   committed menjadi `partial`, tanpa mengarang work, receipt, atau result.
-- `GroupAgentRunWorker` generik sudah mempunyai concurrency/cap queue, trailing
-  resume, abort/stop/drain, lease ABA, dan recovery failure port, tetapi belum
-  dikomposisikan ke service atau model.
+- `GroupAgentRunWorker` mempunyai concurrency/cap queue, trailing resume,
+  abort/stop/drain, lease ABA, recovery failure port, startup/periodic resume,
+  dan composition ke service/model ketika flag eksplisit aktif.
 - Executor group-safe dan work processor sekarang tersedia. Executor hanya
   menerima initial request serta update run teratribusi, tanpa private history,
   memory, capability operasional, atau transcript provider; ia membuat tepat
   satu final/question native decision dalam RunBudget. Checkpoint content-free
   mengikat attempt, instruction revision, input digest, dan budget. Processor
   memeriksa lease, menulis checkpoint sebelum delivery, mensyaratkan receipt
-  exact, lalu baru menyelesaikan usage sebagai committed/discarded. Pipeline ini
-  belum dirangkai ke worker/composition root.
+  exact, lalu baru menyelesaikan usage sebagai committed/discarded. Adapter
+  runtime mengikat repository, service, watermark sesudah send, transport
+  fenced, usage, dan recovery failure ke worker/composition root.
 - Worker lifecycle memulai recovery sebelum purge, tidak menjalankan siklus
   overlap, mencoba ulang recovery/purge yang gagal, dan mendukung stop/drain.
   Runtime WhatsApp juga mempunyai file intent cleanup terpisah. Startup
   menjalankan recovery cleanup lebih dulu dan gagal readiness bila masih
-  pending, kemudian recovery delivery+purge, baru worker dan
-  `whatsapp.start()`. Semua worker ikut stop/drain. Config menolak collision
+  pending, kemudian recovery delivery+purge, baru `whatsapp.start()` dan resume
+  work lane. Semua worker dan ingress ikut stop/drain. Config menolak collision
   path state grup, GroupAgentRun, dan cleanup.
 - Disable mempersistenkan intent exact `scope+account` sebelum mencoba
   `disableGroup` dan `forgetScope` dengan `allSettled`; intent selesai hanya
@@ -113,15 +114,15 @@ tes terarah terbaru dicatat di `docs/LOG.md`. Bukti kanal nyata tetap sempit.
 - Admission service fail-closed pada start, mutasi, prepare, CAS, dan pre-send.
   Resolver produksi mensyaratkan binding live ke account exact, tidak ada cleanup
   pending, serta mode bukan `disabled|paused`; error resolver ditolak. Claim
-  work saat ini hanya memakai admission runtime `scope+account`; revalidasi
-  actor/epoch authority live pada setiap claim tetap prasyarat sebelum worker
-  dikomposisikan.
+  work memakai admission runtime `scope+account` dan revalidasi actor/epoch
+  authority live pada setiap claim sebelum model berjalan.
 - Exact start parser dan `GroupAgentRunIngressRouter` guarded sudah teruji.
   Parser hanya menerima grammar closed-set satu bubble live serta membiarkan
   danger ke safety. Controller memisahkan target run sebelum batching,
   menyerialkan start, memakai deterministic control ID+authority/runtime fence,
-  dan memiliki stop/drain. Controller belum composed atau reachable dari
-  ingress produksi; model dan work lane tetap tertutup.
+  dan memiliki stop/drain. Composition menempatkannya sesudah observation
+  authority dan sebelum merge batch; command serta work lane hanya reachable
+  ketika `WHATSAPP_GROUP_AGENT_RUN_ENABLED=true` dan runtime admission live.
 - Core Phase L group-coding juga tersedia, tetapi terpisah dari ingress grup.
   Link memerlukan admin grup dan `workspace.manage`; status run disanitasi dan
   push/PR hanya dapat berlanjut ke confirmation Workspace-private. Actor
@@ -138,10 +139,9 @@ tes terarah terbaru dicatat di `docs/LOG.md`. Bukti kanal nyata tetap sempit.
 - Dua nomor nyata sekaligus belum diuji. Tidak ada failover atau rebind otomatis
   antar-account.
 - Pending confirmation dan authority epoch grup tidak durable lintas restart.
-- Group AgentRun belum dirangkai dari observation authority ke guarded
-  controller dan `GroupAgentRunWorker` pada composition root. Parser, controller,
-  work ledger, authority-on-claim, checkpoint, executor/processor, final barrier,
-  dan worker coordinator ada, tetapi capability tidak reachable.
+- Group AgentRun composition baru dibuktikan otomatis, belum diuji fault/live
+  end-to-end pada WhatsApp nyata. Flag tetap opt-in; tidak ada klaim deduplikasi
+  server, reconnect delivery, atau kualitas executor pada grup nyata.
 - Cleanup retry durable hanya terkoordinasi dalam satu proses. Startup menahan
   WhatsApp dan reaktivasi ditahan bila intent tidak dapat dituntaskan; retry
   aktivasi otomatis tetap in-memory. Belum ada lease/supervisor multi-instance,
@@ -168,6 +168,7 @@ tes terarah terbaru dicatat di `docs/LOG.md`. Bukti kanal nyata tetap sempit.
   `src/core/group-agent-run-ingress.ts`, `src/core/group-agent-run-start-policy.ts`,
   `src/core/group-agent-run-worker.ts`,
   `src/core/group-agent-run-work-processor.ts`,
+  `src/core/group-agent-run-runtime.ts`,
   `src/core/group-agent-run-activation-retry.ts`,
   `src/core/group-agent-run-cleanup-service.ts`,
   `src/core/group-agent-run-cleanup-worker.ts`,

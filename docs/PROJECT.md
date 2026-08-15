@@ -418,9 +418,12 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 - [x] Fondasi core Group AgentRun Phase K: aggregate group-safe terpisah dari
   run privat, initiator/participant teratribusi, satu foreground CAS per grup,
   thread lewat anchor/assigned question/mention eksplisit, proposal anggota,
-  override admin eksplisit, expiry, dan Run Anchor tanpa auto-pin. Fondasi ini
-  belum dirangkai ke `GroupTurnService`, Baileys, model/work lane, notice,
-  delivery receipt, atau lifecycle produksi; belum ada kemampuan kanal baru.
+  override admin eksplisit, expiry, dan Run Anchor tanpa auto-pin. Jalur ini
+  kini dirangkai sesudah observation authority dan sebelum batching ke guarded
+  ingress, executor/processor, worker durable, Baileys fenced delivery, usage,
+  recovery, serta shutdown. Reachability tetap default-off lewat
+  `WHATSAPP_GROUP_AGENT_RUN_ENABLED` dan memerlukan binding/enrollment live;
+  acceptance WhatsApp nyata belum dilakukan dan group-coding tetap terpisah.
   Lihat `ADR-037`.
 - [x] Memori terstruktur per pengguna yang dapat dilihat dan dihapus. Memori
   biasa disimpan otomatis disertai pemberitahuan, memori sensitif hanya dengan

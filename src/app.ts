@@ -5,6 +5,7 @@ import { OpenAiCompatibleEmbeddingProvider } from "./ai/embedding-client.js";
 import { Conversation } from "./ai/conversation.js";
 import type { HarvyContext } from "./ai/context.js";
 import { GroupConversation } from "./ai/group-conversation.js";
+import { GroupAgentRunExecutor } from "./ai/group-agent-run-executor.js";
 import { createModelAgentWorker } from "./ai/agent.js";
 import {
   currentUsageAttribution,
@@ -28,6 +29,13 @@ import { startGroupAgentRunActivationRetry } from "./core/group-agent-run-activa
 import { GroupAgentRunLifecycleCoordinator } from "./core/group-agent-run-lifecycle-coordinator.js";
 import { startGroupAgentRunRetentionWorker } from "./core/group-agent-run-retention-worker.js";
 import { GroupAgentRunUsageReconciler } from "./core/group-agent-run-usage-reconciler.js";
+import { GroupAgentRunIngressRouter } from "./core/group-agent-run-ingress.js";
+import {
+  startGroupAgentRunWorker,
+  type GroupAgentRunWorker,
+} from "./core/group-agent-run-worker.js";
+import { createGroupAgentRunWorkProcessor } from "./core/group-agent-run-work-processor.js";
+import { createGroupAgentRunRuntimePorts } from "./core/group-agent-run-runtime.js";
 import { GroupMemoryService } from "./core/group-memory-service.js";
 import {
   GROUP_NOTICE_VERSION,
@@ -285,6 +293,8 @@ const bot = createBot(
 let groupTurns: GroupTurnService | null = null;
 let groupBatcher: GroupMessageBatcher | null = null;
 let groupAgentRunCleanup: GroupAgentRunCleanupService | null = null;
+let groupAgentRunIngress: GroupAgentRunIngressRouter | null = null;
+let groupAgentRunWorker: GroupAgentRunWorker | null = null;
 let groupAgentRunActivationRetry: ReturnType<
   typeof startGroupAgentRunActivationRetry
 > | null = null;
@@ -294,6 +304,19 @@ const groupMemories = config.whatsapp.enabled
       new FileGroupRepository(config.whatsapp.groupFile),
     )
   : null;
+const groupAgentRunRuntimeAdmission = async (
+  { scopeKey, accountId }: { scopeKey: string; accountId: string },
+): Promise<boolean> => {
+  if (!config.groupAgentRunEnabled) return false;
+  if (await groupAgentRunCleanup?.isPending(scopeKey, accountId)) return false;
+  const binding = await groupMemories?.binding(scopeKey);
+  if (
+    !binding || binding.accountId !== accountId || binding.disabledAt !== null
+  ) return false;
+  const enrollment = await controlPlane.enrollmentForOwner(scopeKey);
+  const mode = enrollment.groupRuntimeMode ?? "direct_only";
+  return mode !== "disabled" && mode !== "paused";
+};
 const whatsapp = config.whatsapp.enabled
   ? new BaileysAccountManager(config.whatsapp, {
       onMessage: async (message) => {
@@ -360,6 +383,11 @@ const whatsapp = config.whatsapp.enabled
         groupBatcher?.invalidateScope(scopeKey, accountId);
         groupTurns?.invalidateAuthority(scopeKey, accountId);
         groupAgentRunActivationRetry?.cancel(scopeKey, accountId);
+        const foreground = await groupAgentRunRepository?.loadForeground(
+          scopeKey,
+          accountId,
+        );
+        if (foreground) groupAgentRunWorker?.interrupt(foreground.runId);
         const cleanupCoordinator = groupAgentRunCleanup;
         if (!cleanupCoordinator) {
           throw new Error("Coordinator cleanup GroupAgentRun belum siap.");
@@ -381,6 +409,10 @@ const whatsapp = config.whatsapp.enabled
       onGroupAuthorityChanged: (scopeKey, accountId) => {
         groupBatcher?.invalidateScope(scopeKey, accountId);
         groupTurns?.invalidateAuthority(scopeKey, accountId);
+        void groupAgentRunRepository?.loadForeground(scopeKey, accountId)
+          .then((run) => {
+            if (run) groupAgentRunWorker?.interrupt(run.runId);
+          });
       },
       onPairingCode: (accountId, code) => {
         if (
@@ -465,19 +497,7 @@ const groupAgentRuns = whatsapp && groupAgentRunRepository
       whatsapp,
       undefined,
       undefined,
-      async ({ scopeKey, accountId }) => {
-        if (await groupAgentRunCleanup?.isPending(scopeKey, accountId)) {
-          return false;
-        }
-        const binding = await groupMemories?.binding(scopeKey);
-        if (
-          !binding || binding.accountId !== accountId ||
-          binding.disabledAt !== null
-        ) return false;
-        const enrollment = await controlPlane.enrollmentForOwner(scopeKey);
-        const mode = enrollment.groupRuntimeMode ?? "direct_only";
-        return mode !== "disabled" && mode !== "paused";
-      },
+      groupAgentRunRuntimeAdmission,
     )
   : null;
 const groupAgentRunUsageReconciler = groupAgentRunRepository
@@ -495,6 +515,7 @@ let groupAgentRunRetention: ReturnType<
   typeof startGroupAgentRunRetentionWorker
 > | null = null;
 let groupAgentRunActivationRetryTimer: NodeJS.Timeout | null = null;
+let groupAgentRunResumeTimer: NodeJS.Timeout | null = null;
 let groupPurgeTimer: NodeJS.Timeout | null = null;
 
 if (whatsapp && groupMemories) {
@@ -552,6 +573,32 @@ if (whatsapp && groupMemories) {
     conversation,
     (message) => resolveManagedGroupRuntimeAdmission(controlPlane, message),
   );
+  if (
+    config.groupAgentRunEnabled && groupAgentRuns &&
+    groupAgentRunRepository
+  ) {
+    const workProcessor = createGroupAgentRunWorkProcessor({
+      ports: createGroupAgentRunRuntimePorts({
+        repository: groupAgentRunRepository,
+        service: groupAgentRuns,
+        transport: whatsapp,
+        watermark: groupTurns,
+        runtimeAdmission: groupAgentRunRuntimeAdmission,
+      }),
+      executor: new GroupAgentRunExecutor(aiClient, config.ai),
+      usage: usageLedger,
+    });
+    groupAgentRunWorker = startGroupAgentRunWorker(workProcessor, {
+      logger: logger.child("worker.group-agent-run"),
+    });
+    groupAgentRunIngress = new GroupAgentRunIngressRouter(
+      groupAgentRuns,
+      whatsapp,
+      groupAgentRunRuntimeAdmission,
+      logger.child("core.group-agent-run-ingress"),
+      groupAgentRunWorker,
+    );
+  }
   groupBatcher = new GroupMessageBatcher(
     async (message) => {
       const outcome = groupTurns
@@ -579,6 +626,13 @@ if (whatsapp && groupMemories) {
           groupScopeKey(observed.scope),
           observed.accountId,
         )
+      ) {
+        groupTurns?.settleRejectedObservation(observed);
+        return null;
+      }
+      if (
+        observed && groupAgentRunIngress &&
+        await groupAgentRunIngress.handleObserved(observed) === "consumed"
       ) {
         groupTurns?.settleRejectedObservation(observed);
         return null;
@@ -669,12 +723,7 @@ if (whatsapp && groupMemories) {
 
 const SHUTDOWN_GRACE_MS = 60_000;
 const GROUP_RETENTION_INTERVAL_MS = 60 * 60 * 1_000;
-
-// Sedikit perintah saja. Cara utama memakai Harvy adalah menulis biasa.
-await bot.api.setMyCommands([
-  { command: "tugas", description: "Lihat yang harus dikerjakan" },
-  { command: "bantuan", description: "Lihat cara pakai" },
-]);
+const GROUP_RUN_RESUME_INTERVAL_MS = 60_000;
 
 const reminders = startReminderWorker(
   bot,
@@ -706,6 +755,11 @@ const consoleServer = config.controlPlane.console.enabled
   : null;
 
 let shutdownPromise: Promise<void> | undefined;
+const startupNetworkAbort = new AbortController();
+// grammY 1.x mengekspos tipe AbortSignal dari polyfill lamanya, sedangkan
+// runtime Node 22+ menyediakan signal web-standard yang kompatibel saat jalan.
+const telegramStartupSignal = startupNetworkAbort.signal as unknown as
+  NonNullable<Parameters<typeof bot.api.setMyCommands>[2]>;
 
 const shutdown = (
   reason:
@@ -724,6 +778,7 @@ const shutdown = (
     );
     return;
   }
+  startupNetworkAbort.abort();
   shutdownPromise ??= (async () => {
     const startedAt = Date.now();
     logger.info(
@@ -756,6 +811,10 @@ const shutdown = (
               clearInterval(groupAgentRunActivationRetryTimer);
               groupAgentRunActivationRetryTimer = null;
             }
+            if (groupAgentRunResumeTimer) {
+              clearInterval(groupAgentRunResumeTimer);
+              groupAgentRunResumeTimer = null;
+            }
             // Tutup ingress WA lebih dulu, lalu tunggu event yang sudah diterima
             // masuk ke batch dan selesai selagi socket masih hidup. Setelah
             // batch berhenti menambah kerja, batalkan/drain planner serta
@@ -765,8 +824,12 @@ const shutdown = (
               (async () => {
                 whatsapp?.stopIngress();
                 await whatsapp?.drainEvents();
+                groupAgentRunIngress?.stopIngress();
+                groupAgentRunWorker?.stop();
                 await groupBatcher?.stopIngress();
                 groupTurns?.stopIngress();
+                await groupAgentRunIngress?.drain();
+                await groupAgentRunWorker?.drain();
                 await groupTurns?.drain();
                 await whatsapp?.close();
               })(),
@@ -845,6 +908,25 @@ try {
       }
     }
   }
+  if (shutdownPromise) {
+    await shutdownPromise;
+    return;
+  }
+  // Aktivitas jaringan pertama baru boleh berjalan setelah control IPC aktif.
+  // Sedikit perintah saja; cara utama memakai Harvy adalah menulis biasa.
+  try {
+    await bot.api.setMyCommands([
+      { command: "tugas", description: "Lihat yang harus dikerjakan" },
+      { command: "bantuan", description: "Lihat cara pakai" },
+    ], undefined, telegramStartupSignal);
+  } catch (error) {
+    // Abort/failure yang tiba setelah shutdown dimulai bukan kegagalan runtime.
+    if (!shutdownPromise) throw error;
+  }
+  if (shutdownPromise) {
+    await shutdownPromise;
+    return;
+  }
   if (whatsapp && groupAgentRuns && groupAgentRunCleanup) {
     logger.warn(
       "whatsapp_local_auth_enabled",
@@ -857,6 +939,10 @@ try {
       logger.child("worker.group-agent-run-cleanup"),
     );
     const cleanupRecovery = await groupAgentRunCleanupWorker.ready();
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
     if (cleanupRecovery.pending > 0) {
       throw new Error(
         "Cleanup GroupAgentRun tertunda belum tuntas; WhatsApp tidak dimulai.",
@@ -865,7 +951,15 @@ try {
     // Readiness harus gagal tertutup: worker periodik menyerap error agar tetap
     // hidup, jadi recovery/purge startup dijalankan langsung sebelum ingress.
     await groupAgentRuns.recoverInterruptedRuns();
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
     const usageRecovery = await groupAgentRunUsageReconciler?.reconcilePending();
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
     if (usageRecovery && (usageRecovery.failed > 0 || usageRecovery.deferred > 0)) {
       throw new Error(
         "Reconciliation usage GroupAgentRun belum tuntas; WhatsApp tidak dimulai.",
@@ -879,11 +973,19 @@ try {
       );
     }
     await groupAgentRuns.purgeExpired();
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
     groupAgentRunRetention = startGroupAgentRunRetentionWorker(
       groupAgentRuns,
       logger.child("worker.group-agent-run-retention"),
     );
     await groupMemories?.purgeExpired();
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
     if (groupMemories) {
       groupPurgeTimer = setInterval(() => {
         void groupMemories.purgeExpired().catch((error: unknown) => {
@@ -897,6 +999,33 @@ try {
       groupPurgeTimer.unref();
     }
     await whatsapp.start();
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
+    if (groupAgentRunWorker) {
+      await groupAgentRunWorker.resume();
+      if (!shutdownPromise) {
+        groupAgentRunResumeTimer = setInterval(() => {
+          void groupAgentRunWorker?.resume().catch((error: unknown) => {
+            logger.error(
+              "group_agent_run_resume_failed",
+              "Scan berkala work lane GroupAgentRun gagal tertutup.",
+              error,
+            );
+          });
+        }, GROUP_RUN_RESUME_INTERVAL_MS);
+        groupAgentRunResumeTimer.unref();
+      }
+    }
+  }
+
+  // IPC dev-restart dapat tiba ketika Console/WhatsApp masih startup. Jangan
+  // melanjutkan ke polling/ready setelah shutdown sudah dimulai; outer finally
+  // baru melepas runtime lock sesudah seluruh drain selesai.
+  if (shutdownPromise) {
+    await shutdownPromise;
+    return;
   }
 
   logger.info(
@@ -905,6 +1034,7 @@ try {
     {
       whatsappEnabled: config.whatsapp.enabled,
       whatsappAccountCount: config.whatsapp.accounts.length,
+      groupAgentRunEnabled: config.groupAgentRunEnabled,
       aiMode: config.ai.mode,
       consoleEnabled: config.controlPlane.console.enabled,
     },
@@ -915,6 +1045,14 @@ try {
   await bot.start({
     allowed_updates: ["message", "callback_query"],
     onStart: () => {
+      // Shutdown dapat tiba setelah guard startup terakhir, tetapi sebelum
+      // grammY menandai polling sebagai running. Begitu onStart dipanggil,
+      // tutup polling yang baru hidup agar shutdown tidak menunggu proses yang
+      // tidak pernah ikut dihentikan dan runtime lock tetap dapat dilepas.
+      if (shutdownPromise) {
+        if (bot.isRunning()) bot.stop();
+        return;
+      }
       consoleServer?.markReady();
       void bot.resumeAgentRuns().catch((error: unknown) => {
         logger.error(

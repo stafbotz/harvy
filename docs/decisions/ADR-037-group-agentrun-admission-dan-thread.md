@@ -2,6 +2,7 @@
 
 - **Status:** Diterima
 - **Tanggal:** 13 Agustus 2026
+- **Diamendemen:** 15 Agustus 2026 — guarded ingress dan work lane dikomposisikan
 - **Pemilik keputusan:** pemilik produk Harvy
 - **Terkait:** ADR-009, ADR-011, ADR-016, ADR-023, ADR-024, ADR-027
 - **Mengamendemen:** batas private-only pada ADR-027, hanya sebagai fondasi core
@@ -20,8 +21,9 @@ v9, ledger work-attempt, commit barrier delivery termasuk hasil final,
 recovery/retention, cleanup durable, admission runtime, adapter guard,
 coordinator `GroupAgentRunWorker`, executor/checkpoint group-safe, work
 processor, exact start parser, dan controller pre-batch kini tersedia. Jalur
-ingress, processor, dan worker belum dikomposisikan, sehingga admission kanal
-dan execution tetap tertutup.
+ingress, processor, dan worker kini dikomposisikan di balik flag eksplisit;
+tanpa flag atau admission binding/mode/authority live, command dan execution
+tetap tertutup.
 
 ## Keputusan
 
@@ -88,16 +90,18 @@ dan execution tetap tertutup.
    effect ID/idempotency key dan menolak ID aktual yang hilang atau berbeda. Ini
    belum merupakan bukti deduplikasi server WhatsApp atau exactly-once lintas
    proses.
-10. **Composition membuka lifecycle dan admission guard, bukan capability.**
+10. **Composition membuka capability hanya melalui flag dan admission guard.**
     Ketika WhatsApp aktif, runtime membuat repository GroupAgentRun dan cleanup
     pada file khusus yang tidak boleh berkolisi dengan state grup. Startup
     menuntaskan cleanup pending lebih dulu, lalu recovery delivery dan purge,
     seluruhnya fail-closed sebelum `whatsapp.start()`. Worker ikut `stop`/`drain`
     saat shutdown. Resolver admission service hanya mengizinkan exact
     `scope+account` dengan binding live, tanpa intent cleanup pending, dan mode
-    bukan `disabled|paused`; error resolver ditolak. Controller ingress,
-    executor/processor, dan worker work belum dirangkai pada composition root,
-    jadi guard ini belum membuka command atau execution kanal.
+    bukan `disabled|paused`; error resolver ditolak. Ketika flag eksplisit
+    aktif, controller berjalan sesudah observation authority dan sebelum merge
+    batch, lalu executor/processor/worker memakai resolver yang sama pada claim
+    serta transport fence pada send. Tanpa seluruh syarat itu, bubble kembali
+    ke jalur independen atau work gagal tertutup.
 11. **Notice dan penghapusan scope mendahului reachability.** Notice v9
     menjelaskan record GroupAgentRun kondisional: request/judul, input anggota
     teratribusi beserta pesan sumber, Run Anchor, ledger work/delivery, hasil
@@ -128,8 +132,9 @@ dan execution tetap tertutup.
     menyerialkan start per binding, merutekan target run sebelum batching, dan
     mengirim anchor maupun control-copy hanya melalui guarded transport dengan
     idempotency key serta runtime fence. `stopIngress`/`drain` melacak tugas
-    background. Controller ini selesai dan teruji, tetapi belum dikomposisikan
-    atau reachable dari ingress produksi; model dan work lane tetap tertutup.
+    background. Composition root memasang controller hanya ketika flag aktif;
+    bubble yang dikonsumsi tidak ikut masuk chat ambient dan scheduler baru
+    dibangunkan setelah anchor atau update durable committed.
 14. **Eksekusi dan completion mempunyai ledger durable terpisah.** Claim work
     wajib terjadi setelah anchor committed, memakai attempt ID, claim key,
     instruction revision, CAS, runtime admission, dan batas 32 attempt. Restart
@@ -142,8 +147,9 @@ dan execution tetap tertutup.
     state nonterminal; service dan repository sama-sama menolak bypass yang dapat
     meninggalkan attempt atau pertanyaan tanpa jalur recovery/cancel/expiry.
     Claim service memagari runtime `scope+account` dan merevalidasi authority
-    live initiator/epoch di dalam commit fence. Worker tetap belum boleh
-    dikomposisikan sebelum seluruh port processor dan ingress dirangkai bersama.
+    live initiator/epoch di dalam commit fence. Adapter runtime menyatukan port
+    claim/checkpoint/question/final/recovery; pertanyaan menangkap watermark
+    ingress setelah delivery dan worker melakukan startup serta periodic resume.
 15. **Aktivasi dan quote membawa authority hingga efek terakhir.** Aktivasi
     direct membawa fence socket/generation/epoch sampai commit binding, notice,
     dan invocation socket. Retry memakai lease membership live, token ABA, serta
@@ -165,12 +171,11 @@ dan execution tetap tertutup.
 
 ## Batas change set ini
 
-- Notice v9, lifecycle, cleanup durable, resolver admission, dan retry aktivasi
-  sudah dirangkai. Exact parser, controller pre-batch, `GroupAgentRunWorker`,
-  authority-on-claim, executor/checkpoint, work processor, work-attempt, dan
-  final barrier tersedia serta teruji, tetapi jalur tersebut belum composed
-  sehingga tidak reachable; tidak ada kemampuan pengguna baru pada kanal
-  produksi.
+- Notice v9, lifecycle, cleanup durable, resolver admission, retry aktivasi,
+  exact parser/controller pre-batch, `GroupAgentRunWorker`, authority-on-claim,
+  executor/checkpoint, work processor, work-attempt, dan final barrier sudah
+  dirangkai. Reachability tetap opt-in dan belum menjalani acceptance WhatsApp
+  nyata; production multi-instance tetap tidak dibuka.
 - Adapter JSON + CAS hanya restart-durable satu proses; belum ada database,
   lease, dispatcher, outbox, atau reconciler multi-instance.
 - Efek `unknown` sengaja tidak di-retry dan belum mempunyai reconciler eksternal.
@@ -178,10 +183,9 @@ dan execution tetap tertutup.
   socket, bukan reconnect atau WhatsApp live.
 - Tidak ada pin API, hasil parsial user-visible, group-safe artifact, atau
   composition Workspace-private/group-coding pada kanal.
-- Worker cleanup/recovery/retention dan retry aktivasi sudah dirangkai lokal;
-  startup menolak membuka WhatsApp bila cleanup pending belum tuntas. Worker
-  `GroupAgentRunWorker` masih uncomposed. Belum ada lease atau supervisor lintas
-  proses.
+- Worker cleanup/recovery/retention, retry aktivasi, dan work lane sudah
+  dirangkai lokal; startup menolak membuka WhatsApp bila cleanup pending belum
+  tuntas. Belum ada lease atau supervisor lintas proses.
 
 ## Konsekuensi
 
@@ -189,9 +193,10 @@ Phase K kini mempunyai batas data, authority, work-attempt, final commit barrier
 serta recovery/retention/cleanup yang dapat diuji tanpa meminjam state privat.
 Authority expectation, admission runtime, exact parser, controller, worker
 coordinator, activation lease, dan adapter fence mempunyai kontrak yang selaras.
-Integrasi berikutnya adalah merangkai executor/processor/worker dan controller
-sesudah observation authority serta sebelum batching. Execution tetap tertutup
-sampai seluruh jalur itu terbukti pada composition nyata.
+Composition sekarang menempatkan controller sesudah observation authority serta
+sebelum batching dan menyatukan executor/processor/worker sampai final receipt.
+Gerbang berikutnya adalah fault/live acceptance WhatsApp dan backend durable
+multi-instance; flag default-off tetap menjadi batas operator sampai bukti itu ada.
 
 ## Bukti
 
@@ -207,4 +212,6 @@ CAS/pre-send, guarded delivery saat runtime/epoch/role berubah di antrean,
 quote isolation/expiry, exact start/routing pre-batch, shutdown drain, notice
 v9, executor/checkpoint tanpa private context, processor commit/usage ordering,
 ID delivery adapter, serta copy anchor manual-only. Bukti perintah dan
-batas dicatat di `docs/LOG.md`.
+batas dicatat di `docs/LOG.md`. Amendment composition menambah tes adapter
+runtime claim→checkpoint→question/final, watermark post-delivery, startup
+shutdown subprocess, dan gerbang penuh 1.348 tes.

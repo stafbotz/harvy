@@ -1,44 +1,29 @@
 # Current Context
 
-Refreshed: 2026-08-13
+Refreshed: 2026-08-15
 
 ## Verified baseline
 
-- Product capability baseline: working tree fondasi ProjectWorkspace/Coding
-  Phase G–J di atas commit dasar `f29b143` (10 Agustus 2026), diverifikasi
-  ulang 13 Agustus 2026.
-- Product gates: `npm run check` PASS; `npm test` PASS, 1.120 test dalam 138
-  suite, 0 gagal.
-- Context system: `npm run context:check` PASS; output 5.817 byte dengan
-  estimasi 1.455 token.
+- Product capability baseline: working tree composition GroupAgentRun di atas
+  commit dasar `d6560cb` (15 Agustus 2026).
+- Product gate: `npm test` PASS, 1.348 test dalam 169 suite, 0 gagal. Suite
+  terarah GroupAgentRun+startup PASS 40/40. Smoke dev mencapai ready, shutdown
+  bersih, exit 0, dan tidak menyisakan runtime lock.
+- Context contract: `npm run context:check` PASS; bootstrap 5.125 byte,
+  estimasi 1.282 token.
 
 ## Recent material changes
 
-- ProjectWorkspace mempunyai safe ZIP, immutable snapshot, revision/rollback,
-  quota, ACL/CAS, serta tombstone deletion resumable. Tombstone belum selesai
-  dipage sebagai locator content-free dan dilanjutkan tanpa scope pengguna.
-- Sandbox policy dengan content-addressed snapshot/artifact protocol, durable
-  lease journal/recovery, serta lifecycle eksplisit `start/stop/drain/close`
-  yang mem-fence lease sebelum journal ditutup; CodingRun single-writer dengan
-  map/plan/task-review evidence dan commit recovery, serta
-  local-git/GitHub exact-effect + Git object-bundle reconciliation tersedia
-  sebagai service/policy default-off. Client HTTP strict yang mendukung
-  service-auth proof untuk tiga trust domain ada, tetapi belum dirangkai atau
-  didukung backend live.
-- Validator artifact kini durable sebelum sandbox dispose; coordinator coding
-  mempunyai budget keputusan kumulatif, pause/resume, state fence, sandbox
-  action, dan provider-deletion fence. Scheduler local immediate-admission
-  mengikat revision lewat CAS, membatasi concurrency, dan drain baru selesai
-  setelah provider asli quiescent; receipt+verifier conformance deployment wajib,
-  pending commit terjadwal tetap menunggu recovery authority terpisah.
-  Supervisor maintenance mengurutkan sandbox→GitHub unknown→deletion initial
-  pass tetapi tidak membuka coding admission. Publish grant terikat interaction
-  `workspace-private`; deletion tidak menghapus konten GitHub remote.
-- Receipt GitHub `unknown` dan tombstone project yang belum selesai kini dapat
-  ditemukan lewat locator content-free dan diproses worker bounded satu proses.
-  Worker GitHub hanya mengamati reconcile; deletion hanya cleanup lokal exact.
-- Capability coding/GitHub dan permission granular terdaftar; tidak ada
-  surface yang diam-diam aktif tanpa executor live.
+- Fase G–M menyediakan ProjectWorkspace/safe ZIP, sandbox/coding/GitHub policy
+  fail-closed, GroupAgentRun/group-coding core, dan escalation `toughest`.
+  Coding/GitHub tetap default-off tanpa backend trust-domain serta conformance.
+- GroupAgentRun kini dirangkai sesudah observation authority dan sebelum batch
+  chat ke guarded controller, executor/processor, worker durable, usage, serta
+  Baileys delivery fence. Reachability tetap flag eksplisit dan admission live;
+  group-coding masih tidak reachable.
+- Dev control dipasang sebelum network Telegram. Stop/reload saat startup
+  mengabort request, menghentikan polling yang terlambat hidup, dan melepas
+  runtime lock melalui cleanup normal.
 
 ## Active cross-subsystem blockers
 
@@ -54,18 +39,19 @@ Refreshed: 2026-08-13
   prompt, atau sandbox.
 - Metadata project/run/evidence/deletion/GitHub masih file/single-process;
   produksi perlu distributed admission, transport/object store, dan outbox.
-  Supervisor/worker lokal belum dirangkai di `app.ts`; local detach bukan
-  remote GitHub unlink/delete.
+  Supervisor/worker coding lokal belum dirangkai di `app.ts`; local detach
+  bukan remote GitHub unlink/delete.
+- Procedural memory privat yang belajar strategi bantuan dari bukti berulang
+  belum ada; semantic/episodic/graph dan procedure project tidak menggantikannya.
 - Dual model misclassification can still miss pre-save consent for sensitive
   memory. Do not claim this privacy gap is closed.
 - False-positive/false-negative safety pada corpus model aktual belum diukur;
   selective routing baru terverifikasi otomatis dan belum membuktikan kanal
   nyata.
-- Forced shutdown can leave a stale runtime lock, and a startup-cancel race
-  remains open. Verify the recorded owner process is dead before removing a
-  stale lock.
-- WhatsApp group behavior is beta; full current behavior and two real accounts
-  have not been tested end-to-end.
+- Forced shutdown/crash tetap dapat meninggalkan runtime lock stale. Pastikan
+  PID pemilik sudah mati sebelum menghapus lock.
+- WhatsApp group behavior dan GroupAgentRun composition masih beta; full
+  behavior, fault/reconnect delivery, dan dua akun nyata belum diuji end-to-end.
 
 ## Route to detail
 
