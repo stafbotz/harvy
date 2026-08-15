@@ -214,7 +214,7 @@ function validateRun(value: unknown): asserts value is CodingRun {
     "validatorReceipts", "diff", "limits", "counters", "pendingCommit",
     "commitReceipts", "result", "lastError", "createdAt", "startedAt",
     "updatedAt", "completedAt", "expiresAt",
-  ], ["taskReviewReceipts", "repositoryMap", "plan"], "run");
+  ], ["taskReviewReceipts", "repositoryMap", "plan", "admission"], "run");
   const run = value as CodingRun;
   if (run.version !== 1 && run.version !== 2) throw new Error("Versi CodingRun tidak sah.");
   if (!validStatusPhase(run.status, run.phase)) {
@@ -260,6 +260,22 @@ function validateRun(value: unknown): asserts value is CodingRun {
     ].some((text) => typeof text !== "string" || containsSecretLikeValue(text))
   ) {
     throw new Error("TaskBrief CodingRun tidak sah atau menyerupai credential.");
+  }
+  if (run.admission !== undefined) {
+    assertObjectKeys(run.admission, [
+      "source", "effectId", "audience", "authorityRef", "interactionDigest",
+    ], [], "admission");
+    if (
+      run.admission.source !== "group" ||
+      run.admission.audience !== "group-safe" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(run.admission.effectId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(run.admission.authorityRef) ||
+      !/^[a-f0-9]{64}$/u.test(run.admission.interactionDigest) ||
+      containsSecretLikeValue(run.admission.effectId) ||
+      containsSecretLikeValue(run.admission.authorityRef)
+    ) {
+      throw new Error("Admission provenance CodingRun tidak sah.");
+    }
   }
   if (!Array.isArray(run.constraints) || !Array.isArray(run.changeSets)) {
     throw new Error("Constraint CodingRun tidak sah.");
@@ -736,6 +752,7 @@ function validateImmutableState(current: CodingRun, next: CodingRun): void {
     current.version !== next.version ||
     JSON.stringify(current.binding) !== JSON.stringify(next.binding) ||
     JSON.stringify(current.taskBrief) !== JSON.stringify(next.taskBrief) ||
+    JSON.stringify(current.admission) !== JSON.stringify(next.admission) ||
     current.runId !== next.runId ||
     current.workingCopyId !== next.workingCopyId ||
     current.createdAt !== next.createdAt ||
@@ -1063,7 +1080,19 @@ function validEventTransition(
 
 function assertSingleWriters(runs: readonly CodingRun[]): void {
   const active = new Set<string>();
+  const runIds = new Set<string>();
+  const admissionEffects = new Set<string>();
   for (const run of runs) {
+    if (runIds.has(run.runId)) {
+      throw new Error("Run ID CodingRun duplikat.");
+    }
+    runIds.add(run.runId);
+    if (run.admission) {
+      if (admissionEffects.has(run.admission.effectId)) {
+        throw new Error("Admission effect CodingRun duplikat.");
+      }
+      admissionEffects.add(run.admission.effectId);
+    }
     if (TERMINAL.has(run.status)) continue;
     if (active.has(run.binding.projectId)) {
       throw new Error("Lebih dari satu writer aktif untuk satu project.");

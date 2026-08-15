@@ -265,7 +265,7 @@ const labels={
   mode:{direct_only:"Hanya saat dipanggil",ambient:"Boleh nimbrung",paused:"Dijeda",disabled:"Dinonaktifkan",none:"Tanpa mode",workspace:"Workspace"},
   audience:{personal:"Pribadi",group:"Grup",workspace:"Workspace"},planStatus:{pilot:"Pilot",active:"Aktif",retired:"Dipensiunkan"},
   consent:{not_invited:"Belum diundang",invited:"Menunggu persetujuan",granted:"Disetujui",withdrawn:"Dicabut",expired:"Kedaluwarsa"},
-  origin:{primary:"Utama",fallback:"Cadangan"},tier:{cheap:"Ringan",efficient:"Efisien",ambitious:"Mendalam"},
+  origin:{primary:"Utama",fallback:"Cadangan"},tier:{cheap:"Ringan",efficient:"Efisien",ambitious:"Mendalam",toughest:"Eskalasi"},
   purpose:{"turn-boundary":"Batas giliran",understanding:"Pemahaman","due-date":"Membaca waktu","risk-triage":"Triase keselamatan","memory-privacy":"Privasi memori","group-ingress":"Ingress grup",reply:"Balasan","reply-review":"Review balasan",summary:"Ringkasan",agent:"Agent",research:"Research web","insight":"Catatan keselamatan",session:"Sesi","group-participation":"Rencana partisipasi grup","group-reply":"Balasan grup"},
   attemptStatus:{started:"Sedang berjalan",completed:"Selesai",http_error:"Gangguan HTTP",network_error:"Gangguan jaringan",timeout:"Waktu habis",cancelled:"Dibatalkan",response_rejected:"Respons ditolak",unknown:"Status belum dipastikan"},
   auditAction:{session_login:"Masuk Console",session_logout:"Keluar Console",enrollment_create:"Tambah akses",enrollment_update:"Ubah akses",evaluation_invite:"Undang evaluasi",evaluation_revoke:"Cabut evaluasi",plan_version_create:"Buat versi paket",price_version_create:"Buat versi harga",runtime_mode_update:"Ubah mode runtime",unknown_mutation:"Perubahan tidak dikenal"},

@@ -36,7 +36,11 @@ export function canonicalPlanId(planId: string): string {
 
 export type ConfiguredModelMode = "testing" | "production";
 export type ConfiguredModelOrigin = "primary" | "fallback";
-export type ConfiguredModelTier = "cheap" | "efficient" | "ambitious";
+export type ConfiguredModelTier =
+  | "cheap"
+  | "efficient"
+  | "ambitious"
+  | "toughest";
 
 /** Inventaris konfigurasi model yang aman ditampilkan tanpa credential. */
 export interface ConfiguredModelSource {

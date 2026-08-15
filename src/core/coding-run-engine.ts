@@ -9,6 +9,8 @@ import type {
   CodingPlanStep,
   CodingRepositoryMapReceipt,
   CodingRun,
+  CodingRunAdmission,
+  CodingRunStartOptions,
   CodingRunPlan,
   CodingRunEvent,
   CodingRunLimits,
@@ -200,14 +202,32 @@ export class CodingRunEngine {
     projectId: string,
     expectedWorkspaceRevision: number,
     briefInput: CodingTaskBrief,
+    options: CodingRunStartOptions = {},
   ): Promise<CodingRun> {
     const brief = validateTaskBrief(briefInput);
+    const admission = validateCodingRunAdmission(options.admission);
     return this.projects.withFreshProjectPermissions(
       scope,
       projectId,
       expectedWorkspaceRevision,
       ["run.create", "code.write"],
       async (project) => {
+    if (admission) {
+      const replay = (await this.repository.listByProject(project.id)).find(
+        (candidate) => candidate.admission?.effectId === admission.effectId,
+      );
+      if (replay) {
+        if (
+          JSON.stringify(replay.admission) !== JSON.stringify(admission) ||
+          replay.binding.ownerWorkspaceKey !== scope.workspaceKey ||
+          replay.binding.workspaceRevision !== expectedWorkspaceRevision ||
+          JSON.stringify(replay.taskBrief) !== JSON.stringify(brief)
+        ) {
+          throw new Error("Admission effect CodingRun bertabrakan dengan command lain.");
+        }
+        return replay;
+      }
+    }
     const active = await this.repository.loadActiveByProject(project.id);
     if (active) {
       if (active.pendingCommit) {
@@ -251,6 +271,7 @@ export class CodingRunEngine {
         baseSnapshot: project.baseSnapshot,
       },
       taskBrief: brief,
+      ...(admission ? { admission } : {}),
       status: "running",
       phase: "mapping",
       instructionRevision: 0,
@@ -2306,6 +2327,23 @@ function validateTaskBrief(input: CodingTaskBrief): CodingTaskBrief {
     acceptanceCriteria: boundedList(input.acceptanceCriteria, 32, 2_000),
     initialConstraints: boundedList(input.initialConstraints, 32, 2_000),
   };
+}
+
+function validateCodingRunAdmission(
+  value: CodingRunAdmission | undefined,
+): CodingRunAdmission | null {
+  if (value === undefined) return null;
+  if (
+    value.source !== "group" || value.audience !== "group-safe" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value.effectId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value.authorityRef) ||
+    !/^[a-f0-9]{64}$/u.test(value.interactionDigest) ||
+    containsSecretLikeValue(value.effectId) ||
+    containsSecretLikeValue(value.authorityRef)
+  ) {
+    throw new Error("Admission provenance CodingRun tidak sah.");
+  }
+  return Object.freeze(structuredClone(value));
 }
 
 function validateRunLimits(value: CodingRunLimits): CodingRunLimits {

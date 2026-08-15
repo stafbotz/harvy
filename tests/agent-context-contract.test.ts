@@ -40,6 +40,7 @@ describe("kontrak konteks coding agent", () => {
 
     assert.match(stdout, /Harvy compact session context/u);
     assert.match(stdout, /# Current Context/u);
+    assert.match(stdout, /Koordinasikan penulisan secara adaptif/u);
     assert.ok(Buffer.byteLength(stdout, "utf8") <= 8_192);
     assert.doesNotMatch(
       stdout,
@@ -120,6 +121,31 @@ describe("kontrak konteks coding agent", () => {
     assert.doesNotMatch(active, /Commit ditahan:\s*docs\/LOG\.md/iu);
   });
 
+  it("mengunci koordinasi penulisan adaptif tanpa mengubah review eksplisit", async () => {
+    const [agents, workflow] = await Promise.all([
+      text("AGENTS.md"),
+      text("docs/operations/WORKFLOW.md"),
+    ]);
+    const active = `${agents}\n${workflow}`;
+
+    assert.match(agents, /Koordinasikan penulisan secara adaptif/iu);
+    assert.match(agents, /berurutan,\s*paralel,\s*atau\s*terisolasi/iu);
+    assert.match(agents, /peran agent\s+tidak otomatis menentukan hak edit/iu);
+    assert.match(agents, /review\/diskusi eksplisit tetap read-only/iu);
+    assert.match(workflow, /Tidak ada mandat satu penulis untuk seluruh working tree/iu);
+    assert.match(workflow, /Worktree\/clone adalah alat opsional/iu);
+
+    for (const retired of [
+      /Satu penulis aktif per working tree/iu,
+      /Satu pihak menulis pada satu working tree/iu,
+      /Hanya satu pihak menulis file pada satu waktu/iu,
+      /agent lain boleh audit\/QA\s+baca-saja/iu,
+      /Bila dua penulis benar-benar diperlukan,\s*gunakan worktree\/clone terpisah/iu,
+    ]) {
+      assert.doesNotMatch(active, retired);
+    }
+  });
+
   it("membatasi CURRENT dan menyediakan status per subsystem", async () => {
     const [current, statusIndex] = await Promise.all([
       text("docs/agent/CURRENT.md"),
@@ -160,7 +186,7 @@ describe("kontrak konteks coding agent", () => {
     assert.match(generator, /tests\/agent-context-contract\.test\.ts/u);
   });
 
-  it("memvalidasi snapshot staged dan menolak kontrak yang dihapus", async () => {
+  it("memvalidasi snapshot staged dan menolak kontrak usang atau dihapus", async () => {
     const temporaryDirectory = await mkdtemp(join(tmpdir(), "harvy-context-index-"));
     const indexPath = resolve(temporaryDirectory, "index");
     const stagedGenerator = resolve(temporaryDirectory, "session-context.mjs");
@@ -216,6 +242,43 @@ describe("kontrak konteks coding agent", () => {
         { cwd: repositoryRoot, env: stagedEnvironment },
       );
       assert.match(valid.stdout, /agent-context: ok/u);
+
+      const { stdout: stagedAgents } = await execFileAsync(
+        "git",
+        ["show", ":AGENTS.md"],
+        { cwd: repositoryRoot, env: gitEnvironment },
+      );
+      const legacyAgentsPath = resolve(temporaryDirectory, "AGENTS.legacy.md");
+      const legacyAgents = stagedAgents.replace(
+        "<!-- SESSION_CONTEXT_END -->",
+        [
+          "- Satu penulis aktif per working tree. Review dan diskusi tidak mengedit.",
+          "<!-- SESSION_CONTEXT_END -->",
+        ].join("\n"),
+      );
+      assert.notEqual(legacyAgents, stagedAgents);
+      await writeFile(legacyAgentsPath, legacyAgents, "utf8");
+      const { stdout: legacyBlob } = await execFileAsync(
+        "git",
+        ["hash-object", "-w", "--", legacyAgentsPath],
+        { cwd: repositoryRoot },
+      );
+      await execFileAsync(
+        "git",
+        ["update-index", "--cacheinfo", "100644", legacyBlob.trim(), "AGENTS.md"],
+        { cwd: repositoryRoot, env: gitEnvironment },
+      );
+      await assert.rejects(
+        execFileAsync(process.execPath, [stagedGenerator, "--check-staged"], {
+          cwd: repositoryRoot,
+          env: stagedEnvironment,
+        }),
+        /retired repository writing coordination rule remains active/u,
+      );
+      await execFileAsync("git", ["add", "--", "AGENTS.md"], {
+        cwd: repositoryRoot,
+        env: gitEnvironment,
+      });
 
       await execFileAsync(
         "git",

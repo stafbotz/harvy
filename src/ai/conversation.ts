@@ -115,6 +115,7 @@ import {
 import { deterministicTimeReply } from "../agent/time-fast-path.js";
 import {
   DEFAULT_EXECUTION_POLICY,
+  type ExecutionEscalationReason,
   type ExecutionPlan,
   type ExecutionPolicy,
   type ExecutionWorkClass,
@@ -1249,7 +1250,7 @@ export class Conversation {
       allowTools?: boolean;
       allowDelegation?: boolean;
       allowEscalation?: boolean;
-      escalationReason?: string;
+      escalationReason?: ExecutionEscalationReason;
     } = {},
   ): ExecutionPlan {
     return this.executionPolicy.decide({

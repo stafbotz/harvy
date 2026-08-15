@@ -71,6 +71,24 @@ export interface CodingTaskBrief {
   initialConstraints: string[];
 }
 
+/**
+ * Admission provenance is code-owned and content-free. A group interaction may
+ * start a CodingRun only through an idempotent effect that is already bound to
+ * a durable group/workspace link. Raw group IDs, prompts, principals, and
+ * approval material deliberately stay outside this record.
+ */
+export interface CodingRunAdmission {
+  source: "group";
+  effectId: string;
+  audience: "group-safe";
+  authorityRef: string;
+  interactionDigest: string;
+}
+
+export interface CodingRunStartOptions {
+  admission?: CodingRunAdmission;
+}
+
 export type CodingConstraintKind =
   | "constraint"
   | "correction"
@@ -305,6 +323,8 @@ export interface CodingRun {
   runId: string;
   binding: CodingRunBinding;
   taskBrief: CodingTaskBrief;
+  /** Optional so pre-Phase-L records remain source/read compatible. */
+  admission?: CodingRunAdmission;
   status: CodingRunStatus;
   phase: CodingRunPhase;
   instructionRevision: number;

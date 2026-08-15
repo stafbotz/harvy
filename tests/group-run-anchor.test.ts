@@ -118,7 +118,7 @@ describe("Group Run Anchor", () => {
     assert.equal(started.run.anchor.pinPolicy, "manual-only");
     assert.equal(started.run.anchor.messageId, null);
 
-    const attached = await service.attachAnchor(
+    const attached = await commitTestAnchor(service,
       started.run.runId,
       started.run.stateRevision,
       "anchor-message-1",
@@ -134,6 +134,20 @@ describe("Group Run Anchor", () => {
     assert.match(groupRunInputAcknowledgement("cancelled"), /dibatalkan/iu);
   });
 });
+
+async function commitTestAnchor(
+  service: GroupAgentRunService,
+  runId: string,
+  expectedStateRevision: number,
+  messageId: string,
+) {
+  return service.commitAnchor(
+    runId,
+    expectedStateRevision,
+    `Anchor ${messageId}`,
+    async () => ({ messageId }),
+  );
+}
 
 function groupMessage(overrides: Partial<GroupMessage> = {}): GroupMessage {
   return {
@@ -175,7 +189,7 @@ function groupInput(
 
 function groupRun(overrides: Partial<GroupAgentRun> = {}): GroupAgentRun {
   return {
-    version: 1,
+    version: 2,
     runId: "group-run-1",
     scopeKey: "whatsapp:group-1",
     scope: { channel: "whatsapp", groupId: "group-1" },
@@ -202,6 +216,8 @@ function groupRun(overrides: Partial<GroupAgentRun> = {}): GroupAgentRun {
       pinPolicy: "manual-only",
       updatedAt: NOW,
     },
+    pendingEffect: null,
+    receipts: [],
     inputs: [],
     changeSets: [],
     questions: [],

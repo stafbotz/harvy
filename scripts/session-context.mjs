@@ -181,6 +181,19 @@ async function validateContractFiles() {
     "shell wrapper must not read or print large documents",
   );
 
+  const bootstrapContract = extractBootstrapContract(files.agents);
+  assert(
+    /Koordinasikan penulisan secara adaptif/iu.test(bootstrapContract) &&
+      /berurutan,\s*paralel,\s*atau\s*terisolasi/iu.test(bootstrapContract) &&
+      /peran agent\s+tidak otomatis menentukan hak edit/iu.test(bootstrapContract),
+    "AGENTS.md bootstrap must describe adaptive writing coordination",
+  );
+  assert(
+    /Tidak ada mandat satu penulis untuk seluruh working tree/iu.test(files.workflow) &&
+      /Worktree\/clone adalah alat opsional/iu.test(files.workflow),
+    "workflow must preserve adaptive repository writing coordination",
+  );
+
   const activeContract = [
     files.agents,
     files.claude,
@@ -201,6 +214,18 @@ async function validateContractFiles() {
   assert(
     !retiredMandates.some((pattern) => pattern.test(activeContract)),
     "retired mandatory-bootstrap or LOG rule remains active",
+  );
+  const retiredWritingMandates = [
+    /Satu penulis aktif per working tree/iu,
+    /Satu pihak menulis pada satu working tree/iu,
+    /Hanya satu pihak menulis file pada satu waktu/iu,
+    /agent lain boleh audit\/QA\s+baca-saja/iu,
+    /Bila dua penulis benar-benar diperlukan,\s*gunakan worktree\/clone terpisah/iu,
+    /Kerja paralel hanya\s+diizinkan untuk paket dan folder kerja yang benar-benar terisolasi/iu,
+  ];
+  assert(
+    !retiredWritingMandates.some((pattern) => pattern.test(activeContract)),
+    "retired repository writing coordination rule remains active",
   );
   assert(
     !/Commit ditahan:.*LOG|LOG.*tidak ikut berubah|grep\s+-q.*LOG/iu.test(files.hook),

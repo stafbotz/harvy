@@ -1,6 +1,6 @@
 # Status Project Workspace dan Coding
 
-Refreshed: 2026-08-13
+Refreshed: 2026-08-15
 
 ## Ada di kode
 
@@ -83,6 +83,14 @@ Refreshed: 2026-08-13
   Deletion hanya mem-purge connection, approval/receipt, dan selection lokal
   sesudah receipt `unknown` selesai; repository atau installation GitHub remote
   tidak dihapus.
+- Phase L: core group-coding mengikat generation grup aktif ke Workspace lewat
+  irisan admin grup + `workspace.manage`. Setiap operasi memeriksa ulang lease
+  authority grup, membership/ACL Workspace, permission granular, dan link exact.
+  CodingRun dari grup membawa admission effect idempoten serta reference
+  audience durable. Grup hanya menerima status/fase/jumlah file/validator
+  code-owned; source, diff, path, snapshot, brief, log, error detail, dan
+  repository metadata tetap Workspace-private. Request push/PR hanya menjadi
+  offer konfirmasi privat dan tidak memanggil broker.
 - Capability serta permission granular telah terdaftar, tetapi seluruh surface
   coding/sandbox/git/GitHub tetap `installed: false` secara default.
 
@@ -118,10 +126,16 @@ Refreshed: 2026-08-13
   Initial pass hanya satu page dan bukan bukti backlog habis. Tombstone lokal bukan
   bukti remote GitHub sudah
   di-unlink atau konten remote terhapus.
+- Group-coding belum mempunyai actor resolver kanal atau implementasi production
+  untuk lease authority grup dan belum dirangkai di `app.ts`. Core ini tidak
+  membuat source/project dapat dibaca dari grup dan tidak membuat capability
+  coding menjadi installed.
 
 ## Bukti
 
 - `npm run check` PASS.
 - Tes terarah G–J/authority/HTTP PASS, 171 test dalam 19 suite.
-- `npm test` PASS, 1.120 test dalam 138 suite, 0 gagal.
+- Tes terarah Phase L PASS, 8/8; admission replay juga tercakup pada suite
+  `CodingRunEngine`.
+- `npm test` PASS, 1.345 test dalam 167 suite, 0 gagal.
 - Belum ada live isolation test, GitHub App test, provider test, atau kanal E2E.

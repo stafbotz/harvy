@@ -13,8 +13,12 @@ import type {
   UsageLedgerRepository,
 } from "../src/domain/usage-ledger.js";
 import type {
+  EntitlementDeliveryDecision,
+  EntitlementDeliveryScope,
+  EntitlementDeliverySettlement,
   EntitlementEntry,
   EntitlementLedgerRepository,
+  PendingEntitlementCandidate,
 } from "../src/domain/entitlement.js";
 
 class MemoryControl implements ControlPlaneRepository {
@@ -91,6 +95,8 @@ class MemoryLedger implements UsageLedgerRepository {
 
 class MemoryEntitlement implements EntitlementLedgerRepository {
   entries: EntitlementEntry[] = [];
+  candidates: PendingEntitlementCandidate[] = [];
+  settlements: EntitlementDeliverySettlement[] = [];
   failNext = false;
   async append(entry: EntitlementEntry) {
     if (this.failNext) {
@@ -101,6 +107,63 @@ class MemoryEntitlement implements EntitlementLedgerRepository {
       this.entries.push(structuredClone(entry));
     }
   }
+  async stageCandidate(candidate: PendingEntitlementCandidate) {
+    const existing = this.entries.find(
+      (entry) => entry.idempotencyKey === candidate.entry.idempotencyKey,
+    );
+    if (existing) return "committed" as const;
+    const staged = this.candidates.find(
+      (item) => item.entry.idempotencyKey === candidate.entry.idempotencyKey,
+    );
+    if (staged) return "replayed" as const;
+    const terminal = this.settlements.find((item) => sameScope(item.scope, candidate.scope));
+    if (terminal?.outcome === "discarded") return "discarded" as const;
+    if (terminal?.outcome === "committed") {
+      this.entries.push(promote(candidate, terminal.effectId!));
+      return "committed" as const;
+    }
+    this.candidates.push(structuredClone(candidate));
+    return "staged" as const;
+  }
+  async settleScope(
+    scope: EntitlementDeliveryScope,
+    decision: EntitlementDeliveryDecision,
+  ) {
+    const terminal = this.settlements.find((item) => sameScope(item.scope, scope));
+    if (terminal) {
+      if (
+        terminal.outcome === decision.outcome &&
+        terminal.effectId === decision.effectId
+      ) return "replayed" as const;
+      throw new Error("settlement bertabrakan");
+    }
+    const matching = this.candidates.filter((item) => sameScope(item.scope, scope));
+    if (decision.outcome === "committed") {
+      for (const candidate of matching) {
+        this.entries.push(promote(candidate, decision.effectId!));
+      }
+    }
+    this.candidates = this.candidates.filter((item) => !sameScope(item.scope, scope));
+    this.settlements.push(structuredClone({ scope, ...decision }));
+    return "settled" as const;
+  }
+  async listPendingScopes(subjectRef?: string) {
+    const unique = new Map<string, EntitlementDeliveryScope>();
+    for (const candidate of this.candidates) {
+      if (subjectRef !== undefined && candidate.scope.subjectRef !== subjectRef) continue;
+      unique.set(JSON.stringify(candidate.scope), candidate.scope);
+    }
+    return [...unique.values()].map((scope) => structuredClone(scope));
+  }
+  async pendingDebitTokens(subjectRef: string, since: Date) {
+    return this.candidates
+      .filter(
+        (candidate) =>
+          candidate.scope.subjectRef === subjectRef &&
+          Date.parse(candidate.entry.at) >= since.getTime(),
+      )
+      .reduce((sum, candidate) => sum + candidate.entry.debitedTokens, 0);
+  }
   async list(subjectRef?: string) {
     return this.entries.filter(
       (item) => subjectRef === undefined || item.subjectRef === subjectRef,
@@ -108,10 +171,49 @@ class MemoryEntitlement implements EntitlementLedgerRepository {
   }
   async removeBefore(before: Date) {
     this.entries = this.entries.filter((item) => Date.parse(item.at) >= before.getTime());
+    this.candidates = this.candidates.filter(
+      (item) => Date.parse(item.entry.at) >= before.getTime(),
+    );
+    this.settlements = this.settlements.filter(
+      (item) => Date.parse(item.settledAt) >= before.getTime(),
+    );
   }
   async removeSubject(subjectRef: string) {
     this.entries = this.entries.filter((item) => item.subjectRef !== subjectRef);
+    this.candidates = this.candidates.filter(
+      (item) => item.scope.subjectRef !== subjectRef,
+    );
+    this.settlements = this.settlements.filter(
+      (item) => item.scope.subjectRef !== subjectRef,
+    );
   }
+}
+
+function sameScope(
+  left: EntitlementDeliveryScope,
+  right: EntitlementDeliveryScope,
+) {
+  return left.kind === right.kind &&
+    left.subjectRef === right.subjectRef &&
+    left.runId === right.runId &&
+    left.attemptId === right.attemptId;
+}
+
+function promote(
+  candidate: PendingEntitlementCandidate,
+  effectId: string,
+): EntitlementEntry {
+  return {
+    ...structuredClone(candidate.entry),
+    delivery: {
+      scope: {
+        kind: candidate.scope.kind,
+        runId: candidate.scope.runId,
+        attemptId: candidate.scope.attemptId,
+      },
+      effectId,
+    },
+  };
 }
 
 function runtime() {
@@ -217,6 +319,67 @@ describe("UsageLedgerService", () => {
         modelRole: "planner",
       }),
       /tidak sah atau tidak lengkap/u,
+    );
+  });
+
+  it("mencatat route toughest dan privacy domain tanpa payload", async () => {
+    const { ledger, ledgerRepository } = runtime();
+    const context: ProviderAttemptStart = {
+      ...start("attempt-1", "request-1"),
+      tier: "ambitious",
+      modelRole: "critic",
+      requestedEffort: "high",
+      effectiveEffort: "high",
+      verbosity: "low",
+      routeTier: "toughest",
+      routeReason: "validator_escalation",
+      escalationReason: "observation_contradiction",
+      promptMaterial: "structured-brief+candidate",
+      sourcePrivacyDomain: "workspace.private",
+      targetPrivacyDomain: "provider.approved",
+    };
+    await ledger.startAttempt(context);
+    assert.deepEqual(
+      {
+        routeTier: ledgerRepository.records[0]?.routeTier,
+        routeReason: ledgerRepository.records[0]?.routeReason,
+        escalationReason: ledgerRepository.records[0]?.escalationReason,
+        promptMaterial: ledgerRepository.records[0]?.promptMaterial,
+        sourcePrivacyDomain: ledgerRepository.records[0]?.sourcePrivacyDomain,
+        targetPrivacyDomain: ledgerRepository.records[0]?.targetPrivacyDomain,
+      },
+      {
+        routeTier: "toughest",
+        routeReason: "validator_escalation",
+        escalationReason: "observation_contradiction",
+        promptMaterial: "structured-brief+candidate",
+        sourcePrivacyDomain: "workspace.private",
+        targetPrivacyDomain: "provider.approved",
+      },
+    );
+
+    const { targetPrivacyDomain: _targetDomain, ...missingTargetDomain } = context;
+    await assert.rejects(
+      () => ledger.startAttempt({
+        ...missingTargetDomain,
+        attemptId: "attempt-2",
+        requestId: "request-2",
+      }),
+      /route toughest/u,
+    );
+
+    await ledger.startAttempt({
+      ...start("attempt-3", "request-3"),
+      tier: "ambitious",
+      modelRole: "synthesizer",
+      requestedEffort: "high",
+      effectiveEffort: "high",
+      verbosity: "high",
+      promptMaterial: "raw+structured-brief+candidate",
+    });
+    assert.equal(
+      ledgerRepository.records[1]?.promptMaterial,
+      "raw+structured-brief+candidate",
     );
   });
 
@@ -469,6 +632,80 @@ describe("UsageLedgerService", () => {
     assert.equal(entitlementRepository.entries[0]?.debitedTokens, 15);
     assert.equal(entitlementRepository.entries[1]?.type, "safety_exempt");
     assert.equal(entitlementRepository.entries[1]?.debitedTokens, 0);
+  });
+
+  it("men-stage debit attempt secara durable lalu mengikat exact delivery effect", async () => {
+    const { ledger, entitlementRepository } = runtime();
+    const deliveryScope = {
+      kind: "group_agent_run_attempt" as const,
+      runId: "run-usage-1",
+      attemptId: "attempt-usage-1",
+    };
+    await ledger.settleEntitlement(
+      {
+        requestId: "scoped-logical-1",
+        turnId: "attempt-usage-1",
+        ownerId: "whatsapp:group-1",
+        subjectKind: "group",
+        channel: "whatsapp",
+        deliveryScope,
+        tier: "cheap",
+        purpose: "agent",
+        model: "primary-model",
+        maxTokens: 100,
+        inputTokenEstimate: 10,
+        safetyCritical: false,
+      },
+      { inputTokens: 10, outputTokens: 5, totalTokens: 15, estimated: false },
+      { succeeded: true },
+    );
+
+    assert.equal(entitlementRepository.entries.length, 0);
+    assert.equal(entitlementRepository.candidates.length, 1);
+    assert.deepEqual(
+      (await ledger.pendingDeliveryScopes()).map(({ kind, runId, attemptId }) => ({
+        kind,
+        runId,
+        attemptId,
+      })),
+      [deliveryScope],
+    );
+    assert.equal(
+      await ledger.pendingDebitTokens(
+        "whatsapp:group-1",
+        new Date("2026-07-31T00:00:00.000Z"),
+      ),
+      15,
+    );
+
+    const scope = { ...deliveryScope, ownerId: "whatsapp:group-1" };
+    assert.equal(
+      await ledger.settleDeliveryScope(scope, {
+        outcome: "committed",
+        effectId: "effect-final-1",
+      }),
+      "settled",
+    );
+    assert.equal(
+      await ledger.settleDeliveryScope(scope, {
+        outcome: "committed",
+        effectId: "effect-final-1",
+      }),
+      "replayed",
+    );
+    await assert.rejects(
+      ledger.settleDeliveryScope(scope, {
+        outcome: "committed",
+        effectId: "effect-final-lain",
+      }),
+      /bert[a-z]+kan|bertabrakan/u,
+    );
+    assert.equal(entitlementRepository.candidates.length, 0);
+    assert.equal(entitlementRepository.entries.length, 1);
+    assert.deepEqual(entitlementRepository.entries[0]?.delivery, {
+      scope: deliveryScope,
+      effectId: "effect-final-1",
+    });
   });
 
   it("delivery hanya menyelesaikan kandidat milik turn yang benar", async () => {

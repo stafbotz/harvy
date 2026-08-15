@@ -13,6 +13,8 @@
 import type { RiskLevel } from "../core/safety-policy.js";
 
 export type ModelTier = "cheap" | "efficient" | "ambitious";
+/** Slot escalation-only; ordinary routing never returns it. */
+export type ExecutionModelTier = ModelTier | "toughest";
 
 export type ConversationIntent =
   | "task"

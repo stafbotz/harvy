@@ -1,8 +1,7 @@
 # Status — WhatsApp Grup
 
-Verified: 13 Agustus 2026 pada working tree fondasi Group AgentRun Phase K di
-atas `e6d7fbf`; hasil gerbang terbaru dicatat di `docs/LOG.md`. Bukti kanal
-nyata tetap sempit.
+Refreshed: 15 Agustus 2026 pada working tree Group AgentRun Phase K/L; build dan
+tes terarah terbaru dicatat di `docs/LOG.md`. Bukti kanal nyata tetap sempit.
 
 ## Keadaan saat ini
 
@@ -47,11 +46,87 @@ nyata tetap sempit.
   lengkap hanya untuk record member/room yang baru dibuat.
 - Fondasi core Group AgentRun terpisah menyimpan scope+account, initiator,
   participant/audience group-safe, anchor/question reference, input
-  teratribusi, ChangeSet, event, revision, dan expiry. Policy lokal menolak
+  teratribusi, ChangeSet, ledger work, hasil final committed, event, revision,
+  dan expiry. Policy lokal menolak
   ambient serta mixed bubble, membedakan self-info/proposal/control, mengikat
   assigned answer dan override admin eksplisit, menyisakan slot cancel, serta
   menegakkan satu foreground per grup melalui CAS serta menolak replay lintas
   account. Anchor tidak auto-pin.
+- Anchor dan assigned question kini melewati `pendingEffect` durable sebelum
+  send. Effect mengikat digest konten, revision, purpose, dan snapshot authority;
+  request delivery menurunkan expected epoch serta actor/role initiator atau
+  assignee exact dari effect itu. Anchor/question baru diikat sesudah transport
+  mengembalikan ID pesan. Receipt append-only membedakan `committed`,
+  `not_committed`, dan `unknown`; replay committed tidak mengirim ulang,
+  sedangkan delivery ambigu atau recovery restart menjadi `partial|unknown`
+  tanpa retry. Watermark assigned answer diambil sesudah delivery.
+- Notice v9 mengungkap record GroupAgentRun kondisional, ledger upaya/delivery,
+  hasil final committed, data/provenance, audience grup, file lokal terpisah,
+  retensi maksimal tujuh hari, batas terhadap memori/riwayat privat dan
+  transcript model, serta cleanup saat Harvy dinonaktifkan/dikeluarkan.
+- Adapter Baileys menyediakan delivery GroupRun yang dapat quote pesan inbound
+  maupun outbound, meminta ID pesan deterministik dari effect ID/idempotency
+  key, dan gagal tertutup bila ID aktual kosong atau berbeda. Setiap send juga
+  wajib membawa expected authority epoch, actor/role, dan runtime fence. Dalam
+  antrean per grup, adapter menyegarkan metadata, menunggu runtime fence, lalu
+  memeriksa ulang socket/generation, epoch, membership Harvy, dan role actor
+  secara sinkron tepat sebelum socket dipanggil. Fence false/error tidak
+  memanggil socket. Validator repository menolak receipt/pending-effect dirusak.
+- Quote raw inbound untuk control-copy hanya in-memory, memakai key exact
+  grup+message, TTL 60 detik, cap 1.000 per akun, dan dibersihkan pada socket
+  close/reconnect atau self-removal. Refresh membership transient dibedakan dari
+  absence agar retry aktivasi tetap fail-closed tanpa kehilangan wake.
+- Ledger work-attempt membatasi satu attempt running, claim sesudah anchor,
+  replay exact revision, recovery/requeue, expiry, waiting-input, cancel, dan
+  batas 32 attempt. Hasil komputasi tetap `finalizing`; hanya final delivery
+  committed yang atomik mengikat receipt, result, attempt, event
+  `run.completed`, dan terminal run. Cap 256 event menolak setiap transisi
+  nonterminal yang tidak menyisakan slot outcome/penutupan; guard yang sama ada
+  pada service dan repository. Migrasi v1/v2 tanpa ledger work menormalkan
+  state aktif ke `queued|waiting_input`; legacy `completed` tanpa bukti final
+  committed menjadi `partial`, tanpa mengarang work, receipt, atau result.
+- `GroupAgentRunWorker` generik sudah mempunyai concurrency/cap queue, trailing
+  resume, abort/stop/drain, lease ABA, dan recovery failure port, tetapi belum
+  dikomposisikan ke service atau model.
+- Executor group-safe dan work processor sekarang tersedia. Executor hanya
+  menerima initial request serta update run teratribusi, tanpa private history,
+  memory, capability operasional, atau transcript provider; ia membuat tepat
+  satu final/question native decision dalam RunBudget. Checkpoint content-free
+  mengikat attempt, instruction revision, input digest, dan budget. Processor
+  memeriksa lease, menulis checkpoint sebelum delivery, mensyaratkan receipt
+  exact, lalu baru menyelesaikan usage sebagai committed/discarded. Pipeline ini
+  belum dirangkai ke worker/composition root.
+- Worker lifecycle memulai recovery sebelum purge, tidak menjalankan siklus
+  overlap, mencoba ulang recovery/purge yang gagal, dan mendukung stop/drain.
+  Runtime WhatsApp juga mempunyai file intent cleanup terpisah. Startup
+  menjalankan recovery cleanup lebih dulu dan gagal readiness bila masih
+  pending, kemudian recovery delivery+purge, baru worker dan
+  `whatsapp.start()`. Semua worker ikut stop/drain. Config menolak collision
+  path state grup, GroupAgentRun, dan cleanup.
+- Disable mempersistenkan intent exact `scope+account` sebelum mencoba
+  `disableGroup` dan `forgetScope` dengan `allSettled`; intent selesai hanya
+  sesudah keduanya fulfilled. Revision+token intent dan pemeriksaan
+  matches-before-effects menutup ABA/stale attempt. Coordinator per binding
+  menyatukan request, recovery, dan activation; reaktivasi serta ingress ditahan
+  ketika cleanup masih pending. Setelah cleanup tuntas, retry merevalidasi live
+  membership dan membawa lease sampai commit binding/notice.
+- Admission service fail-closed pada start, mutasi, prepare, CAS, dan pre-send.
+  Resolver produksi mensyaratkan binding live ke account exact, tidak ada cleanup
+  pending, serta mode bukan `disabled|paused`; error resolver ditolak. Claim
+  work saat ini hanya memakai admission runtime `scope+account`; revalidasi
+  actor/epoch authority live pada setiap claim tetap prasyarat sebelum worker
+  dikomposisikan.
+- Exact start parser dan `GroupAgentRunIngressRouter` guarded sudah teruji.
+  Parser hanya menerima grammar closed-set satu bubble live serta membiarkan
+  danger ke safety. Controller memisahkan target run sebelum batching,
+  menyerialkan start, memakai deterministic control ID+authority/runtime fence,
+  dan memiliki stop/drain. Controller belum composed atau reachable dari
+  ingress produksi; model dan work lane tetap tertutup.
+- Core Phase L group-coding juga tersedia, tetapi terpisah dari ingress grup.
+  Link memerlukan admin grup dan `workspace.manage`; status run disanitasi dan
+  push/PR hanya dapat berlanjut ke confirmation Workspace-private. Actor
+  resolver dan lease authority production belum ada, jadi surface ini tidak
+  reachable.
 - `WHATSAPP_ACCOUNTS` mendukung beberapa alias account satu proses, masing-masing
   dengan auth folder, socket, cache, reconnect, generation, dan queue sendiri.
 - Satu nomor nyata pernah QR/login/`open` dan membalas satu jalur dasar.
@@ -63,17 +138,25 @@ nyata tetap sempit.
 - Dua nomor nyata sekaligus belum diuji. Tidak ada failover atau rebind otomatis
   antar-account.
 - Pending confirmation dan authority epoch grup tidak durable lintas restart.
-- Group AgentRun belum dirangkai ke `GroupTurnService`, Baileys, notice,
-  entitlement, model/work lane, startup/shutdown, atau transport. Adapter file
-  hanya satu proses; anchor/question belum mempunyai outbox/receipt sehingga
-  crash antara delivery dan binding belum dapat direkonsiliasi. Purge expiry
-  tersedia tetapi belum dijadwalkan pada composition root.
+- Group AgentRun belum dirangkai dari observation authority ke guarded
+  controller dan `GroupAgentRunWorker` pada composition root. Parser, controller,
+  work ledger, authority-on-claim, checkpoint, executor/processor, final barrier,
+  dan worker coordinator ada, tetapi capability tidak reachable.
+- Cleanup retry durable hanya terkoordinasi dalam satu proses. Startup menahan
+  WhatsApp dan reaktivasi ditahan bila intent tidak dapat dituntaskan; retry
+  aktivasi otomatis tetap in-memory. Belum ada lease/supervisor multi-instance,
+  bukti crash/restart nyata, atau fault-injection crash setelah commit binding.
+- Adapter file hanya satu proses dan belum mempunyai lease/outbox/dispatcher
+  atau reconciler multi-instance. Crash antara send dan receipt ditutup
+  konservatif sebagai `unknown|partial` tanpa retry; belum ada reconciliation
+  eksternal. ID deterministik Baileys baru diuji dengan fake socket dan belum
+  membuktikan deduplikasi WhatsApp live/reconnect.
 - Edit, delete, reset, alias, dan self-delete belum mempunyai kompensasi generik
   bila acknowledgment gagal sesudah mutasi commit.
 - Store sosial legacy masih memakai PN/LID mentah untuk bridging; semantic
   record baru memakai alias hash scoped. Account linking lintas kanal belum ada.
-- Satu stream grup belum mempunyai conversation disentanglement sempurna dan
-  quote kandidat dapat hilang saat cache Baileys kedaluwarsa.
+- Satu stream grup belum mempunyai conversation disentanglement sempurna. Quote
+  control-copy sengaja dikirim tanpa quote bila cache raw 60 detik kedaluwarsa.
 - Adaptive timing, selective safety/privacy, emergency ACK, dan authority-first
   preflight belum diuji di grup nyata.
 
@@ -82,13 +165,42 @@ nyata tetap sempit.
 - Kode: `src/whatsapp/`, `src/core/group-turn-service.ts`,
   `src/core/group-memory-service.ts`, `src/core/group-authority-policy.ts`,
   `src/core/group-agent-run-service.ts`, `src/core/group-agent-run-policy.ts`,
-  `src/domain/group-agent-run.ts`, `src/storage/file-group-agent-run-repository.ts`,
+  `src/core/group-agent-run-ingress.ts`, `src/core/group-agent-run-start-policy.ts`,
+  `src/core/group-agent-run-worker.ts`,
+  `src/core/group-agent-run-work-processor.ts`,
+  `src/core/group-agent-run-activation-retry.ts`,
+  `src/core/group-agent-run-cleanup-service.ts`,
+  `src/core/group-agent-run-cleanup-worker.ts`,
+  `src/core/group-agent-run-lifecycle-coordinator.ts`,
+  `src/core/group-agent-run-retention-worker.ts`,
+  `src/domain/group-agent-run.ts`, `src/domain/group-agent-run-cleanup.ts`,
+  `src/storage/file-group-agent-run-repository.ts`,
+  `src/storage/file-group-agent-run-cleanup-repository.ts`,
   `src/bot/group-run-anchor.ts`, `src/ai/group-ingress.ts`,
+  `src/ai/group-agent-run-executor.ts`,
+  `src/core/group-workspace-coding-controller.ts`,
   `src/core/group-runtime-policy.ts`, `src/whatsapp/group-message-batcher.ts`.
 - Tes: `tests/baileys-account-manager.test.ts`,
   `tests/group-conversation.test.ts`, `tests/group-turn-service.test.ts`,
   `tests/group-memory-service.test.ts`, `tests/group-ingress.test.ts`,
   `tests/group-runtime-policy.test.ts`, `tests/group-message-batcher.test.ts`,
   `tests/group-agent-run-policy.test.ts`, `tests/group-agent-run-service.test.ts`,
-  dan `tests/group-run-anchor.test.ts`.
-- Keputusan: ADR-009, ADR-011, ADR-016, ADR-023, ADR-024, ADR-037.
+  `tests/group-agent-run-delivery.test.ts`,
+  `tests/group-agent-run-runtime-admission.test.ts`,
+  `tests/group-agent-run-start-policy.test.ts`,
+  `tests/group-agent-run-activation-retry.test.ts`,
+  `tests/group-agent-run-cleanup-repository.test.ts`,
+  `tests/group-agent-run-cleanup-service.test.ts`,
+  `tests/group-agent-run-cleanup-worker.test.ts`,
+  `tests/group-agent-run-lifecycle-coordinator.test.ts`,
+  `tests/group-agent-run-forget.test.ts`, `tests/group-agent-run-ingress.test.ts`,
+  `tests/group-agent-run-final-delivery.test.ts`,
+  `tests/group-agent-run-purge-safety.test.ts`,
+  `tests/group-agent-run-retention-worker.test.ts`,
+  `tests/group-agent-run-work-lifecycle.test.ts`,
+  `tests/group-agent-run-work-processor.test.ts`,
+  `tests/group-agent-run-executor.test.ts`,
+  `tests/group-agent-run-worker.test.ts`, dan
+  `tests/group-run-anchor.test.ts`, serta
+  `tests/group-workspace-coding-controller.test.ts`.
+- Keputusan: ADR-009, ADR-011, ADR-016, ADR-023, ADR-024, ADR-037, ADR-039.

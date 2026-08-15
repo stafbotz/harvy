@@ -576,7 +576,7 @@ function groupRun(
   overrides: Partial<GroupAgentRun> = {},
 ): GroupAgentRun {
   return {
-    version: 1,
+    version: 2,
     runId: "group-run-1",
     scopeKey: "whatsapp:group-1",
     scope: { channel: "whatsapp", groupId: "group-1" },
@@ -603,6 +603,8 @@ function groupRun(
       pinPolicy: "manual-only",
       updatedAt: "2026-08-13T05:00:00.000Z",
     },
+    pendingEffect: null,
+    receipts: [],
     inputs: [],
     changeSets: [],
     questions: [],

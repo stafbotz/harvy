@@ -5,11 +5,16 @@
 - Pemilik keputusan: pengguna Harvy
 - Menggantikan sebagian: [`ADR-001`](ADR-001-agent-orchestration.md)
 - Diganti sebagian oleh: [`ADR-019`](ADR-019-code-first-progressive-context.md)
+  dan [`ADR-038`](ADR-038-koordinasi-penulisan-adaptif.md)
 
 > **Perubahan keputusan 6 Agustus 2026.** Konteks tetap menggantikan Work Order,
 > tetapi kewajiban membaca empat dokumen sebelum bekerja dan menulis LOG pada
 > setiap sesi tidak lagi berlaku. `ADR-019` menetapkan code-first progressive
 > loading, snapshot berbatas, status per subsystem, dan LOG material saja.
+>
+> **Perubahan keputusan 14 Agustus 2026.** Mandat satu penulis aktif pada satu
+> waktu tidak lagi berlaku. `ADR-038` menyerahkan pilihan kerja berurutan,
+> paralel, atau terisolasi kepada penilaian agent berdasarkan risiko overlap.
 
 ## Konteks
 
@@ -51,9 +56,10 @@ Formulir tidak menyembuhkan itu. Konteks yang menyembuhkannya.
    `docs/LOG.md`.** Ini pengganti serah-terima. Satu entri berisi tanggal, apa
    yang berubah, alasannya, bukti verifikasi, dan apa yang sengaja
    ditinggalkan.
-4. **Yang tetap berlaku dari ADR-001:** satu penulis aktif pada satu waktu,
-   bukti tes wajib disebut, dan dokumentasi keputusan permanen tetap di
-   `docs/decisions/`. Keputusan pemilik produk pada 26 Juli 2026 kemudian
+4. **[Disupersesi sebagian ADR-038] Yang tetap berlaku dari ADR-001:** bukti tes
+   wajib disebut dan dokumentasi keputusan permanen tetap di
+   `docs/decisions/`. Kebijakan historis satu penulis aktif dicabut pada
+   14 Agustus 2026. Keputusan pemilik produk pada 26 Juli 2026 tetap
    mengizinkan tulisan serta commit langsung pada `main`; branch terpisah dan
    pull request bersifat opsional.
 

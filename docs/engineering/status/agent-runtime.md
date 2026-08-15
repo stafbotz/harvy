@@ -1,8 +1,7 @@
 # Status — Agent Runtime
 
-Verified: 9 Agustus 2026 pada working tree hardening RunMailbox Phase D di atas
-`843cffd`; `npm run check` PASS dan `npm test` PASS, 866 test dalam 110 suite,
-0 gagal.
+Refreshed: 15 Agustus 2026 pada working tree sampai fondasi Phase M. Bukti
+gerbang terbaru dicatat di `docs/LOG.md`; provider/model live belum dijalankan.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
 
@@ -70,6 +69,20 @@ agent, scope/authority, atau executor internal.
 - `AgentScope` dan Workspace authority v1 ada di core dengan membership, role,
   permission tertutup, `aclEpoch`, dan stale-authority rejection. Workspace
   belum terhubung ke composition root atau surface pengguna.
+- Phase M menambah slot escalation-only `toughest` yang default-off dan hanya
+  sah dengan model+privacy-domain+profile exact explicit. Pure policy hanya
+  menerima closed validator failure, role critic/recovery/synthesizer, satu
+  step tanpa tool/delegasi, serta budget call/token/deadline yang masih cukup.
+  Provider/network failure tetap retry/fallback dan tidak menaikkan tier.
+- Reservation toughest ditulis durable sebelum provider call. Satu stage hanya
+  dapat dipakai sekali; replay, rejection, provider/execution failure, dan
+  outcome ambigu sesudah restart tidak memanggil provider lagi. Sensitive
+  cross-domain memerlukan approval code-owned. Record dan provider-attempt
+  ledger hanya menyimpan digest/route/provider/model/effort/kelas material serta
+  privacy domain, bukan prompt, candidate, output, atau reasoning.
+- Harness routing sintetis A–E tersedia lewat `npm run eval:routing`. Rewrite
+  only adalah variant eksperimen, raw request tetap hadir pada C–E, semua
+  materi turunan berlabel untrusted, dan E hanya untuk case sulit terpilih.
 
 ## Batas dan defect aktif
 
@@ -81,8 +94,10 @@ agent, scope/authority, atau executor internal.
 - Profile compatibility tidak mengaktifkan reasoning. `AI_MODEL_PROFILES`
   exact belum di-smoke pada provider nyata; capability explicit fallback
   sengaja ditolak.
-- Visible verbosity control, validator-driven escalation, finalizer terminal
-  terpisah, dan K3/toughest belum ada. Context-pressure baru memakai estimator
+- Visible verbosity control dan finalizer terminal terpisah belum ada. Core
+  validator-driven `toughest` sudah ada, tetapi belum dirangkai pada validator
+  runtime, tidak mempunyai target aktif secara default, dan belum diuji pada
+  provider nyata. Context-pressure baru memakai estimator
   karakter dan hanya aktif untuk context window profile exact; threshold belum
   dikalibrasi pada tokenizer/usage provider nyata.
 - Limit RunBudget dan `compactAtContextRatio` belum bisa dituning lewat Console
@@ -118,5 +133,10 @@ agent, scope/authority, atau executor internal.
   `tests/run-budget.test.ts`, `tests/active-agent-run-service.test.ts`,
   `tests/run-mailbox-anchor.test.ts`, `tests/agent-context-pressure.test.ts`,
   `tests/observation-compaction.test.ts`, dan `tests/client.test.ts`.
+- Phase M: `src/core/model-escalation-policy.ts`,
+  `src/storage/file-model-escalation-repository.ts`,
+  `scripts/routing-eval-corpus.ts`, `scripts/evaluasi-routing.ts`,
+  `tests/model-escalation-policy.test.ts`, dan
+  `tests/routing-evaluation-corpus.test.ts`.
 - Keputusan: ADR-012, ADR-016, ADR-017, ADR-018, ADR-021, ADR-025, ADR-026,
-  ADR-027, ADR-028, ADR-029.
+  ADR-027, ADR-028, ADR-029, ADR-040.

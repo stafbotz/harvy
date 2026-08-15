@@ -17,13 +17,19 @@ Klasifikasikan task menurut `AGENTS.md`, lalu untuk coding/diagnosis:
 Review dan diskusi tetap read-only. Riset tidak boleh diubah menjadi klaim
 kemampuan tanpa bukti kode/tes atau status subsystem terverifikasi.
 
-## Satu penulis pada satu working tree
+## Koordinasi perubahan
 
-- Hanya satu pihak menulis file pada satu waktu. Reviewer/QA boleh bekerja
-  paralel secara baca-saja dan mengembalikan temuan kepada penulis.
+- Agent menentukan sendiri apakah pekerjaan paling aman dan efisien dilakukan
+  berurutan, paralel dalam working tree yang sama, atau terisolasi lewat
+  worktree/clone. Tidak ada mandat satu penulis untuk seluruh working tree.
 - Periksa dirty state sebelum edit. Perubahan yang sudah ada adalah milik
   pengguna atau pekerjaan lain; pertahankan dan jangan menimpanya.
-- Bila dua penulis benar-benar diperlukan, gunakan worktree/clone terpisah.
+- Reviewer, QA, dan subagent tidak otomatis read-only hanya karena bekerja
+  paralel. Hak edit mengikuti scope tugas yang diberikan; task yang memang
+  berupa review atau diskusi tetap read-only sesuai `AGENTS.md`.
+- Untuk pekerjaan paralel, pilih pembagian scope, koordinasi overlap, dan
+  isolasi berdasarkan file yang disentuh, shared output, serta risiko konflik.
+  Worktree/clone adalah alat opsional, bukan syarat bagi penulis kedua.
 - Pengguna menguasai scope dan penerimaan akhir. Jangan memperluas mutasi atau
   tindakan eksternal hanya karena secara teknis memungkinkan.
 

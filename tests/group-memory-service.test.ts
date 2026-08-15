@@ -28,7 +28,44 @@ describe("memori grup", () => {
 
     assert.equal(first.status, "active");
     assert.equal(second.status, "conflict");
+    if (second.status !== "conflict") assert.fail("binding harus conflict");
     assert.equal(second.binding.accountId, "nomor-a");
+  });
+
+  it("fence aktivasi yang berubah mencegah binding dan notice commit", async () => {
+    const repository = new MemoryGroupRepository();
+    const service = new GroupMemoryService(repository, () => NOW);
+    const scope = whatsappGroup("fenced@g.us");
+    let checks = 0;
+    const activation = await service.activate(
+      scope,
+      "nomor-a",
+      "Fenced",
+      NOW.toISOString(),
+      () => {
+        checks += 1;
+        return checks === 1;
+      },
+    );
+
+    assert.equal(activation.status, "inactive");
+    assert.equal(await service.binding("whatsapp:fenced@g.us"), null);
+
+    const active = await service.activate(scope, "nomor-a", "Fenced");
+    assert.equal(active.status, "active");
+    assert.equal(
+      await service.markNoticeSent(
+        "whatsapp:fenced@g.us",
+        "nomor-a",
+        8,
+        () => false,
+      ),
+      false,
+    );
+    assert.equal(
+      (await service.binding("whatsapp:fenced@g.us"))?.noticeSentAt,
+      null,
+    );
   });
 
   it("mengisolasi anggota yang sama di dua grup", async () => {

@@ -5,7 +5,18 @@ import type {
   Verbosity,
 } from "../domain/model-execution.js";
 import type { ModelProfile } from "../ai/model-profile.js";
-import type { ModelTier } from "../ai/model-policy.js";
+import type {
+  ExecutionModelTier,
+  ModelTier,
+} from "../ai/model-policy.js";
+import {
+  MODEL_ESCALATION_FAILURE_CODES,
+  type ModelEscalationFailureCode,
+} from "../domain/model-escalation.js";
+import {
+  PROVIDER_PROMPT_MATERIALS,
+  type ProviderPromptMaterial,
+} from "../domain/usage-ledger.js";
 
 export type ExecutionWorkClass =
   | "mechanical"
@@ -19,6 +30,8 @@ export type ExecutionBudgetClass = "work" | "final";
 
 export interface ExecutionPlan extends ModelExecutionMetadata {
   tier: ModelTier;
+  /** Hanya hadir untuk slot eskalasi; accounting tetap memakai ambitious. */
+  routeTier?: "toughest";
   workClass: ExecutionWorkClass;
   budgetClass: ExecutionBudgetClass;
   maxOutputTokens: number;
@@ -27,11 +40,20 @@ export interface ExecutionPlan extends ModelExecutionMetadata {
   allowTools: boolean;
   allowDelegation: boolean;
   allowEscalation: boolean;
-  escalationReason?: string;
+  escalationReason?: ExecutionEscalationReason;
+  routeReason?: "truncation_recovery" | "validator_escalation";
+  promptMaterial?: ProviderPromptMaterial;
+  sourcePrivacyDomain?: string;
+  targetPrivacyDomain?: string;
 }
 
+export type ExecutionEscalationReason =
+  | "validator_failed"
+  | "output_truncated"
+  | ModelEscalationFailureCode;
+
 export interface ExecutionPolicyInput {
-  tier: ModelTier;
+  tier: ExecutionModelTier;
   role: ModelRole;
   workClass: ExecutionWorkClass;
   profile: ModelProfile | null;
@@ -42,7 +64,11 @@ export interface ExecutionPolicyInput {
   allowTools?: boolean;
   allowDelegation?: boolean;
   allowEscalation?: boolean;
-  escalationReason?: string;
+  escalationReason?: ExecutionEscalationReason;
+  routeReason?: "truncation_recovery" | "validator_escalation";
+  promptMaterial?: ProviderPromptMaterial;
+  sourcePrivacyDomain?: string;
+  targetPrivacyDomain?: string;
 }
 
 const EFFORT_ORDER: readonly ReasoningEffort[] = [
@@ -78,6 +104,42 @@ export class ExecutionPolicy {
     if (allowEscalation !== Boolean(input.escalationReason)) {
       throw new Error("Eskalasi harus mempunyai alasan tertutup dan eksplisit.");
     }
+    if (input.tier === "toughest") {
+      if (
+        !allowEscalation || !input.escalationReason ||
+        !MODEL_ESCALATION_FAILURE_CODES.has(
+          input.escalationReason as ModelEscalationFailureCode,
+        ) ||
+        (input.role !== "critic" && input.role !== "recovery" &&
+          input.role !== "synthesizer") ||
+        allowTools || allowDelegation || maxSteps !== 1 ||
+        input.routeReason !== "validator_escalation" ||
+        input.promptMaterial !== "structured-brief+candidate"
+      ) {
+        throw new Error(
+          "Tier toughest hanya sah untuk eskalasi validator one-shot tanpa tool.",
+        );
+      }
+      validatePrivacyDomain(input.sourcePrivacyDomain, "sourcePrivacyDomain");
+      validatePrivacyDomain(input.targetPrivacyDomain, "targetPrivacyDomain");
+    } else {
+      if (
+        input.promptMaterial !== undefined &&
+        !(PROVIDER_PROMPT_MATERIALS as ReadonlySet<string>).has(
+          input.promptMaterial,
+        )
+      ) throw new Error("Kelas material prompt execution tidak sah.");
+      if (
+        input.sourcePrivacyDomain !== undefined ||
+        input.targetPrivacyDomain !== undefined ||
+        (input.routeReason !== undefined && (
+          input.routeReason !== "truncation_recovery" ||
+          input.escalationReason !== "output_truncated" ||
+          (input.promptMaterial !== "raw" &&
+            input.promptMaterial !== "structured-brief")
+        ))
+      ) throw new Error("Metadata route execution tidak cocok dengan tier biasa.");
+    }
     if (
       input.profile?.maxOutputTokens !== null &&
       input.profile?.maxOutputTokens !== undefined &&
@@ -97,7 +159,8 @@ export class ExecutionPolicy {
     const verbosity = verbosityFor(input.role);
 
     return Object.freeze({
-      tier: input.tier,
+      tier: input.tier === "toughest" ? "ambitious" : input.tier,
+      ...(input.tier === "toughest" ? { routeTier: "toughest" as const } : {}),
       role: input.role,
       workClass: input.workClass,
       budgetClass: budgetClassFor(input.role),
@@ -112,6 +175,14 @@ export class ExecutionPolicy {
       allowEscalation,
       ...(input.escalationReason
         ? { escalationReason: input.escalationReason }
+        : {}),
+      ...(input.routeReason ? { routeReason: input.routeReason } : {}),
+      ...(input.promptMaterial ? { promptMaterial: input.promptMaterial } : {}),
+      ...(input.sourcePrivacyDomain
+        ? { sourcePrivacyDomain: input.sourcePrivacyDomain }
+        : {}),
+      ...(input.targetPrivacyDomain
+        ? { targetPrivacyDomain: input.targetPrivacyDomain }
         : {}),
     });
   }
@@ -160,14 +231,14 @@ function budgetClassFor(role: ModelRole): ExecutionBudgetClass {
 
 function requestedEffortFor(
   role: ModelRole,
-  tier: ModelTier,
+  tier: ExecutionModelTier,
 ): ReasoningEffort {
   switch (role) {
     case "extractor":
     case "classifier":
       return "low";
     case "critic":
-      return tier === "cheap" ? "low" : "medium";
+      return tier === "toughest" ? "high" : tier === "cheap" ? "low" : "medium";
     case "conversationalist":
       return tier === "ambitious" ? "high" : tier === "efficient" ? "medium" : "low";
     case "planner":
@@ -175,7 +246,9 @@ function requestedEffortFor(
     case "worker":
       return tier === "efficient" ? "medium" : "low";
     case "synthesizer":
-      return tier === "ambitious" ? "high" : "medium";
+      return tier === "toughest"
+        ? "max"
+        : tier === "ambitious" ? "high" : "medium";
     case "recovery":
       return "high";
   }
@@ -223,4 +296,11 @@ function validatePositiveInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} execution plan tidak sah.`);
   }
+}
+
+function validatePrivacyDomain(value: string | undefined, label: string): void {
+  if (
+    typeof value !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$/u.test(value)
+  ) throw new Error(`${label} execution plan tidak sah.`);
 }

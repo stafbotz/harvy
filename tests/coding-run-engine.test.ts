@@ -1341,6 +1341,50 @@ describe("CodingRunEngine Phase I", () => {
     assert.equal(durable?.stateRevision, run.stateRevision);
     assert.equal(durable?.writer.writerId, run.writer.writerId);
   });
+
+  it("mereplay admission group-coding exact tanpa membuat writer kedua", async () => {
+    const fixture = await createFixture();
+    const admission = {
+      source: "group" as const,
+      effectId: `group-coding-run-${"a".repeat(64)}`,
+      audience: "group-safe" as const,
+      authorityRef: "group-workspace-link-exact",
+      interactionDigest: "b".repeat(64),
+    };
+    const first = await fixture.engine.start(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      brief(),
+      { admission },
+    );
+    const replay = await fixture.engine.start(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      brief(),
+      { admission },
+    );
+    assert.equal(replay.runId, first.runId);
+    assert.equal(replay.stateRevision, first.stateRevision);
+    assert.deepEqual(replay.admission, admission);
+    assert.deepEqual(
+      (await fixture.baseCodingRepository.load(first.runId))?.admission,
+      admission,
+    );
+
+    await assert.rejects(
+      fixture.engine.start(
+        fixture.scope,
+        fixture.project.id,
+        1,
+        { ...brief(), objective: "command lain" },
+        { admission },
+      ),
+      /bertabrakan/iu,
+    );
+    assert.equal((await fixture.baseCodingRepository.listByProject(fixture.project.id)).length, 1);
+  });
 });
 
 async function createFixture(options: {

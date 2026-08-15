@@ -49,6 +49,7 @@ import {
   GroupMemoryService,
   ROOM_MEMORY_RETENTION_DAYS,
   SOCIAL_STAT_WINDOW_DAYS,
+  type GroupActivationFence,
   type GroupMutationGuard,
 } from "./group-memory-service.js";
 import {
@@ -192,12 +193,14 @@ const NOOP_GROUP_USAGE_CONTROL: GroupUsageControlPort = {
   discardUndelivered: async () => undefined,
 };
 
-export const GROUP_NOTICE_VERSION = 7;
+export const GROUP_NOTICE_VERSION = 9;
 export function groupNotice(operationalLogRetentionDays = 14): string {
   return [
     "Halo, aku Harvy—AI yang ikut ngobrol sebagai anggota grup ini. Pesan live yang memicu pemberitahuan ini akan kuproses setelah pemberitahuan terkirim; sesudahnya, pesan baru di grup dapat diproses oleh satu atau lebih penyedia model AI pihak ketiga supaya aku bisa memahami konteks dan tahu kapan perlu nimbrung. Kalau penyedia utama gagal, permintaan yang sama dapat dikirim ulang ke penyedia cadangan. Aku tidak membaca riwayat dari sebelum aku hadir.",
     "",
     "Konteks chat mentah hanya berada di memori proses sampai 24 giliran atau 2 jam dan hilang saat proses dimulai ulang; pesan yang dinilai sensitif atau berisiko tidak dimasukkan ke konteks itu. Untuk kesinambungan grup ini, aku menyimpan nama grup dan julukanku selama masih aktif, serta ID teknis anggota pada kanal ini (termasuk pasangan identitas yang diketahui), nama tampilan/koreksinya, waktu terakhir terlihat, dan hitungan pesan harian paling lama 30 hari. ID pesan teknis untuk mencegah pemrosesan ulang disimpan paling lama 24 jam. Kalau kamu bicara langsung kepadaku, fakta biasa yang singkat dan berguna dapat kusimpan sebagai memori anggota yang hanya berlaku di grup ini; catatan sementara kedaluwarsa setelah 60 hari, sedangkan identitas, preferensi, dan rutinitas bertahan selama grup aktif sampai kamu menghapusnya. Hal yang dinilai sensitif tidak pernah kusimpan otomatis. Anggota juga dapat mengusulkan keputusan, agenda, kebiasaan, kegiatan, atau catatan bersama dengan perintah “ingat untuk grup: …”; catatan itu baru disimpan setelah admin mengonfirmasi preview persisnya, terlihat oleh seluruh anggota, dan kedaluwarsa setelah 60 hari. Kalau menyebut siapa paling aktif, jendelanya selalu 7 hari—bukan cap kepribadian. Catatan teknis pemakaian AI menyimpan model/tier, jumlah token, latensi, keberhasilan, dan perkiraan biaya tanpa isi percakapan, mengikuti masa retensi operasional.",
+    "",
+    "Bila suatu permintaan eksplisit diterima sebagai GroupAgentRun, record pekerjaan yang dapat disimpan memuat permintaan awal dan judul pekerjaan, input anggota yang teratribusi ke peserta dan pesan sumber, referensi Run Anchor, ledger teknis upaya kerja dan delivery, serta hasil akhir yang sudah terkirim. Record dengan audience grup ini berada di file lokal terpisah paling lama 7 hari; ia bukan memori privat, riwayat chat privat, atau transcript penyedia/model. Saat Harvy dinonaktifkan atau dikeluarkan dari grup, penghapusan record tersebut langsung dicoba; record tetap tunduk pada batas retensi 7 hari bila cleanup penyimpanan sementara gagal.",
     "",
     `Sistem juga membuat log operasional terpisah untuk mengevaluasi gangguan: waktu, komponen, tahap, durasi, status, kode error, dan fingerprint teknis. Log ini tidak berisi isi chat, prompt atau balasan AI, nama/ID grup dan anggota, nomor telepon, QR, kode pairing, token, atau kredensial. Trace acak hanya berlaku selama satu proses. File lokal Harvy dirotasi dan dihapus paling lama setelah ${operationalLogRetentionDays} hari; bila deployment meneruskan log aman ini ke collector perusahaan, retensi collector mengikuti kebijakan infrastruktur yang terpisah.`,
     "",
@@ -255,10 +258,16 @@ const ALLOW_GROUP_RUNTIME_ADMISSION: GroupRuntimeAdmissionResolver =
 export type GroupNoticeTarget = Pick<GroupMessage, "scope" | "accountId">;
 
 export interface GroupTransport {
-  sendNotice(target: GroupNoticeTarget, text: string): Promise<void>;
+  sendNotice(
+    target: GroupNoticeTarget,
+    text: string,
+    runtimeFence?: GroupActivationFence,
+  ): Promise<void>;
   sendReply(message: GroupMessage, text: string): Promise<void>;
   sendTyping?(target: GroupNoticeTarget): Promise<void>;
 }
+
+const ALLOW_GROUP_ACTIVATION_FENCE: GroupActivationFence = () => true;
 
 export type GroupTurnOutcome =
   | "replied"
@@ -554,25 +563,46 @@ export class GroupTurnService {
 
   async activateGroup(
     message: Pick<GroupMessage, "scope" | "accountId" | "groupName" | "at">,
-  ): Promise<"active" | "binding-conflict" | "notice-failed"> {
+    fence: GroupActivationFence = ALLOW_GROUP_ACTIVATION_FENCE,
+  ): Promise<"active" | "binding-conflict" | "notice-failed" | "inactive"> {
     const scopeKey = groupScopeKey(message.scope);
     return this.enqueue(scopeKey, async () => {
+      if (!fence()) return "inactive";
       const result = await this.memories.activate(
         message.scope,
         message.accountId,
         message.groupName,
         message.at,
+        fence,
       );
+      if (result.status === "inactive") return "inactive";
       if (result.status === "conflict") return "binding-conflict";
+      const rollbackCreatedActivation = async (): Promise<void> => {
+        if (result.created) {
+          await this.memories.disable(scopeKey, message.accountId);
+          await this.usageControl.forget(scopeKey);
+        }
+      };
+      if (!fence()) {
+        await rollbackCreatedActivation();
+        return "inactive";
+      }
       this.rememberJoinedAt(
         scopeKey,
         message.accountId,
         result.binding.joinedAt,
       );
       await this.usageControl.allow(scopeKey);
-      return (await this.ensureNotice(message, scopeKey))
-        ? "active"
-        : "notice-failed";
+      if (!fence()) {
+        await rollbackCreatedActivation();
+        return "inactive";
+      }
+      const noticeReady = await this.ensureNotice(message, scopeKey, fence);
+      if (!fence()) {
+        await rollbackCreatedActivation();
+        return "inactive";
+      }
+      return noticeReady ? "active" : "notice-failed";
     });
   }
 
@@ -864,16 +894,20 @@ export class GroupTurnService {
     if (!this.isCurrentGeneration(runtimeKey, generation)) {
       return "inactive";
     }
+    const activationFence = () =>
+      this.accepting && this.isCurrentGeneration(runtimeKey, generation);
     if (!binding) {
       const activation = await this.memories.activate(
         message.scope,
         message.accountId,
         message.groupName,
         earliestMessageAt(message),
+        activationFence,
       );
       if (!this.isCurrentGeneration(runtimeKey, generation)) {
         return "inactive";
       }
+      if (activation.status === "inactive") return "inactive";
       if (activation.status === "conflict") return "binding-conflict";
       binding = activation.binding;
       await this.usageControl.allow(scopeKey);
@@ -891,7 +925,11 @@ export class GroupTurnService {
       binding.joinedAt,
     );
 
-    const noticeReady = await this.ensureNotice(message, scopeKey);
+    const noticeReady = await this.ensureNotice(
+      message,
+      scopeKey,
+      activationFence,
+    );
     if (!this.isCurrentGeneration(runtimeKey, generation)) {
       this.clearRuntimeState(scopeKey, runtimeKey);
       return "inactive";
@@ -2316,12 +2354,14 @@ export class GroupTurnService {
   private async ensureNotice(
     target: GroupNoticeTarget,
     scopeKey: string,
+    fence: GroupActivationFence = ALLOW_GROUP_ACTIVATION_FENCE,
   ): Promise<boolean> {
     const binding = await this.memories.binding(scopeKey);
     if (
       !binding ||
       binding.accountId !== target.accountId ||
-      binding.disabledAt !== null
+      binding.disabledAt !== null ||
+      !fence()
     ) {
       return false;
     }
@@ -2329,6 +2369,7 @@ export class GroupTurnService {
       binding.noticeVersion === this.noticeVersion &&
       binding.noticeSentAt !== null
     ) {
+      if (!fence()) return false;
       this.rememberJoinedAt(
         scopeKey,
         target.accountId,
@@ -2339,9 +2380,11 @@ export class GroupTurnService {
     }
 
     try {
+      if (!fence()) return false;
       await this.transport.sendNotice(
         target,
         groupNotice(this.operationalLogRetentionDays),
+        fence,
       );
     } catch (error) {
       this.logger.error(
@@ -2352,12 +2395,14 @@ export class GroupTurnService {
       );
       return false;
     }
+    if (!fence()) return false;
     const marked = await this.memories.markNoticeSent(
       scopeKey,
       target.accountId,
       this.noticeVersion,
+      fence,
     );
-    if (marked) {
+    if (marked && fence()) {
       this.rememberJoinedAt(
         scopeKey,
         target.accountId,
@@ -2365,7 +2410,7 @@ export class GroupTurnService {
       );
       this.noticeReady.add(scopeKey);
     }
-    return marked;
+    return marked && fence();
   }
 
   private async acknowledgeUrgent(

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import makeWASocket, {
   DisconnectReason,
@@ -22,6 +23,8 @@ import type {
   GroupNoticeTarget,
   GroupTransport,
 } from "../core/group-turn-service.js";
+import { GroupAgentRunDeliveryNotCommittedError } from
+  "../core/group-agent-run-service.js";
 import type {
   WhatsAppAccountConfig,
   WhatsAppConfig,
@@ -33,8 +36,9 @@ import {
 } from "../observability/operational-logger.js";
 import { createBaileysLogger } from "../observability/baileys-logger.js";
 
-const MESSAGE_CACHE_MS = 2 * 60 * 60 * 1_000;
-const MAX_INCOMING_MESSAGES = 1_000;
+const OUTBOUND_MESSAGE_CACHE_MS = 2 * 60 * 60 * 1_000;
+export const GROUP_INCOMING_QUOTE_CACHE_MS = 60_000;
+export const GROUP_INCOMING_QUOTE_CACHE_MAX_MESSAGES = 1_000;
 const MAX_OUTBOUND_MESSAGES = 2_000;
 const DEFAULT_METADATA_TIMEOUT_MS = 2_000;
 const GROUP_AUTHORITY_METADATA_MAX_AGE_MS = 30_000;
@@ -51,6 +55,7 @@ export interface BaileysAccountEvents {
   onMessage(message: GroupMessage): Promise<void>;
   onGroupActive(
     message: Pick<GroupMessage, "scope" | "accountId" | "groupName" | "at">,
+    authorityFence: () => boolean,
   ): Promise<void>;
   onGroupDisabled(scopeKey: string, accountId: string): Promise<void>;
   /** Dipanggil sinkron ketika epoch metadata authority naik. */
@@ -78,9 +83,38 @@ export interface BaileysAccountManagerDependencies {
   metadataTimeoutMs?: number;
 }
 
+export interface GroupRunDeliveryActorExpectation {
+  participantIds: readonly string[];
+  expectedRole: "member" | "admin";
+}
+
+/** Fence authority yang wajib dibawa oleh setiap efek outbound GroupRun. */
+export interface GroupRunDeliveryAuthorityExpectation {
+  expectedAuthorityEpoch: number;
+  actors: readonly GroupRunDeliveryActorExpectation[];
+}
+
+/**
+ * Fence runtime yang dibentuk caller dari binding delivery saat ini. Callback
+ * sengaja tidak menerima content, effect ID, atau message ID.
+ */
+export type GroupRunDeliveryRuntimeFence = () => Promise<boolean>;
+export type GroupNoticeRuntimeFence = () => boolean;
+
+export interface GroupLiveMembershipLease {
+  isCurrent(): boolean;
+}
+
+export type GroupLiveMembershipResult =
+  | { status: "member"; lease: GroupLiveMembershipLease }
+  | { status: "self-missing" }
+  | { status: "unavailable" };
+
 interface CachedMessage {
+  groupId: string;
   message: WAMessage;
   expiresAt: number;
+  expiryTimer?: NodeJS.Timeout;
 }
 
 interface MetadataRefreshToken {
@@ -236,13 +270,8 @@ export class BaileysAccountManager implements GroupTransport {
       participantIs(candidate, request.participantIds),
     );
     if (!participant) return null;
-    const isAdmin =
-      participant.isAdmin === true ||
-      participant.isSuperAdmin === true ||
-      participant.admin === "admin" ||
-      participant.admin === "superadmin";
     return {
-      role: isAdmin ? "admin" : "member",
+      role: participantRole(participant),
       authorityEpoch: this.groupEpoch(runtime, request.scope.groupId),
     };
   }
@@ -283,6 +312,7 @@ export class BaileysAccountManager implements GroupTransport {
 
         const socket = runtime.socket;
         runtime.socket = null;
+        this.clearMessageCache(runtime.incoming);
         if (socket) {
           try {
             await socket.end(undefined);
@@ -301,12 +331,276 @@ export class BaileysAccountManager implements GroupTransport {
     );
   }
 
-  async sendNotice(target: GroupNoticeTarget, text: string): Promise<void> {
-    await this.sendText(target, text);
+  async sendNotice(
+    target: GroupNoticeTarget,
+    text: string,
+    runtimeFence?: GroupNoticeRuntimeFence,
+  ): Promise<void> {
+    await this.sendText(
+      target,
+      text,
+      undefined,
+      undefined,
+      false,
+      runtimeFence,
+    );
   }
 
   async sendReply(message: GroupMessage, text: string): Promise<void> {
     await this.sendText(message, text, message.messageId);
+  }
+
+  /**
+   * Revalidator live untuk retry reaktivasi. Cache tidak pernah menjadi bukti
+   * membership: setiap pass masuk queue exact group dan membaca metadata dari
+   * socket yang sama dengan generation yang ditangkap caller.
+   */
+  async hasLiveGroupMembership(target: GroupNoticeTarget): Promise<boolean> {
+    const membership = await this.captureLiveGroupMembership(target);
+    return membership.status === "member" && membership.lease.isCurrent();
+  }
+
+  async captureLiveGroupMembership(
+    target: GroupNoticeTarget,
+  ): Promise<GroupLiveMembershipResult> {
+    if (
+      target.scope.channel !== "whatsapp" ||
+      !isJidGroup(target.scope.groupId)
+    ) {
+      return { status: "unavailable" };
+    }
+    const runtime = this.accounts.get(target.accountId);
+    const socket = runtime?.socket ?? null;
+    const generation = runtime?.generation ?? -1;
+    if (
+      !runtime || !socket || !this.acceptingEvents ||
+      runtime.status !== "open" || !this.isCurrent(runtime, generation)
+    ) {
+      return { status: "unavailable" };
+    }
+    const groupId = target.scope.groupId;
+    const expectedEpoch = this.groupEpoch(runtime, groupId);
+    const runtimeIsCurrent = () =>
+      this.acceptingEvents &&
+      runtime.status === "open" &&
+      runtime.socket === socket &&
+      this.isCurrent(runtime, generation);
+
+    try {
+      return await this.enqueueGroupOperation(runtime, groupId, async () => {
+        if (
+          !runtimeIsCurrent() ||
+          this.groupEpoch(runtime, groupId) !== expectedEpoch
+        ) {
+          return { status: "unavailable" };
+        }
+        const before = runtime.groups.get(groupId);
+        const beforeFingerprint = before
+          ? metadataAuthorityFingerprint(before)
+          : null;
+
+        let refreshed: GroupMetadata;
+        try {
+          refreshed = await withTimeout(
+            socket.groupMetadata(groupId),
+            this.metadataTimeoutMs,
+          );
+        } catch {
+          this.logger.warn(
+            "whatsapp_group_membership_revalidation_failed",
+            "Refresh membership grup WhatsApp gagal; reaktivasi akan dicoba ulang.",
+          );
+          return { status: "unavailable" };
+        }
+        if (
+          !runtimeIsCurrent() ||
+          this.groupEpoch(runtime, groupId) !== expectedEpoch ||
+          refreshed.id !== groupId
+        ) {
+          return { status: "unavailable" };
+        }
+
+        const fingerprintChanged =
+          beforeFingerprint !== metadataAuthorityFingerprint(refreshed);
+        const verifiedEpoch = fingerprintChanged
+          ? this.bumpGroupEpoch(runtime, groupId)
+          : expectedEpoch;
+        if (selfJids(socket).length === 0) {
+          return { status: "unavailable" };
+        }
+        if (!this.metadataContainsSelf(runtime, refreshed)) {
+          this.notifySelfMissing(runtime, groupId);
+          return { status: "self-missing" };
+        }
+
+        runtime.groups.set(groupId, refreshed);
+        runtime.groupMetadataAt.set(groupId, this.now().getTime());
+        runtime.selfMissingNotified.delete(groupId);
+        const isCurrent = this.groupAuthorityFence(
+          runtime,
+          socket,
+          generation,
+          groupId,
+          verifiedEpoch,
+        );
+        return isCurrent()
+          ? { status: "member", lease: { isCurrent } }
+          : { status: "unavailable" };
+      });
+    } catch {
+      // Queue/refresh yang unavailable tetap fail-closed, tetapi dibedakan
+      // dari absence supaya worker dapat mencoba lagi secara bounded.
+      return { status: "unavailable" };
+    }
+  }
+
+  async sendGroupRunMessage(
+    target: GroupNoticeTarget,
+    text: string,
+    quoteMessageId: string | undefined,
+    idempotencyKey: string,
+    authorityExpectation: GroupRunDeliveryAuthorityExpectation,
+    runtimeFence: GroupRunDeliveryRuntimeFence,
+  ): Promise<{ messageId: string }> {
+    const expectation = validatedGroupRunAuthorityExpectation(
+      authorityExpectation,
+    );
+    if (typeof runtimeFence !== "function") {
+      throw groupRunRuntimeUnavailable();
+    }
+    if (target.scope.channel !== "whatsapp") {
+      throw groupRunAuthorityUnavailable();
+    }
+    const runtime = this.accounts.get(target.accountId);
+    const socket = runtime?.socket ?? null;
+    const generation = runtime?.generation ?? -1;
+    if (
+      !runtime || !socket || !this.acceptingEvents ||
+      runtime.status !== "open" || !this.isCurrent(runtime, generation)
+    ) {
+      throw groupRunAuthorityUnavailable();
+    }
+    const messageId = await this.enqueueGroupOperation(
+      runtime,
+      target.scope.groupId,
+      async () => {
+        await this.refreshGroupRunDeliveryAuthority(
+          runtime,
+          socket,
+          generation,
+          target.scope.groupId,
+          expectation,
+        );
+        let runtimeAllowed = false;
+        try {
+          runtimeAllowed = await runtimeFence();
+        } catch {
+          throw groupRunRuntimeUnavailable();
+        }
+        if (runtimeAllowed !== true) throw groupRunRuntimeUnavailable();
+
+        this.assertGroupRunDeliveryAuthority(
+          runtime,
+          socket,
+          generation,
+          target.scope.groupId,
+          expectation,
+        );
+        // Tidak ada await antara recheck socket/generation/authority/runtime
+        // terakhir dan pemanggilan socket di sendText. Event role/removal
+        // sendiri menaikkan epoch secara sinkron sebelum dapat mengantre di
+        // belakang operasi ini.
+        return this.sendText(
+          target,
+          text,
+          quoteMessageId,
+          idempotencyKey,
+          true,
+        );
+      },
+    );
+    if (!messageId) {
+      throw new Error(
+        `Pengiriman WhatsApp ${target.accountId} tidak menghasilkan ID pesan.`,
+      );
+    }
+    return {
+      messageId,
+    };
+  }
+
+  private async refreshGroupRunDeliveryAuthority(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    groupId: string,
+    expectation: GroupRunDeliveryAuthorityExpectation,
+  ): Promise<void> {
+    const runtimeIsCurrent = () =>
+      this.acceptingEvents &&
+      runtime.status === "open" &&
+      runtime.socket === socket &&
+      this.isCurrent(runtime, generation);
+    if (
+      !runtimeIsCurrent() ||
+      this.groupEpoch(runtime, groupId) !==
+        expectation.expectedAuthorityEpoch
+    ) {
+      throw groupRunAuthorityUnavailable();
+    }
+
+    let metadata = runtime.groups.get(groupId);
+    const metadataWasMissing = !metadata;
+    const metadataAt = runtime.groupMetadataAt.get(groupId) ?? 0;
+    if (
+      !metadata ||
+      this.now().getTime() - metadataAt >
+        GROUP_AUTHORITY_METADATA_MAX_AGE_MS
+    ) {
+      metadata = await this.refreshGroupMetadata(
+        runtime,
+        socket,
+        generation,
+        groupId,
+      );
+      // Metadata yang baru muncul setelah cache authority kosong (misalnya
+      // reconnect) adalah snapshot baru. Epoch lama tidak boleh hidup kembali.
+      if (
+        metadataWasMissing && metadata && runtimeIsCurrent() &&
+        this.groupEpoch(runtime, groupId) ===
+          expectation.expectedAuthorityEpoch
+      ) {
+        this.bumpGroupEpoch(runtime, groupId);
+      }
+    }
+  }
+
+  private assertGroupRunDeliveryAuthority(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    groupId: string,
+    expectation: GroupRunDeliveryAuthorityExpectation,
+  ): void {
+    const metadata = runtime.groups.get(groupId);
+    if (
+      !metadata || metadata.id !== groupId || !this.acceptingEvents ||
+      runtime.status !== "open" || runtime.socket !== socket ||
+      !this.isCurrent(runtime, generation) ||
+      this.groupEpoch(runtime, groupId) !==
+        expectation.expectedAuthorityEpoch ||
+      !this.metadataContainsSelf(runtime, metadata)
+    ) throw groupRunAuthorityUnavailable();
+    for (const actor of expectation.actors) {
+      const participant = metadata.participants.find((candidate) =>
+        participantIs(candidate, actor.participantIds)
+      );
+      if (
+        !participant || participantRole(participant) !== actor.expectedRole
+      ) {
+        throw groupRunAuthorityUnavailable();
+      }
+    }
   }
 
   async sendTyping(target: GroupNoticeTarget): Promise<void> {
@@ -338,6 +632,8 @@ export class BaileysAccountManager implements GroupTransport {
     runtime.groups.clear();
     runtime.groupMetadataAt.clear();
     runtime.selfMissingNotified.clear();
+    // Quote raw dari generation lama tidak boleh dipakai socket baru.
+    this.clearMessageCache(runtime.incoming);
     // Epoch authority tetap monoton di dalam proses. Menghapusnya saat
     // reconnect dapat membuat proposal dari socket lama terlihat segar lagi
     // ketika socket baru mulai menghitung dari nol.
@@ -503,12 +799,21 @@ export class BaileysAccountManager implements GroupTransport {
               ) {
                 return;
               }
-              await this.events.onGroupActive({
-                scope: { channel: "whatsapp", groupId: group.id },
-                accountId: runtime.config.id,
-                groupName: group.subject || null,
-                at: this.now().toISOString(),
-              });
+              await this.events.onGroupActive(
+                {
+                  scope: { channel: "whatsapp", groupId: group.id },
+                  accountId: runtime.config.id,
+                  groupName: group.subject || null,
+                  at: this.now().toISOString(),
+                },
+                this.groupAuthorityFence(
+                  runtime,
+                  socket,
+                  generation,
+                  group.id,
+                  authorityEpoch,
+                ),
+              );
               }),
             ),
           );
@@ -556,6 +861,14 @@ export class BaileysAccountManager implements GroupTransport {
       // Invalidate authority synchronously on event arrival, before the
       // per-group queue can be delayed by metadata/model work. A demotion or
       // removal therefore cannot race an admin control using the old epoch.
+      if (
+        update.action === "remove" &&
+        update.participants.some((participant) =>
+          isSelfParticipant(participant, selfJids(socket))
+        )
+      ) {
+        this.clearIncomingQuotesForGroup(runtime, update.id);
+      }
       const authorityEpoch = this.bumpGroupEpoch(runtime, update.id);
       runtime.groups.delete(update.id);
       runtime.groupMetadataAt.delete(update.id);
@@ -633,6 +946,9 @@ export class BaileysAccountManager implements GroupTransport {
     }
     if (update.connection !== "close") return;
 
+    // Raw quote dari socket yang sudah tertutup tidak boleh bertahan selama
+    // backoff atau state needs-operator.
+    this.clearMessageCache(runtime.incoming);
     runtime.socket = null;
     const reason = disconnectReason(update.lastDisconnect?.error);
     const decision = reconnectDecision(reason);
@@ -717,12 +1033,21 @@ export class BaileysAccountManager implements GroupTransport {
     ) {
       return;
     }
-    await this.events.onGroupActive({
-      scope: { channel: "whatsapp", groupId: update.id },
-      accountId: runtime.config.id,
-      groupName: metadata?.subject ?? null,
-      at: this.now().toISOString(),
-    });
+    await this.events.onGroupActive(
+      {
+        scope: { channel: "whatsapp", groupId: update.id },
+        accountId: runtime.config.id,
+        groupName: metadata?.subject ?? null,
+        at: this.now().toISOString(),
+      },
+      this.groupAuthorityFence(
+        runtime,
+        socket,
+        generation,
+        update.id,
+        authorityEpoch,
+      ),
+    );
   }
 
   private async handleMessages(
@@ -782,7 +1107,12 @@ export class BaileysAccountManager implements GroupTransport {
               accountId: runtime.config.id,
               selfJids: selfJids(socket),
               groupName: metadata?.subject ?? null,
-              ownMessageIds: new Set(runtime.outbound.keys()),
+              ownMessageIds: new Set(
+                [...runtime.outbound.values()]
+                  .filter((item) => item.groupId === groupId)
+                  .map((item) => item.message.key.id)
+                  .filter((id): id is string => Boolean(id)),
+              ),
               isAdmin: (participantJids) =>
                 Boolean(
                   metadata?.participants.some(
@@ -800,27 +1130,28 @@ export class BaileysAccountManager implements GroupTransport {
 
             this.cacheMessage(
               runtime.incoming,
+              groupId,
               normalized.messageId,
               raw,
-              MAX_INCOMING_MESSAGES,
+              GROUP_INCOMING_QUOTE_CACHE_MAX_MESSAGES,
+              GROUP_INCOMING_QUOTE_CACHE_MS,
+              true,
             );
             const trace = this.logger.newTraceContext(
               "whatsapp",
               "group_turn",
               runtime.config.id,
             );
-            const task = Promise.resolve()
-              .then(() =>
-                this.logger.runWithContext(trace, async () => {
-                  await this.events.onMessage(normalized);
-                }),
-              )
-              .finally(() => {
-                runtime.incoming.delete(normalized.messageId);
-              });
+            const task = Promise.resolve().then(() =>
+              this.logger.runWithContext(trace, async () => {
+                await this.events.onMessage(normalized);
+              })
+            );
             // Normalisasi/urutan event tetap memakai queue Baileys, tetapi
             // penyelesaian model tidak boleh menahan pesan grup berikutnya.
-            // Task tetap dilacak untuk quote cache, error boundary, dan drain.
+            // Raw quote punya TTL/cap sendiri dan tidak mengikuti lifetime
+            // callback, karena control-copy dapat dijadwalkan sesudah callback.
+            // Task tetap dilacak untuk error boundary dan drain.
             this.trackEvent(runtime, task);
           } catch (error) {
             // Satu pesan rusak/gagal tidak boleh menjatuhkan sisa array upsert.
@@ -836,34 +1167,79 @@ export class BaileysAccountManager implements GroupTransport {
     target: GroupNoticeTarget,
     text: string,
     quoteMessageId?: string,
-  ): Promise<void> {
+    idempotencyKey?: string,
+    requireMessageId = false,
+    runtimeFence?: GroupNoticeRuntimeFence,
+  ): Promise<string | null> {
     const runtime = this.accounts.get(target.accountId);
+    const socket = runtime?.socket ?? null;
     if (
       !runtime ||
       runtime.stopping ||
       runtime.status !== "open" ||
-      !runtime.socket
+      !socket
     ) {
       throw new Error(`Akun WhatsApp ${target.accountId} tidak tersambung.`);
     }
 
     this.pruneMessageCaches(runtime);
-    const quoted = quoteMessageId
-      ? runtime.incoming.get(quoteMessageId)?.message
+    const quoteKey = quoteMessageId
+      ? messageCacheKey(target.scope.groupId, quoteMessageId)
+      : null;
+    const quoted = quoteKey
+      ? runtime.incoming.get(quoteKey)?.message ??
+        runtime.outbound.get(quoteKey)?.message
       : undefined;
-    const sent = await runtime.socket.sendMessage(
+    const requestedMessageId = idempotencyKey
+      ? groupRunMessageId(idempotencyKey)
+      : undefined;
+    if (runtimeFence) {
+      let allowed = false;
+      try {
+        allowed = runtimeFence() === true;
+      } catch {
+        throw groupNoticeRuntimeUnavailable();
+      }
+      if (!allowed) throw groupNoticeRuntimeUnavailable();
+    }
+    // Tidak ada await antara fence host terakhir dan invocation socket.
+    const sent = await socket.sendMessage(
       target.scope.groupId,
       { text: text.trim() },
-      quoted ? { quoted } : undefined,
+      quoted || requestedMessageId
+        ? { ...(quoted ? { quoted } : {}), ...(requestedMessageId
+            ? { messageId: requestedMessageId }
+            : {}) }
+        : undefined,
     );
-    if (sent?.key.id) {
-      this.cacheMessage(
-        runtime.outbound,
-        sent.key.id,
-        sent,
-        MAX_OUTBOUND_MESSAGES,
+    const messageId = sent?.key.id;
+    if (
+      !sent ||
+      typeof messageId !== "string" ||
+      messageId.length === 0 ||
+      messageId.trim().length === 0
+    ) {
+      if (requireMessageId) {
+        throw new Error(
+          `Pengiriman WhatsApp ${target.accountId} tidak menghasilkan ID pesan.`,
+        );
+      }
+      return null;
+    }
+    if (requestedMessageId && messageId !== requestedMessageId) {
+      throw new Error(
+        `Pengiriman WhatsApp ${target.accountId} tidak mempertahankan ID idempotent.`,
       );
     }
+    this.cacheMessage(
+      runtime.outbound,
+      target.scope.groupId,
+      messageId,
+      sent,
+      MAX_OUTBOUND_MESSAGES,
+      OUTBOUND_MESSAGE_CACHE_MS,
+    );
+    return messageId;
   }
 
   private scheduleReconnect(
@@ -972,12 +1348,36 @@ export class BaileysAccountManager implements GroupTransport {
     );
   }
 
+  private groupAuthorityFence(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    groupId: string,
+    authorityEpoch: number,
+  ): GroupNoticeRuntimeFence {
+    return () => {
+      const metadata = runtime.groups.get(groupId);
+      return Boolean(
+        this.acceptingEvents &&
+        runtime.status === "open" &&
+        runtime.socket === socket &&
+        this.isCurrent(runtime, generation) &&
+        this.groupEpoch(runtime, groupId) === authorityEpoch &&
+        metadata?.id === groupId &&
+        this.metadataContainsSelf(runtime, metadata),
+      );
+    };
+  }
+
   /**
    * Sinyal removal dari metadata dibuat one-shot. Jika identitas socket belum
    * tersedia, keadaan hanya dianggap unknown/fail-closed dan tidak disamakan
    * dengan bukti bahwa Harvy sudah dikeluarkan.
    */
   private notifySelfMissing(runtime: AccountRuntime, groupId: string): void {
+    // Synchronous dan exact-group: callback cleanup yang tertunda tidak boleh
+    // meninggalkan raw quote yang dapat dipakai setelah re-add.
+    this.clearIncomingQuotesForGroup(runtime, groupId);
     const socket = runtime.socket;
     if (!socket || selfJids(socket).length === 0) return;
     runtime.groups.delete(groupId);
@@ -1026,28 +1426,69 @@ export class BaileysAccountManager implements GroupTransport {
   private pruneMessageCaches(runtime: AccountRuntime): void {
     const now = this.now().getTime();
     for (const [id, item] of runtime.incoming) {
-      if (item.expiresAt <= now) runtime.incoming.delete(id);
+      if (item.expiresAt <= now) {
+        this.deleteCachedMessage(runtime.incoming, id);
+      }
     }
     for (const [id, item] of runtime.outbound) {
-      if (item.expiresAt <= now) runtime.outbound.delete(id);
+      if (item.expiresAt <= now) {
+        this.deleteCachedMessage(runtime.outbound, id);
+      }
     }
   }
 
   private cacheMessage(
     cache: Map<string, CachedMessage>,
+    groupId: string,
     id: string,
     message: WAMessage,
     limit: number,
+    expiresAfterMs: number,
+    eagerExpiry = false,
   ): void {
+    const key = messageCacheKey(groupId, id);
+    this.deleteCachedMessage(cache, key);
     while (cache.size >= limit) {
       const oldest = cache.keys().next().value as string | undefined;
       if (oldest === undefined) break;
-      cache.delete(oldest);
+      this.deleteCachedMessage(cache, oldest);
     }
-    cache.set(id, {
+    const item: CachedMessage = {
+      groupId,
       message,
-      expiresAt: this.now().getTime() + MESSAGE_CACHE_MS,
-    });
+      expiresAt: this.now().getTime() + expiresAfterMs,
+    };
+    if (eagerExpiry) {
+      item.expiryTimer = setTimeout(() => {
+        if (cache.get(key) === item) this.deleteCachedMessage(cache, key);
+      }, expiresAfterMs);
+      item.expiryTimer.unref();
+    }
+    cache.set(key, item);
+  }
+
+  private deleteCachedMessage(
+    cache: Map<string, CachedMessage>,
+    id: string,
+  ): void {
+    const existing = cache.get(id);
+    if (existing?.expiryTimer) clearTimeout(existing.expiryTimer);
+    cache.delete(id);
+  }
+
+  private clearMessageCache(cache: Map<string, CachedMessage>): void {
+    for (const id of cache.keys()) this.deleteCachedMessage(cache, id);
+  }
+
+  private clearIncomingQuotesForGroup(
+    runtime: AccountRuntime,
+    groupId: string,
+  ): void {
+    for (const [key, item] of runtime.incoming) {
+      if (item.groupId === groupId) {
+        this.deleteCachedMessage(runtime.incoming, key);
+      }
+    }
   }
 
   private trackEvent(runtime: AccountRuntime, task: Promise<void>): void {
@@ -1110,6 +1551,111 @@ export class BaileysAccountManager implements GroupTransport {
     );
     this.events.onError?.(accountId, error);
   }
+}
+
+function groupRunMessageId(idempotencyKey: string): string {
+  const clean = idempotencyKey.trim();
+  if (
+    !clean || clean.length > 512 ||
+    /[\u0000-\u001f\u007f]/u.test(clean)
+  ) throw new Error("Idempotency key delivery GroupRun tidak sah.");
+  return createHash("sha256")
+    .update(`harvy-group-run\u0000${clean}`, "utf8")
+    .digest("hex")
+    .slice(0, 32)
+    .toUpperCase();
+}
+
+function messageCacheKey(groupId: string, messageId: string): string {
+  // Length-prefix menjaga exact tuple dan mencegah collision concatenation.
+  return `${groupId.length}:${groupId}${messageId.length}:${messageId}`;
+}
+
+function validatedGroupRunAuthorityExpectation(
+  value: unknown,
+): GroupRunDeliveryAuthorityExpectation {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw groupRunDeliveryNotCommitted(
+      "Fence authority delivery GroupRun tidak sah.",
+    );
+  }
+  const record = value as Record<string, unknown>;
+  const expectedAuthorityEpoch = record["expectedAuthorityEpoch"];
+  const actorValues = record["actors"];
+  if (
+    !Number.isSafeInteger(expectedAuthorityEpoch) ||
+    (expectedAuthorityEpoch as number) < 0 ||
+    !Array.isArray(actorValues) || actorValues.length === 0 ||
+    actorValues.length > 8
+  ) {
+    throw groupRunDeliveryNotCommitted(
+      "Fence authority delivery GroupRun tidak sah.",
+    );
+  }
+  const actors = actorValues.map((actorValue) => {
+    if (
+      typeof actorValue !== "object" || actorValue === null ||
+      Array.isArray(actorValue)
+    ) {
+      throw groupRunDeliveryNotCommitted(
+        "Aktor authority delivery GroupRun tidak sah.",
+      );
+    }
+    const actor = actorValue as Record<string, unknown>;
+    const participantValues = actor["participantIds"];
+    const expectedRole = actor["expectedRole"];
+    if (
+      !Array.isArray(participantValues) || participantValues.length === 0 ||
+      participantValues.length > 8 ||
+      (expectedRole !== "member" && expectedRole !== "admin")
+    ) {
+      throw groupRunDeliveryNotCommitted(
+        "Aktor authority delivery GroupRun tidak sah.",
+      );
+    }
+    const participantIds = [...new Set(participantValues.map((participantId) => {
+      if (
+        typeof participantId !== "string" || !participantId.trim() ||
+        participantId.length > 512 ||
+        /[\u0000-\u001f\u007f]/u.test(participantId)
+      ) {
+        throw groupRunDeliveryNotCommitted(
+          "Identitas aktor delivery GroupRun tidak sah.",
+        );
+      }
+      return participantId.trim();
+    }))];
+    return {
+      participantIds,
+      expectedRole: expectedRole as GroupRunDeliveryActorExpectation["expectedRole"],
+    };
+  });
+  return {
+    expectedAuthorityEpoch: expectedAuthorityEpoch as number,
+    actors,
+  };
+}
+
+function groupRunAuthorityUnavailable(): GroupAgentRunDeliveryNotCommittedError {
+  return groupRunDeliveryNotCommitted(
+    "Authority delivery GroupRun berubah atau tidak tersedia.",
+  );
+}
+
+function groupRunRuntimeUnavailable(): GroupAgentRunDeliveryNotCommittedError {
+  return groupRunDeliveryNotCommitted(
+    "Runtime delivery GroupRun tidak aktif atau berubah.",
+  );
+}
+
+function groupRunDeliveryNotCommitted(
+  message: string,
+): GroupAgentRunDeliveryNotCommittedError {
+  return new GroupAgentRunDeliveryNotCommittedError(message);
+}
+
+function groupNoticeRuntimeUnavailable(): Error {
+  return new Error("Authority notice grup tidak aktif atau berubah.");
 }
 
 export function reconnectDecision(
@@ -1204,6 +1750,17 @@ function participantIs(
   return [participant.id, participant.lid, participant.phoneNumber]
     .filter((value): value is string => Boolean(value))
     .some((value) => expected.has(normalizedJid(value)));
+}
+
+function participantRole(
+  participant: GroupParticipant,
+): "member" | "admin" {
+  return participant.isAdmin === true ||
+      participant.isSuperAdmin === true ||
+      participant.admin === "admin" ||
+      participant.admin === "superadmin"
+    ? "admin"
+    : "member";
 }
 
 function normalizedJid(value: string): string {

@@ -124,6 +124,14 @@ describe("migrasi ID paket individu", () => {
 
     const usageOnDisk = await readFile(usageFile, "utf8");
     const entitlementOnDisk = await readFile(entitlementFile, "utf8");
+    const entitlementDatabase = JSON.parse(entitlementOnDisk) as {
+      version: number;
+      candidates: unknown[];
+      settlements: unknown[];
+    };
+    assert.equal(entitlementDatabase.version, 2);
+    assert.deepEqual(entitlementDatabase.candidates, []);
+    assert.deepEqual(entitlementDatabase.settlements, []);
     for (const legacyId of LEGACY_IDS) {
       assert.doesNotMatch(usageOnDisk, new RegExp(`"${legacyId}"`, "u"));
       assert.doesNotMatch(entitlementOnDisk, new RegExp(`"${legacyId}"`, "u"));

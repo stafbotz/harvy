@@ -15,6 +15,7 @@ import type {
   ProviderAttemptObserver,
   ProviderAttemptStart,
 } from "../src/domain/usage-ledger.js";
+import { ExecutionPolicy } from "../src/core/execution-policy.js";
 
 class LogicalObserver implements UsageObserver {
   before: AiUsageContext[] = [];
@@ -110,6 +111,70 @@ describe("AiClient usage ledger", () => {
       assert.equal(attempts.finishes[1]?.result.usage.providerCostUsd, "0.0004");
       assert.equal(attempts.finishes[1]?.result.usage.cacheReadTokens, 3);
       assert.equal(attempts.finishes[1]?.result.usage.reasoningTokens, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("meneruskan metadata route toughest ke observer tanpa memasukkannya ke wire", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody = "";
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = String(init?.body ?? "");
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "candidate" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const attempts = new AttemptObserver();
+      const execution = new ExecutionPolicy().decide({
+        tier: "toughest",
+        role: "critic",
+        workClass: "agent",
+        profile: null,
+        maxOutputTokens: 512,
+        deadlineMs: 20_000,
+        maxSteps: 1,
+        allowTools: false,
+        allowDelegation: false,
+        allowEscalation: true,
+        escalationReason: "observation_contradiction",
+        routeReason: "validator_escalation",
+        promptMaterial: "structured-brief+candidate",
+        sourcePrivacyDomain: "workspace.private",
+        targetPrivacyDomain: "provider.approved",
+      });
+      const client = new AiClient({
+        baseUrl: "https://primary.example/v1",
+        providerId: "openrouter",
+        keys: new ApiKeyPool(["key"]),
+        attemptObserver: attempts,
+      });
+      await client.complete({
+        model: "model-toughest",
+        maxTokens: execution.maxOutputTokens,
+        execution,
+        messages: [{ role: "user", content: "structured candidate" }],
+        usage: {
+          ownerId: "student",
+          tier: "ambitious",
+          purpose: "reply",
+          safetyCritical: false,
+        },
+      });
+
+      assert.equal(attempts.starts[0]?.routeTier, "toughest");
+      assert.equal(
+        attempts.starts[0]?.escalationReason,
+        "observation_contradiction",
+      );
+      assert.equal(attempts.starts[0]?.sourcePrivacyDomain, "workspace.private");
+      assert.equal(attempts.starts[0]?.targetPrivacyDomain, "provider.approved");
+      assert.doesNotMatch(
+        requestBody,
+        /routeTier|promptMaterial|sourcePrivacyDomain|targetPrivacyDomain|validator_escalation/u,
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

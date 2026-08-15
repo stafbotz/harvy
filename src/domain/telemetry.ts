@@ -24,6 +24,18 @@ export type AiPurpose =
   | "group-participation"
   | "group-reply";
 
+/**
+ * Scope delivery code-owned untuk usage yang baru boleh didebit setelah efek
+ * final satu attempt GroupAgentRun benar-benar terminal.
+ */
+export interface GroupAgentRunAttemptUsageDeliveryScope {
+  kind: "group_agent_run_attempt";
+  runId: string;
+  attemptId: string;
+}
+
+export type UsageDeliveryScope = GroupAgentRunAttemptUsageDeliveryScope;
+
 export interface AiUsageContext {
   /** Satu ID untuk seluruh retry key, JSON downgrade, dan fallback. */
   requestId: string;
@@ -34,6 +46,8 @@ export interface AiUsageContext {
   channel?: "telegram" | "whatsapp" | "system";
   /** Hanya hidup di request; observer detail wajib meng-hash lalu membuangnya. */
   actorAliases?: readonly string[];
+  /** Tidak dikirim ke provider; dipakai hanya untuk settlement entitlement. */
+  deliveryScope?: UsageDeliveryScope;
   tier: UsageTier;
   purpose: AiPurpose;
   model: string;

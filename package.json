@@ -12,6 +12,7 @@
     "context:check": "node scripts/session-context.mjs --check",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "eval:conversation": "tsx scripts/evaluasi-percakapan.ts --all",
+    "eval:routing": "tsx scripts/evaluasi-routing.ts",
     "eval:group": "tsx scripts/evaluasi-grup.ts",
     "eval:group:full": "tsx scripts/evaluasi-grup.ts --all",
     "eval:group:direct": "tsx scripts/evaluasi-grup-direct.ts"

@@ -13,10 +13,37 @@ import type {
   ReasoningEffort,
   Verbosity,
 } from "./model-execution.js";
+import type { ModelEscalationFailureCode } from "./model-escalation.js";
 
 export type RuntimeEnvironment = "development" | "staging" | "production";
 export type UsageCostCenter = "runtime" | "evaluation" | "probe" | "migration";
 export type ProviderOrigin = "primary" | "fallback";
+export type ProviderRouteReason =
+  | "truncation_recovery"
+  | "validator_escalation";
+export type ProviderPromptMaterial =
+  | "raw"
+  | "lower-rewrite"
+  | "structured-brief"
+  | "structured-brief+candidate"
+  | "raw+structured-brief"
+  | "raw+structured-brief+candidate"
+  | "raw+structured-brief+candidate+critic";
+export const PROVIDER_PROMPT_MATERIALS: ReadonlySet<
+  ProviderPromptMaterial
+> = new Set([
+  "raw",
+  "lower-rewrite",
+  "structured-brief",
+  "structured-brief+candidate",
+  "raw+structured-brief",
+  "raw+structured-brief+candidate",
+  "raw+structured-brief+candidate+critic",
+]);
+export type ProviderEscalationReason =
+  | "validator_failed"
+  | "output_truncated"
+  | ModelEscalationFailureCode;
 
 export interface ProviderTokenUsage extends TokenUsage {
   reasoningTokens: number | null;
@@ -50,6 +77,13 @@ export interface ProviderAttemptStart {
   requestedEffort?: ReasoningEffort;
   effectiveEffort?: ReasoningEffort | null;
   verbosity?: Verbosity;
+  /** Optional content-free route metadata; legacy records remain readable. */
+  routeTier?: "toughest";
+  routeReason?: ProviderRouteReason;
+  escalationReason?: ProviderEscalationReason;
+  promptMaterial?: ProviderPromptMaterial;
+  sourcePrivacyDomain?: string;
+  targetPrivacyDomain?: string;
 }
 
 export interface ProviderAttemptFinish {
@@ -104,6 +138,12 @@ export interface ProviderAttemptRecord {
   requestedEffort?: ReasoningEffort;
   effectiveEffort?: ReasoningEffort | null;
   verbosity?: Verbosity;
+  routeTier?: "toughest";
+  routeReason?: ProviderRouteReason;
+  escalationReason?: ProviderEscalationReason;
+  promptMaterial?: ProviderPromptMaterial;
+  sourcePrivacyDomain?: string;
+  targetPrivacyDomain?: string;
   status: "started" | ProviderAttemptFinish["status"];
   httpStatus: number | null;
   responseOutcome: ProviderAttemptFinish["responseOutcome"];

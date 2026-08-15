@@ -15,6 +15,7 @@ import type {
   GroupAuthoritySnapshot,
 } from "../src/core/group-authority-policy.js";
 import type { GroupMessage } from "../src/domain/group.js";
+import type { GroupRunParticipant } from "../src/domain/group-agent-run.js";
 import { FileGroupAgentRunRepository } from "../src/storage/file-group-agent-run-repository.js";
 
 const NOW = new Date("2026-08-13T12:00:00.000Z");
@@ -104,7 +105,7 @@ describe("group agent run service", () => {
         mentionsHarvy: true,
       }),
     });
-    const anchored = await service.attachAnchor(
+    const anchored = await commitTestAnchor(service,
       started.run.runId,
       started.run.stateRevision,
       "anchor-routing",
@@ -191,12 +192,12 @@ describe("group agent run service", () => {
         mentionsHarvy: true,
       }),
     });
-    const anchored = await service.attachAnchor(
+    const anchored = await commitTestAnchor(service,
       started.run.runId,
       started.run.stateRevision,
       "anchor-question",
     );
-    const waiting = await service.recordAssignedQuestion({
+    const waiting = await commitTestQuestion(service, {
       runId: anchored.runId,
       expectedStateRevision: anchored.stateRevision,
       prompt: "Sabtu pagi kamu bisa?",
@@ -288,12 +289,12 @@ describe("group agent run service", () => {
         mentionsHarvy: true,
       }),
     });
-    const anchored = await base.attachAnchor(
+    const anchored = await commitTestAnchor(base,
       started.run.runId,
       started.run.stateRevision,
       "anchor-assignee",
     );
-    const waiting = await base.recordAssignedQuestion({
+    const waiting = await commitTestQuestion(base, {
       runId: anchored.runId,
       expectedStateRevision: anchored.stateRevision,
       prompt: "Jumat pagi bisa?",
@@ -330,7 +331,7 @@ describe("group agent run service", () => {
         mentionsHarvy: true,
       }),
     });
-    const staleAnchored = await stable.attachAnchor(
+    const staleAnchored = await commitTestAnchor(stable,
       staleStarted.run.runId,
       staleStarted.run.stateRevision,
       "anchor-stale",
@@ -357,7 +358,7 @@ describe("group agent run service", () => {
       0,
     );
     await assert.rejects(
-      changing.recordAssignedQuestion({
+      commitTestQuestion(changing, {
         runId: staleAnchored.runId,
         expectedStateRevision: staleAnchored.stateRevision,
         prompt: "Besok kamu bisa?",
@@ -369,7 +370,7 @@ describe("group agent run service", () => {
         messageId: "question-stale-authority",
         acceptAnswersAfterIngressRevision: 10,
       }),
-      GroupAgentRunConflictError,
+      GroupAgentRunAuthorityError,
     );
     assert.equal(
       (await new FileGroupAgentRunRepository(staleFile).load(staleAnchored.runId))
@@ -387,7 +388,7 @@ describe("group agent run service", () => {
         mentionsHarvy: true,
       }),
     });
-    await service.attachAnchor(
+    await commitTestAnchor(service,
       started.run.runId,
       started.run.stateRevision,
       "anchor-idempotent",
@@ -467,12 +468,12 @@ describe("group agent run service", () => {
         mentionsHarvy: true,
       }),
     });
-    const anchored = await service.attachAnchor(
+    const anchored = await commitTestAnchor(service,
       started.run.runId,
       started.run.stateRevision,
       "anchor-expiry",
     );
-    const waiting = await service.recordAssignedQuestion({
+    const waiting = await commitTestQuestion(service, {
       runId: anchored.runId,
       expectedStateRevision: anchored.stateRevision,
       prompt: "Besok bisa?",
@@ -504,12 +505,12 @@ describe("group agent run service", () => {
       }),
     });
     assert.equal(second.status, "started");
-    const secondAnchor = await service.attachAnchor(
+    const secondAnchor = await commitTestAnchor(service,
       second.run.runId,
       second.run.stateRevision,
       "anchor-after-cancel",
     );
-    await service.recordAssignedQuestion({
+    await commitTestQuestion(service, {
       runId: secondAnchor.runId,
       expectedStateRevision: secondAnchor.stateRevision,
       prompt: "Lusa bisa?",
@@ -570,12 +571,12 @@ describe("group agent run service", () => {
         mentionsHarvy: true,
       }),
     });
-    const anchored = await service.attachAnchor(
+    const anchored = await commitTestAnchor(service,
       started.run.runId,
       started.run.stateRevision,
       "anchor-expiry-race",
     );
-    await service.recordAssignedQuestion({
+    await commitTestQuestion(service, {
       runId: anchored.runId,
       expectedStateRevision: anchored.stateRevision,
       prompt: "Sekarang bisa?",
@@ -645,7 +646,7 @@ describe("group agent run service", () => {
     );
 
     await assert.rejects(
-      service.recordAssignedQuestion({
+      commitTestQuestion(service, {
         runId: full.runId,
         expectedStateRevision: full.stateRevision,
         prompt: "Masih bisa?",
@@ -703,6 +704,39 @@ describe("file group agent run repository", () => {
     );
   });
 });
+
+async function commitTestAnchor(
+  service: GroupAgentRunService,
+  runId: string,
+  expectedStateRevision: number,
+  messageId: string,
+) {
+  return service.commitAnchor(
+    runId,
+    expectedStateRevision,
+    `Anchor ${messageId}`,
+    async () => ({ messageId }),
+  );
+}
+
+async function commitTestQuestion(
+  service: GroupAgentRunService,
+  input: {
+    runId: string;
+    expectedStateRevision: number;
+    prompt: string;
+    assignee: GroupRunParticipant;
+    messageId: string;
+    acceptAnswersAfterIngressRevision: number;
+    expiresAt?: string;
+  },
+) {
+  const { messageId, acceptAnswersAfterIngressRevision, ...request } = input;
+  return service.commitAssignedQuestion(request, async () => ({
+    messageId,
+    acceptAnswersAfterIngressRevision,
+  }));
+}
 
 async function serviceFixture(options: {
   authority?: GroupAuthorityResolver;

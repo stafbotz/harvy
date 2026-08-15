@@ -13,6 +13,7 @@ const AI_ENV_KEYS = [
   "AI_MODEL_TESTING_CHEAP",
   "AI_MODEL_TESTING_EFFICIENT",
   "AI_MODEL_TESTING_AMBITIOUS",
+  "AI_MODEL_TESTING_TOUGHEST",
   "AI_TESTING_FALLBACK_BASE_URL",
   "AI_TESTING_FALLBACK_API_KEY",
   "AI_TESTING_FALLBACK_MODEL",
@@ -22,6 +23,8 @@ const AI_ENV_KEYS = [
   "AI_MODEL_CHEAP",
   "AI_MODEL_EFFICIENT",
   "AI_MODEL_AMBITIOUS",
+  "AI_MODEL_TOUGHEST",
+  "AI_TOUGHEST_PRIVACY_DOMAIN",
   "AI_MODEL_PROFILES",
   "MEMORY_EMBEDDING_MODEL",
 ] as const;
@@ -101,6 +104,8 @@ describe("konfigurasi fallback AI testing", () => {
       AI_MODEL_CHEAP: "model-production-cheap",
       AI_MODEL_EFFICIENT: "model-production-efficient",
       AI_MODEL_AMBITIOUS: "model-production-ambitious",
+      AI_MODEL_TOUGHEST: "model-production-toughest",
+      AI_TOUGHEST_PRIVACY_DOMAIN: "provider.approved",
       AI_TESTING_FALLBACK_BASE_URL: "https://fallback.example/api/v3",
       AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
       AI_TESTING_FALLBACK_MODEL: "model-cadangan",
@@ -116,6 +121,7 @@ describe("konfigurasi fallback AI testing", () => {
           "openrouter:model-production-ambitious",
           "openrouter:model-production-cheap",
           "openrouter:model-production-efficient",
+          "openrouter:model-production-toughest",
         ],
       );
       assert.equal(
@@ -126,6 +132,7 @@ describe("konfigurasi fallback AI testing", () => {
         catalog.find((model) => model.modelId === "model-production-cheap")?.active,
         false,
       );
+      assert.equal(loadAiConfig().toughest, null);
       const serialized = JSON.stringify(catalog);
       assert.doesNotMatch(serialized, /rahasia-cadangan|fallback\.example/u);
       assert.match(serialized, /AI_TESTING_FALLBACK_MODEL/u);
@@ -145,6 +152,76 @@ describe("konfigurasi fallback AI testing", () => {
         ["AI_MODEL_TESTING_CHEAP", "AI_MODEL_TESTING_EFFICIENT"],
       );
       assert.equal(shared?.active, true);
+    });
+  });
+
+  it("menjaga toughest default-off dan hanya mengaktifkan profile exact", () => {
+    withAiEnvironment(validTestingEnvironment(), () => {
+      assert.equal(loadAiConfig().toughest, null);
+    });
+
+    withAiEnvironment(validTestingEnvironment({
+      AI_MODEL_TESTING_TOUGHEST: "model-testing-toughest",
+      AI_TOUGHEST_PRIVACY_DOMAIN: "provider.approved",
+      AI_MODEL_PROFILES: JSON.stringify([
+        explicitProfile("google-ai-studio", "model-testing-toughest"),
+      ]),
+    }), () => {
+      const config = loadAiConfig();
+      assert.deepEqual(config.toughest, {
+        modelId: "model-testing-toughest",
+        privacyDomain: "provider.approved",
+      });
+      const toughest = config.configuredModels.find(
+        (model) => model.modelId === "model-testing-toughest",
+      );
+      assert.equal(toughest?.active, true);
+      assert.deepEqual(toughest?.sources[0]?.tiers, ["toughest"]);
+      assert.equal(
+        config.modelProfiles.require(
+          "google-ai-studio",
+          "model-testing-toughest",
+        ).verification,
+        "explicit",
+      );
+    });
+  });
+
+  it("menolak slot toughest yang parsial, domain rusak, atau tanpa profile exact", () => {
+    for (const environment of [
+      validTestingEnvironment({
+        AI_MODEL_TESTING_TOUGHEST: "model-testing-toughest",
+      }),
+      validTestingEnvironment({
+        AI_TOUGHEST_PRIVACY_DOMAIN: "provider.approved",
+      }),
+    ]) {
+      withAiEnvironment(environment, () => {
+        assert.throws(
+          () => loadAiConfig(),
+          hasCode("CONFIG_AI_TOUGHEST_INCOMPLETE"),
+        );
+      });
+    }
+
+    withAiEnvironment(validTestingEnvironment({
+      AI_MODEL_TESTING_TOUGHEST: "model-testing-toughest",
+      AI_TOUGHEST_PRIVACY_DOMAIN: "domain tidak sah",
+    }), () => {
+      assert.throws(
+        () => loadAiConfig(),
+        hasCode("CONFIG_AI_TOUGHEST_PRIVACY_DOMAIN_INVALID"),
+      );
+    });
+
+    withAiEnvironment(validTestingEnvironment({
+      AI_MODEL_TESTING_TOUGHEST: "model-testing-toughest",
+      AI_TOUGHEST_PRIVACY_DOMAIN: "provider.approved",
+    }), () => {
+      assert.throws(
+        () => loadAiConfig(),
+        hasCode("CONFIG_AI_TOUGHEST_PROFILE_REQUIRED"),
+      );
     });
   });
 
@@ -237,6 +314,11 @@ describe("konfigurasi fallback AI testing", () => {
       AI_MODEL_CHEAP: "cheap",
       AI_MODEL_EFFICIENT: "efficient",
       AI_MODEL_AMBITIOUS: "ambitious",
+      AI_MODEL_TOUGHEST: "model-production-toughest",
+      AI_TOUGHEST_PRIVACY_DOMAIN: "provider.approved",
+      AI_MODEL_PROFILES: JSON.stringify([
+        explicitProfile("openrouter", "model-production-toughest"),
+      ]),
       AI_TESTING_FALLBACK_BASE_URL:
         "https://fallback.example/api/v3",
       AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
@@ -251,6 +333,10 @@ describe("konfigurasi fallback AI testing", () => {
         ).reasoning.wireFormat,
         "none",
       );
+      assert.deepEqual(config.toughest, {
+        modelId: "model-production-toughest",
+        privacyDomain: "provider.approved",
+      });
     });
   });
 

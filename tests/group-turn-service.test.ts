@@ -47,12 +47,21 @@ describe("giliran grup", () => {
     assert.doesNotMatch(notice, /bawaan 14 hari/i);
     assert.match(notice, /satu atau lebih penyedia/i);
     assert.match(notice, /dikirim ulang ke penyedia cadangan/i);
-    assert.equal(GROUP_NOTICE_VERSION, 7);
+    assert.equal(GROUP_NOTICE_VERSION, 9);
     assert.match(notice, /terpisah per grup dan per anggota/i);
     assert.match(notice, /sensitif tidak pernah kusimpan otomatis/i);
+    assert.match(notice, /permintaan awal dan judul pekerjaan/i);
+    assert.match(notice, /input anggota yang teratribusi ke peserta dan pesan sumber/i);
+    assert.match(notice, /referensi Run Anchor/i);
+    assert.match(notice, /ledger teknis upaya kerja dan delivery/i);
+    assert.match(notice, /hasil akhir yang sudah terkirim/i);
+    assert.match(notice, /audience grup.*file lokal terpisah.*7 hari/i);
+    assert.match(notice, /bukan memori privat, riwayat chat privat, atau transcript penyedia\/model/i);
+    assert.match(notice, /penghapusan record tersebut langsung dicoba/i);
+    assert.match(notice, /tetap tunduk pada batas retensi 7 hari bila cleanup penyimpanan sementara gagal/i);
   });
 
-  it("mengirim notice v7 lagi sebelum memproses grup yang baru melihat v6", async () => {
+  it("mengirim notice v9 lagi sebelum memproses grup yang baru melihat v8", async () => {
     const events: string[] = [];
     const runtime = createRuntime({
       events,
@@ -63,7 +72,7 @@ describe("giliran grup", () => {
     await runtime.memories.markNoticeSent(
       "whatsapp:grup@g.us",
       "utama",
-      6,
+      8,
     );
 
     assert.equal(
@@ -73,7 +82,7 @@ describe("giliran grup", () => {
     assert.deepEqual(events, ["notice", "reply:halo"]);
     assert.equal(
       (await runtime.memories.binding("whatsapp:grup@g.us"))?.noticeVersion,
-      7,
+      9,
     );
   });
 
@@ -1498,6 +1507,44 @@ describe("giliran grup", () => {
     );
     assert.equal(runtime.replies.length, 0);
     assert.equal(modelCalls, 0);
+  });
+
+  it("membatalkan aktivasi dan notice ketika fence berubah setelah binding", async () => {
+    const allowStarted = deferredVoid();
+    const releaseAllow = deferredVoid();
+    let fenceCurrent = true;
+    let notices = 0;
+    let forgotten = 0;
+    const runtime = createRuntime({
+      usageControl: {
+        allow: async () => {
+          allowStarted.resolve();
+          await releaseAllow.promise;
+        },
+        forget: async () => {
+          forgotten += 1;
+        },
+      },
+      sendNotice: async (_target, _text, runtimeFence) => {
+        if (runtimeFence?.() !== false) notices += 1;
+      },
+    });
+
+    const activation = runtime.turns.activateGroup(
+      message({ groupName: "Grup uji" }),
+      () => fenceCurrent,
+    );
+    await allowStarted.promise;
+    fenceCurrent = false;
+    releaseAllow.resolve();
+
+    assert.equal(await activation, "inactive");
+    assert.equal(notices, 0);
+    assert.equal(forgotten, 1);
+    const binding = await runtime.memories.binding("whatsapp:grup@g.us");
+    assert.ok(binding);
+    assert.notEqual(binding.disabledAt, null);
+    assert.equal(binding.noticeSentAt, null);
   });
 
   it("mengulang notice gagal lalu memproses pesan berikutnya", async () => {

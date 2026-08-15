@@ -63,7 +63,7 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 
 | ADR | Area |
 |---|---|
-| [`ADR-001`](decisions/ADR-001-agent-orchestration.md) | satu sumber instruksi dan satu penulis |
+| [`ADR-001`](decisions/ADR-001-agent-orchestration.md) | satu sumber instruksi; kebijakan writer lama disupersesi ADR-038 |
 | [`ADR-002`](decisions/ADR-002-percakapan-bahasa-alami.md) | bahasa alami dan tombol |
 | [`ADR-003`](decisions/ADR-003-routing-model.md) | routing model/provider/biaya |
 | [`ADR-004`](decisions/ADR-004-percakapan-sepenuhnya-lewat-ai.md) | understanding/prompt/persona |
@@ -100,6 +100,9 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 | [`ADR-035`](decisions/ADR-035-coding-run-single-writer-dan-bukti.md) | CodingRun single writer, validator evidence, dan commit recovery |
 | [`ADR-036`](decisions/ADR-036-github-app-broker-exact-effect.md) | GitHub App broker, exact effect, approval, dan reconciliation |
 | [`ADR-037`](decisions/ADR-037-group-agentrun-admission-dan-thread.md) | Group AgentRun, explicit thread targeting, participant authority, dan assigned input |
+| [`ADR-038`](decisions/ADR-038-koordinasi-penulisan-adaptif.md) | koordinasi penulisan adaptif untuk manusia dan coding agent |
+| [`ADR-039`](decisions/ADR-039-group-coding-audience-dan-authority.md) | irisan authority grup+Workspace, audience-safe CodingRun, dan private GitHub confirmation |
+| [`ADR-040`](decisions/ADR-040-escalation-toughest-one-shot.md) | eskalasi toughest validator-driven, one-shot, privacy path, dan evaluasi routing A–E |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.
@@ -108,6 +111,8 @@ aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.
 
 - Agent Runtime acceptance: [`evidence/agent-acceptance-v1-2026-08-04/`](evidence/agent-acceptance-v1-2026-08-04/)
 - Group evaluation: [`evidence/group-conversation-2026-07-30/`](evidence/group-conversation-2026-07-30/)
+- Routing evaluation A–E: `npm run eval:routing` (provider live; default satu
+  case sintetis, gunakan `-- --all` untuk seluruh corpus)
 - LOG lama: [`log/`](log/)
 - Status snapshot lama: [`engineering/status/archive/`](engineering/status/archive/)
 

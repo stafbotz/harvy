@@ -30,9 +30,19 @@ export const ROOM_MEMORY_RETENTION_DAYS = 60;
 
 export type GroupMutationGuard = () => Promise<boolean>;
 
+/**
+ * Fence sinkron untuk aktivasi binding. Adapter menaikkan generation/epoch
+ * secara sinkron ketika membership berubah, sehingga guard ini dapat diperiksa
+ * tepat sebelum setiap durable commit tanpa membuka await baru.
+ */
+export type GroupActivationFence = () => boolean;
+
+const ALLOW_GROUP_ACTIVATION: GroupActivationFence = () => true;
+
 export type ActivationResult =
   | { status: "active"; binding: GroupBinding; created: boolean }
-  | { status: "conflict"; binding: GroupBinding };
+  | { status: "conflict"; binding: GroupBinding }
+  | { status: "inactive" };
 
 export interface ActivityRank {
   participantId: string;
@@ -84,10 +94,12 @@ export class GroupMemoryService {
     accountId: string,
     groupName: string | null,
     joinedAt = this.now().toISOString(),
+    fence: GroupActivationFence = ALLOW_GROUP_ACTIVATION,
   ): Promise<ActivationResult> {
     const scopeKey = groupScopeKey(scope);
     return this.exclusive(scopeKey, async () => {
       const existing = await this.repository.loadBinding(scopeKey);
+      if (!fence()) return { status: "inactive" };
       if (existing && existing.accountId !== accountId) {
         return { status: "conflict", binding: existing };
       }
@@ -95,9 +107,11 @@ export class GroupMemoryService {
       if (existing && !existing.disabledAt) {
         if (groupName && groupName !== existing.groupName) {
           const updated = { ...existing, groupName };
+          if (!fence()) return { status: "inactive" };
           await this.repository.saveBinding(updated);
           return { status: "active", binding: updated, created: false };
         }
+        if (!fence()) return { status: "inactive" };
         return { status: "active", binding: existing, created: false };
       }
 
@@ -112,6 +126,7 @@ export class GroupMemoryService {
         noticeSentAt: null,
         disabledAt: null,
       };
+      if (!fence()) return { status: "inactive" };
       await this.repository.saveBinding(binding);
       return { status: "active", binding, created: true };
     });
@@ -125,17 +140,20 @@ export class GroupMemoryService {
     scopeKey: string,
     accountId: string,
     noticeVersion: number,
+    fence: GroupActivationFence = ALLOW_GROUP_ACTIVATION,
   ): Promise<boolean> {
     return this.exclusive(scopeKey, async () => {
       const binding = await this.repository.loadBinding(scopeKey);
       if (
         !binding ||
         binding.accountId !== accountId ||
-        binding.disabledAt !== null
+        binding.disabledAt !== null ||
+        !fence()
       ) {
         return false;
       }
 
+      if (!fence()) return false;
       await this.repository.saveBinding({
         ...binding,
         noticeVersion,

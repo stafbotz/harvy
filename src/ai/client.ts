@@ -919,6 +919,24 @@ export class AiClient {
             requestedEffort: request.execution.requestedEffort,
             effectiveEffort: request.execution.effectiveEffort,
             verbosity: request.execution.verbosity,
+            ...(request.execution.routeTier
+              ? { routeTier: request.execution.routeTier }
+              : {}),
+            ...(request.execution.routeReason
+              ? { routeReason: request.execution.routeReason }
+              : {}),
+            ...(request.execution.escalationReason
+              ? { escalationReason: request.execution.escalationReason }
+              : {}),
+            ...(request.execution.promptMaterial
+              ? { promptMaterial: request.execution.promptMaterial }
+              : {}),
+            ...(request.execution.sourcePrivacyDomain
+              ? { sourcePrivacyDomain: request.execution.sourcePrivacyDomain }
+              : {}),
+            ...(request.execution.targetPrivacyDomain
+              ? { targetPrivacyDomain: request.execution.targetPrivacyDomain }
+              : {}),
           }
         : {}),
     };
@@ -950,6 +968,12 @@ export class AiClient {
       requestedEffort: request.execution?.requestedEffort,
       effectiveEffort: request.execution?.effectiveEffort,
       verbosity: request.execution?.verbosity,
+      routeTier: request.execution?.routeTier,
+      routeReason: request.execution?.routeReason,
+      escalationReason: request.execution?.escalationReason,
+      promptMaterial: request.execution?.promptMaterial,
+      sourcePrivacyDomain: request.execution?.sourcePrivacyDomain,
+      targetPrivacyDomain: request.execution?.targetPrivacyDomain,
       ...(request.contextManifest
         ? contextManifestLogFields(request.contextManifest)
         : {}),

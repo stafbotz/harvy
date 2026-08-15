@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import type { CodingRun, CodingTaskBrief } from "../domain/coding-run.js";
+import type {
+  CodingRun,
+  CodingRunStartOptions,
+  CodingTaskBrief,
+} from "../domain/coding-run.js";
 import type { WorkspacePrincipal } from "../domain/workspace.js";
 import { containsSecretLikeValue } from "../security/credential-like.js";
 import type { WorkspaceAgentScope } from "../harness/scope.js";
@@ -58,6 +62,7 @@ export interface CodingRunCreator {
     projectId: string,
     expectedWorkspaceRevision: number,
     brief: CodingTaskBrief,
+    options?: CodingRunStartOptions,
   ): Promise<CodingRun>;
 }
 

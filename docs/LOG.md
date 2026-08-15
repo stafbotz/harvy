@@ -38,21 +38,71 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
-## 2026-08-13 — Fondasi core Group AgentRun Phase K
+## 2026-08-15 — Fondasi arsitektur agent mencapai Phase M
 
-Scope: aggregate, policy, service, repository, Run Anchor, dan kontrak WhatsApp.
+Scope: completion GroupAgentRun Phase K, group-coding Phase L, escalation
+`toughest`/privacy observability/eval routing Phase M, config, ledger, ADR, dan
+tes.
 
-Changed: core kini memiliki run grup group-safe dengan thread closed-set, satu
-foreground CAS, assigned answer+watermark, guard authority, expiry/retensi,
-dan pin manual-only. Ia default-off dan belum wiring kanal.
+Changed: GroupAgentRun kini mempunyai authority-on-claim, executor one-decision
+group-safe tanpa private context/capability, checkpoint RunBudget content-free,
+work processor yang mengurutkan checkpoint→delivery receipt→usage settlement,
+serta startup reconciliation kandidat usage. Phase L menambah link grup ke
+Workspace melalui irisan admin grup + membership/permission Workspace,
+CodingRun admission/reference idempoten, proyeksi grup tanpa source/diff/path,
+dan offer GitHub yang tetap memerlukan confirmation privat. Phase M menambah
+slot `toughest` default-off dengan profile exact dan privacy domain, closed
+validator reasons, one-shot/no-tool durable reservation, no-retry outcome
+ambigu, sensitive cross-domain gate, metadata route/material content-free, dan
+harness routing A–E dengan variant E hanya untuk selected hard tasks. Capability
+kanal/coding tidak dibuka dan seluruh core baru belum composed ke runtime
+produksi.
 
-Verified: tes terarah PASS 22 test/4 suite; `npm run check`, `npm run build`, dan
-`npm run context:check` PASS; `npm test` PASS 1.142 test/142 suite, 0 gagal.
+Verified: `npm run check` PASS; `npm test` PASS 1.345/1.345 dalam 167 suite
+termasuk build; `npm run context:check` PASS (6.070 byte, estimasi 1.518 token);
+`git diff --check` PASS. Suite mencakup Phase K executor/processor/barrier,
+Phase L audience/authority/replay, Phase M policy/repository/config/ledger, dan
+corpus routing.
 
-Not verified: WhatsApp/model live, wiring GroupTurnService, delivery/outbox,
-startup lifecycle, serta storage multi-process.
+Not verified: WhatsApp/group-coding/provider/toughest/evaluator live, runner
+Linux, GitHub broker/App nyata, restart proses atau multi-process nyata, harga
+model toughest, serta privacy behavior provider eksternal.
 
-Next: pasang receipt/outbox dan lifecycle sebelum wiring ingress/work lane.
+Next: implementasikan resolver+lease authority dan composition produksi secara
+terpisah, lalu jalankan conformance/live test sintetis sebelum capability
+diaktifkan.
+
+## 2026-08-14 — Koordinasi penulisan coding agent menjadi adaptif
+
+Scope: workflow kontribusi, ADR-001/005/038, dan indeks keputusan.
+
+Changed: mandat satu penulis, read-only otomatis untuk peran lain, dan worktree/
+clone wajib bagi penulis kedua dicabut. Agent kini memilih strategi koordinasi
+berdasarkan scope dan risiko, sambil tetap menjaga perubahan yang ada serta
+otoritas pengguna. Invariant runtime `CodingRun` tidak berubah.
+
+Verified: `npm run context:check` PASS; tes kontrak agent PASS 11/11; pencarian
+sumber aktif tidak menemukan mandat lama.
+
+Not verified: kolaborasi live beberapa penulis pada perubahan yang overlap.
+
+## 2026-08-14 — Fondasi lifecycle, work, dan final Group AgentRun Phase K
+
+Scope: GroupAgentRun core/delivery/lifecycle WhatsApp.
+
+Changed: Notice v9, activation lease/quote cache, cleanup durable, ledger work,
+dan final commit barrier kini tersedia. Migrasi work/result dan cap event tetap
+konservatif; state nonterminal selalu menyisakan slot penutupan dan hasil yang
+tidak committed tidak diakui. Exact parser/controller dan
+`GroupAgentRunWorker` ada tetapi belum composed; checkpoint/executor model belum
+ada dan authority-on-claim tetap prasyarat sebelum composition.
+
+Verified: tes terarah GroupAgentRun/WhatsApp 275/275 dalam 24 suite; `npm run
+check` PASS; `npm test` PASS 1.270/1.270 dalam 158 suite termasuk build;
+`npm run context:check` PASS (6.070 byte, estimasi 1.518 token); diff-check PASS.
+
+Not verified: WhatsApp/reconnect/model/work live, restart proses nyata,
+reconciliation `unknown`, dan multi-process.
 
 ## 2026-08-13 — Fondasi ProjectWorkspace dan coding Phase G–J
 
@@ -378,40 +428,3 @@ Not verified: Telegram/model live, latency ACK jaringan nyata, dan akurasi
 false-positive/false-negative pada corpus model aktual.
 
 Next: ukur corpus safety aktual dan uji split-bubble/ACK lewat Telegram nyata.
-
-## 2026-08-09 — Selective safety dan privacy ingress grup
-
-Scope: classifier/planner ingress grup, GroupTurnService, batching WhatsApp,
-usage policy, kontrak arsitektur, dan tes regresi grup.
-
-Changed: core kini menyelesaikan membership authority, binding aktif, dan
-notice live sebelum assessment model. Direct/ambient menghasilkan `riskHint`
-acute-only dan `contextPrivacy` raw-retention-only dengan parser independen;
-ordinary melewati triage, outage safety evidence-aware, unknown privacy
-no-retain tanpa UX krisis, dan durable memory memakai classifier candidate-only
-terpisah. Reviewer menjadi kondisional dan kontrol eksplisit low-risk tetap
-tersedia pada support yang pasti. Bubble pra-join difilter sebelum matcher/model,
-revocation membatalkan assessment aktif/queued, dan emergency lokal melewati
-debounce/`direct_only`: fixed ACK terpisah dari reservation triage, acute triage
-tidak menunggu compiler/memory extraction, emergency ambient tetap mendapat
-final reviewed safety reply, dan matcher full-turn menilai tiap bubble agar
-marker konteks lama tidak memveto emergency baru. Full turn tetap FIFO.
-Observation authority async diserialkan per runtime dan hanya observation
-authorized/live yang boleh menaikkan revision atau menyupersesi ambient. Alias
-default/durable dihidrasi sebelum admission, observation yang sengaja ditolak
-disettle pada generation yang sama, dan mode runtime efektif dibaca ulang tepat
-sebelum pending revalidation, delivery, serta fixed ACK. ADR-024 mengikat
-kontrak ini.
-
-Verified: `npm run check` PASS; tes terarah GroupTurnService dan runtime policy
-PASS, 80 test dalam 2 suite; `npm test` PASS, 755 test dalam 100 suite, 0 gagal;
-`npm run context:check` PASS dengan output bootstrap 3.742 byte (estimasi 936
-token). Audit read-only lifecycle runtime-mode tidak menemukan blocker tersisa.
-
-Not verified: WhatsApp live, grup nyata, model/provider live, latency ACK nyata,
-akurasi false-positive/false-negative classifier risk/privacy pada corpus model
-aktual, serta kualitas split bubble produksi.
-
-Next: ukur false-positive/false-negative safety pada corpus model aktual dan
-validasi latency/split-bubble kanal nyata; Phase C provider/execution policy
-tetap change set terpisah.

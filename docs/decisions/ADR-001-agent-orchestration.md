@@ -4,6 +4,7 @@
 - Tanggal: 25 Juli 2026
 - Pemilik keputusan: pengguna Harvy dan orkestrator
 - Diganti sebagian oleh: [`ADR-005`](ADR-005-konteks-menggantikan-work-order.md)
+  dan [`ADR-038`](ADR-038-koordinasi-penulisan-adaptif.md)
 
 > **Catatan 26 Juli 2026.** Keputusan nomor 1, 4, 5, 6, dan 7 **tetap berlaku**:
 > satu repositori sebagai sumber kebenaran, peninjau yang tidak mengedit, commit
@@ -19,6 +20,12 @@
 > serta membuat commit langsung pada branch aktif, termasuk `main`. Push tetap
 > dilakukan hanya bila diminta. Bagian keputusan nomor 5 tetap berlaku untuk
 > commit, bukti tes, dan dokumentasi; pull request kini hanya media opsional.
+>
+> **Perubahan keputusan 14 Agustus 2026.** Keputusan nomor 4 dan sisa
+> kewajiban isolasi pada pekerjaan paralel disupersesi oleh
+> [`ADR-038`](ADR-038-koordinasi-penulisan-adaptif.md). Agent kini menentukan
+> strategi koordinasi berdasarkan risiko perubahan; peran lain tidak otomatis
+> read-only dan penulis kedua tidak wajib memakai worktree/clone terpisah.
 
 ## Konteks
 

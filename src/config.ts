@@ -50,6 +50,11 @@ export interface AiConfig {
    */
   testingModels: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
+  /** Escalation-only model; null keeps Phase M disabled. */
+  toughest: {
+    modelId: string;
+    privacyDomain: string;
+  } | null;
   /** Capability provider+model; key tidak pernah diturunkan dari prompt. */
   modelProfiles: ModelProfileRegistry;
   /** Model dari seluruh slot `.env`, tanpa key, base URL, atau credential. */
@@ -102,6 +107,16 @@ export interface AppConfig {
   termsUrl: string;
 }
 
+/** Konfigurasi penuh yang hanya dibentuk oleh bootstrap runtime. */
+export interface RuntimeAppConfig extends AppConfig {
+  /** Capability ingress/executor Phase K; default-off sampai live acceptance. */
+  groupAgentRunEnabled: boolean;
+  /** State durable GroupAgentRun WhatsApp; wajib terpisah dari state grup. */
+  groupAgentRunFile: string;
+  /** Intent penghapusan scope; terpisah agar retry tetap hidup setelah crash. */
+  groupAgentRunCleanupFile: string;
+}
+
 const GOOGLE_BASE_URL =
   "https://generativelanguage.googleapis.com/v1beta/openai";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -119,7 +134,7 @@ export function aiClientOptions(
   };
 }
 
-export function loadConfig(): AppConfig {
+export function loadConfig(): RuntimeAppConfig {
   loadEnvironmentFile();
 
   const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
@@ -149,6 +164,8 @@ export function loadConfig(): AppConfig {
   }
 
   const operationalLog = loadOperationalLogConfig();
+  const whatsapp = loadWhatsAppConfig();
+  const groupAgentRunFile = resolveGroupAgentRunFile(whatsapp.groupFile);
   return {
     telegramBotToken,
     dataFile: resolve(process.env.DATA_FILE ?? "./data/tasks.json"),
@@ -172,9 +189,80 @@ export function loadConfig(): AppConfig {
     operationalLog,
     controlPlane: loadControlPlaneConfig(operationalLog.environment),
     ai: loadAiConfig(),
-    whatsapp: loadWhatsAppConfig(),
+    whatsapp,
+    groupAgentRunEnabled: resolveGroupAgentRunEnabled(),
+    groupAgentRunFile,
+    groupAgentRunCleanupFile: resolveGroupAgentRunCleanupFile(
+      whatsapp.groupFile,
+      groupAgentRunFile,
+    ),
     termsUrl: process.env.TERMS_URL?.trim() || "https://harvy.id/terms",
   };
+}
+
+export function resolveGroupAgentRunEnabled(
+  configured = process.env.WHATSAPP_GROUP_AGENT_RUN_ENABLED,
+): boolean {
+  const normalized = configured?.trim().toLocaleLowerCase("en-US");
+  if (!normalized) return false;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw configurationError(
+    "CONFIG_WHATSAPP_GROUP_AGENT_RUN_ENABLED_INVALID",
+    "WHATSAPP_GROUP_AGENT_RUN_ENABLED harus true atau false.",
+  );
+}
+
+export function resolveGroupAgentRunFile(
+  groupFile: string,
+  configuredPath = process.env.WHATSAPP_GROUP_AGENT_RUN_FILE,
+): string {
+  const file = resolve(
+    configuredPath?.trim() || "./data/whatsapp-group-agent-runs.json",
+  );
+  const resolvedGroupFile = resolve(groupFile);
+  const comparableFile = process.platform === "win32"
+    ? file.toLocaleLowerCase("en-US")
+    : file;
+  const comparableGroupFile = process.platform === "win32"
+    ? resolvedGroupFile.toLocaleLowerCase("en-US")
+    : resolvedGroupFile;
+  if (comparableFile === comparableGroupFile) {
+    throw configurationError(
+      "CONFIG_WHATSAPP_GROUP_AGENT_RUN_FILE_SHARED",
+      "WHATSAPP_GROUP_AGENT_RUN_FILE wajib terpisah dari WHATSAPP_GROUP_FILE.",
+    );
+  }
+  return file;
+}
+
+export function resolveGroupAgentRunCleanupFile(
+  groupFile: string,
+  groupAgentRunFile: string,
+  configuredPath = process.env.WHATSAPP_GROUP_AGENT_RUN_CLEANUP_FILE,
+): string {
+  const file = resolve(
+    configuredPath?.trim() ||
+      "./data/whatsapp-group-agent-run-cleanup.json",
+  );
+  const comparable = comparablePath(file);
+  if (
+    comparable === comparablePath(groupFile) ||
+    comparable === comparablePath(groupAgentRunFile)
+  ) {
+    throw configurationError(
+      "CONFIG_WHATSAPP_GROUP_AGENT_RUN_CLEANUP_FILE_SHARED",
+      "WHATSAPP_GROUP_AGENT_RUN_CLEANUP_FILE wajib terpisah dari state grup dan GroupAgentRun.",
+    );
+  }
+  return file;
+}
+
+function comparablePath(value: string): string {
+  const file = resolve(value);
+  return process.platform === "win32"
+    ? file.toLocaleLowerCase("en-US")
+    : file;
 }
 
 function loadControlPlaneConfig(environment: string): ControlPlaneConfig {
@@ -339,6 +427,18 @@ export function loadAiConfig(): AiConfig {
   } satisfies Record<ModelTier, string>;
 
   const testingModel = process.env.AI_MODEL_TESTING?.trim() ?? "";
+  const testingToughestModel = process.env.AI_MODEL_TESTING_TOUGHEST?.trim() ?? "";
+  const productionToughestModel = process.env.AI_MODEL_TOUGHEST?.trim() ?? "";
+  const activeToughestModel = mode === "testing"
+    ? testingToughestModel
+    : productionToughestModel;
+  const toughestPrivacyDomainRaw = process.env.AI_TOUGHEST_PRIVACY_DOMAIN?.trim() ?? "";
+  // Slot mode lain tetap boleh diinventarisasi tanpa mengaktifkan route itu.
+  // Domain tanpa slot mana pun tetap ditolak sebagai konfigurasi yatim.
+  const activeToughestPrivacyDomain = !activeToughestModel &&
+      (testingToughestModel || productionToughestModel)
+    ? ""
+    : toughestPrivacyDomainRaw;
   const memoryEmbeddingModelRaw = process.env.MEMORY_EMBEDDING_MODEL?.trim() ?? "";
   const memoryEmbeddingModel = memoryEmbeddingModelRaw
     ? configuredModelId("MEMORY_EMBEDDING_MODEL", memoryEmbeddingModelRaw)
@@ -388,12 +488,20 @@ export function loadAiConfig(): AiConfig {
       testingModels,
       models,
       activeFallback: fallback,
+      testingToughestModel,
+      productionToughestModel,
     });
     const explicitProfiles = loadExplicitModelProfiles();
     const modelProfiles = configuredModelProfiles({
       configuredModels,
       explicitProfiles,
     });
+    const toughest = configuredToughest(
+      "google-ai-studio",
+      activeToughestModel,
+      activeToughestPrivacyDomain,
+      modelProfiles,
+    );
     return {
       mode,
       providerId: "google-ai-studio",
@@ -403,6 +511,7 @@ export function loadAiConfig(): AiConfig {
       testingModel,
       testingModels,
       models,
+      toughest,
       modelProfiles,
       configuredModels,
       memoryEmbeddingModel,
@@ -436,12 +545,20 @@ export function loadAiConfig(): AiConfig {
     testingModels,
     models,
     activeFallback: null,
+    testingToughestModel,
+    productionToughestModel,
   });
   const explicitProfiles = loadExplicitModelProfiles();
   const modelProfiles = configuredModelProfiles({
     configuredModels,
     explicitProfiles,
   });
+  const toughest = configuredToughest(
+    "openrouter",
+    activeToughestModel,
+    activeToughestPrivacyDomain,
+    modelProfiles,
+  );
   return {
     mode,
     providerId: "openrouter",
@@ -451,6 +568,7 @@ export function loadAiConfig(): AiConfig {
     testingModel,
     testingModels,
     models,
+    toughest,
     modelProfiles,
     configuredModels,
     memoryEmbeddingModel,
@@ -666,12 +784,51 @@ function configuredModelProfiles(input: {
   return new ModelProfileRegistry([...profiles.values()]);
 }
 
+function configuredToughest(
+  providerId: string,
+  modelId: string,
+  privacyDomain: string,
+  profiles: ModelProfileRegistry,
+): AiConfig["toughest"] {
+  if (!modelId && !privacyDomain) return null;
+  if (!modelId || !privacyDomain) {
+    throw configurationError(
+      "CONFIG_AI_TOUGHEST_INCOMPLETE",
+      "Model toughest dan privacy domain harus dikonfigurasi bersama.",
+    );
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$/u.test(privacyDomain)) {
+    throw configurationError(
+      "CONFIG_AI_TOUGHEST_PRIVACY_DOMAIN_INVALID",
+      "AI_TOUGHEST_PRIVACY_DOMAIN tidak sah.",
+    );
+  }
+  let profile: ModelProfile;
+  try {
+    profile = profiles.require(providerId, modelId);
+  } catch {
+    throw configurationError(
+      "CONFIG_AI_TOUGHEST_PROFILE_REQUIRED",
+      "Model toughest harus mempunyai profile exact yang terdaftar.",
+    );
+  }
+  if (profile.verification !== "explicit") {
+    throw configurationError(
+      "CONFIG_AI_TOUGHEST_PROFILE_REQUIRED",
+      "Model toughest hanya aktif dengan AI_MODEL_PROFILES explicit.",
+    );
+  }
+  return Object.freeze({ modelId: profile.id, privacyDomain });
+}
+
 function configuredModelCatalog(input: {
   mode: AiMode;
   testingModel: string;
   testingModels: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
   activeFallback: AiFallbackOptions | null;
+  testingToughestModel: string;
+  productionToughestModel: string;
 }): ConfiguredModel[] {
   const tiers = ["cheap", "efficient", "ambitious"] as const;
   const entries: {
@@ -719,6 +876,15 @@ function configuredModelCatalog(input: {
       });
     }
   }
+  if (input.testingToughestModel) {
+    add("google-ai-studio", input.testingToughestModel, {
+      environmentVariable: "AI_MODEL_TESTING_TOUGHEST",
+      mode: "testing",
+      origin: "primary",
+      tiers: ["toughest"],
+      active: input.mode === "testing",
+    });
+  }
   for (const tier of tiers) {
     const modelId = input.models[tier];
     if (modelId) {
@@ -730,6 +896,15 @@ function configuredModelCatalog(input: {
         active: input.mode === "production",
       });
     }
+  }
+  if (input.productionToughestModel) {
+    add("openrouter", input.productionToughestModel, {
+      environmentVariable: "AI_MODEL_TOUGHEST",
+      mode: "production",
+      origin: "primary",
+      tiers: ["toughest"],
+      active: input.mode === "production",
+    });
   }
 
   const fallbackModel = process.env.AI_TESTING_FALLBACK_MODEL?.trim() ?? "";

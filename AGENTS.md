@@ -18,6 +18,9 @@ ini, bukan menyalin aturannya.
   pada batas tersebut wajib membaca kontrak terkait dan gagal tertutup.
 - Dokumentasi dan LOG hanya diperbarui bila fakta, perilaku, kontrak, keputusan
   durable, bukti live, defect, atau prosedur proyek berubah secara material.
+- Koordinasikan penulisan secara adaptif: pilih kerja berurutan, paralel, atau
+  terisolasi berdasarkan scope, overlap, shared output, dan risiko. Peran agent
+  tidak otomatis menentukan hak edit; review/diskusi eksplisit tetap read-only.
 - Jangan push, merge, rebase, atau membuat PR kecuali diminta.
 <!-- SESSION_CONTEXT_END -->
 
@@ -129,9 +132,14 @@ Detail panjang berada di issue, PR, ADR, atau evidence, bukan LOG.
 ## Kepemilikan, keselamatan, dan “Jangan lakukan”
 
 - Pengguna menguasai tujuan, scope, dan penerimaan akhir.
-- Pertahankan perubahan pengguna yang sudah ada.
-- Review melaporkan temuan tanpa memperbaiki; diskusi tidak membuat perubahan
-  kecuali pengguna meminta implementasi.
+- Pilih kerja berurutan, paralel dalam working tree yang sama, atau terisolasi
+  berdasarkan scope, overlap file, shared output, dan risiko integrasi.
+  Worktree/clone bersifat opsional, bukan syarat bagi penulis kedua.
+- Hak edit Reviewer, QA, atau subagent mengikuti task yang diberikan, bukan
+  label perannya. Review atau diskusi eksplisit tetap read-only kecuali
+  pengguna juga meminta implementasi.
+- Periksa git state dan diff yang relevan sebelum menulis. Pertahankan perubahan
+  pengguna atau pekerjaan lain yang sudah ada dan koordinasikan setiap overlap.
 - Jangan menaruh `.env`, token, API key, credential, identifier pengguna nyata,
   atau kutipan data pengguna nyata di Git, docs, log, output bootstrap, atau
   laporan.

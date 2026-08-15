@@ -183,6 +183,93 @@ describe("ExecutionPolicy", () => {
       /recovery/u,
     );
   });
+
+  it("mengizinkan toughest hanya sebagai validator one-shot tanpa tool", () => {
+    const plan = policy.decide({
+      tier: "toughest",
+      role: "critic",
+      workClass: "agent",
+      profile: profile(),
+      maxOutputTokens: 2_048,
+      deadlineMs: 20_000,
+      maxSteps: 1,
+      allowTools: false,
+      allowDelegation: false,
+      allowEscalation: true,
+      escalationReason: "observation_contradiction",
+      routeReason: "validator_escalation",
+      promptMaterial: "structured-brief+candidate",
+      sourcePrivacyDomain: "workspace.private",
+      targetPrivacyDomain: "provider.approved",
+    });
+
+    assert.equal(plan.tier, "ambitious");
+    assert.equal(plan.routeTier, "toughest");
+    assert.equal(plan.requestedEffort, "high");
+    assert.equal(plan.maxSteps, 1);
+    assert.equal(plan.allowTools, false);
+    assert.equal(plan.allowDelegation, false);
+
+    for (const invalid of [
+      { role: "planner" as const },
+      { allowTools: true },
+      { maxSteps: 2 },
+      { escalationReason: "validator_failed" as const },
+      { routeReason: "truncation_recovery" as const },
+      { promptMaterial: "raw" as const },
+    ]) {
+      assert.throws(
+        () => policy.decide({
+          tier: "toughest",
+          role: "critic",
+          workClass: "agent",
+          profile: profile(),
+          maxOutputTokens: 2_048,
+          deadlineMs: 20_000,
+          maxSteps: 1,
+          allowTools: false,
+          allowDelegation: false,
+          allowEscalation: true,
+          escalationReason: "observation_contradiction",
+          routeReason: "validator_escalation",
+          promptMaterial: "structured-brief+candidate",
+          sourcePrivacyDomain: "workspace.private",
+          targetPrivacyDomain: "provider.approved",
+          ...invalid,
+        }),
+        /toughest/u,
+      );
+    }
+  });
+
+  it("mencatat kelas material prompt biasa tanpa mengubah authority route", () => {
+    const plan = policy.decide({
+      tier: "ambitious",
+      role: "synthesizer",
+      workClass: "agent",
+      profile: profile(),
+      maxOutputTokens: 1_024,
+      deadlineMs: 20_000,
+      promptMaterial: "raw+structured-brief+candidate",
+    });
+    assert.equal(plan.promptMaterial, "raw+structured-brief+candidate");
+    assert.equal(plan.routeTier, undefined);
+    assert.equal(plan.routeReason, undefined);
+    assert.equal(plan.allowEscalation, false);
+
+    assert.throws(
+      () => policy.decide({
+        tier: "ambitious",
+        role: "synthesizer",
+        workClass: "agent",
+        profile: profile(),
+        maxOutputTokens: 1_024,
+        deadlineMs: 20_000,
+        promptMaterial: "unknown-material" as never,
+      }),
+      /material prompt/u,
+    );
+  });
 });
 
 function profile(

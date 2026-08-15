@@ -17,14 +17,21 @@ import type {
   UsageLedgerFilter,
   UsageLedgerRepository,
 } from "../domain/usage-ledger.js";
+import { PROVIDER_PROMPT_MATERIALS } from "../domain/usage-ledger.js";
 import type {
+  EntitlementDeliveryOutcome,
+  EntitlementDeliveryScope,
   EntitlementEntry,
   EntitlementLedgerRepository,
+  EntitlementScopeSettlementResult,
 } from "../domain/entitlement.js";
 import type {
   AiUsageContext,
   TokenUsage,
+  UsageDeliveryScope,
 } from "../domain/telemetry.js";
+import { MODEL_ESCALATION_FAILURE_CODES } from "../domain/model-escalation.js";
+import type { ModelEscalationFailureCode } from "../domain/model-escalation.js";
 
 export interface UsageLedgerSummary {
   attempts: number;
@@ -78,6 +85,20 @@ export interface UsageLedgerBreakdown {
 export interface UsageLedgerOptions {
   retentionDays: number;
   entitlementRepository?: EntitlementLedgerRepository;
+}
+
+export interface OwnerUsageDeliveryScope extends UsageDeliveryScope {
+  ownerId: string;
+}
+
+/** Pending scopes membawa subjectRef dan dapat diberikan kembali tanpa lookup. */
+export type UsageDeliverySettlementScope =
+  | OwnerUsageDeliveryScope
+  | EntitlementDeliveryScope;
+
+export interface UsageDeliverySettlement {
+  outcome: EntitlementDeliveryOutcome;
+  effectId: string | null;
 }
 
 /** Ledger detail provider tanpa prompt, balasan, atau ID platform mentah. */
@@ -174,6 +195,7 @@ export class UsageLedgerService implements ProviderAttemptObserver {
       inputTokenEstimate: nonNegativeInteger(context.inputTokenEstimate),
       safetyCritical: context.safetyCritical,
       ...providerExecutionMetadata(context),
+      ...providerRouteMetadata(context),
       status: "started",
       httpStatus: null,
       responseOutcome: "not_checked",
@@ -424,7 +446,7 @@ export class UsageLedgerService implements ProviderAttemptObserver {
     const queued = this.ownerQueues.get(ownerId);
     if (queued) await queued;
     const threshold = since.getTime();
-    return [...this.pendingDeliveryCandidates.values()]
+    const legacyPending = [...this.pendingDeliveryCandidates.values()]
       .filter((candidate) =>
         candidate.ownerId === ownerId &&
         Date.parse(candidate.entry.at) >= threshold
@@ -434,6 +456,10 @@ export class UsageLedgerService implements ProviderAttemptObserver {
           sum + nonNegativeInteger(candidate.entry.debitedTokens),
         0,
       );
+    const repository = this.options.entitlementRepository;
+    if (!repository) return legacyPending;
+    const subjectRef = await this.controlPlane.subjectRef(ownerId);
+    return legacyPending + await repository.pendingDebitTokens(subjectRef, since);
   }
 
   async settleEntitlement(
@@ -443,7 +469,18 @@ export class UsageLedgerService implements ProviderAttemptObserver {
   ): Promise<void> {
     await this.exclusiveOwner(context.ownerId, async () => {
       const repository = this.options.entitlementRepository;
-      if (!repository || this.blockedOwners.has(context.ownerId)) return;
+      if (this.blockedOwners.has(context.ownerId)) return;
+      if (!repository) {
+        if (
+          context.deliveryScope !== undefined &&
+          entitlementDisposition(context, outcome.succeeded) === "charge"
+        ) {
+          throw new Error(
+            "Entitlement repository wajib tersedia untuk scoped delivery usage.",
+          );
+        }
+        return;
+      }
       const effective = await this.controlPlane.effectiveEnrollment(context.ownerId);
       const measuredTokens = Math.max(
         nonNegativeInteger(usage.totalTokens),
@@ -475,6 +512,16 @@ export class UsageLedgerService implements ProviderAttemptObserver {
         at: this.now().toISOString(),
       };
       if (disposition === "charge") {
+        if (context.deliveryScope !== undefined) {
+          await repository.stageCandidate({
+            scope: {
+              ...context.deliveryScope,
+              subjectRef: effective.enrollment.subjectRef,
+            },
+            entry,
+          });
+          return;
+        }
         this.pendingDeliveryCandidates.set(entry.idempotencyKey, {
           ownerId: context.ownerId,
           entry,
@@ -496,6 +543,51 @@ export class UsageLedgerService implements ProviderAttemptObserver {
       this.pendingEntitlements.set(entry.idempotencyKey, entry);
       await this.flushEntitlements();
     });
+  }
+
+  /**
+   * Menutup satu attempt/effect secara durable. Replay outcome + effect yang
+   * sama idempoten; setiap keputusan terminal yang berbeda ditolak repository.
+   */
+  async settleDeliveryScope(
+    scope: UsageDeliverySettlementScope,
+    settlement: UsageDeliverySettlement,
+  ): Promise<EntitlementScopeSettlementResult> {
+    const repository = this.options.entitlementRepository;
+    if (!repository) {
+      throw new Error(
+        "Entitlement repository wajib tersedia untuk settlement delivery.",
+      );
+    }
+    if ("subjectRef" in scope) {
+      return repository.settleScope(scope, {
+        ...settlement,
+        settledAt: this.now().toISOString(),
+      });
+    }
+    return this.exclusiveOwner(scope.ownerId, async () => {
+      if (this.blockedOwners.has(scope.ownerId)) {
+        throw new Error("Owner diblokir dari settlement entitlement.");
+      }
+      const subjectRef = await this.controlPlane.subjectRef(scope.ownerId);
+      return repository.settleScope(
+        {
+          kind: scope.kind,
+          runId: scope.runId,
+          attemptId: scope.attemptId,
+          subjectRef,
+        },
+        {
+          ...settlement,
+          settledAt: this.now().toISOString(),
+        },
+      );
+    });
+  }
+
+  /** Daftar scope durable yang perlu direkonsiliasi dengan receipt GroupAgentRun. */
+  async pendingDeliveryScopes(): Promise<EntitlementDeliveryScope[]> {
+    return this.options.entitlementRepository?.listPendingScopes() ?? [];
   }
 
   /** Debit baru dibuat setelah adapter menyatakan balasan berhasil dikirim. */
@@ -1031,6 +1123,95 @@ function providerExecutionMetadata(
     effectiveEffort: context.effectiveEffort,
     verbosity: context.verbosity,
   };
+}
+
+function providerRouteMetadata(
+  context: ProviderAttemptStart,
+): Partial<Pick<
+  ProviderAttemptRecord,
+  | "routeTier"
+  | "routeReason"
+  | "escalationReason"
+  | "promptMaterial"
+  | "sourcePrivacyDomain"
+  | "targetPrivacyDomain"
+>> {
+  const supplied = [
+    context.routeTier,
+    context.routeReason,
+    context.escalationReason,
+    context.promptMaterial,
+    context.sourcePrivacyDomain,
+    context.targetPrivacyDomain,
+  ].some((value) => value !== undefined);
+  if (!supplied) return {};
+
+  if (context.routeTier === "toughest") {
+    if (
+      context.routeReason !== "validator_escalation" ||
+      context.escalationReason === undefined ||
+      !isModelEscalationFailureCode(context.escalationReason) ||
+      context.promptMaterial !== "structured-brief+candidate" ||
+      !isPrivacyDomain(context.sourcePrivacyDomain) ||
+      !isPrivacyDomain(context.targetPrivacyDomain)
+    ) {
+      throw new Error("Metadata route toughest provider tidak sah atau tidak lengkap.");
+    }
+  } else {
+    if (
+      context.routeTier !== undefined ||
+      context.sourcePrivacyDomain !== undefined ||
+      context.targetPrivacyDomain !== undefined ||
+      (context.escalationReason !== undefined &&
+        !isProviderEscalationReason(context.escalationReason)) ||
+      (context.promptMaterial !== undefined &&
+        !(PROVIDER_PROMPT_MATERIALS as ReadonlySet<string>).has(
+          context.promptMaterial,
+        )) ||
+      (context.routeReason !== undefined && (
+        context.routeReason !== "truncation_recovery" ||
+        context.escalationReason !== "output_truncated" ||
+        (context.promptMaterial !== "raw" &&
+          context.promptMaterial !== "structured-brief")
+      ))
+    ) {
+      throw new Error("Metadata recovery/provider route tidak sah atau tidak lengkap.");
+    }
+  }
+
+  return {
+    ...(context.routeTier ? { routeTier: context.routeTier } : {}),
+    ...(context.routeReason ? { routeReason: context.routeReason } : {}),
+    ...(context.escalationReason
+      ? { escalationReason: context.escalationReason }
+      : {}),
+    ...(context.promptMaterial
+      ? { promptMaterial: context.promptMaterial }
+      : {}),
+    ...(context.sourcePrivacyDomain
+      ? { sourcePrivacyDomain: context.sourcePrivacyDomain }
+      : {}),
+    ...(context.targetPrivacyDomain
+      ? { targetPrivacyDomain: context.targetPrivacyDomain }
+      : {}),
+  };
+}
+
+function isPrivacyDomain(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$/u.test(value);
+}
+
+function isModelEscalationFailureCode(
+  value: unknown,
+): value is ModelEscalationFailureCode {
+  return typeof value === "string" &&
+    (MODEL_ESCALATION_FAILURE_CODES as ReadonlySet<string>).has(value);
+}
+
+function isProviderEscalationReason(value: unknown): boolean {
+  return value === "validator_failed" || value === "output_truncated" ||
+    isModelEscalationFailureCode(value);
 }
 
 function optionalTokenCount(value: number | null, maximum: number): number | null {

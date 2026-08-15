@@ -21,6 +21,13 @@ import {
 import { HistoryService } from "./core/history-service.js";
 import { AgentRunService } from "./core/agent-run-service.js";
 import { DataControlService } from "./core/data-control-service.js";
+import { GroupAgentRunService } from "./core/group-agent-run-service.js";
+import { GroupAgentRunCleanupService } from "./core/group-agent-run-cleanup-service.js";
+import { startGroupAgentRunCleanupWorker } from "./core/group-agent-run-cleanup-worker.js";
+import { startGroupAgentRunActivationRetry } from "./core/group-agent-run-activation-retry.js";
+import { GroupAgentRunLifecycleCoordinator } from "./core/group-agent-run-lifecycle-coordinator.js";
+import { startGroupAgentRunRetentionWorker } from "./core/group-agent-run-retention-worker.js";
+import { GroupAgentRunUsageReconciler } from "./core/group-agent-run-usage-reconciler.js";
 import { GroupMemoryService } from "./core/group-memory-service.js";
 import {
   GROUP_NOTICE_VERSION,
@@ -46,6 +53,8 @@ import { startCheckInWorker } from "./reminders/checkin-worker.js";
 import { startReminderWorker } from "./reminders/reminder-worker.js";
 import { FileHistoryRepository } from "./storage/file-history-repository.js";
 import { FileAgentRunRepository } from "./storage/file-agent-run-repository.js";
+import { FileGroupAgentRunRepository } from "./storage/file-group-agent-run-repository.js";
+import { FileGroupAgentRunCleanupIntentRepository } from "./storage/file-group-agent-run-cleanup-repository.js";
 import { FileGroupRepository } from "./storage/file-group-repository.js";
 import { FileProfileRepository } from "./storage/file-profile-repository.js";
 import { FileSessionRepository } from "./storage/file-session-repository.js";
@@ -275,6 +284,11 @@ const bot = createBot(
 
 let groupTurns: GroupTurnService | null = null;
 let groupBatcher: GroupMessageBatcher | null = null;
+let groupAgentRunCleanup: GroupAgentRunCleanupService | null = null;
+let groupAgentRunActivationRetry: ReturnType<
+  typeof startGroupAgentRunActivationRetry
+> | null = null;
+const groupAgentRunLifecycle = new GroupAgentRunLifecycleCoordinator();
 const groupMemories = config.whatsapp.enabled
   ? new GroupMemoryService(
       new FileGroupRepository(config.whatsapp.groupFile),
@@ -288,19 +302,48 @@ const whatsapp = config.whatsapp.enabled
           await runManagedGroupTurn(controlPlane, groupTurns, message);
         }
       },
-      onGroupActive: async (message) => {
-        const outcome = await groupTurns?.activateGroup(message);
-        if (outcome === "binding-conflict") {
+      onGroupActive: async (message, authorityFence) => {
+        const scopeKey = groupScopeKey(message.scope);
+        const cleanupCoordinator = groupAgentRunCleanup;
+        if (!cleanupCoordinator) {
+          throw new Error("Coordinator cleanup GroupAgentRun belum siap.");
+        }
+        groupBatcher?.invalidateScope(scopeKey, message.accountId);
+        groupTurns?.invalidateAuthority(scopeKey, message.accountId);
+        const activation = await cleanupCoordinator.activateWhenClean(
+          scopeKey,
+          message.accountId,
+          () => groupTurns!.activateGroup(message, authorityFence),
+        );
+        if (activation.status === "pending") {
+          groupAgentRunActivationRetry?.enqueue(scopeKey, message.accountId);
+          void groupAgentRunActivationRetry?.runNow();
+          logger.warn(
+            "whatsapp_group_reactivation_cleanup_pending",
+            "Reaktivasi grup ditahan sampai cleanup durable lama selesai.",
+            { accountId: message.accountId },
+          );
+          return;
+        }
+        const outcome = activation.value;
+        if (outcome === "notice-failed") {
+          groupAgentRunActivationRetry?.enqueue(scopeKey, message.accountId);
+          void groupAgentRunActivationRetry?.runNow();
+          logger.warn(
+            "whatsapp_group_notice_pending",
+            "Notice grup belum terkirim dan akan dicoba lagi sebelum pesan live diproses.",
+            { accountId: message.accountId },
+          );
+          return;
+        }
+        groupAgentRunActivationRetry?.cancel(scopeKey, message.accountId);
+        if (outcome === "inactive") {
+          return;
+        } else if (outcome === "binding-conflict") {
           logger.error(
             "whatsapp_group_binding_conflict",
             "Grup sudah terikat ke akun Harvy lain; akun ini tidak akan menjawab.",
             new Error("Binding akun WhatsApp bertentangan."),
-            { accountId: message.accountId },
-          );
-        } else if (outcome === "notice-failed") {
-          logger.warn(
-            "whatsapp_group_notice_pending",
-            "Notice grup belum terkirim dan akan dicoba lagi sebelum pesan live diproses.",
             { accountId: message.accountId },
           );
         } else {
@@ -312,11 +355,23 @@ const whatsapp = config.whatsapp.enabled
         }
       },
       onGroupDisabled: async (scopeKey, accountId) => {
-        // Batasi ingress akun ini sebelum satu pun read binding. Generation
-        // guard di core dipasang pada awal disableGroup; invalidasi batch di
-        // sini memastikan bubble yang belum flush tidak menyusul kemudian.
+        // Batasi ingress akun ini sebelum satu pun read binding. Efek cleanup
+        // masuk coordinator yang sama dengan aktivasi dan recovery worker.
         groupBatcher?.invalidateScope(scopeKey, accountId);
-        await groupTurns?.disableGroup(scopeKey, accountId);
+        groupTurns?.invalidateAuthority(scopeKey, accountId);
+        groupAgentRunActivationRetry?.cancel(scopeKey, accountId);
+        const cleanupCoordinator = groupAgentRunCleanup;
+        if (!cleanupCoordinator) {
+          throw new Error("Coordinator cleanup GroupAgentRun belum siap.");
+        }
+        const cleanup = await cleanupCoordinator.request(scopeKey, accountId);
+        if (cleanup === "pending") {
+          logger.warn(
+            "whatsapp_group_disable_cleanup_pending",
+            "Grup sudah diblokir dari ingress; intent cleanup durable akan dicoba lagi.",
+            { accountId },
+          );
+        }
         logger.info(
           "whatsapp_group_disabled",
           "Grup WhatsApp dinonaktifkan dan state runtime dibatalkan.",
@@ -401,6 +456,45 @@ const whatsapp = config.whatsapp.enabled
       logger: logger.child("whatsapp.account-manager"),
     })
   : null;
+const groupAgentRunRepository = whatsapp
+  ? new FileGroupAgentRunRepository(config.groupAgentRunFile)
+  : null;
+const groupAgentRuns = whatsapp && groupAgentRunRepository
+  ? new GroupAgentRunService(
+      groupAgentRunRepository,
+      whatsapp,
+      undefined,
+      undefined,
+      async ({ scopeKey, accountId }) => {
+        if (await groupAgentRunCleanup?.isPending(scopeKey, accountId)) {
+          return false;
+        }
+        const binding = await groupMemories?.binding(scopeKey);
+        if (
+          !binding || binding.accountId !== accountId ||
+          binding.disabledAt !== null
+        ) return false;
+        const enrollment = await controlPlane.enrollmentForOwner(scopeKey);
+        const mode = enrollment.groupRuntimeMode ?? "direct_only";
+        return mode !== "disabled" && mode !== "paused";
+      },
+    )
+  : null;
+const groupAgentRunUsageReconciler = groupAgentRunRepository
+  ? new GroupAgentRunUsageReconciler({
+      pendingDeliveryScopes: () => usageLedger.pendingDeliveryScopes(),
+      loadRun: (runId) => groupAgentRunRepository.load(runId),
+      settleDeliveryScope: (scope, settlement) =>
+        usageLedger.settleDeliveryScope(scope, settlement),
+    }, { maxScopes: 10_000 })
+  : null;
+let groupAgentRunCleanupWorker: ReturnType<
+  typeof startGroupAgentRunCleanupWorker
+> | null = null;
+let groupAgentRunRetention: ReturnType<
+  typeof startGroupAgentRunRetentionWorker
+> | null = null;
+let groupAgentRunActivationRetryTimer: NodeJS.Timeout | null = null;
 let groupPurgeTimer: NodeJS.Timeout | null = null;
 
 if (whatsapp && groupMemories) {
@@ -478,7 +572,19 @@ if (whatsapp && groupMemories) {
     undefined,
     logger.child("whatsapp.group-batcher"),
     undefined,
-    (message) => groupTurns?.observeAuthorized(message) ?? message,
+    async (message) => {
+      const observed = await (groupTurns?.observeAuthorized(message) ?? message);
+      if (
+        observed && await groupAgentRunCleanup?.isPending(
+          groupScopeKey(observed.scope),
+          observed.accountId,
+        )
+      ) {
+        groupTurns?.settleRejectedObservation(observed);
+        return null;
+      }
+      return observed;
+    },
     undefined,
     async (message) => {
       if (groupTurns) {
@@ -490,6 +596,75 @@ if (whatsapp && groupMemories) {
       }
     },
   );
+  if (groupAgentRuns) {
+    groupAgentRunCleanup = new GroupAgentRunCleanupService(
+      new FileGroupAgentRunCleanupIntentRepository(
+        config.groupAgentRunCleanupFile,
+      ),
+      {
+        disableGroup: (scopeKey, accountId) =>
+          groupTurns!.disableGroup(scopeKey, accountId),
+        forgetScope: (scopeKey, accountId) =>
+          groupAgentRuns.forgetScope(scopeKey, accountId),
+      },
+      logger.child("core.group-agent-run-cleanup"),
+      undefined,
+      groupAgentRunLifecycle,
+    );
+    groupAgentRunActivationRetry = startGroupAgentRunActivationRetry(
+      {
+        revalidateLiveMembership: async ({ scopeKey, accountId }) => {
+          const binding = await groupMemories.binding(scopeKey);
+          if (
+            !binding || binding.accountId !== accountId ||
+            binding.channel !== "whatsapp"
+          ) return { status: "unavailable" };
+          return whatsapp.captureLiveGroupMembership({
+            scope: { channel: "whatsapp", groupId: binding.groupId },
+            accountId,
+          });
+        },
+        reconcileAndActivate: async ({ scopeKey, accountId }, lease) => {
+          const cleanup = groupAgentRunCleanup!;
+          const activation = await cleanup.activateWhenClean(
+            scopeKey,
+            accountId,
+            async () => {
+              const binding = await groupMemories.binding(scopeKey);
+              if (
+                !lease.isCurrent() || !binding ||
+                binding.accountId !== accountId ||
+                binding.channel !== "whatsapp"
+              ) return "stale" as const;
+              return groupTurns!.activateGroup({
+                scope: { channel: "whatsapp", groupId: binding.groupId },
+                accountId,
+                groupName: binding.groupName,
+                at: new Date().toISOString(),
+              }, lease.isCurrent);
+            },
+          );
+          if (activation.status === "pending") return "pending";
+          if (activation.value === "active") return "activated";
+          if (activation.value === "inactive") {
+            throw new Error("Lease reaktivasi GroupAgentRun tidak lagi aktif.");
+          }
+          if (activation.value === "notice-failed") {
+            // `pending` hanya untuk cleanup durable yang memang masih dapat
+            // direkonsiliasi. Kegagalan notice harus menghabiskan failure
+            // budget worker agar error transport permanen tidak menjadi loop.
+            throw new Error("Reaktivasi GroupAgentRun gagal mengirim notice.");
+          }
+          throw new Error("Reaktivasi GroupAgentRun ditolak oleh binding.");
+        },
+      },
+      { logger: logger.child("worker.group-agent-run-activation-retry") },
+    );
+    groupAgentRunActivationRetryTimer = setInterval(() => {
+      void groupAgentRunActivationRetry?.runNow();
+    }, 60_000);
+    groupAgentRunActivationRetryTimer.unref();
+  }
 }
 
 const SHUTDOWN_GRACE_MS = 60_000;
@@ -577,6 +752,10 @@ const shutdown = (
               clearInterval(groupPurgeTimer);
               groupPurgeTimer = null;
             }
+            if (groupAgentRunActivationRetryTimer) {
+              clearInterval(groupAgentRunActivationRetryTimer);
+              groupAgentRunActivationRetryTimer = null;
+            }
             // Tutup ingress WA lebih dulu, lalu tunggu event yang sudah diterima
             // masuk ke batch dan selesai selagi socket masih hidup. Setelah
             // batch berhenti menambah kerja, batalkan/drain planner serta
@@ -604,6 +783,11 @@ const shutdown = (
         reminders,
         checkIns,
         agentRunRetention,
+        ...(groupAgentRunCleanupWorker ? [groupAgentRunCleanupWorker] : []),
+        ...(groupAgentRunRetention ? [groupAgentRunRetention] : []),
+        ...(groupAgentRunActivationRetry
+          ? [groupAgentRunActivationRetry]
+          : []),
       );
       await consoleServer?.close();
       logger.info(
@@ -661,10 +845,43 @@ try {
       }
     }
   }
-  if (whatsapp) {
+  if (whatsapp && groupAgentRuns && groupAgentRunCleanup) {
     logger.warn(
       "whatsapp_local_auth_enabled",
       "WhatsApp aktif dengan auth berkas lokal Baileys. Ini fondasi beta satu proses, bukan penyimpanan kredensial produksi.",
+    );
+    // Intent penghapusan didahulukan agar recovery delivery tidak menghidupkan
+    // pekerjaan dari binding yang sudah dinonaktifkan sebelum proses mati.
+    groupAgentRunCleanupWorker = startGroupAgentRunCleanupWorker(
+      groupAgentRunCleanup,
+      logger.child("worker.group-agent-run-cleanup"),
+    );
+    const cleanupRecovery = await groupAgentRunCleanupWorker.ready();
+    if (cleanupRecovery.pending > 0) {
+      throw new Error(
+        "Cleanup GroupAgentRun tertunda belum tuntas; WhatsApp tidak dimulai.",
+      );
+    }
+    // Readiness harus gagal tertutup: worker periodik menyerap error agar tetap
+    // hidup, jadi recovery/purge startup dijalankan langsung sebelum ingress.
+    await groupAgentRuns.recoverInterruptedRuns();
+    const usageRecovery = await groupAgentRunUsageReconciler?.reconcilePending();
+    if (usageRecovery && (usageRecovery.failed > 0 || usageRecovery.deferred > 0)) {
+      throw new Error(
+        "Reconciliation usage GroupAgentRun belum tuntas; WhatsApp tidak dimulai.",
+      );
+    }
+    if (usageRecovery) {
+      logger.info(
+        "group_agent_run_usage_recovery_completed",
+        "Kandidat usage GroupAgentRun direkonsiliasi sebelum purge dan ingress.",
+        { ...usageRecovery },
+      );
+    }
+    await groupAgentRuns.purgeExpired();
+    groupAgentRunRetention = startGroupAgentRunRetentionWorker(
+      groupAgentRuns,
+      logger.child("worker.group-agent-run-retention"),
     );
     await groupMemories?.purgeExpired();
     if (groupMemories) {
