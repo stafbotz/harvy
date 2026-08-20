@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
+// Full-suite Windows runs compile/import hundreds of modules concurrently.
+// Keep the lifecycle assertion strict, but do not classify cold-import
+// contention as a control-plane failure; the shutdown deadline remains 10 s.
+const CONTROL_READY_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000;
+
 describe("application startup shutdown barrier", () => {
   it("tidak menjadi ready dan melepas lock ketika dev-stop tiba saat startup", async () => {
     const root = await mkdtemp(join(tmpdir(), "harvy-app-startup-stop-"));
@@ -31,7 +36,7 @@ describe("application startup shutdown barrier", () => {
           () => rejectReady(new Error(
             `Control startup tidak menjadi ready.\n${output.join("")}`,
           )),
-          10_000,
+          CONTROL_READY_TIMEOUT_MS,
         );
         child.once("message", (message: unknown) => {
           if (

@@ -972,6 +972,53 @@ describe("armada akun Baileys", () => {
     await manager.stop();
   });
 
+  it("mengedit exact anchor GroupRun dengan message ID idempoten baru", async () => {
+    const sockets: FakeSocket[] = [];
+    const manager = new BaileysAccountManager(
+      { ...config(), accounts: [config().accounts[0]!] },
+      noOpEvents(),
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.ev.emit("connection.update", { connection: "open" });
+    socket.ev.emit("groups.upsert", [metadata()]);
+    await manager.drainEvents();
+    const target = {
+      scope: { channel: "whatsapp" as const, groupId: "120363000000@g.us" },
+      accountId: "utama",
+    };
+    const anchor = await manager.sendGroupRunMessage(
+      target,
+      "Anchor awal",
+      undefined,
+      "effect-edit-anchor",
+      memberRunAuthority(),
+      allowGroupRunRuntime,
+    );
+    const edited = await manager.editGroupRunMessage(
+      target,
+      "Anchor selesai",
+      anchor.messageId,
+      "effect-edit-terminal",
+      memberRunAuthority(),
+      allowGroupRunRuntime,
+    );
+    assert.match(edited.messageId, /^[A-F0-9]{32}$/u);
+    assert.notEqual(edited.messageId, anchor.messageId);
+    assert.deepEqual(socket.editedMessageIds, [anchor.messageId]);
+    assert.equal(socket.sentMessages[1]?.quotedMessageId, null);
+    assert.equal(socket.sentMessages[1]?.text, "Anchor selesai");
+    await manager.stop();
+  });
+
   it("gagal tertutup ketika delivery GroupRun tidak mempunyai ID pesan", async () => {
     const sockets: FakeSocket[] = [];
     const manager = new BaileysAccountManager(
@@ -2037,6 +2084,7 @@ class FakeSocket {
     requestedMessageId: string | null;
   }> = [];
   readonly quotedRemoteJids: Array<string | null> = [];
+  readonly editedMessageIds: Array<string | null> = [];
   groupMetadataImpl: () => Promise<GroupMetadata> =
     async () => metadata();
 
@@ -2065,10 +2113,11 @@ class FakeSocket {
     },
     sendMessage: async (
       jid: string,
-      content: { text?: string },
+      content: { text?: string; edit?: { id?: string } },
       options?: { quoted?: WAMessage; messageId?: string },
     ) => {
       this.quotedRemoteJids.push(options?.quoted?.key.remoteJid ?? null);
+      if (content.edit) this.editedMessageIds.push(content.edit.id ?? null);
       this.sentMessages.push({
         jid,
         text: content.text ?? "",

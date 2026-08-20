@@ -140,10 +140,16 @@ describe("CodingRunCoordinator", () => {
     const yieldedEngine = new FakeCoordinatorEngine();
     const yielded = await new CodingRunCoordinator(
       yieldedEngine,
-      new QueueDriver([{ kind: "yield", reasonCode: "needs_user_input" }]),
+      new QueueDriver([{
+        kind: "yield",
+        reasonCode: "needs_user_input",
+        question: "Bolehkan perubahan pada public API?",
+      }]),
     ).run(SCOPE, yieldedEngine.run.runId);
     assert.equal(yielded.outcome, "yielded");
     assert.equal(yielded.run.status, "waiting_input");
+    assert.equal(yielded.run.pendingQuestion?.prompt,
+      "Bolehkan perubahan pada public API?");
     assert.equal(yielded.run.counters.coordinatorDecisions, 1);
 
     const budgetEngine = new FakeCoordinatorEngine();
@@ -153,7 +159,7 @@ describe("CodingRunCoordinator", () => {
     }).run(SCOPE, budgetEngine.run.runId);
     assert.equal(budget.outcome, "action_budget");
     assert.equal(budget.actions, 3);
-    assert.equal(budget.run.status, "waiting_input");
+    assert.equal(budget.run.status, "running");
     // The code-owned mapping step consumes one invocation slot but no paid
     // worker decision; only the two diff decisions are durably charged.
     assert.equal(budget.run.counters.coordinatorDecisions, 2);
@@ -164,11 +170,19 @@ describe("CodingRunCoordinator", () => {
     for (let index = 0; index < 2; index += 1) {
       const result = await new CodingRunCoordinator(
         cumulative,
-        new QueueDriver([{ kind: "yield", reasonCode: `checkpoint_${index}` }]),
+        new QueueDriver([{
+          kind: "yield",
+          reasonCode: `checkpoint_${index}`,
+          question: "Berikan arahan lanjutan.",
+        }]),
       ).run(SCOPE, cumulative.run.runId);
       assert.equal(result.outcome, "yielded");
     }
-    const mustNotRun = new QueueDriver([{ kind: "yield", reasonCode: "overflow" }]);
+    const mustNotRun = new QueueDriver([{
+      kind: "yield",
+      reasonCode: "overflow",
+      question: "Ini tidak boleh ditanyakan.",
+    }]);
     const exhausted = await new CodingRunCoordinator(cumulative, mustNotRun).run(
       SCOPE,
       cumulative.run.runId,
@@ -176,6 +190,7 @@ describe("CodingRunCoordinator", () => {
     assert.equal(exhausted.outcome, "action_budget");
     assert.equal(exhausted.actions, 0);
     assert.equal(exhausted.run.counters.coordinatorDecisions, 2);
+    assert.match(exhausted.run.pendingQuestion?.prompt ?? "", /batas keputusan/iu);
     assert.equal(mustNotRun.inputs.length, 0);
   });
 
@@ -206,7 +221,7 @@ describe("CodingRunCoordinator", () => {
     denied.run.phase = "planning";
     denied.denyWriter = true;
     const deniedDriver = new QueueDriver([
-      { kind: "yield", reasonCode: "should_not_run" },
+      { kind: "yield", reasonCode: "should_not_run", question: "Tidak boleh tampil." },
     ]);
     await assert.rejects(
       new CodingRunCoordinator(denied, deniedDriver).run(SCOPE, denied.run.runId),
@@ -234,7 +249,7 @@ describe("CodingRunCoordinator", () => {
       receivedAt: NOW,
     }];
     const privateDriver = new QueueDriver([
-      { kind: "yield", reasonCode: "done_for_now" },
+      { kind: "yield", reasonCode: "done_for_now", question: "Ada constraint tambahan?" },
     ]);
     await new CodingRunCoordinator(privateMetadata, privateDriver).run(
       SCOPE,
@@ -261,7 +276,11 @@ describe("CodingRunCoordinator", () => {
       next: async () => {
         started();
         await releasePromise;
-        return { kind: "yield", reasonCode: "gate_released" };
+        return {
+          kind: "yield",
+          reasonCode: "gate_released",
+          question: "Lanjutkan setelah gate?",
+        };
       },
     };
     const first = new CodingRunCoordinator(concurrent, gateDriver).run(
@@ -271,7 +290,7 @@ describe("CodingRunCoordinator", () => {
     await startedPromise;
     await assert.rejects(
       new CodingRunCoordinator(concurrent, new QueueDriver([
-        { kind: "yield", reasonCode: "duplicate" },
+        { kind: "yield", reasonCode: "duplicate", question: "Duplikat?" },
       ])).run(SCOPE, concurrent.run.runId),
       /sudah aktif/iu,
     );
@@ -298,7 +317,7 @@ describe("CodingRunCoordinator", () => {
       preparedAt: NOW,
     };
     const recoveryDriver = new QueueDriver([
-      { kind: "yield", reasonCode: "must_not_run" },
+      { kind: "yield", reasonCode: "must_not_run", question: "Tidak boleh tampil." },
     ]);
     const recovered = await new CodingRunCoordinator(
       recovering,
@@ -347,7 +366,11 @@ describe("CodingRunCoordinator", () => {
       }],
       preparedAt: NOW,
     };
-    const driver = new QueueDriver([{ kind: "yield", reasonCode: "must_not_run" }]);
+    const driver = new QueueDriver([{
+      kind: "yield",
+      reasonCode: "must_not_run",
+      question: "Tidak boleh tampil.",
+    }]);
     const result = await new CodingRunCoordinator(pending, driver).run(
       SCOPE,
       pending.run.runId,
@@ -370,7 +393,11 @@ describe("CodingRunCoordinator", () => {
       validatorEvidence: [],
       preparedAt: NOW,
     };
-    const driver = new QueueDriver([{ kind: "yield", reasonCode: "must_not_run" }]);
+    const driver = new QueueDriver([{
+      kind: "yield",
+      reasonCode: "must_not_run",
+      question: "Tidak boleh tampil.",
+    }]);
 
     await assert.rejects(
       new CodingRunCoordinator(pending, driver).run(
@@ -383,6 +410,50 @@ describe("CodingRunCoordinator", () => {
     );
     assert.equal(pending.recoveries, 0);
     assert.equal(driver.inputs.length, 0);
+  });
+
+  it("memanggil recovery critic hanya setelah validator deterministik gagal berulang", async () => {
+    const engine = new FakeCoordinatorEngine();
+    engine.validatorStatus = "failed";
+    const driver = new QueueDriver([
+      { kind: "validator", validator: "test" },
+      { kind: "validator", validator: "test" },
+      {
+        kind: "yield",
+        reasonCode: "inspect_recovery_hint",
+        question: "Apakah recovery hint ini boleh diterapkan?",
+      },
+    ]);
+    let escalations = 0;
+    const result = await new CodingRunCoordinator(engine, driver, {
+      validatorEscalation: {
+        async recover(input) {
+          escalations += 1;
+          assert.equal(input.receipt.status, "failed");
+          assert.equal(input.diagnostic?.exitCode, 1);
+          return {
+            status: "accepted",
+            code: "recovery_hint_accepted",
+            recoveryHint: "Periksa assertion yang gagal lalu edit melalui writer biasa.",
+          };
+        },
+      },
+    }).run(SCOPE, engine.run.runId);
+
+    assert.equal(result.outcome, "yielded");
+    assert.equal(escalations, 1);
+    assert.equal(engine.validators.length, 2);
+    assert.equal(
+      driver.inputs[1]?.previousObservation?.payload &&
+        JSON.stringify(driver.inputs[1].previousObservation?.payload).includes(
+          "recovery_hint_accepted",
+        ),
+      false,
+    );
+    assert.match(
+      JSON.stringify(driver.inputs[2]?.previousObservation?.payload),
+      /recovery_hint_accepted/u,
+    );
   });
 });
 
@@ -419,6 +490,7 @@ class FakeCoordinatorEngine implements CodingCoordinatorEngine {
   sandboxExecutions = 0;
   mutateBeforePatch = false;
   recoveryRemainsPending = false;
+  validatorStatus: CodingValidatorReceipt["status"] = "passed";
 
   async get(_scope: WorkspaceAgentScope, runId: string): Promise<CodingRun | null> {
     return runId === this.run.runId ? structuredClone(this.run) : null;
@@ -501,13 +573,21 @@ class FakeCoordinatorEngine implements CodingCoordinatorEngine {
   async pauseCoordinator(
     _scope: WorkspaceAgentScope,
     _runId: string,
-    _reasonCode: string,
+    reasonCode: string,
+    question: string,
   ): Promise<CodingRun> {
     if (this.run.status === "waiting_input") return structuredClone(this.run);
     this.run = {
       ...this.run,
       status: "waiting_input",
       phase: "waiting_input",
+      pendingQuestion: {
+        questionId: `coding-question-${this.run.stateRevision}`,
+        reasonCode,
+        prompt: question,
+        instructionRevision: this.run.instructionRevision,
+        requestedAt: NOW,
+      },
       stateRevision: this.run.stateRevision + 1,
     };
     return structuredClone(this.run);
@@ -521,6 +601,7 @@ class FakeCoordinatorEngine implements CodingCoordinatorEngine {
       phase: this.run.repositoryMap
         ? this.run.plan ? "editing" : "planning"
         : "mapping",
+      pendingQuestion: null,
       stateRevision: this.run.stateRevision + 1,
     };
     return structuredClone(this.run);
@@ -663,16 +744,28 @@ class FakeCoordinatorEngine implements CodingCoordinatorEngine {
     kind: CodingValidatorKind,
     _signal?: AbortSignal,
     expectedStateRevision?: number,
-  ): Promise<{ run: CodingRun; receipt: CodingValidatorReceipt }> {
+  ): Promise<{
+    run: CodingRun;
+    receipt: CodingValidatorReceipt;
+    diagnostic?: {
+      status: SandboxExecResult["status"];
+      exitCode: number | null;
+      signal: string | null;
+      stdout: string;
+      stderr: string;
+      truncated: boolean;
+      artifacts: SandboxExecResult["artifacts"];
+    };
+  }> {
     assert.equal(expectedInstructionRevision, this.run.instructionRevision);
     if (expectedStateRevision !== undefined) {
       assert.equal(expectedStateRevision, this.run.stateRevision);
     }
     this.validators.push(kind);
     const receipt: CodingValidatorReceipt = {
-      receiptId: `validator-${kind}-1`,
+      receiptId: `validator-${kind}-${this.validators.length}`,
       kind,
-      status: "passed",
+      status: this.validatorStatus,
       instructionRevision: 0,
       workingSnapshot: changedDiff().workingSnapshot,
       commandDigest: "1".repeat(64),
@@ -680,17 +773,31 @@ class FakeCoordinatorEngine implements CodingCoordinatorEngine {
       sandboxOperationId: "sandbox-operation-1",
       sandboxRequestDigest: "3".repeat(64),
       sandboxExecutionId: "sandbox-execution-1",
-      exitCode: 0,
+      exitCode: this.validatorStatus === "passed" ? 0 : 1,
       evidenceArtifactIds: [],
       completedAt: NOW,
     };
     this.run = {
       ...this.run,
-      phase: "reviewing",
+      phase: this.validatorStatus === "passed" ? "reviewing" : "editing",
       validatorReceipts: [...this.run.validatorReceipts, receipt],
       stateRevision: this.run.stateRevision + 1,
     };
-    return { run: structuredClone(this.run), receipt };
+    return {
+      run: structuredClone(this.run),
+      receipt,
+      diagnostic: {
+        status: "exited",
+        exitCode: receipt.exitCode,
+        signal: null,
+        stdout: this.validatorStatus === "passed"
+          ? "validator passed"
+          : "AssertionError: expected two",
+        stderr: "",
+        truncated: false,
+        artifacts: [],
+      },
+    };
   }
 
   async runTaskReview(

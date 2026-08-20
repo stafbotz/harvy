@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
 import type { ProjectSnapshotBundleDescriptor } from "./project-transfer.js";
 
+export const LOCAL_GIT_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+export const LOCAL_GIT_UPLOAD_ROOT_CONTENT =
+  `tree ${LOCAL_GIT_EMPTY_TREE}\n` +
+  "author Harvy Bot <bot@harvy.local> 0 +0000\n" +
+  "committer Harvy Bot <bot@harvy.local> 0 +0000\n" +
+  "\nHarvy uploaded workspace root\n";
+export const LOCAL_GIT_UPLOAD_ROOT_COMMIT = createHash("sha1")
+  .update(`commit ${Buffer.byteLength(LOCAL_GIT_UPLOAD_ROOT_CONTENT)}\0`, "utf8")
+  .update(LOCAL_GIT_UPLOAD_ROOT_CONTENT, "utf8")
+  .digest("hex");
+
 export interface LocalGitBinding {
   projectId: string;
   snapshotId: string;
@@ -166,6 +177,13 @@ export function createLocalGitCommitRequest(
  */
 export interface LocalGitTransport extends LocalGitObjectBundleSource {
   health(signal?: AbortSignal): Promise<LocalGitHealth>;
+  /** Idempotently installs an immutable project snapshot in this trust domain. */
+  prepare(
+    binding: LocalGitBinding,
+    snapshot: ProjectSnapshotBundleDescriptor,
+    content: AsyncIterable<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<{ binding: LocalGitBinding }>;
   status(binding: LocalGitBinding, signal?: AbortSignal): Promise<LocalGitStatus>;
   diff(binding: LocalGitBinding, signal?: AbortSignal): Promise<{
     binding: LocalGitBinding;
@@ -200,6 +218,14 @@ export class UnavailableLocalGitTransport implements LocalGitTransport {
       checkedAt: this.now().toISOString(),
       reason: this.reason,
     };
+  }
+  async prepare(
+    _binding: LocalGitBinding,
+    _snapshot: ProjectSnapshotBundleDescriptor,
+    _content: AsyncIterable<Uint8Array>,
+    _signal?: AbortSignal,
+  ): Promise<{ binding: LocalGitBinding }> {
+    throw new Error(this.reason);
   }
   async status(_binding: LocalGitBinding, _signal?: AbortSignal): Promise<LocalGitStatus> {
     throw new Error(this.reason);

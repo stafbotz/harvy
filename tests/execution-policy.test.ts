@@ -70,6 +70,19 @@ describe("ExecutionPolicy", () => {
     });
     assert.equal(recovery.requestedEffort, "high");
     assert.equal(recovery.verbosity, "low");
+
+    const conciseSynthesis = policy.decide({
+      tier: "ambitious",
+      role: "synthesizer",
+      workClass: "agent",
+      profile: profile(),
+      maxOutputTokens: 2_048,
+      deadlineMs: 20_000,
+      visibleVerbosity: "low",
+    });
+    assert.equal(conciseSynthesis.requestedEffort, "high");
+    assert.equal(conciseSynthesis.effectiveEffort, "high");
+    assert.equal(conciseSynthesis.verbosity, "low");
   });
 
   it("tidak membaca prompt atau saran model sebagai authority", () => {

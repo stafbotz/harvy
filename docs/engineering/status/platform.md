@@ -1,8 +1,7 @@
 # Status — Platform dan Operasi Runtime
 
-Verified: 15 Agustus 2026 pada working tree composition GroupAgentRun dan
-startup cancellation; `npm test` PASS, 1.348 test dalam 169 suite, 0 gagal;
-smoke provider baru belum dijalankan.
+Refreshed: 20 Agustus 2026 pada profile provider exact dan live smoke.
+Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 
 ## Keadaan saat ini
 
@@ -25,7 +24,10 @@ smoke provider baru belum dijalankan.
   provider dipakai bila ada.
 - Registry capability mengikat exact provider+model. Default compatibility
   mempertahankan wire lama tanpa reasoning; deklarasi `AI_MODEL_PROFILES`
-  schema-valid diperlukan untuk effort/reasoning continuation baru. Adapter
+  schema-valid atau record code-owned live-proven diperlukan untuk effort/
+  reasoning continuation baru. Profile Google AI Studio Gemini 3.5 Flash-Lite
+  hanya aktif pada endpoint resmi exact; custom gateway dan fallback tidak
+  mewarisi bukti itu. Adapter
   mengirim allowlist message dan field Google/OpenRouter/DeepSeek yang sesuai
   profile, termasuk omission temperature/tool choice yang tidak didukung.
 - Respons tanpa terminal finish reason, content filter, reason asing, dan
@@ -35,6 +37,14 @@ smoke provider baru belum dijalankan.
   export, full deletion, flush, dan shutdown drain. Service menyediakan
   nearest-rank p50/p95 serta rate boundary/triage/review/fast-path per owner;
   retry fisik tetap dicatat terpisah di provider-attempt ledger.
+- Telemetry turn sekarang mencatat `timeToFirstResponseMs` dari delivery pertama
+  dan `timeToFinalResponseMs` dari delivery terminal, lalu mengagregasikan p50/
+  p95 terpisah. Nilai ini content-free dan membedakan feedback awal dari durasi
+  sampai hasil akhir; total model latency tidak dipakai sebagai proxy TTFR.
+- Coding production composition dipasang di `app.ts` secara opt-in dan wajib
+  melewati recovery+conformance sebelum command kanal didaftarkan. Trust-domain
+  sandbox, local-git, dan GitHub broker memakai service HMAC dari secret file;
+  loopback insecure memerlukan flag development explicit.
 
 ## Batas dan defect aktif
 
@@ -48,12 +58,14 @@ smoke provider baru belum dijalankan.
 - Kebijakan privacy/retention provider cadangan belum diverifikasi.
 - Token selection masih character/count-based; belum ada tokenizer atau
   adaptive calibration per route/model.
-- Turn summary belum menjadi dashboard agregat lintas owner dan belum mengukur
-  time-to-first-response; wiring terminal saat ini baru free-text Telegram.
+- Turn summary belum menjadi dashboard agregat lintas owner. TTFR/final p50/p95
+  tersedia pada service/repository, tetapi alert/SLO exporter dan pengukuran
+  live lintas Telegram/WhatsApp belum dikalibrasi.
 
 ## Bukti dan pointer
 
 - Kode: `src/ai/client.ts`, `src/ai/key-pool.ts`, `src/core/local-runtime-lock.ts`,
+  `src/core/telemetry-service.ts`, `src/core/coding-runtime-composition.ts`,
   `src/observability/`, `scripts/dev-runner.ts`.
 - Tes: `tests/client.test.ts`, `tests/key-pool.test.ts`,
   `tests/local-runtime-lock.test.ts`, `tests/operational-logger.test.ts`,

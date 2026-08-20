@@ -214,7 +214,10 @@ function validateRun(value: unknown): asserts value is CodingRun {
     "validatorReceipts", "diff", "limits", "counters", "pendingCommit",
     "commitReceipts", "result", "lastError", "createdAt", "startedAt",
     "updatedAt", "completedAt", "expiresAt",
-  ], ["taskReviewReceipts", "repositoryMap", "plan", "admission"], "run");
+  ], [
+    "taskReviewReceipts", "repositoryMap", "plan", "admission",
+    "pendingQuestion",
+  ], "run");
   const run = value as CodingRun;
   if (run.version !== 1 && run.version !== 2) throw new Error("Versi CodingRun tidak sah.");
   if (!validStatusPhase(run.status, run.phase)) {
@@ -520,6 +523,27 @@ function validateRun(value: unknown): asserts value is CodingRun {
   if (run.status === "completed" && (!run.result || !run.diff)) {
     throw new Error("CodingRun completed tanpa hasil atau diff.");
   }
+  if (run.pendingQuestion) {
+    assertObjectKeys(run.pendingQuestion, [
+      "questionId", "reasonCode", "prompt", "instructionRevision",
+      "requestedAt",
+    ], [], "pending question");
+    safeKey(run.pendingQuestion.questionId, "pending questionId");
+    if (
+      run.status !== "waiting_input" ||
+      !/^[a-z][a-z0-9_.-]{0,108}$/u.test(run.pendingQuestion.reasonCode) ||
+      typeof run.pendingQuestion.prompt !== "string" ||
+      !run.pendingQuestion.prompt.trim() ||
+      run.pendingQuestion.prompt.length > 2_000 ||
+      /\p{Cc}/u.test(run.pendingQuestion.prompt) ||
+      containsSecretLikeValue(run.pendingQuestion.prompt) ||
+      run.pendingQuestion.instructionRevision !== run.instructionRevision
+    ) throw new Error("Pertanyaan pending CodingRun tidak sah.");
+    validIso(run.pendingQuestion.requestedAt, "pending question requestedAt");
+  }
+  if (run.status !== "waiting_input" && (run.pendingQuestion ?? null) !== null) {
+    throw new Error("Pertanyaan pending CodingRun hanya sah saat waiting_input.");
+  }
   if (run.pendingCommit && run.status !== "validating") {
     throw new Error("Pending commit CodingRun hanya sah saat validating.");
   }
@@ -819,6 +843,7 @@ function validateInitialState(run: CodingRun): void {
     run.repositoryMap !== null ||
     run.plan !== null ||
     run.diff !== null ||
+    (run.pendingQuestion ?? null) !== null ||
     run.pendingCommit !== null ||
     run.commitReceipts.length !== 0 ||
     run.result !== null ||
@@ -848,6 +873,15 @@ function validateStateTransition(current: CodingRun, next: CodingRun): void {
   if (!allowed[current.status].includes(next.status)) {
     throw new Error("Transisi status CodingRun tidak sah.");
   }
+  const currentQuestion = current.pendingQuestion ?? null;
+  const nextQuestion = next.pendingQuestion ?? null;
+  if (
+    (next.status === "waiting_input" && nextQuestion === null &&
+      current.status !== "waiting_input") ||
+    (next.status !== "waiting_input" && nextQuestion !== null) ||
+    (current.status === "waiting_input" && next.status === "waiting_input" &&
+      JSON.stringify(currentQuestion) !== JSON.stringify(nextQuestion))
+  ) throw new Error("Transisi pertanyaan pending CodingRun tidak sah.");
   if (next.status === "completed") {
     const pending = current.pendingCommit;
     const appended = next.commitReceipts.slice(current.commitReceipts.length);

@@ -118,6 +118,28 @@ menunggu; perlakukan sebagai data pribadi dan jangan menyalinnya ke log.
 Berkas `.env` dibaca lewat
 `process.loadEnvFile()`, tanpa dependency tambahan.
 
+Coding runtime production adalah opt-in lewat
+`HARVY_CODING_RUNTIME_ENABLED=true`. Ia memerlukan state root terpisah,
+principal secret, receipt conformance sandbox beserta SHA-256 exact, privacy
+domain AI, dan tiga trust-domain endpoint/HMAC secret file yang tercantum di
+`.env.example`; GitHub mempunyai flag opt-in kedua. Secret file tidak boleh
+berada di project, data Harvy, prompt, atau sandbox. Loopback HTTP hanya boleh
+dipakai dengan `HARVY_CODING_ALLOW_INSECURE_LOOPBACK=true` pada development.
+
+Build ketiga service lalu jalankan pada host/trust domain masing-masing:
+
+```bash
+npm run start:sandbox
+npm run start:local-git
+npm run start:github-broker
+```
+
+Kontrak host, environment, systemd, image/seccomp, dan live acceptance berada
+di `deploy/sandbox/`, `deploy/local-git/`, `deploy/github-broker/`, dan
+`deploy/whatsapp/`. Jangan mengaktifkan control-plane hanya karena health HTTP
+positif; scheduler juga memerlukan receipt hostile-code exact dari deployment
+yang sama.
+
 ## Model routing
 
 ID model tidak boleh ditulis di kode. Nama dan harga model berubah cepat, jadi
@@ -162,8 +184,11 @@ routing sudah terbukti setelah menguji dalam keadaan itu.
 diverifikasi operator bagi pasangan provider+ID model exact. Tanpa variabel
 ini, setiap slot memakai profile `compatibility`: routing/tool behavior lama
 tetap ada, tetapi Harvy tidak mengirim reasoning control atau replay reasoning
-assistant-level baru. Base URL dan substring nama model tidak pernah dipakai
-untuk menebak capability.
+assistant-level baru. Satu pengecualian code-owned adalah
+`google-ai-studio/gemini-3.5-flash-lite` pada endpoint resmi Google, yang
+dipromosikan setelah live smoke exact 20 Agustus 2026. Custom gateway, model
+lain, dan pasangan yang juga menjadi fallback aktif tetap compatibility. Base
+URL atau substring nama model tidak pernah dipakai untuk menebak capability.
 
 Setiap entry wajib mempunyai schema penuh berikut; ID harus sudah berada di
 salah satu slot model environment (aktif maupun tidak aktif):

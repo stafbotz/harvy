@@ -1,7 +1,8 @@
 # Status — Agent Runtime
 
-Refreshed: 15 Agustus 2026 pada working tree sampai fondasi Phase M. Bukti
-gerbang terbaru dicatat di `docs/LOG.md`; provider/model live belum dijalankan.
+Refreshed: 20 Agustus 2026 pada targeted CodingRun input, provider exact, dan
+wiring validator-driven Phase M. Bukti gerbang terbaru dicatat di
+`docs/LOG.md`.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
 
@@ -50,6 +51,10 @@ agent, scope/authority, atau executor internal.
   owner-scoped, CAS, horizon absolut sepuluh menit, dan hash capability/executor.
   Writer checkpoint memakai v2 dengan snapshot RunBudget; jeda manusia tidak
   memakai waktu aktif.
+- CodingRun memakai kontrak serupa tetapi state terpisah: pertanyaan manusia
+  disimpan credential-free bersama reason code dan instruction revision, lalu
+  hanya reply Run Anchor tepercaya yang dikompilasi menjadi ChangeSet. Batas
+  action internal tetap `running` dan tidak pernah mengonsumsi pesan chat biasa.
 - Permintaan `orchestrate` eksplisit privat Telegram sekarang memakai active
   AgentRun v2 di work lane durable: snapshot konteks transaksi, satu foreground,
   RunMailbox/ChangeSet, instruction revision, work unit/event, Run Anchor,
@@ -66,9 +71,11 @@ agent, scope/authority, atau executor internal.
   atau checkpoint tidak muat, adapter memberi backpressure sebelum revision
   naik. Ledger menyisakan kapasitas pembatalan sehingga update nonterminal
   tidak dikeluarkan diam-diam.
-- `AgentScope` dan Workspace authority v1 ada di core dengan membership, role,
-  permission tertutup, `aclEpoch`, dan stale-authority rejection. Workspace
-  belum terhubung ke composition root atau surface pengguna.
+- `AgentScope` dan Workspace authority v1 memakai membership, role, permission
+  tertutup, `aclEpoch`, dan stale-authority rejection. Private Telegram serta
+  WhatsApp group-coding sekarang membentuk principal hanya dari ingress
+  tepercaya dan terhubung ke composition runtime opt-in; isi model/chat tidak
+  dapat membentuk scope atau ACL.
 - Phase M menambah slot escalation-only `toughest` yang default-off dan hanya
   sah dengan model+privacy-domain+profile exact explicit. Pure policy hanya
   menerima closed validator failure, role critic/recovery/synthesizer, satu
@@ -83,6 +90,14 @@ agent, scope/authority, atau executor internal.
 - Harness routing sintetis A–E tersedia lewat `npm run eval:routing`. Rewrite
   only adalah variant eksperimen, raw request tetap hadir pada C–E, semua
   materi turunan berlabel untrusted, dan E hanya untuk case sulit terpilih.
+- Coding validator memasang `toughest` optional ke repeated deterministic
+  validator failure pada revision yang sama. Call ini primary-only, satu-shot,
+  read-only critic tanpa tool/delegasi; hint tidak menjadi patch atau approval
+  sampai integration writer menerapkan dan validator code-owned lulus ulang.
+- Execution policy memakai `verbosity` terpisah dari requested/effective
+  reasoning effort. Coding critic dapat high-reasoning dengan output ceiling
+  dan visible answer ringkas; tier maupun effort tidak mengubah panjang jawaban
+  pengguna secara implisit.
 
 ## Batas dan defect aktif
 
@@ -91,13 +106,14 @@ agent, scope/authority, atau executor internal.
   smoke primary dan Telegram post-fix belum dilakukan.
 - Native fallback sengaja nonaktif sampai wire contract provider cadangan
   dibuktikan kompatibel.
-- Profile compatibility tidak mengaktifkan reasoning. `AI_MODEL_PROFILES`
-  exact belum di-smoke pada provider nyata; capability explicit fallback
-  sengaja ditolak.
-- Visible verbosity control dan finalizer terminal terpisah belum ada. Core
-  validator-driven `toughest` sudah ada, tetapi belum dirangkai pada validator
-  runtime, tidak mempunyai target aktif secara default, dan belum diuji pada
-  provider nyata. Context-pressure baru memakai estimator
+- Profile compatibility tidak mengaktifkan reasoning. Profile code-owned
+  `google-ai-studio/gemini-3.5-flash-lite` pada endpoint resmi lulus live smoke
+  effort/tool/thought-signature replay/finish/pressure/timeout/retry; capability
+  explicit fallback tetap sengaja ditolak.
+- Visible verbosity sudah menjadi field policy terpisah, tetapi belum ada
+  dashboard/UX tuning lintas seluruh surface. Validator-driven `toughest`
+  sudah dirangkai untuk coding, tetap tidak mempunyai target aktif secara
+  default, dan belum diuji live sebagai critic. Context-pressure baru memakai estimator
   karakter dan hanya aktif untuk context window profile exact; threshold belum
   dikalibrasi pada tokenizer/usage provider nyata.
 - Limit RunBudget dan `compactAtContextRatio` belum bisa dituning lewat Console
@@ -113,6 +129,10 @@ agent, scope/authority, atau executor internal.
   dan tool read. Idempotency ingress hanya terikat record lokal yang diretensi,
   bukan exactly-once lintas instance; ledger berbatas menolak update baru
   secara eksplisit ketika penuh. Query `tools` tetap sinkron.
+- CodingRun mempunyai lane/composition terpisah dan tidak memakai active
+  AgentRun privat ini sebagai store. Ia juga masih memakai file control-plane
+  lokal, sehingga wiring tersebut bukan RunStore distributed atau izin
+  horizontal scale.
 - Agent root menerima konteks privat terpilih sebagai data tak tepercaya;
   worker tidak menerimanya. Memori tidak boleh menjadi authority permission,
   actor, credential, live schedule, atau outcome tool.
@@ -138,5 +158,9 @@ agent, scope/authority, atau executor internal.
   `scripts/routing-eval-corpus.ts`, `scripts/evaluasi-routing.ts`,
   `tests/model-escalation-policy.test.ts`, dan
   `tests/routing-evaluation-corpus.test.ts`.
+- Wiring coding: `src/ai/coding-worker-driver.ts`,
+  `src/ai/coding-validator-escalation.ts`,
+  `src/coding/production-coding-validator-policy.ts`, dan
+  `src/core/coding-runtime-composition.ts`.
 - Keputusan: ADR-012, ADR-016, ADR-017, ADR-018, ADR-021, ADR-025, ADR-026,
   ADR-027, ADR-028, ADR-029, ADR-040.

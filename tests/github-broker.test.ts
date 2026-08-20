@@ -8,7 +8,13 @@ import { CodingRunEngine } from "../src/core/coding-run-engine.js";
 import { effectDigest, GitHubBroker } from "../src/core/github-broker.js";
 import { startGitHubReconciliationWorker } from "../src/core/github-reconciliation-worker.js";
 import { LocalGitService } from "../src/core/local-git-service.js";
+import type { GitHubInstallationService } from "../src/core/github-installation-service.js";
+import { PrivateGitHubApplication } from "../src/core/private-github-application.js";
+import { PrivateGitHubConfirmationController } from
+  "../src/core/private-github-confirmation-controller.js";
 import { ProjectWorkspaceService } from "../src/core/project-workspace-service.js";
+import { TrustedWorkspaceActorRegistry } from
+  "../src/core/trusted-workspace-actor-registry.js";
 import { callTransportWithDeadline } from "../src/core/transport-deadline.js";
 import {
   WorkspaceAuthorityService,
@@ -46,10 +52,20 @@ import type {
   SandboxRunner,
   SandboxSnapshotResult,
 } from "../src/domain/sandbox.js";
+
+function sandboxIdentity() {
+  return {
+    serviceIdentityDigest: "1".repeat(64),
+    runtimeImageDigest: "2".repeat(64),
+    policyDigest: "3".repeat(64),
+  };
+}
 import { FileCodingRunRepository } from "../src/storage/file-coding-run-repository.js";
 import { FileCodingEvidenceStore } from "../src/storage/file-coding-evidence-store.js";
 import { FileGitHubConnectionRepository } from "../src/storage/file-github-connection-repository.js";
 import { FileProjectWorkspaceRepository } from "../src/storage/file-project-workspace-repository.js";
+import { FilePrivateCodingSessionStore } from
+  "../src/storage/file-private-coding-session-store.js";
 import { FileWorkspaceRepository } from "../src/storage/file-workspace-repository.js";
 import type { WorkspaceAgentScope } from "../src/harness/scope.js";
 import { buildZip } from "./zip-test-fixture.js";
@@ -184,6 +200,154 @@ describe("GitHub Broker Phase J", () => {
     const metadata = await readFile(fixture.connectionFile, "utf8");
     assert.doesNotMatch(metadata, /private.?key|access.?token|credential/iu);
     assert.match(metadata, /github\.push_branch/u);
+  });
+
+  it("mengorkestrasi confirmation privat branch → push exact → draft PR", async () => {
+    const fixture = await createFixture();
+    const actors = new TrustedWorkspaceActorRegistry();
+    const issueActor = (interactionId: string) => actors.issue({
+      principal: fixture.owner,
+      interactionId,
+      audience: "workspace-private",
+    });
+    const sessions = new FilePrivateCodingSessionStore(
+      join(fixture.root, "private-github-sessions.json"),
+    );
+    await sessions.save({
+      version: 1,
+      principalKey: fixture.owner.principalKey,
+      channel: fixture.owner.channel,
+      workspaceKey: fixture.scope.workspaceKey,
+      projectId: fixture.project.id,
+      projectRevision: fixture.project.revision,
+      foregroundRunId: null,
+      lastRunId: fixture.runId,
+      updatedAt: NOW.toISOString(),
+    }, null);
+    const confirmations = new PrivateGitHubConfirmationController(() => NOW);
+    const broker = new GitHubBroker(
+      fixture.connectionRepository,
+      fixture.transport,
+      confirmations,
+      fixture.authority,
+      fixture.projects,
+      fixture.codingRepository,
+      fixture.localGitTransport,
+      () => NOW,
+      fixture.ids,
+    );
+    const application = new PrivateGitHubApplication(
+      actors,
+      fixture.authority,
+      fixture.engine,
+      null as unknown as GitHubInstallationService,
+      broker,
+      confirmations,
+      fixture.connectionRepository,
+      sessions,
+      () => NOW,
+    );
+
+    const branchOffer = await application.preparePublishOffer(
+      issueActor("telegram:publish:branch"),
+    );
+    assert.equal(branchOffer?.capability, "github.branch.create");
+    assert.equal(branchOffer?.audience, "workspace-private");
+    const branch = await application.confirmPublishOffer(
+      issueActor("telegram:confirm:branch"),
+      branchOffer!.offerId,
+    );
+    assert.equal(branch.receipt.status, "committed");
+    assert.equal(branch.nextOffer?.capability, "github.push_branch");
+
+    const push = await application.confirmPublishOffer(
+      issueActor("telegram:confirm:push"),
+      branch.nextOffer!.offerId,
+    );
+    assert.equal(push.receipt.status, "committed");
+    assert.equal(push.receipt.commit, fixture.project.git?.headCommit);
+    assert.equal(push.nextOffer?.capability, "github.pr.create");
+
+    const pullRequest = await application.confirmPublishOffer(
+      issueActor("telegram:confirm:pr"),
+      push.nextOffer!.offerId,
+    );
+    assert.equal(pullRequest.receipt.status, "committed");
+    assert.match(pullRequest.receipt.url ?? "", /^https:\/\/github\.com\//u);
+    assert.equal(pullRequest.nextOffer, null);
+    assert.equal(fixture.transport.branches.length, 1);
+    assert.equal(fixture.transport.pushes.length, 1);
+    assert.equal(fixture.transport.pullRequests.length, 1);
+    const state = await fixture.connectionRepository.loadByProject(fixture.project.id);
+    assert.deepEqual(
+      state?.receipts.map((receipt) => receipt.capability),
+      ["github.branch.create", "github.push_branch", "github.pr.create"],
+    );
+    assert.equal(new Set(state?.approvals.map((approval) =>
+      approval.confirmationId)).size, 3);
+  });
+
+  it("menolak offer publish privat setelah authority epoch berubah", async () => {
+    const fixture = await createFixture();
+    const actors = new TrustedWorkspaceActorRegistry();
+    let interaction = 0;
+    const actor = () => actors.issue({
+      principal: fixture.owner,
+      interactionId: `telegram:publish:${interaction += 1}`,
+      audience: "workspace-private",
+    });
+    const sessions = new FilePrivateCodingSessionStore(
+      join(fixture.root, "private-github-stale-sessions.json"),
+    );
+    await sessions.save({
+      version: 1,
+      principalKey: fixture.owner.principalKey,
+      channel: fixture.owner.channel,
+      workspaceKey: fixture.scope.workspaceKey,
+      projectId: fixture.project.id,
+      projectRevision: fixture.project.revision,
+      foregroundRunId: null,
+      lastRunId: fixture.runId,
+      updatedAt: NOW.toISOString(),
+    }, null);
+    const confirmations = new PrivateGitHubConfirmationController(() => NOW);
+    const broker = new GitHubBroker(
+      fixture.connectionRepository,
+      fixture.transport,
+      confirmations,
+      fixture.authority,
+      fixture.projects,
+      fixture.codingRepository,
+      fixture.localGitTransport,
+      () => NOW,
+      fixture.ids,
+    );
+    const application = new PrivateGitHubApplication(
+      actors,
+      fixture.authority,
+      fixture.engine,
+      null as unknown as GitHubInstallationService,
+      broker,
+      confirmations,
+      fixture.connectionRepository,
+      sessions,
+      () => NOW,
+    );
+    const offer = await application.preparePublishOffer(actor());
+    const member = workspacePrincipal(SECRET, "telegram", "epoch-bump-member");
+    assert.equal((await fixture.authority.addMember(
+      fixture.scope,
+      member,
+      "viewer",
+    )).status, "updated");
+
+    await assert.rejects(
+      application.confirmPublishOffer(actor(), offer!.offerId),
+      /authority.*berubah/iu,
+    );
+    assert.equal(fixture.transport.branches.length, 0);
+    assert.equal(fixture.transport.pushes.length, 0);
+    assert.equal(fixture.transport.pullRequests.length, 0);
   });
 
   it("mendorong CodingRun kedua secara non-force dari head branch Harvy sebelumnya", async () => {
@@ -1064,14 +1228,15 @@ async function createFixture(
     },
   );
   const repositoryArchive = buildZip([
-    { name: "src/", content: "" },
-    { name: "src/index.ts", content: "export const value = 1;\n" },
+    { name: "student-project-deadbeef/", content: "" },
+    { name: "student-project-deadbeef/src/", content: "" },
+    { name: "student-project-deadbeef/src/index.ts", content: "export const value = 1;\n" },
     ...(options.workflowChange
       ? [
-          { name: ".github/", content: "" },
-          { name: ".github/workflows/", content: "" },
+          { name: "student-project-deadbeef/.github/", content: "" },
+          { name: "student-project-deadbeef/.github/workflows/", content: "" },
           {
-            name: ".github/workflows/ci.yml",
+            name: "student-project-deadbeef/.github/workflows/ci.yml",
             content: "name: CI\non: [push]\njobs: {}\n",
           },
         ]
@@ -1311,6 +1476,7 @@ async function createFixture(
   return {
     root,
     ids,
+    owner,
     authority,
     scope: workspace.scope,
     project,
@@ -1425,7 +1591,6 @@ class FakeGitHubTransport implements GitHubBrokerTransport {
       reason: null,
     };
   }
-
   async repositoryAccess(
     ownerWorkspaceKey: string,
     _installationId: string,
@@ -1576,6 +1741,22 @@ class FakeLocalGitTransport implements LocalGitTransport {
       reason: null,
     };
   }
+  async prepare(
+    binding: LocalGitBinding,
+    snapshot: SandboxInputSnapshotDescriptor,
+    content: AsyncIterable<Uint8Array>,
+  ): Promise<{ binding: LocalGitBinding }> {
+    const hash = createHash("sha256");
+    let size = 0;
+    for await (const chunk of content) {
+      size += chunk.byteLength;
+      hash.update(chunk);
+    }
+    if (size !== snapshot.size || hash.digest("hex") !== snapshot.bundleSha256) {
+      throw new Error("prepare snapshot local git rusak");
+    }
+    return { binding: structuredClone(binding) };
+  }
   async status(
     binding: LocalGitBinding,
     signal?: AbortSignal,
@@ -1700,7 +1881,13 @@ class FakeLocalGitTransport implements LocalGitTransport {
 class PassingSandbox implements SandboxRunner {
   private sequence = 0;
   async health(): Promise<SandboxHealth> {
-    return { available: true, runtime: "isolated-linux", checkedAt: NOW.toISOString(), reason: null };
+    return {
+      available: true,
+      runtime: "isolated-linux",
+      identity: sandboxIdentity(),
+      checkedAt: NOW.toISOString(),
+      reason: null,
+    };
   }
   async allocate(binding: SandboxLease["binding"]): Promise<SandboxLease> {
     return {

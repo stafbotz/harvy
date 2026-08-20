@@ -43,6 +43,14 @@ import { FileWorkspaceRepository } from "../src/storage/file-workspace-repositor
 import { buildZip } from "./zip-test-fixture.js";
 
 const NOW = new Date("2026-08-10T05:00:00.000Z");
+
+function sandboxIdentity() {
+  return {
+    serviceIdentityDigest: "1".repeat(64),
+    runtimeImageDigest: "2".repeat(64),
+    policyDigest: "3".repeat(64),
+  };
+}
 const SECRET = "coding-run-engine-test-secret-32-characters";
 
 describe("CodingRunEngine Phase I", () => {
@@ -119,7 +127,7 @@ describe("CodingRunEngine Phase I", () => {
     assert.match(anchor.text, /Coding selesai/iu);
     assert.match(anchor.text, /Test: lulus/iu);
     assert.match(anchor.text, /Belum dipush/iu);
-    assert.doesNotMatch(anchor.text, /%|ETA|model|worker/iu);
+    assert.doesNotMatch(anchor.text, /%|\bETA\b|\bmodel\b|\bworker\b/iu);
   });
 
   it("menyembunyikan source sensitif dan menolak bundle sandbox sebelum allocate", async () => {
@@ -215,7 +223,10 @@ describe("CodingRunEngine Phase I", () => {
       fixture.scope,
       run.runId,
       "checkpoint",
+      "Konfirmasi constraint sebelum melanjutkan.",
     );
+    assert.equal(paused.pendingQuestion?.prompt,
+      "Konfirmasi constraint sebelum melanjutkan.");
     const activeBeforeIdle = paused.counters.activeElapsedMs;
 
     const restartedEngine = () => new CodingRunEngine(
@@ -242,6 +253,7 @@ describe("CodingRunEngine Phase I", () => {
       fixture.scope,
       run.runId,
       "awaiting_constraint",
+      "Apakah API publik harus tetap dipertahankan?",
     );
     currentTime += 60 * 60 * 1_000;
     const afterRevisionRestart = restartedEngine();
@@ -261,9 +273,118 @@ describe("CodingRunEngine Phase I", () => {
       fixture.scope,
       run.runId,
       "cancel_requested",
+      "Apakah run ini harus dibatalkan?",
     );
     const cancelled = await restartedEngine().cancel(fixture.scope, run.runId);
     assert.equal(cancelled.status, "cancelled");
+  });
+
+  it("memfence group admission exact tanpa memberi authority ke effect lain", async () => {
+    const fixture = await createFixture();
+    const admission = {
+      source: "group" as const,
+      effectId: "group-effect-authority-fence",
+      audience: "group-safe" as const,
+      authorityRef: "group-link-authority-fence",
+      interactionDigest: "a".repeat(64),
+    };
+    const run = await fixture.engine.start(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      brief(),
+      { admission },
+    );
+    const exactFence = {
+      version: 1 as const,
+      source: "group" as const,
+      cause: "group_disabled" as const,
+      runId: run.runId,
+      ownerWorkspaceKey: run.binding.ownerWorkspaceKey,
+      projectId: run.binding.projectId,
+      effectId: admission.effectId,
+      authorityRef: admission.authorityRef,
+    };
+
+    await assert.rejects(
+      fixture.engine.cancelByAdmissionFence({
+        ...exactFence,
+        effectId: "group-effect-wrong",
+      }),
+      /tidak cocok admission/iu,
+    );
+    assert.equal(fixture.sandbox.disposed, false);
+    assert.equal(
+      (await fixture.baseCodingRepository.load(run.runId))?.status,
+      "running",
+    );
+
+    const fenced = await fixture.engine.cancelByAdmissionFence(exactFence);
+    assert.equal(fenced.pendingCommit, false);
+    assert.equal(fenced.run.status, "cancelled");
+    assert.equal(fixture.sandbox.disposed, true);
+    assert.equal(
+      fenced.run.events.at(-1)?.summaryCode,
+      "group_disabled",
+    );
+    await assert.rejects(
+      fixture.projects.rehydrateWorkingCopy(fixture.scope, {
+        projectId: run.binding.projectId,
+        ownerWorkspaceKey: run.binding.ownerWorkspaceKey,
+        workingCopyId: run.workingCopyId,
+        workspaceRevision: run.binding.workspaceRevision,
+        baseSnapshot: run.binding.baseSnapshot,
+      }),
+      /ENOENT|tidak tersedia/iu,
+    );
+  });
+
+  it("mempertahankan exact-effect barrier ketika authority hilang saat commit ambigu", async () => {
+    const fixture = await createFixture({ failCompletionSaveOnce: true });
+    const admission = {
+      source: "group" as const,
+      effectId: "group-effect-pending-fence",
+      audience: "group-safe" as const,
+      authorityRef: "group-link-pending-fence",
+      interactionDigest: "b".repeat(64),
+    };
+    const run = await fixture.engine.start(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      brief(),
+      { admission },
+    );
+    await mapAndPlan(fixture.engine, fixture.scope, run.runId, 0);
+    const tools = await fixture.engine.writerTools(fixture.scope, run.runId);
+    const before = await tools.read(0, { path: "src/index.ts" });
+    await fixture.engine.applyPatch(fixture.scope, run.runId, 0, [{
+      kind: "update",
+      path: "src/index.ts",
+      expectedSha256: before.sha256,
+      content: "export const value = 7;\n",
+    }]);
+    await fixture.engine.runValidator(fixture.scope, run.runId, 0, "test");
+    await fixture.engine.runTaskReview(fixture.scope, run.runId, 0);
+    await assert.rejects(
+      fixture.engine.finalize(fixture.scope, run.runId, 0),
+      /berubah bersamaan/iu,
+    );
+
+    const fenced = await fixture.engine.cancelByAdmissionFence({
+      version: 1,
+      source: "group",
+      cause: "group_authority_changed",
+      runId: run.runId,
+      ownerWorkspaceKey: run.binding.ownerWorkspaceKey,
+      projectId: run.binding.projectId,
+      effectId: admission.effectId,
+      authorityRef: admission.authorityRef,
+    });
+    assert.equal(fenced.pendingCommit, true);
+    assert.equal(fenced.run.status, "validating");
+    assert.ok(fenced.run.pendingCommit);
+    assert.ok((await fixture.baseCodingRepository.load(run.runId))?.pendingCommit);
   });
 
   it("menolak completion ketika artifact validator durable hilang", async () => {
@@ -1591,6 +1712,7 @@ class FakeSandboxRunner implements SandboxRunner {
     return {
       available: true,
       runtime: "isolated-linux",
+      identity: sandboxIdentity(),
       checkedAt: NOW.toISOString(),
       reason: null,
     };

@@ -50,10 +50,12 @@ principal maupun grant sendiri.
 
 ## Konsekuensi
 
-Core Phase L dapat membuktikan audience isolation dan permission intersection
-secara lokal. Ia sengaja belum dirangkai ke `app.ts`: belum ada actor resolver
-kanal maupun implementasi production untuk lease authority grup. Karena itu
-fitur group-coding belum reachable dan capability coding tetap default-off.
+Core Phase L sekarang dirangkai ke observation-authorized ingress `app.ts`,
+actor resolver tepercaya, link/handoff private durable, Run Anchor group-safe,
+background driver, dan lifecycle fence revocation. Reachability tetap opt-in
+bersama coding runtime serta binding WhatsApp live. Acceptance grup nyata belum
+lengkap dan adapter file belum multi-instance; wiring otomatis tidak menjadi
+bukti audience/privacy pada kanal live.
 
 ## Bukti
 
@@ -61,4 +63,7 @@ Tes `group-workspace-coding-controller` mengunci admin+Workspace intersection,
 viewer policy, replay, audience run exact, generation/epoch stale, proyeksi
 tanpa sentinel privat, private confirmation GitHub, persistence restart, schema
 tertutup, dan transisi revoke. Tes admission `CodingRunEngine` mengunci replay
-exact serta collision command.
+exact serta collision command. Suite `group-coding-ingress`, delivery, driver,
+dan lifecycle-fence mengunci routing sebelum ambient, output allowlist,
+workspace-private handoff, authority-race cancellation, disable/removal, orphan
+admission, serta pending-commit fail-closed.

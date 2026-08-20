@@ -96,7 +96,7 @@ describe("FileTelemetryRepository migration", () => {
         usage: Record<string, unknown>[];
         turns: unknown[];
       };
-      assert.equal(persisted.version, 3);
+      assert.equal(persisted.version, 4);
       assert.deepEqual(persisted.turns, []);
       assert.equal(persisted.usage[0]?.requestId, "legacy_usage-lama");
       assert.equal("providerId" in (persisted.usage[0] ?? {}), false);
@@ -124,6 +124,8 @@ describe("FileTelemetryRepository migration", () => {
         queueWaitMs: 2,
         handlingLatencyMs: 20,
         totalLatencyMs: 32,
+        timeToFirstResponseMs: 12,
+        timeToFinalResponseMs: 30,
         modelCallCount: 3,
         failedModelCallCount: 0,
         boundaryCallCount: 1,

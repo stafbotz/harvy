@@ -353,6 +353,46 @@ describe("konfigurasi fallback AI testing", () => {
     });
   });
 
+  it("memakai profile live-verified hanya pada model dan endpoint Google exact", () => {
+    withAiEnvironment(validTestingEnvironment({
+      AI_MODEL_TESTING: "gemini-3.5-flash-lite",
+    }), () => {
+      const profile = loadAiConfig().modelProfiles.require(
+        "google-ai-studio",
+        "gemini-3.5-flash-lite",
+      );
+      assert.equal(profile.verification, "explicit");
+      assert.equal(profile.reasoning.defaultEffort, "minimal");
+      assert.equal(profile.supports.temperature, false);
+      assert.equal(profile.continuation.preserveReasoning, true);
+    });
+
+    withAiEnvironment(validTestingEnvironment({
+      AI_MODEL_TESTING: "gemini-3.5-flash-lite",
+      AI_BASE_URL: "https://gateway.example/v1",
+    }), () => {
+      assert.equal(loadAiConfig().modelProfiles.require(
+        "google-ai-studio",
+        "gemini-3.5-flash-lite",
+      ).verification, "compatibility");
+    });
+  });
+
+  it("tidak mengaktifkan profile live-verified pada pasangan fallback aktif", () => {
+    withAiEnvironment(validTestingEnvironment({
+      AI_MODEL_TESTING: "gemini-3.5-flash-lite",
+      AI_TESTING_FALLBACK_BASE_URL: "https://fallback.example/api/v3",
+      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
+      AI_TESTING_FALLBACK_MODEL: "gemini-3.5-flash-lite",
+      AI_TESTING_FALLBACK_PROVIDER_ID: "google-ai-studio",
+    }), () => {
+      assert.equal(loadAiConfig().modelProfiles.require(
+        "google-ai-studio",
+        "gemini-3.5-flash-lite",
+      ).verification, "compatibility");
+    });
+  });
+
   it("mengaktifkan capability hanya untuk deklarasi exact provider + model", () => {
     withAiEnvironment(validTestingEnvironment({
       AI_MODEL_CHEAP: "model-production-cheap",

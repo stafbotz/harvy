@@ -27,6 +27,7 @@ import type {
 } from "../domain/project-workspace.js";
 import {
   createLocalGitCommitRequest,
+  LOCAL_GIT_UPLOAD_ROOT_COMMIT,
   validateLocalGitObjectBundleReference,
   type LocalGitBinding,
   type LocalGitCommitResult,
@@ -248,6 +249,11 @@ export class ProjectWorkspaceService {
           snapshotId: installed.manifest.snapshotId,
           parentSnapshotId: null,
           reason: "import",
+          git: {
+            baseCommit: LOCAL_GIT_UPLOAD_ROOT_COMMIT,
+            headCommit: LOCAL_GIT_UPLOAD_ROOT_COMMIT,
+            branch: `harvy/upload-${installed.manifest.snapshotId.slice(0, 12)}`,
+          },
           createdAt,
         };
         const saved = await this.repository.create({
@@ -260,6 +266,7 @@ export class ProjectWorkspaceService {
           },
           baseSnapshot: installed.manifest.snapshotId,
           snapshotHistory: [revision],
+          git: structuredClone(revision.git!),
           storageUsage: {
             artifactBytes: archive.length,
             snapshotBytes: installed.manifest.totalBytes,
@@ -316,6 +323,7 @@ export class ProjectWorkspaceService {
           scope.workspaceKey,
           projectId,
           input.archive,
+          true,
         );
         attemptSnapshot = installed.manifest.snapshotId;
         await this.assertOwnerQuota(
@@ -447,6 +455,7 @@ export class ProjectWorkspaceService {
             scope.workspaceKey,
             projectId,
             input.archive,
+            true,
           );
           attemptSnapshot = installed.manifest.snapshotId;
           await this.assertOwnerQuota(
@@ -933,10 +942,22 @@ export class ProjectWorkspaceService {
       );
       try {
         await mkdir(workingProjectRoot, { recursive: true });
+        const sourceManifest = JSON.parse(
+          await readFile(
+            this.rawManifestPath(
+              project.ownerWorkspaceKey,
+              project.id,
+              project.baseSnapshot,
+            ),
+            "utf8",
+          ),
+        ) as ProjectSnapshotManifest;
+        validateManifest(sourceManifest, project.baseSnapshot);
         const copied = await copyProjectTree(
           source,
           internalPath,
           this.treeLimits,
+          windowsExecutableOverrides(sourceManifest),
         );
         if (copied.snapshotId !== project.baseSnapshot) {
           throw new Error("Snapshot project berubah selama materialisasi working copy.");
@@ -1114,7 +1135,7 @@ export class ProjectWorkspaceService {
       }
       this.assertRevisionCapacity(
         current,
-        current.source.type === "github" ? 2 : 1,
+        current.git ? 2 : 1,
       );
       const installed = await this.installWorkingSnapshot(current, working);
       if (expectedSnapshotId && installed.snapshotId !== expectedSnapshotId) {
@@ -1150,7 +1171,7 @@ export class ProjectWorkspaceService {
         0,
         false,
       );
-      const pendingGitCommit = current.source.type === "github"
+      const pendingGitCommit = current.git
         ? localGitPendingIntent(
             current.id,
             installed.snapshotId,
@@ -1405,7 +1426,7 @@ export class ProjectWorkspaceService {
         expectedRevision,
       );
       this.assertRevisionCapacity(current);
-      if (current.source.type !== "github" || !current.git || !current.pendingGitCommit) {
+      if (!current.git || !current.pendingGitCommit) {
         throw new Error("Project tidak mempunyai pending local git effect.");
       }
       const pending = current.pendingGitCommit;
@@ -1520,6 +1541,54 @@ export class ProjectWorkspaceService {
         internalPath: this.workingPath(
           working.ownerWorkspaceKey,
           cleanProjectId,
+          working.workingCopyId,
+        ),
+      });
+    });
+  }
+
+  /**
+   * Cleanup-only authority bypass for a code-owned run lifecycle fence.
+   * The caller cannot supply a path: the managed location is reconstructed
+   * from an exact immutable run binding and must have existed in this
+   * project's snapshot history. This grants no read/write/commit capability.
+   */
+  async disposeWorkingCopyReferenceForRunFence(
+    input: Omit<ProjectWorkingCopy, "internalPath">,
+  ): Promise<void> {
+    await this.ensureStorageIsolation();
+    const working = validWorkingCopyReference(input);
+    await this.exclusive(working.projectId, async () => {
+      const project = await this.repository.load(working.projectId);
+      if (!project) {
+        // Project deletion owns any remaining tree once its durable record has
+        // disappeared. The exact managed path is safe to remove idempotently.
+        await this.disposeWorkingCopyUnsafe({
+          ...working,
+          internalPath: this.workingPath(
+            working.ownerWorkspaceKey,
+            working.projectId,
+            working.workingCopyId,
+          ),
+        });
+        return;
+      }
+      if (project.ownerWorkspaceKey !== working.ownerWorkspaceKey) {
+        throw new Error("Working copy lifecycle fence berada di workspace lain.");
+      }
+      const bindingExists = project.snapshotHistory.some(
+        (entry) =>
+          entry.revision === working.workspaceRevision &&
+          entry.snapshotId === working.baseSnapshot,
+      );
+      if (!bindingExists) {
+        throw new Error("Binding working copy lifecycle fence tidak dimiliki project.");
+      }
+      await this.disposeWorkingCopyUnsafe({
+        ...working,
+        internalPath: this.workingPath(
+          working.ownerWorkspaceKey,
+          working.projectId,
           working.workingCopyId,
         ),
       });
@@ -1757,6 +1826,7 @@ export class ProjectWorkspaceService {
     ownerWorkspaceKey: string,
     projectId: string,
     archive: Buffer,
+    stripSingleRoot = false,
   ): Promise<{
     archiveSha256: string;
     manifest: ProjectSnapshotManifest;
@@ -1769,6 +1839,8 @@ export class ProjectWorkspaceService {
         ...(this.zipLimits ? { limits: this.zipLimits } : {}),
         now: this.now,
         makeId: this.makeId,
+        stripSingleRoot,
+        preserveRegularFileExecutability: stripSingleRoot,
       });
       const snapshot = this.rawSnapshotPath(
         ownerWorkspaceKey,
@@ -1802,9 +1874,22 @@ export class ProjectWorkspaceService {
     project: ProjectWorkspace,
     working: ProjectWorkingCopy,
   ): Promise<ProjectSnapshotManifest> {
+    const baseManifest = JSON.parse(
+      await readFile(
+        this.rawManifestPath(
+          project.ownerWorkspaceKey,
+          project.id,
+          project.baseSnapshot,
+        ),
+        "utf8",
+      ),
+    ) as ProjectSnapshotManifest;
+    validateManifest(baseManifest, project.baseSnapshot);
+    const executableOverrides = windowsExecutableOverrides(baseManifest);
     const preliminary = await scanProjectTree(working.internalPath, {
       ...(this.treeLimits ? { limits: this.treeLimits } : {}),
       now: this.now,
+      ...(executableOverrides ? { executableOverrides } : {}),
     });
     await this.assertOwnerQuota(
       project.ownerWorkspaceKey,
@@ -1830,6 +1915,7 @@ export class ProjectWorkspaceService {
           working.internalPath,
           temporary,
           this.treeLimits,
+          executableOverrides,
         );
         if (copied.snapshotId !== preliminary.snapshotId) {
           throw new Error("Working copy berubah selama pembentukan snapshot.");
@@ -1882,6 +1968,9 @@ export class ProjectWorkspaceService {
     const actual = await scanProjectTree(path, {
       ...(this.treeLimits ? { limits: this.treeLimits } : {}),
       now: this.now,
+      ...(windowsExecutableOverrides(manifest)
+        ? { executableOverrides: windowsExecutableOverrides(manifest)! }
+        : {}),
     });
     await assertTreeReadOnly(path);
     if (
@@ -3408,6 +3497,19 @@ function validateManifest(
   if (computed !== manifest.snapshotId) {
     throw new Error("Digest manifest snapshot project tidak cocok.");
   }
+}
+
+/**
+ * NTFS/Node on Windows cannot round-trip the POSIX executable bit. Keep that
+ * Git-tree metadata in the content-addressed manifest while all file bytes and
+ * paths continue to be rescanned. POSIX deployments always verify real mode.
+ */
+function windowsExecutableOverrides(
+  manifest: ProjectSnapshotManifest,
+): ReadonlyMap<string, boolean> | undefined {
+  return process.platform === "win32"
+    ? new Map(manifest.files.map((file) => [file.path, file.executable] as const))
+    : undefined;
 }
 
 async function exists(path: string): Promise<boolean> {

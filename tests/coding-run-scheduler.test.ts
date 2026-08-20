@@ -187,6 +187,54 @@ describe("CodingRunScheduler", () => {
     assert.equal(scheduler.status().active, 1);
   });
 
+  it("lifecycle fence hanya mengabort exact workspace dan menunggu quiescence", async () => {
+    const entered = deferred<void>();
+    const providerSettled = deferred<void>();
+    let aborted = false;
+    const scheduler = createScheduler(
+      {
+        async run(_scope, _runId, signal) {
+          entered.resolve(undefined);
+          return new Promise<CodingCoordinatorResult>((_resolve, reject) => {
+            signal?.addEventListener("abort", () => {
+              aborted = true;
+              const error = new Error("authority fenced");
+              error.name = "AbortError";
+              reject(error);
+            }, { once: true });
+          });
+        },
+      },
+      { async waitForRunQuiescence() { await providerSettled.promise; } },
+    );
+    scheduler.start();
+    const invocation = scheduler.advance(SCOPE, {
+      runId: "run-authority-fence",
+      expectedStateRevision: 1,
+    });
+    await entered.promise;
+
+    await scheduler.interruptByBinding(
+      "workspace-scheduler-other",
+      "run-authority-fence",
+    );
+    assert.equal(aborted, false);
+    let fenceSettled = false;
+    const fence = scheduler.interruptByBinding(
+      SCOPE.workspaceKey,
+      "run-authority-fence",
+    ).then(() => {
+      fenceSettled = true;
+    });
+    await assert.rejects(invocation, { name: "AbortError" });
+    await tick();
+    assert.equal(aborted, true);
+    assert.equal(fenceSettled, false);
+    providerSettled.resolve(undefined);
+    await fence;
+    assert.equal(scheduler.status().active, 0);
+  });
+
   it("health tanpa deployment conformance tidak pernah membuka admission", async () => {
     const scheduler = new CodingRunScheduler(
       { async run() { return result(); } },

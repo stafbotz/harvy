@@ -1,5 +1,6 @@
 import type { CodingRun } from "./coding-run.js";
 import type { GroupScope } from "./group.js";
+import type { WorkspacePrincipal } from "./workspace.js";
 
 export interface GroupWorkspaceLink {
   version: 1;
@@ -40,6 +41,7 @@ export interface GroupCodingRunReference {
   workspaceKey: string;
   projectId: string;
   initiatedByMembershipId: string;
+  initiatedByPrincipalKey: string;
   initiatedByParticipantId: string;
   createdAt: string;
 }
@@ -48,8 +50,94 @@ export type GroupWorkspaceLinkSaveResult =
   | { status: "saved"; link: GroupWorkspaceLink }
   | { status: "conflict" };
 
+/**
+ * Two-step cross-channel handoff. A live group admin creates the request; a
+ * workspace owner approves it privately. The room never receives workspace
+ * identifiers or repository authority from message text.
+ */
+export interface GroupWorkspaceLinkRequest {
+  version: 1;
+  requestId: string;
+  scopeKey: string;
+  scope: GroupScope;
+  accountId: string;
+  groupJoinedAt: string;
+  participantPrincipal: WorkspacePrincipal;
+  requestedByParticipantId: string;
+  requestedAtAuthorityEpoch: number;
+  status:
+    | "pending"
+    | "approving"
+    | "approved"
+    | "consumed"
+    | "expired"
+    | "revoked";
+  workspaceKey: string | null;
+  grantedMembershipId: string | null;
+  approvedByMembershipId: string | null;
+  approvedAclEpoch: number | null;
+  stateRevision: number;
+  createdAt: string;
+  expiresAt: string;
+  approvedAt: string | null;
+  consumedAt: string | null;
+  revokedAt: string | null;
+  updatedAt: string;
+}
+
+export type GroupWorkspaceLinkRequestSaveResult =
+  | { status: "saved"; request: GroupWorkspaceLinkRequest }
+  | { status: "conflict" };
+
 export type GroupCodingRunReferenceSaveResult =
   | { status: "saved"; reference: GroupCodingRunReference }
+  | { status: "conflict" };
+
+export type GroupCodingDeliveryPurpose =
+  | "command_reply"
+  | "anchor_progress"
+  | "terminal_result";
+
+export interface GroupCodingDeliveryAuthority {
+  expectedAuthorityEpoch: number;
+  actors: Array<{
+    participantIds: string[];
+    expectedRole: "member" | "admin";
+  }>;
+}
+
+/**
+ * Durable send barrier for group-safe coding output. A crash after the socket
+ * call but before the receipt is persisted leaves `prepared`; startup closes
+ * it as `unknown` and never retries the possibly committed effect silently.
+ */
+export interface GroupCodingDeliveryEffect {
+  version: 1;
+  effectId: string;
+  commandDigest: string;
+  purpose: GroupCodingDeliveryPurpose;
+  scopeKey: string;
+  scope: GroupScope;
+  accountId: string;
+  groupJoinedAt: string;
+  runId: string | null;
+  sourceMessageId: string;
+  quoteMessageId: string | null;
+  mode: "send" | "edit";
+  /** Original Harvy-authored anchor key for edit; null for the initial send. */
+  targetMessageId: string | null;
+  text: string;
+  textDigest: string;
+  authority: GroupCodingDeliveryAuthority;
+  status: "prepared" | "committed" | "not_committed" | "unknown";
+  stateRevision: number;
+  externalMessageId: string | null;
+  preparedAt: string;
+  settledAt: string | null;
+}
+
+export type GroupCodingDeliveryEffectSaveResult =
+  | { status: "saved"; effect: GroupCodingDeliveryEffect }
   | { status: "conflict" };
 
 export interface GroupCodingRepository {
@@ -59,11 +147,26 @@ export interface GroupCodingRepository {
     link: Omit<GroupWorkspaceLink, "stateRevision">,
     expectedStateRevision: number | null,
   ): Promise<GroupWorkspaceLinkSaveResult>;
+  loadLinkRequest(requestId: string): Promise<GroupWorkspaceLinkRequest | null>;
+  listLinkRequests(): Promise<GroupWorkspaceLinkRequest[]>;
+  saveLinkRequest(
+    request: Omit<GroupWorkspaceLinkRequest, "stateRevision">,
+    expectedStateRevision: number | null,
+  ): Promise<GroupWorkspaceLinkRequestSaveResult>;
   loadRunReference(runId: string): Promise<GroupCodingRunReference | null>;
+  listRunReferences(): Promise<GroupCodingRunReference[]>;
   loadRunReferenceByEffect(effectId: string): Promise<GroupCodingRunReference | null>;
   saveRunReference(
     reference: GroupCodingRunReference,
   ): Promise<GroupCodingRunReferenceSaveResult>;
+  loadDeliveryEffect(effectId: string): Promise<GroupCodingDeliveryEffect | null>;
+  listDeliveryEffects(
+    status?: GroupCodingDeliveryEffect["status"],
+  ): Promise<GroupCodingDeliveryEffect[]>;
+  saveDeliveryEffect(
+    effect: Omit<GroupCodingDeliveryEffect, "stateRevision">,
+    expectedStateRevision: number | null,
+  ): Promise<GroupCodingDeliveryEffectSaveResult>;
 }
 
 export interface GroupSafeCodingCheck {
@@ -104,7 +207,11 @@ export function renderGroupSafeCodingRun(run: CodingRun): GroupSafeCodingRunView
   const checks = [...currentChecks].map(([kind, status]) => ({ kind, status }));
   const changedFiles = run.result?.changedFiles ?? run.diff?.files.length ?? null;
   const localRevisionCreated = run.status === "completed" && run.result !== null;
-  const lines = [groupSafeTitle(run), groupSafePhase(run.phase)];
+  const lines = [
+    groupSafeTitle(run),
+    `Kode pekerjaan: ${run.runId}`,
+    groupSafePhase(run.phase),
+  ];
   if (changedFiles !== null) lines.push(`${changedFiles} file berubah.`);
   for (const check of checks) {
     lines.push(`${groupSafeCheckLabel(check.kind)}: ${groupSafeCheckStatus(check.status)}.`);

@@ -1,8 +1,7 @@
 # Status — Telegram Privat
 
-Verified: 9 Agustus 2026 pada working tree Active AgentRun Phase D di atas
-`bbe7b9b`; `npm test` PASS 842 test / 108 suite, 0 gagal; `npm run check` dan
-`npm run context:check` PASS. Baca untuk task `src/bot/` dan surface Telegram.
+Refreshed: 20 Agustus 2026 pada targeted CodingRun input/private publish. Angka gerbang
+penuh terbaru dicatat di `docs/LOG.md`; bukti Telegram live belum diperbarui.
 
 ## Keadaan saat ini
 
@@ -35,11 +34,23 @@ Verified: 9 Agustus 2026 pada working tree Active AgentRun Phase D di atas
   Correction menaikkan revision dan menahan hasil lama; jawaban wajib terikat
   ke anchor/question+watermark. Shutdown mem-pause, startup melanjutkan, dan
   delivery ambigu tidak di-retry otomatis.
+- Bila coding runtime melewati startup recovery+conformance, command
+  `/project`, `/code`, `/code_status`, dan `/code_cancel` tersedia. Actor
+  Workspace diterbitkan dari `from.id`+interaction tepercaya, bukan command atau
+  model. Upload ZIP, select project, run background, correction/cancel, dan Run
+  Anchor mutable dirangkai; pertanyaan `waiting_input` tampil dari state durable
+  dan hanya reply anchor yang menjadi revision. Chat biasa tetap responsif pada
+  lane lama.
+- Bila GitHub broker juga aktif, `/github` memakai browser GitHub App
+  installation/selection tanpa PAT chat. `/publish` hanya menyiapkan effect
+  exact dan confirmation workspace-private per tahap branch/push/draft PR;
+  callback lama atau commit/ACL yang berubah ditolak.
 - Model mengusulkan action dari allowlist; kode tetap menguasai callback,
   ownership, expiry, dan batas pilihan.
 - Free-text memakai satu `turnId` dari boundary sampai handler terminal.
   Telemetry content-free memisahkan waktu batch, FIFO, handler, total, jumlah
   model per purpose, fallback safety, dan outcome completed/failed/cancelled.
+  Delivery pertama dan final juga mengisi TTFR/time-to-final content-free.
 
 ## Batas dan defect aktif
 
@@ -55,8 +66,12 @@ Verified: 9 Agustus 2026 pada working tree Active AgentRun Phase D di atas
   matcher yang sama melalui jalur terpisah ADR-024.
 - Adaptive profile baru teruji otomatis; kualitas split bubble dan latency
   aktual belum diuji end-to-end lewat Telegram.
-- Metrik turn belum mengukur TTFR terpisah dan belum mencakup command, callback,
-  grup, atau durable AgentRun. Belum ada dashboard agregat.
+- Metrik turn mempunyai TTFR dan final terpisah untuk delivery yang
+  diinstrumentasi, tetapi coverage command/callback/durable run serta dashboard
+  agregat belum lengkap dan belum dikalibrasi live.
+- Private coding/GitHub surface baru dibuktikan otomatis. Sandbox Linux,
+  provider exact, GitHub App remote, Telegram upload/callback, dan draft PR
+  belum diuji end-to-end live pada deployment ini; runtime tetap default-off.
 - Work lane baru satu foreground dan belum mempunyai job queue kedua,
   replacement policy, pin/archive Anchor, storage multi-instance, atau receipt
   selain outbound Telegram.
@@ -68,5 +83,6 @@ Verified: 9 Agustus 2026 pada working tree Active AgentRun Phase D di atas
 - Kode: `src/bot/`, `src/ai/conversation.ts`, `src/app.ts`.
 - Tes: `tests/create-bot.test.ts`, `tests/conversation.test.ts`,
   `tests/message-batcher.test.ts`, `tests/create-bot-flow.test.ts`,
-  `tests/onboarding.test.ts`.
+  `tests/onboarding.test.ts`, dan
+  `tests/private-coding-application-e2e.test.ts`.
 - Keputusan: ADR-002, ADR-004, ADR-007, ADR-008, ADR-021, ADR-023, ADR-027.

@@ -11,6 +11,14 @@ import type {
 } from "../src/core/project-deletion-recovery-worker.js";
 import type { SandboxHealth, SandboxRunnerLifecycle } from "../src/domain/sandbox.js";
 
+function sandboxIdentity() {
+  return {
+    serviceIdentityDigest: "1".repeat(64),
+    runtimeImageDigest: "2".repeat(64),
+    policyDigest: "3".repeat(64),
+  };
+}
+
 describe("CodingRuntimeSupervisor", () => {
   it("menyelesaikan sandbox→GitHub→deletion secara berurutan dan tetap menutup coding admission", async () => {
     const order: string[] = [];
@@ -71,6 +79,7 @@ describe("CodingRuntimeSupervisor", () => {
       sandbox: sandboxLifecycle([], Promise.resolve({
         available: false,
         runtime: null,
+        identity: null,
         checkedAt: "2026-08-13T01:00:00.000Z",
         reason: "backend unavailable",
       })),
@@ -365,6 +374,7 @@ function healthy(reason: string | null): SandboxHealth {
   return {
     available: true,
     runtime: "isolated-linux",
+    identity: sandboxIdentity(),
     checkedAt: "2026-08-13T01:00:00.000Z",
     reason,
   };

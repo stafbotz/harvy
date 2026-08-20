@@ -19,6 +19,10 @@ import {
   loadOperationalLogConfig,
   type AiConfig,
 } from "./config.js";
+import {
+  createCodingRuntimeComposition,
+  loadCodingRuntimeDeploymentConfig,
+} from "./core/coding-runtime-composition.js";
 import { HistoryService } from "./core/history-service.js";
 import { AgentRunService } from "./core/agent-run-service.js";
 import { DataControlService } from "./core/data-control-service.js";
@@ -30,6 +34,12 @@ import { GroupAgentRunLifecycleCoordinator } from "./core/group-agent-run-lifecy
 import { startGroupAgentRunRetentionWorker } from "./core/group-agent-run-retention-worker.js";
 import { GroupAgentRunUsageReconciler } from "./core/group-agent-run-usage-reconciler.js";
 import { GroupAgentRunIngressRouter } from "./core/group-agent-run-ingress.js";
+import { GroupCodingIngressRouter } from "./core/group-coding-ingress.js";
+import { GroupCodingDeliveryService } from "./core/group-coding-delivery-service.js";
+import {
+  GroupWorkspaceCodingController,
+  GroupWorkspaceLinkService,
+} from "./core/group-workspace-coding-controller.js";
 import {
   startGroupAgentRunWorker,
   type GroupAgentRunWorker,
@@ -117,6 +127,7 @@ let removeDevShutdownControl: () => void = () => undefined;
 
 try {
 const config = loadConfig();
+const codingDeployment = loadCodingRuntimeDeploymentConfig();
 runtimeLock = await acquireLocalRuntimeLock(
   localRuntimeLockPath(config.controlPlane.file),
   "runtime",
@@ -164,6 +175,18 @@ const aiClient = new AiClient({
   environment: runtimeEnvironment(config.operationalLog.environment),
   costCenter: "runtime",
   logger: logger.child("ai.client"),
+});
+const groupMemories = config.whatsapp.enabled
+  ? new GroupMemoryService(
+      new FileGroupRepository(config.whatsapp.groupFile),
+    )
+  : null;
+const codingRuntime = await createCodingRuntimeComposition({
+  config: codingDeployment,
+  aiClient,
+  ai: config.ai,
+  groupBindings: groupMemories,
+  logger: logger.child("coding.runtime"),
 });
 // Authority internal perlu tersedia sebelum registry agent dibentuk. Scope
 // executor tetap mengambil owner dari AgentExecutionContext, bukan dari model.
@@ -288,6 +311,7 @@ const bot = createBot(
   logger.child("telegram.bot"),
   agentRuns,
   memoryContextCompiler,
+  codingRuntime,
 );
 
 let groupTurns: GroupTurnService | null = null;
@@ -295,15 +319,12 @@ let groupBatcher: GroupMessageBatcher | null = null;
 let groupAgentRunCleanup: GroupAgentRunCleanupService | null = null;
 let groupAgentRunIngress: GroupAgentRunIngressRouter | null = null;
 let groupAgentRunWorker: GroupAgentRunWorker | null = null;
+let groupCodingIngress: GroupCodingIngressRouter | null = null;
+let groupCodingDeliveries: GroupCodingDeliveryService | null = null;
 let groupAgentRunActivationRetry: ReturnType<
   typeof startGroupAgentRunActivationRetry
 > | null = null;
 const groupAgentRunLifecycle = new GroupAgentRunLifecycleCoordinator();
-const groupMemories = config.whatsapp.enabled
-  ? new GroupMemoryService(
-      new FileGroupRepository(config.whatsapp.groupFile),
-    )
-  : null;
 const groupAgentRunRuntimeAdmission = async (
   { scopeKey, accountId }: { scopeKey: string; accountId: string },
 ): Promise<boolean> => {
@@ -383,6 +404,22 @@ const whatsapp = config.whatsapp.enabled
         groupBatcher?.invalidateScope(scopeKey, accountId);
         groupTurns?.invalidateAuthority(scopeKey, accountId);
         groupAgentRunActivationRetry?.cancel(scopeKey, accountId);
+        let codingFenceFailure: unknown = null;
+        try {
+          await codingRuntime?.fenceGroupCoding({
+            scopeKey,
+            accountId,
+            cause: "group_disabled",
+          });
+        } catch (error) {
+          codingFenceFailure = error;
+          logger.error(
+            "whatsapp_group_coding_fence_failed",
+            "Ingress grup sudah tertutup, tetapi lifecycle fence CodingRun memerlukan recovery.",
+            error,
+            { accountId },
+          );
+        }
         const foreground = await groupAgentRunRepository?.loadForeground(
           scopeKey,
           accountId,
@@ -405,10 +442,23 @@ const whatsapp = config.whatsapp.enabled
           "Grup WhatsApp dinonaktifkan dan state runtime dibatalkan.",
           { accountId },
         );
+        if (codingFenceFailure) throw codingFenceFailure;
       },
       onGroupAuthorityChanged: (scopeKey, accountId) => {
         groupBatcher?.invalidateScope(scopeKey, accountId);
         groupTurns?.invalidateAuthority(scopeKey, accountId);
+        void codingRuntime?.fenceGroupCoding({
+          scopeKey,
+          accountId,
+          cause: "group_authority_changed",
+        }).catch((error: unknown) => {
+          logger.error(
+            "whatsapp_group_coding_authority_fence_failed",
+            "Authority grup berubah; group-coding diblokir tetapi recovery fence belum selesai.",
+            error,
+            { accountId },
+          );
+        });
         void groupAgentRunRepository?.loadForeground(scopeKey, accountId)
           .then((run) => {
             if (run) groupAgentRunWorker?.interrupt(run.runId);
@@ -519,6 +569,37 @@ let groupAgentRunResumeTimer: NodeJS.Timeout | null = null;
 let groupPurgeTimer: NodeJS.Timeout | null = null;
 
 if (whatsapp && groupMemories) {
+  if (codingRuntime) {
+    const groupCodingRepository = codingRuntime.groupRepository;
+    const groupWorkspaceLinks = new GroupWorkspaceLinkService(
+      groupCodingRepository,
+      groupMemories,
+      whatsapp,
+      codingRuntime.authority,
+    );
+    groupCodingDeliveries = new GroupCodingDeliveryService(
+      groupCodingRepository,
+      whatsapp,
+      groupAgentRunRuntimeAdmission,
+      groupMemories,
+    );
+    const groupCodingController = new GroupWorkspaceCodingController(
+      codingRuntime.groupActors,
+      groupWorkspaceLinks,
+      groupCodingRepository,
+      codingRuntime.groupRuns,
+      () => new Date(),
+      randomUUID,
+      codingRuntime.projects,
+    );
+    groupCodingIngress = new GroupCodingIngressRouter(
+      groupCodingController,
+      groupCodingDeliveries,
+      (message) => codingRuntime.issueGroupActor(message),
+      groupAgentRunRuntimeAdmission,
+      codingRuntime.progress,
+    );
+  }
   const groupUsageControl = {
     allow: (ownerId: string) => telemetry.allow(ownerId),
     forget: (ownerId: string) => telemetry.forget(ownerId),
@@ -626,6 +707,13 @@ if (whatsapp && groupMemories) {
           groupScopeKey(observed.scope),
           observed.accountId,
         )
+      ) {
+        groupTurns?.settleRejectedObservation(observed);
+        return null;
+      }
+      if (
+        observed && groupCodingIngress &&
+        await groupCodingIngress.handleObserved(observed) === "consumed"
       ) {
         groupTurns?.settleRejectedObservation(observed);
         return null;
@@ -822,13 +910,16 @@ const shutdown = (
             await Promise.all([
               bot.isRunning() ? bot.stop() : Promise.resolve(),
               (async () => {
+                codingRuntime?.supervisor.stop();
                 whatsapp?.stopIngress();
                 await whatsapp?.drainEvents();
+                groupCodingIngress?.stopIngress();
                 groupAgentRunIngress?.stopIngress();
                 groupAgentRunWorker?.stop();
                 await groupBatcher?.stopIngress();
                 groupTurns?.stopIngress();
                 await groupAgentRunIngress?.drain();
+                await groupCodingIngress?.drain();
                 await groupAgentRunWorker?.drain();
                 await groupTurns?.drain();
                 await whatsapp?.close();
@@ -836,6 +927,7 @@ const shutdown = (
             ]);
           },
           drainPending: async () => {
+            await codingRuntime?.supervisor.drain();
             await groupBatcher?.drainAll();
             await groupTurns?.drain();
             // `bot.drainPending()` menguras telemetry. Ia harus terakhir karena
@@ -912,12 +1004,60 @@ try {
     await shutdownPromise;
     return;
   }
+  if (groupCodingDeliveries) {
+    const deliveryRecovery = await groupCodingDeliveries.recoverPrepared();
+    logger.info(
+      "group_coding_delivery_recovery_completed",
+      "Delivery group-coding prepared ditutup secara konservatif sebelum ingress.",
+      { ...deliveryRecovery },
+    );
+  }
+  if (codingRuntime) {
+    const codingStartup = await codingRuntime.supervisor.start();
+    logger.info(
+      "coding_runtime_started",
+      "Coding runtime production melewati recovery dan admission gate.",
+      {
+        state: codingStartup.state,
+        codingAdmission: codingStartup.codingAdmission,
+        sandboxRuntime: codingStartup.sandbox.runtime,
+        githubUnresolved: codingStartup.githubInitialPass.unresolved,
+        deletionBlocked: codingStartup.projectDeletionInitialPass.blocked,
+      },
+    );
+  }
+  if (groupCodingIngress) {
+    const anchorRecovery = await groupCodingIngress.recoverAnchors();
+    logger.info(
+      "group_coding_anchor_recovery_completed",
+      "Anchor Group CodingRun current dipasang kembali setelah recovery runtime.",
+      { ...anchorRecovery },
+    );
+  }
+  if (shutdownPromise) {
+    await shutdownPromise;
+    return;
+  }
   // Aktivitas jaringan pertama baru boleh berjalan setelah control IPC aktif.
   // Sedikit perintah saja; cara utama memakai Harvy adalah menulis biasa.
   try {
     await bot.api.setMyCommands([
       { command: "tugas", description: "Lihat yang harus dikerjakan" },
       { command: "bantuan", description: "Lihat cara pakai" },
+      ...(codingRuntime
+        ? [
+            { command: "project", description: "Kelola workspace/project coding" },
+            { command: "code", description: "Mulai CodingRun pada project aktif" },
+            { command: "code_status", description: "Lihat status CodingRun" },
+            { command: "code_cancel", description: "Batalkan CodingRun aktif" },
+          ]
+        : []),
+      ...(codingRuntime?.privateGitHub
+        ? [
+            { command: "github", description: "Hubungkan GitHub App dan pilih repo" },
+            { command: "publish", description: "Siapkan publish exact ke draft PR" },
+          ]
+        : []),
     ], undefined, telegramStartupSignal);
   } catch (error) {
     // Abort/failure yang tiba setelah shutdown dimulai bukan kegagalan runtime.

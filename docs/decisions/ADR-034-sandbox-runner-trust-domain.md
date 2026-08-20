@@ -60,7 +60,9 @@ container yang dapat membuktikan isolasi nyata.
 ## Konsekuensi
 
 Policy/client contract, transfer konten, artifact verification, dan recovery
-durable dapat diuji tanpa mengarang host isolation. Phase H live tetap belum
-diterima sampai runner Linux dan negative
-integration evidence ada; watchdog/AbortSignal client bukan bukti worker sudah
-quiescent dan bukan pengganti streaming cap/cgroup/seccomp backend.
+durable dapat diuji tanpa mengarang host isolation. Implementasi rootless OCI,
+service terpisah, deployment unit, 15-scenario hostile harness, receipt
+generator, serta composition gate kini tersedia. Phase H live tetap belum
+diterima sampai harness itu lulus pada host Linux+image+seccomp exact;
+watchdog/AbortSignal client atau test fake bukan bukti worker sudah quiescent
+dan bukan pengganti streaming cap/cgroup/seccomp backend.

@@ -38,6 +38,75 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-20 — Coding input target dan publish privat exact
+
+Scope: CodingRun/coordinator/worker, private coding session, private GitHub
+application, provider profile/smoke, startup harness, tes integrasi, dan status.
+
+Changed: `waiting_input` CodingRun kini membawa pertanyaan durable terikat
+instruction revision; reply Anchor tepercaya menjadi ChangeSet sedangkan batas
+action internal tetap checkpoint `running`. Session privat mempertahankan
+project revision pada jeda nonterminal. Publish privat menjalankan branch,
+exact push, dan draft PR melalui tiga confirmation terpisah; offer menjadi basi
+setelah ACL epoch berubah. Body Markdown PR menerima newline/tab tetapi tetap
+menolak control character lain. Profile
+`google-ai-studio/gemini-3.5-flash-lite` pada endpoint resmi dipromosikan
+code-owned setelah wire exact lulus; custom gateway dan active fallback tidak
+mewarisi capability itu.
+
+Verified: `npm run check` PASS; `npm test` PASS 1.413/1.413 dalam 183 suite, 0
+gagal; `npm run context:check` PASS; `git diff --check` PASS selain peringatan
+line-ending Windows. Acceptance otomatis membuktikan ZIP→CodingRun→validator→
+local commit, pertanyaan target, urutan private confirmation, dan rejection
+sebelum transport saat authority berubah. `npm run acceptance:provider` PASS
+live pada 20 Agustus 2026 dengan digest
+`4d4c4f299b84b5a1767c96a54e6591a53c06a90807aba16d78a04fe4967d7d5c`:
+effort, native tool, thought signature+replay, stop/length, local pressure gate,
+timeout, dan retry teramati; fallback dinonaktifkan.
+
+Not verified: hostile suite pada Linux nyata, GitHub App/repository live,
+WhatsApp grup nyata, provider fallback, dan critic `toughest` live. Guard
+berhenti tanpa efek dengan
+`SANDBOX_ACCEPTANCE_REQUIRES_LINUX_HOST`,
+`GITHUB_LIVE_ACCEPTANCE_REQUIRES_CREATE_NONCRITICAL_DRAFT_PR`, dan
+`WHATSAPP_LIVE_ACCEPTANCE_REQUIRES_RUN_NONCRITICAL_WHATSAPP_GROUP`.
+
+Next: jalankan acceptance nonkritis exact pada infrastruktur/credential live,
+tanpa membuka runtime default-off sebelum bukti conformance tersedia.
+
+## 2026-08-15 — Coding production vertical slice dan trust-domain service
+
+Scope: isolated sandbox, Workspace/CodingRun private+group composition,
+local-git, GitHub App broker, startup recovery, validator escalation, TTFR,
+deployment contract, acceptance harness, dan status arsitektur.
+
+Changed: Harvy kini mempunyai service rootless OCI terpisah dengan
+network-off/quota/seccomp/no-host-mount, 15-scenario hostile harness dan exact
+conformance receipt gate; AI coding writer iterative, production validators,
+Run Anchor, trusted private ingress, stale revision/cancel fencing, dan ZIP→Git
+commit acceptance otomatis; credential-free local-git dengan atomic ref CAS;
+credential-owning GitHub App broker dengan installation/archive/exact
+non-force push/draft PR/reconciliation; startup/shutdown supervisor production;
+validator-driven one-shot `toughest`; TTFR/final p50/p95; serta group-coding
+ingress, private Workspace handoff, audience-safe delivery, dan authority-loss
+lifecycle fence. Seluruh runtime tetap opt-in dan fail-closed.
+
+Verified: `npm run check` PASS; `npm run context:check` PASS; `npm test` PASS
+1.399/1.399 dalam 181 suite, 0 gagal; suite perbaikan ZIP/Workspace/HTTP
+trust-domain PASS 23/23; `git diff --check` PASS selain peringatan line-ending.
+Acceptance guard sandbox, GitHub, provider, dan WhatsApp semuanya berhenti
+sebelum efek dengan reason code eksplisit.
+
+Not verified: hostile suite pada Linux nyata (host ini Windows tanpa OCI/WSL),
+GitHub branch/push/draft PR live (App+repo uji+confirmation tidak tersedia),
+provider continuation exact (profile aktif compatibility), dan WhatsApp grup
+live (confirmation+akun/grup uji tidak tersedia). Store selain lease SQLite
+masih single-service; horizontal safety dan procedural memory belum selesai.
+
+Next: jalankan empat acceptance pada infrastruktur nonkritis exact, terbitkan
+receipt sandbox dari host yang sama, lalu kerjakan distributed lease/outbox/
+reconciler hanya setelah bukti live P0/P1 lulus.
+
 ## 2026-08-15 — GroupAgentRun menjadi reachable dan startup dapat dibatalkan
 
 Scope: composition WhatsApp GroupAgentRun, checkpoint/delivery repository,
@@ -330,108 +399,3 @@ Telegram/WhatsApp live, artifact full retrieval, serta finalizer terminal.
 Next: perbaiki idempotency `sourceMessageId` dan agregasi update RunMailbox yang
 masih dapat memotong koreksi terbaru; setelah itu lanjutkan batas Phase C atau
 RunStore produksi sesuai urutan deployment.
-
-## 2026-08-09 — Output policy dan reserve final synthesis
-
-Scope: execution policy, AI conversation/worker/client, RunBudget, agent
-harness, tes regresi, serta kontrak Agent Runtime.
-
-Changed: call general kini memperoleh output ceiling code-owned per role dan
-di-clamp ke profile exact; ceiling mekanis tetap sempit. Planner/worker memakai
-kelas budget `work`, sedangkan conversationalist/synthesizer/recovery memakai
-`final`. Work tidak dapat mereservasi separuh total token/biaya yang dilindungi
-untuk final synthesis—48.000 pada budget default, maksimal 49.152 token. View
-numeric dan checkpoint/resume mempertahankan reserve tanpa schema baru.
-ADR-028 mengikat keputusan dan batasnya.
-
-Verified: tes terarah terkait PASS. `npm run check` PASS; `npm test` PASS,
-846 test dalam 108 suite, 0 gagal. `npm run context:check`
-PASS; `git diff --check` PASS.
-
-Not verified: provider/model nyata, Telegram/WhatsApp live, context-pressure
-compaction, recovery truncation, finalizer terminal terpisah, dan efek latency/
-biaya provider dari ceiling baru.
-
-Next: implementasikan context-pressure compaction dan recovery truncation
-sebagai slice Phase C terpisah. Production RunStore/dispatcher tetap wajib
-sebelum work lane diperluas ke surface atau job lain.
-
-## 2026-08-09 — Active AgentRun dan work lane Telegram
-
-Scope: AgentRun domain/repository/service, agent harness, adapter Telegram,
-Run Anchor, mailbox policy, consent/data control, dan dokumentasi arsitektur.
-
-Changed: permintaan planning eksplisit Telegram privat kini memperoleh satu
-foreground active AgentRun v2 yang durable lokal dan tidak memblokir chat.
-RunMailbox dan ChangeSet mengikat koreksi/jawaban secara eksplisit; instruction
-revision menahan hasil basi; commit barrier mencatat receipt outbound dan
-menutup delivery ambigu sebagai `partial|unknown` tanpa retry. Startup/shutdown,
-expiry, ekspor teredaksi, retensi tujuh hari, serta penghapusan snapshot saat
-memory/history dicabut kini mempunyai lifecycle tepercaya. Consent dinaikkan ke
-versi 7. ADR-027 mengikat keputusan dan batasnya.
-
-Verified: `npm run check` PASS; `npm test` PASS, 842 test dalam 108 suite, 0
-gagal; `npm run context:check` PASS; `git diff --check` bersih selain peringatan
-line-ending.
-
-Not verified: provider/model nyata, Telegram live, storage/lease multi-instance,
-dispatcher/outbox/reconciler eksternal, job queue kedua, pin/archive Anchor,
-coding sandbox, dan efek tool write.
-
-Next: buktikan profile/provider dan Telegram lewat smoke test, lalu pisahkan
-RunStore/dispatcher produksi sebelum memperluas work lane ke job atau surface
-lain.
-
-## 2026-08-09 — RunBudget kumulatif Agent Runtime
-
-Scope: Agent Runtime privat, AiClient retry/fallback, delegasi worker,
-checkpoint `waiting_input`, adapter Telegram, dan ekspor data AgentRun.
-
-Changed: satu akun RunBudget code-owned kini mengikat root, setiap physical
-attempt, tool, dan worker. Reservation token+biaya dibuat sebelum key/fetch;
-actual usage dan reported cost disettle, sedangkan transport/408/5xx/payload
-ambigu dibebankan konservatif. Checkpoint writer baru memakai v2 dengan budget
-kumulatif dan migrasi v1 konservatif tanpa menagih jeda pengguna. Stop budget
-memakai copy jujur, concurrency worker dibatasi per run, dan ekspor pengguna
-meredaksi capability hash, price snapshot, serta limit internal. ADR-026
-mengikat keputusan dan batasnya.
-
-Verified: `npm run check` PASS; suite terarah RunBudget+AiClient PASS, 55 test
-dalam 2 suite; `npm test` PASS, 819 test dalam 104 suite, 0 gagal; `npm run
-context:check` PASS; `git diff --check` bersih selain peringatan line-ending.
-
-Not verified: provider/Telegram/WhatsApp nyata, tuning limit produksi,
-kelengkapan harga tier, crash recovery run aktif, dan multi-process storage.
-
-Next: implementasikan context-pressure compaction, reserved final synthesis,
-output-ceiling overhaul, dan recovery truncation sebagai slice Phase C
-terpisah sebelum K3/toughest.
-
-## 2026-08-09 — Fondasi Phase C provider-aware
-
-Scope: registry/config capability model, execution policy, adapter provider,
-AiClient, live native-tool continuation, provider-attempt ledger, dan call
-production conversation/group/worker.
-
-Changed: capability kini terikat pasangan provider+model exact dan hanya
-reasoning profile explicit yang boleh mengaktifkan wire baru. Seluruh call
-production membawa execution plan code-owned; adapter mengallowlist payload
-serta memetakan effort Google/OpenRouter/DeepSeek sesuai profile. Planner
-memutar assistant turn Chat Completions utuh selama invocation dengan binding
-provider+model dan batas reasoning, tanpa mempersistenkan atau mencatat isinya.
-Respons nonterminal gagal tertutup, attempt lokal invalid tidak memutar key,
-dan ledger membedakan incomplete/truncated/schema-rejected sambil merekam
-metadata role/effort/verbosity content-free. Profile explicit fallback testing
-sengaja ditolak sampai execution plan fallback dapat dihitung ulang aman.
-ADR-025 mengikat keputusan dan batasnya.
-
-Verified: `npm run check` PASS; suite terarah provider/config/client PASS, 66
-test dalam 6 suite; `npm test` PASS, 789 test dalam 103 suite, 0 gagal; `npm run
-context:check` PASS.
-
-Not verified: Google AI Studio/OpenRouter/DeepSeek live, Telegram live, WhatsApp
-live, serta kualitas/biaya reasoning pada model produksi exact.
-
-Next: tambahkan cumulative RunBudget sebelum melonggarkan output ceiling, lalu
-context-pressure compaction, recovery truncation, visible verbosity,
-validator-driven escalation, dan K3/toughest sebagai change set terpisah.

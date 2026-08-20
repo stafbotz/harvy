@@ -20,6 +20,10 @@ import type {
   GroupAuthoritySnapshot,
 } from "../core/group-authority-policy.js";
 import type {
+  GroupCodingAuthorityExpectation,
+  GroupCodingAuthorityGuard,
+} from "../core/group-workspace-coding-controller.js";
+import type {
   GroupNoticeTarget,
   GroupTransport,
 } from "../core/group-turn-service.js";
@@ -150,7 +154,9 @@ interface AccountRuntime {
  * reconnect supervisor, dan cache per akun. Tidak ada failover grup ke akun
  * lain; binding domain yang memutuskan akun mana yang sah.
  */
-export class BaileysAccountManager implements GroupTransport {
+export class BaileysAccountManager
+  implements GroupTransport, GroupCodingAuthorityGuard
+{
   private readonly accounts = new Map<string, AccountRuntime>();
   private readonly createSocket: (config: UserFacingSocketConfig) => WASocket;
   private readonly loadAuthState: typeof useMultiFileAuthState;
@@ -274,6 +280,84 @@ export class BaileysAccountManager implements GroupTransport {
       role: participantRole(participant),
       authorityEpoch: this.groupEpoch(runtime, request.scope.groupId),
     };
+  }
+
+  /**
+   * Exact actor lease for group coding. The callback runs inside the same
+   * per-group queue as membership events and is rejected if the epoch changes
+   * while it is active.
+   */
+  async withCurrentActor<T>(
+    expectation: GroupCodingAuthorityExpectation,
+    operation: (authority: GroupAuthoritySnapshot) => Promise<T>,
+  ): Promise<T> {
+    if (
+      expectation.scope.channel !== "whatsapp" ||
+      !Array.isArray(expectation.participantIds) ||
+      expectation.participantIds.length < 1 ||
+      expectation.participantIds.length > 16 ||
+      !Number.isSafeInteger(expectation.claimedAuthorityEpoch) ||
+      expectation.claimedAuthorityEpoch < 1
+    ) throw new Error("Expectation authority group-coding tidak sah.");
+    const runtime = this.accounts.get(expectation.accountId);
+    const socket = runtime?.socket ?? null;
+    const generation = runtime?.generation ?? -1;
+    if (
+      !runtime || !socket || !this.acceptingEvents || runtime.status !== "open" ||
+      !this.isCurrent(runtime, generation)
+    ) throw new Error("Authority group-coding tidak tersedia.");
+    const groupId = expectation.scope.groupId;
+    const expectedEpoch = expectation.claimedAuthorityEpoch;
+    return this.enqueueGroupOperation(runtime, groupId, async () => {
+      if (
+        runtime.socket !== socket || !this.isCurrent(runtime, generation) ||
+        this.groupEpoch(runtime, groupId) !== expectedEpoch
+      ) throw new Error("Authority group-coding sudah berubah.");
+      const before = runtime.groups.get(groupId);
+      let metadata: GroupMetadata;
+      try {
+        metadata = await withTimeout(
+          socket.groupMetadata(groupId),
+          this.metadataTimeoutMs,
+        );
+      } catch {
+        throw new Error("Refresh authority group-coding gagal.");
+      }
+      if (
+        runtime.socket !== socket || !this.isCurrent(runtime, generation) ||
+        this.groupEpoch(runtime, groupId) !== expectedEpoch ||
+        metadata.id !== groupId
+      ) throw new Error("Authority group-coding tidak lagi current.");
+      if (
+        !before ||
+        metadataAuthorityFingerprint(before) !== metadataAuthorityFingerprint(metadata)
+      ) {
+        this.bumpGroupEpoch(runtime, groupId);
+        runtime.groups.set(groupId, metadata);
+        runtime.groupMetadataAt.set(groupId, this.now().getTime());
+        throw new Error("Metadata authority group-coding berubah; kirim ulang command.");
+      }
+      if (!this.metadataContainsSelf(runtime, metadata)) {
+        this.notifySelfMissing(runtime, groupId);
+        throw new Error("Harvy bukan anggota grup pada authority terbaru.");
+      }
+      const participant = metadata.participants.find((candidate) =>
+        participantIs(candidate, expectation.participantIds)
+      );
+      if (!participant) throw new Error("Actor group-coding bukan anggota grup.");
+      runtime.groups.set(groupId, metadata);
+      runtime.groupMetadataAt.set(groupId, this.now().getTime());
+      const authority: GroupAuthoritySnapshot = {
+        role: participantRole(participant),
+        authorityEpoch: expectedEpoch,
+      };
+      const value = await operation(authority);
+      if (
+        runtime.socket !== socket || !this.isCurrent(runtime, generation) ||
+        this.groupEpoch(runtime, groupId) !== expectedEpoch
+      ) throw new Error("Authority group-coding berubah selama operasi.");
+      return value;
+    });
   }
 
   async stop(): Promise<void> {
@@ -527,6 +611,71 @@ export class BaileysAccountManager implements GroupTransport {
     return {
       messageId,
     };
+  }
+
+  async editGroupRunMessage(
+    target: GroupNoticeTarget,
+    text: string,
+    targetMessageIdInput: string,
+    idempotencyKey: string,
+    authorityExpectation: GroupRunDeliveryAuthorityExpectation,
+    runtimeFence: GroupRunDeliveryRuntimeFence,
+  ): Promise<{ messageId: string }> {
+    const targetMessageId = groupRunTargetMessageId(targetMessageIdInput);
+    const expectation = validatedGroupRunAuthorityExpectation(
+      authorityExpectation,
+    );
+    if (typeof runtimeFence !== "function") throw groupRunRuntimeUnavailable();
+    if (target.scope.channel !== "whatsapp") throw groupRunAuthorityUnavailable();
+    const runtime = this.accounts.get(target.accountId);
+    const socket = runtime?.socket ?? null;
+    const generation = runtime?.generation ?? -1;
+    if (
+      !runtime || !socket || !this.acceptingEvents ||
+      runtime.status !== "open" || !this.isCurrent(runtime, generation)
+    ) throw groupRunAuthorityUnavailable();
+    const messageId = await this.enqueueGroupOperation(
+      runtime,
+      target.scope.groupId,
+      async () => {
+        await this.refreshGroupRunDeliveryAuthority(
+          runtime,
+          socket,
+          generation,
+          target.scope.groupId,
+          expectation,
+        );
+        let runtimeAllowed = false;
+        try {
+          runtimeAllowed = await runtimeFence();
+        } catch {
+          throw groupRunRuntimeUnavailable();
+        }
+        if (runtimeAllowed !== true) throw groupRunRuntimeUnavailable();
+        this.assertGroupRunDeliveryAuthority(
+          runtime,
+          socket,
+          generation,
+          target.scope.groupId,
+          expectation,
+        );
+        return this.sendText(
+          target,
+          text,
+          undefined,
+          idempotencyKey,
+          true,
+          undefined,
+          targetMessageId,
+        );
+      },
+    );
+    if (!messageId) {
+      throw new Error(
+        `Edit WhatsApp ${target.accountId} tidak menghasilkan ID pesan.`,
+      );
+    }
+    return { messageId };
   }
 
   private async refreshGroupRunDeliveryAuthority(
@@ -1170,6 +1319,7 @@ export class BaileysAccountManager implements GroupTransport {
     idempotencyKey?: string,
     requireMessageId = false,
     runtimeFence?: GroupNoticeRuntimeFence,
+    editMessageId?: string,
   ): Promise<string | null> {
     const runtime = this.accounts.get(target.accountId);
     const socket = runtime?.socket ?? null;
@@ -1205,7 +1355,16 @@ export class BaileysAccountManager implements GroupTransport {
     // Tidak ada await antara fence host terakhir dan invocation socket.
     const sent = await socket.sendMessage(
       target.scope.groupId,
-      { text: text.trim() },
+      editMessageId
+        ? {
+            text: text.trim(),
+            edit: {
+              remoteJid: target.scope.groupId,
+              fromMe: true,
+              id: editMessageId,
+            },
+          }
+        : { text: text.trim() },
       quoted || requestedMessageId
         ? { ...(quoted ? { quoted } : {}), ...(requestedMessageId
             ? { messageId: requestedMessageId }
@@ -1564,6 +1723,14 @@ function groupRunMessageId(idempotencyKey: string): string {
     .digest("hex")
     .slice(0, 32)
     .toUpperCase();
+}
+
+function groupRunTargetMessageId(value: string): string {
+  const clean = value.trim();
+  if (!clean || clean.length > 512 || /[\u0000-\u001f\u007f]/u.test(clean)) {
+    throw new Error("Target message ID edit GroupRun tidak sah.");
+  }
+  return clean;
 }
 
 function messageCacheKey(groupId: string, messageId: string): string {

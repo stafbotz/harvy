@@ -90,6 +90,12 @@ export async function scanProjectTree(
   options: {
     limits?: Partial<ProjectTreeLimits>;
     now?: () => Date;
+    /**
+     * Windows cannot faithfully materialize the POSIX executable bit carried
+     * by a Git tree. Trusted snapshot metadata may supply that bit while this
+     * scanner still verifies every path, byte count, and content digest.
+     */
+    executableOverrides?: ReadonlyMap<string, boolean>;
   } = {},
 ): Promise<ProjectSnapshotManifest> {
   const limits = resolveTreeLimits(options.limits);
@@ -152,11 +158,18 @@ export async function scanProjectTree(
       if (bytes.length !== state.size) {
         throw new Error("File project berubah selama scan.");
       }
+      const hasExecutableOverride = options.executableOverrides?.has(path) === true;
+      const executableOverride = hasExecutableOverride
+        ? options.executableOverrides?.get(path)
+        : undefined;
+      if (hasExecutableOverride && typeof executableOverride !== "boolean") {
+        throw new Error("Metadata executable snapshot project tidak sah.");
+      }
       files.push({
         path,
         size: state.size,
         sha256: createHash("sha256").update(bytes).digest("hex"),
-        executable: (state.mode & 0o111) !== 0,
+        executable: executableOverride ?? (state.mode & 0o111) !== 0,
       });
     }
   }
@@ -188,6 +201,7 @@ export async function copyProjectTree(
   sourceRoot: string,
   destinationRoot: string,
   limits?: Partial<ProjectTreeLimits>,
+  executableOverrides?: ReadonlyMap<string, boolean>,
 ): Promise<ProjectSnapshotManifest> {
   const source = resolve(sourceRoot);
   const destination = resolve(destinationRoot);
@@ -195,6 +209,7 @@ export async function copyProjectTree(
   assertPathNotInside(source, destination);
   const manifest = await scanProjectTree(source, {
     ...(limits ? { limits } : {}),
+    ...(executableOverrides ? { executableOverrides } : {}),
   });
   await mkdir(destination, { recursive: false });
   for (const file of manifest.files) {
@@ -220,6 +235,7 @@ export async function copyProjectTree(
   }
   return scanProjectTree(destination, {
     ...(limits ? { limits } : {}),
+    ...(executableOverrides ? { executableOverrides } : {}),
   });
 }
 

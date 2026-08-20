@@ -6,13 +6,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-const MAX_CURRENT_BYTES = 5_120;
-const MAX_OUTPUT_BYTES = 8_192;
-const MAX_AGENTS_BYTES = 12_288;
-const MAX_STATUS_INDEX_BYTES = 8_192;
-const MAX_ACTIVE_LOG_BYTES = 24 * 1_024;
-const START_MARKER = "<!-- SESSION_CONTEXT_START -->";
-const END_MARKER = "<!-- SESSION_CONTEXT_END -->";
+import { validateContractFiles } from "./context-contract.mjs";
+import { validateContextFreshness } from "./context-freshness.mjs";
+
+export const MAX_CURRENT_BYTES = 5_120;
+export const MAX_OUTPUT_BYTES = 8_192;
+export const MAX_AGENTS_BYTES = 12_288;
+export const START_MARKER = "<!-- SESSION_CONTEXT_START -->";
+export const END_MARKER = "<!-- SESSION_CONTEXT_END -->";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const readStagedSnapshot = process.argv.includes("--check-staged");
@@ -22,7 +23,17 @@ const root = readStagedSnapshot && stagedRoot
   : resolve(scriptDir, "..");
 const execFileAsync = promisify(execFile);
 
-async function readRepositoryFile(relativePath) {
+export function byteLength(value) {
+  return Buffer.byteLength(value, "utf8");
+}
+
+export function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+export async function readRepositoryFile(relativePath) {
   if (readStagedSnapshot) {
     assert(stagedRoot !== undefined, "HARVY_CONTEXT_ROOT is required for staged checks");
     try {
@@ -39,32 +50,7 @@ async function readRepositoryFile(relativePath) {
   return readFile(resolve(root, relativePath), "utf8");
 }
 
-async function assertStagedExecutable(relativePath) {
-  if (!readStagedSnapshot) {
-    return;
-  }
-  const { stdout } = await execFileAsync(
-    "git",
-    ["ls-files", "--stage", "--", relativePath],
-    { cwd: root, encoding: "utf8" },
-  );
-  assert(
-    stdout.startsWith("100755 "),
-    `${relativePath} must remain executable in the staged snapshot`,
-  );
-}
-
-function byteLength(value) {
-  return Buffer.byteLength(value, "utf8");
-}
-
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function extractBootstrapContract(agents) {
+export function extractBootstrapContract(agents) {
   const start = agents.indexOf(START_MARKER);
   const end = agents.indexOf(END_MARKER);
   assert(start >= 0 && end > start, "bootstrap markers missing from AGENTS.md");
@@ -93,10 +79,11 @@ export function assertNoCredentialLikeText(value) {
   );
 }
 
-export async function buildSessionContext() {
+export async function buildSessionContext(options = {}) {
+  const fileReader = options.readRepositoryFile || readRepositoryFile;
   const [agents, current] = await Promise.all([
-    readRepositoryFile("AGENTS.md"),
-    readRepositoryFile("docs/agent/CURRENT.md"),
+    fileReader("AGENTS.md"),
+    fileReader("docs/agent/CURRENT.md"),
   ]);
 
   assert(byteLength(agents) <= MAX_AGENTS_BYTES, "AGENTS.md exceeds 12 KiB");
@@ -120,161 +107,38 @@ export async function buildSessionContext() {
   return output;
 }
 
-async function validateContractFiles() {
-  const paths = {
-    agents: "AGENTS.md",
-    claude: "CLAUDE.md",
-    antigravity: ".agent/rules/00-harvy-bootstrap.md",
-    settings: ".claude/settings.json",
-    shell: "scripts/session-context.sh",
-    workflow: "docs/operations/WORKFLOW.md",
-    index: "docs/INDEX.md",
-    status: "docs/engineering/STATUS.md",
-    log: "docs/LOG.md",
-    hook: ".githooks/pre-commit",
-    generator: "scripts/session-context.mjs",
-    contractTest: "tests/agent-context-contract.test.ts",
-    package: "package.json",
+export async function runContextCheck(options = {}) {
+  const contextOptions = {
+    root,
+    readRepositoryFile,
+    execFileAsync,
+    readStagedSnapshot,
+    ...options,
   };
-  const entries = await Promise.all(
-    Object.entries(paths).map(async ([key, path]) => [key, await readRepositoryFile(path)]),
-  );
-  const files = Object.fromEntries(entries);
 
-  await Promise.all([
-    assertStagedExecutable(".githooks/pre-commit"),
-    assertStagedExecutable("scripts/session-context.sh"),
-  ]);
+  const output = await buildSessionContext(contextOptions);
+  await validateContractFiles(contextOptions);
+  const freshness = await validateContextFreshness(contextOptions);
 
-  assert(files.claude.includes("@AGENTS.md"), "CLAUDE.md must import AGENTS.md");
-  assert(byteLength(files.claude) <= 1_024, "CLAUDE.md is not a thin adapter");
-  assert(
-    files.antigravity.includes("@../../AGENTS.md"),
-    "Antigravity rule must import AGENTS.md",
-  );
-  assert(byteLength(files.antigravity) <= 512, "Antigravity rule is not thin");
-
-  const settings = JSON.parse(files.settings);
-  const sessionStart = settings?.hooks?.SessionStart;
-  assert(
-    Array.isArray(sessionStart) && sessionStart.length === 1,
-    "Claude must define exactly one SessionStart bootstrap group",
-  );
-  const sessionHooks = sessionStart[0]?.hooks;
-  assert(
-    Array.isArray(sessionHooks) && sessionHooks.length === 1,
-    "Claude must define exactly one SessionStart bootstrap hook",
-  );
-  const sessionHook = sessionHooks[0];
-  assert(
-    sessionHook?.type === "command" &&
-      sessionHook.command === "node" &&
-      Array.isArray(sessionHook.args) &&
-      sessionHook.args.length === 1 &&
-      sessionHook.args[0] === "${CLAUDE_PROJECT_DIR}/scripts/session-context.mjs",
-    "Claude SessionStart must call the portable context generator",
-  );
-  assert(
-    !/docs\/(?:LOG|PROJECT|CONSTITUTION)|docs\/engineering\/STATUS|\b(?:cat|awk)\b/u.test(
-      files.shell,
-    ),
-    "shell wrapper must not read or print large documents",
-  );
-
-  const bootstrapContract = extractBootstrapContract(files.agents);
-  assert(
-    /Koordinasikan penulisan secara adaptif/iu.test(bootstrapContract) &&
-      /berurutan,\s*paralel,\s*atau\s*terisolasi/iu.test(bootstrapContract) &&
-      /peran agent\s+tidak otomatis menentukan hak edit/iu.test(bootstrapContract),
-    "AGENTS.md bootstrap must describe adaptive writing coordination",
-  );
-  assert(
-    /Tidak ada mandat satu penulis untuk seluruh working tree/iu.test(files.workflow) &&
-      /Worktree\/clone adalah alat opsional/iu.test(files.workflow),
-    "workflow must preserve adaptive repository writing coordination",
-  );
-
-  const activeContract = [
-    files.agents,
-    files.claude,
-    files.antigravity,
-    files.workflow,
-    files.index,
-    files.shell,
-    files.log,
-    files.hook,
-  ].join("\n");
-  const retiredMandates = [
-    /~15 entri terbaru/iu,
-    /termasuk sesi yang hanya berdiskusi/iu,
-    /Baca konteks sebelum menjawab:\s*docs\/PROJECT\.md/iu,
-    /Commit ditahan:\s*docs\/LOG\.md/iu,
-    /docs\/LOG\.md tidak ikut berubah/iu,
-  ];
-  assert(
-    !retiredMandates.some((pattern) => pattern.test(activeContract)),
-    "retired mandatory-bootstrap or LOG rule remains active",
-  );
-  const retiredWritingMandates = [
-    /Satu penulis aktif per working tree/iu,
-    /Satu pihak menulis pada satu working tree/iu,
-    /Hanya satu pihak menulis file pada satu waktu/iu,
-    /agent lain boleh audit\/QA\s+baca-saja/iu,
-    /Bila dua penulis benar-benar diperlukan,\s*gunakan worktree\/clone terpisah/iu,
-    /Kerja paralel hanya\s+diizinkan untuk paket dan folder kerja yang benar-benar terisolasi/iu,
-  ];
-  assert(
-    !retiredWritingMandates.some((pattern) => pattern.test(activeContract)),
-    "retired repository writing coordination rule remains active",
-  );
-  assert(
-    !/Commit ditahan:.*LOG|LOG.*tidak ikut berubah|grep\s+-q.*LOG/iu.test(files.hook),
-    "pre-commit must not force LOG updates",
-  );
-
-  assert(
-    byteLength(files.status) <= MAX_STATUS_INDEX_BYTES,
-    "STATUS.md summary exceeds 8 KiB",
-  );
-  assert(byteLength(files.log) <= MAX_ACTIVE_LOG_BYTES, "active LOG.md exceeds 24 KiB");
-  const materialLogEntries = files.log.match(/^## \d{4}-\d{2}-\d{2} — /gmu)?.length ?? 0;
-  assert(materialLogEntries <= 12, "active LOG.md exceeds 12 material entries");
-  assert(byteLength(files.generator) <= 12_288, "session context generator exceeds 12 KiB");
-  assert(
-    files.contractTest.includes("kontrak konteks coding agent"),
-    "agent context contract test source is missing or invalid",
-  );
-  const packageJson = JSON.parse(files.package);
-  assert(
-    packageJson?.scripts?.["context:check"] === "node scripts/session-context.mjs --check",
-    "package.json must expose the canonical context:check command",
-  );
-  const subsystemFiles = [
-    "agent-runtime.md",
-    "telegram.md",
-    "whatsapp.md",
-    "tasks.md",
-    "memory.md",
-    "safety-privacy.md",
-    "console.md",
-    "platform.md",
-  ];
-  for (const name of subsystemFiles) {
-    assert(files.status.includes(`status/${name}`), `STATUS.md does not link ${name}`);
-    await readRepositoryFile(`docs/engineering/status/${name}`);
+  if (freshness?.warnings?.length > 0) {
+    for (const warning of freshness.warnings) {
+      process.stderr.write(`agent-context warning: ${warning}\n`);
+    }
   }
+
+  const bytes = byteLength(output);
+  process.stdout.write(
+    `agent-context: ok; output=${bytes} bytes; estimate=${Math.ceil(bytes / 4)} tokens\n`,
+  );
+  return { output, freshness };
 }
 
 async function main() {
-  const output = await buildSessionContext();
   if (process.argv.includes("--check") || process.argv.includes("--check-staged")) {
-    await validateContractFiles();
-    const bytes = byteLength(output);
-    process.stdout.write(
-      `agent-context: ok; output=${bytes} bytes; estimate=${Math.ceil(bytes / 4)} tokens\n`,
-    );
+    await runContextCheck();
     return;
   }
+  const output = await buildSessionContext();
   process.stdout.write(output);
 }
 

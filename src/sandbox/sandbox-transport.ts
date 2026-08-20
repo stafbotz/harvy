@@ -70,6 +70,7 @@ export class UnavailableSandboxTransport implements SandboxTransport {
     return {
       available: false,
       runtime: null,
+      identity: null,
       checkedAt: this.now().toISOString(),
       reason: this.reason,
     };

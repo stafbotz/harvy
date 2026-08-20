@@ -1,0 +1,25 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      bash ca-certificates coreutils findutils gawk git grep make sed tar \
+      nodejs npm python3 python3-pip python3-pytest \
+      cargo rustc default-jdk-headless gradle \
+ && find / -xdev -perm /6000 -type f -exec chmod a-s {} + \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 65532 sandbox \
+ && useradd --uid 65532 --gid 65532 --home-dir /tmp --no-create-home --shell /usr/sbin/nologin sandbox \
+ && mkdir -p /workspace \
+ && chown 65532:65532 /workspace
+
+COPY deploy/sandbox/harvy-project-validate.mjs /usr/local/bin/harvy-project-validate
+RUN chown root:root /usr/local/bin/harvy-project-validate \
+ && chmod 0555 /usr/local/bin/harvy-project-validate
+
+USER 65532:65532
+WORKDIR /workspace
+ENTRYPOINT ["/bin/sleep"]
+CMD ["infinity"]

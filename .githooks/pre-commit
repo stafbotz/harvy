@@ -8,24 +8,26 @@ staged=$(
     grep -Ev '^[ACDMRTUXB][0-9]*$'
 )
 
-guarded=$(printf '%s\n' "$staged" | grep -E '^((AGENTS|CLAUDE)\.md|\.claude/settings\.json|\.agent/rules/.*|\.githooks/pre-commit|scripts/session-context\.(mjs|sh)|docs/(LOG\.md|agent/CURRENT\.md)|docs/engineering/STATUS\.md|docs/engineering/status/.*|docs/operations/WORKFLOW\.md|docs/INDEX\.md|tests/agent-context-contract\.test\.ts|package\.json)$')
+guarded=$(printf '%s\n' "$staged" | grep -E '^((AGENTS|CLAUDE)\.md|\.claude/settings\.json|\.agent/rules/.*|\.githooks/pre-commit|scripts/session-context\.(mjs|sh)|scripts/context-(contract|freshness)\.mjs|docs/(LOG\.md|agent/CURRENT\.md)|docs/engineering/STATUS\.md|docs/engineering/status/.*|docs/operations/WORKFLOW\.md|docs/INDEX\.md|tests/agent-context-(contract|freshness)\.test\.ts|package\.json)$')
 
 [ -z "$guarded" ] && exit 0
 
 repository_root=$(git rev-parse --show-toplevel) || exit 1
-staged_generator=$(mktemp "${TMPDIR:-/tmp}/harvy-context.XXXXXX.mjs") || exit 1
+staged_dir=$(mktemp -d "${TMPDIR:-/tmp}/harvy-context.XXXXXX") || exit 1
 
 cleanup() {
-  rm -f -- "$staged_generator"
+  rm -rf -- "$staged_dir"
 }
 trap cleanup EXIT HUP INT TERM
 
-if ! git show :scripts/session-context.mjs >"$staged_generator"; then
-  echo "Commit ditahan: generator konteks tidak ada pada snapshot staged." >&2
+if ! git show :scripts/session-context.mjs >"$staged_dir/session-context.mjs" || \
+   ! git show :scripts/context-contract.mjs >"$staged_dir/context-contract.mjs" || \
+   ! git show :scripts/context-freshness.mjs >"$staged_dir/context-freshness.mjs"; then
+  echo "Commit ditahan: script konteks agent tidak lengkap pada snapshot staged." >&2
   exit 1
 fi
 
-HARVY_CONTEXT_ROOT="$repository_root" node "$staged_generator" --check-staged || {
+HARVY_CONTEXT_ROOT="$repository_root" node "$staged_dir/session-context.mjs" --check-staged || {
   cat >&2 <<'MESSAGE'
 
   Commit ditahan: kontrak konteks agent pada snapshot staged tidak valid.

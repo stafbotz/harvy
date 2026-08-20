@@ -36,6 +36,11 @@ describe("HTTP Sandbox trust-domain transport", () => {
         return jsonResponse(observedHeaders, {
           available: true,
           runtime: "isolated-linux",
+          identity: {
+            serviceIdentityDigest: "1".repeat(64),
+            runtimeImageDigest: "2".repeat(64),
+            policyDigest: "3".repeat(64),
+          },
           checkedAt: NOW,
           reason: null,
         });

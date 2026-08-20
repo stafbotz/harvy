@@ -43,7 +43,7 @@ export type CodingWorkerAction =
   | { kind: "validator"; validator: CodingValidatorKind }
   | { kind: "task_review" }
   | { kind: "finalize" }
-  | { kind: "yield"; reasonCode: string };
+  | { kind: "yield"; reasonCode: string; question: string };
 
 export interface CodingCoordinatorRunView {
   runId: string;
@@ -156,6 +156,7 @@ export interface CodingCoordinatorEngine {
     scope: WorkspaceAgentScope,
     runId: string,
     reasonCode: string,
+    question: string,
   ): Promise<CodingRun>;
   resumeCoordinator(
     scope: WorkspaceAgentScope,
@@ -168,7 +169,11 @@ export interface CodingCoordinatorEngine {
     kind: CodingValidatorKind,
     signal?: AbortSignal,
     expectedStateRevision?: number,
-  ): Promise<{ run: CodingRun; receipt: CodingRun["validatorReceipts"][number] }>;
+  ): Promise<{
+    run: CodingRun;
+    receipt: CodingRun["validatorReceipts"][number];
+    diagnostic?: CodingValidatorDiagnostic;
+  }>;
   runTaskReview(
     scope: WorkspaceAgentScope,
     runId: string,
@@ -191,6 +196,30 @@ export interface CodingCoordinatorEngine {
   ): Promise<CodingRun>;
 }
 
+export interface CodingValidatorDiagnostic {
+  status: SandboxExecResult["status"];
+  exitCode: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+  artifacts: SandboxExecResult["artifacts"];
+}
+
+export interface CodingValidatorEscalationResult {
+  status: "accepted" | "not_escalated" | "already_used" | "failed";
+  code: string;
+  recoveryHint?: string;
+}
+
+export interface CodingValidatorEscalationDriver {
+  recover(input: {
+    run: CodingCoordinatorRunView;
+    receipt: CodingCoordinatorRunView["validators"][number];
+    diagnostic: CodingValidatorDiagnostic | null;
+  }, signal?: AbortSignal): Promise<CodingValidatorEscalationResult>;
+}
+
 export type CodingCoordinatorResult =
   | { outcome: "terminal"; actions: number; run: CodingRun }
   | {
@@ -205,6 +234,9 @@ export interface CodingRunCoordinatorOptions {
   maxActions?: number;
   workerTimeoutMs?: number;
   maxObservationCharacters?: number;
+  /** Best-effort facts-only observer; it never controls run state. */
+  onProgress?: (run: CodingRun) => void | Promise<void>;
+  validatorEscalation?: CodingValidatorEscalationDriver;
 }
 
 /**
@@ -215,6 +247,12 @@ export class CodingRunCoordinator {
   private readonly maxActions: number;
   private readonly workerTimeoutMs: number;
   private readonly maxObservationCharacters: number;
+  private readonly onProgress:
+    | ((run: CodingRun) => void | Promise<void>)
+    | undefined;
+  private readonly validatorEscalation:
+    | CodingValidatorEscalationDriver
+    | undefined;
 
   constructor(
     private readonly engine: CodingCoordinatorEngine,
@@ -236,6 +274,8 @@ export class CodingRunCoordinator {
       "maxObservationCharacters",
       512_000,
     );
+    this.onProgress = options.onProgress;
+    this.validatorEscalation = options.validatorEscalation;
   }
 
   async run(
@@ -322,6 +362,7 @@ export class CodingRunCoordinator {
       const instructionRevision = run.instructionRevision;
       if (run.phase === "mapping") {
         run = await this.engine.markMapped(scope, runId, instructionRevision);
+        await this.reportProgress(run);
         previousObservation = observation(
           "mapping.completed",
           {
@@ -347,6 +388,7 @@ export class CodingRunCoordinator {
           scope,
           runId,
           "decision_budget",
+          "Batas keputusan kumulatif run ini tercapai. Balas anchor dengan arahan yang lebih sempit, atau batalkan run.",
         );
         return { outcome: "action_budget", actions, run: paused };
       }
@@ -390,6 +432,7 @@ export class CodingRunCoordinator {
           scope,
           runId,
           action.reasonCode,
+          action.question,
         );
         return {
           outcome: "yielded",
@@ -410,19 +453,18 @@ export class CodingRunCoordinator {
       // action slot. Report the durable terminal outcome instead of
       // misclassifying a successfully completed run as budget exhaustion.
       run = await this.requireRun(scope, runId);
+      await this.reportProgress(run);
       if (terminal(run)) {
         return { outcome: "terminal", actions: actions + 1, run };
       }
     }
-    const paused = await this.engine.pauseCoordinator(
-      scope,
-      runId,
-      "invocation_action_budget",
-    );
+    // Ini checkpoint internal antar-invocation, bukan permintaan input manusia.
+    // Application dapat menjadwalkan run durable yang sama setelah quiescence.
+    const checkpoint = await this.requireRun(scope, runId);
     return {
       outcome: "action_budget",
       actions: this.maxActions,
-      run: paused,
+      run: checkpoint,
     };
   }
 
@@ -489,10 +531,37 @@ export class CodingRunCoordinator {
         signal,
         run.stateRevision,
       );
-      return this.observe("validator.completed", {
+      const completed = {
         phase: validated.run.phase,
         receipt: receiptSummary(validated.receipt),
-      });
+        ...(validated.diagnostic
+          ? { diagnostic: structuredClone(validated.diagnostic) }
+          : {}),
+      };
+      if (
+        validated.receipt.status !== "failed" ||
+        !this.validatorEscalation ||
+        repeatedValidatorFailures(validated.run, validated.receipt) < 2
+      ) return this.observe("validator.completed", completed);
+      let escalation: CodingValidatorEscalationResult;
+      try {
+        escalation = validateEscalationResult(
+          await this.validatorEscalation.recover({
+            run: runView(validated.run),
+            receipt: receiptSummary(validated.receipt),
+            diagnostic: validated.diagnostic
+              ? structuredClone(validated.diagnostic)
+              : null,
+          }, signal),
+        );
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        return this.observe("validator.completed", {
+          ...completed,
+          escalation: { status: "failed", code: "escalation_unavailable" },
+        });
+      }
+      return this.observe("validator.completed", { ...completed, escalation });
     }
     if (action.kind === "task_review") {
       const reviewed = await this.engine.runTaskReview(
@@ -589,6 +658,15 @@ export class CodingRunCoordinator {
     return run;
   }
 
+  private async reportProgress(run: CodingRun): Promise<void> {
+    if (!this.onProgress) return;
+    try {
+      await this.onProgress(structuredClone(run));
+    } catch {
+      // Delivery is cosmetic. Durable run state remains authoritative.
+    }
+  }
+
   private async pauseAfterFailure(
     scope: WorkspaceAgentScope,
     runId: string,
@@ -602,6 +680,9 @@ export class CodingRunCoordinator {
       error instanceof Error && error.name === "AbortError"
         ? "coordinator_aborted"
         : "coordinator_error",
+      error instanceof Error && error.name === "AbortError"
+        ? "Pekerjaan terhenti sebelum langkah aktif selesai. Balas anchor untuk mencoba lagi dengan constraint terbaru, atau batalkan run."
+        : "Pekerjaan tidak dapat melanjutkan langkah aktif dengan aman. Balas anchor dengan koreksi atau constraint tambahan, atau batalkan run.",
     );
   }
 }
@@ -682,10 +763,11 @@ function validateAction(input: CodingWorkerAction): CodingWorkerAction {
       }
       return structuredClone(input);
     case "yield":
-      exactKeys(input, ["kind", "reasonCode"]);
+      exactKeys(input, ["kind", "reasonCode", "question"]);
       if (!/^[a-z][a-z0-9_.-]{0,108}$/u.test(input.reasonCode)) {
         throw new Error("Coding yield reasonCode tidak sah.");
       }
+      safeText(input.question, "coding yield question", 2_000);
       return structuredClone(input);
     default:
       throw new Error("Coding worker action tidak dikenal.");
@@ -727,6 +809,46 @@ function receiptSummary(
     instructionRevision: receipt.instructionRevision,
     completedAt: receipt.completedAt,
   };
+}
+
+function repeatedValidatorFailures(
+  run: CodingRun,
+  receipt: CodingRun["validatorReceipts"][number],
+): number {
+  return run.validatorReceipts.filter((candidate) =>
+    candidate.kind === receipt.kind &&
+    candidate.status === "failed" &&
+    candidate.instructionRevision === receipt.instructionRevision
+  ).length;
+}
+
+function validateEscalationResult(
+  input: CodingValidatorEscalationResult,
+): CodingValidatorEscalationResult {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Hasil eskalasi validator tidak sah.");
+  }
+  const allowed = input.status === "accepted"
+    ? ["status", "code", "recoveryHint"]
+    : ["status", "code"];
+  exactKeys(input, allowed);
+  if (
+    input.status !== "accepted" && input.status !== "not_escalated" &&
+    input.status !== "already_used" && input.status !== "failed"
+  ) throw new Error("Status eskalasi validator tidak sah.");
+  if (!/^[a-z][a-z0-9_.-]{0,108}$/u.test(input.code)) {
+    throw new Error("Kode eskalasi validator tidak sah.");
+  }
+  if (
+    input.status === "accepted" &&
+    (typeof input.recoveryHint !== "string" ||
+      !input.recoveryHint.trim() || input.recoveryHint.length > 8_192 ||
+      containsSecretLikeValue(input.recoveryHint))
+  ) throw new Error("Recovery hint eskalasi validator tidak sah.");
+  if (input.status !== "accepted" && input.recoveryHint !== undefined) {
+    throw new Error("Recovery hint hanya sah pada eskalasi accepted.");
+  }
+  return structuredClone(input);
 }
 
 function taskReviewSummary(

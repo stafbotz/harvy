@@ -189,6 +189,21 @@ describe("OneShotModelEscalationService", () => {
     });
   });
 
+  it("menutup seluruh reservation menggantung sebelum admission startup", async () => {
+    await withRepository(async (_file, repository) => {
+      const service = escalationService(repository);
+      const first = input({ stageKey: "run-1:startup-first" });
+      const second = input({ stageKey: "run-1:startup-second" });
+      await repository.reserve(reservation(first));
+      await repository.reserve(reservation(second));
+      assert.equal((await repository.listReserved()).length, 2);
+      assert.equal(await service.recoverReserved(), 2);
+      assert.equal((await repository.listReserved()).length, 0);
+      assert.equal((await repository.load(first.stageKey))?.status, "unknown");
+      assert.equal((await repository.load(second.stageKey))?.outcomeCode, "outcome_unknown");
+    });
+  });
+
   it("menolak schema outcome asing dan settlement kedua", async () => {
     await withRepository(async (file, repository) => {
       const candidate = input({ stageKey: "run-1:critic-schema" });

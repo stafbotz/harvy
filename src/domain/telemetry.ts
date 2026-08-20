@@ -110,6 +110,9 @@ export interface TurnTelemetryRecord {
   queueWaitMs: number;
   handlingLatencyMs: number;
   totalLatencyMs: number;
+  /** Null only when no user-visible response was delivered for the turn. */
+  timeToFirstResponseMs: number | null;
+  timeToFinalResponseMs: number | null;
   modelCallCount: number;
   failedModelCallCount: number;
   boundaryCallCount: number;

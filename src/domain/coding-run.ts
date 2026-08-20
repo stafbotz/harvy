@@ -255,6 +255,19 @@ export interface CodingRunCounters {
   coordinatorDecisions: number;
 }
 
+/**
+ * Human-visible question that makes `waiting_input` an explicit, targeted
+ * state instead of a generic pause. Platform ingress binds the answer to the
+ * mutable Run Anchor; arbitrary conversation is never copied here.
+ */
+export interface CodingRunPendingQuestion {
+  questionId: string;
+  reasonCode: string;
+  prompt: string;
+  instructionRevision: number;
+  requestedAt: string;
+}
+
 export interface PendingCodingCommit {
   effectId: string;
   instructionRevision: number;
@@ -344,6 +357,8 @@ export interface CodingRun {
   diff: CodingDiffSummary | null;
   limits: CodingRunLimits;
   counters: CodingRunCounters;
+  /** Optional only while loading records written before targeted questions. */
+  pendingQuestion?: CodingRunPendingQuestion | null;
   pendingCommit: PendingCodingCommit | null;
   commitReceipts: CodingCommitReceipt[];
   result: CodingRunResult | null;

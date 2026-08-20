@@ -111,6 +111,12 @@ export interface CreatedWorkspace {
   scope: WorkspaceAgentScope;
 }
 
+export interface AccessibleWorkspace {
+  workspace: WorkspaceRecord;
+  membership: WorkspaceMembership;
+  scope: WorkspaceAgentScope;
+}
+
 /**
  * Membuat pseudonim principal yang terpisah per kanal. Secret berasal dari
  * control plane/deployment dan tidak pernah masuk scope, repository, atau log.
@@ -215,6 +221,25 @@ export class WorkspaceAuthorityService {
     if (!state || state.workspace.disabledAt !== null) return null;
     const membership = activeMembership(state, cleanPrincipal);
     return membership ? workspaceScope(state.workspace, membership) : null;
+  }
+
+  async listWorkspaces(
+    principalInput: WorkspacePrincipal,
+  ): Promise<AccessibleWorkspace[]> {
+    const principal = validPrincipal(principalInput);
+    const states = await this.repository.listAuthorityStatesByPrincipal(principal);
+    const result: AccessibleWorkspace[] = [];
+    for (const state of states) {
+      if (state.workspace.disabledAt !== null) continue;
+      const membership = activeMembership(state, principal);
+      if (!membership) continue;
+      result.push(Object.freeze({
+        workspace: structuredClone(state.workspace),
+        membership: structuredClone(membership),
+        scope: workspaceScope(state.workspace, membership),
+      }));
+    }
+    return result;
   }
 
   async authorize(

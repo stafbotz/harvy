@@ -1,7 +1,8 @@
 # Status — WhatsApp Grup
 
-Refreshed: 15 Agustus 2026 pada working tree composition GroupAgentRun;
-`npm test` PASS 1.348/1.348 dalam 169 suite. Bukti kanal nyata tetap sempit.
+Refreshed: 15 Agustus 2026 pada production reachability GroupAgentRun dan
+group-coding. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; bukti kanal
+nyata tetap belum lengkap.
 
 ## Keadaan saat ini
 
@@ -123,11 +124,28 @@ Refreshed: 15 Agustus 2026 pada working tree composition GroupAgentRun;
   dan memiliki stop/drain. Composition menempatkannya sesudah observation
   authority dan sebelum merge batch; command serta work lane hanya reachable
   ketika `WHATSAPP_GROUP_AGENT_RUN_ENABLED=true` dan runtime admission live.
-- Core Phase L group-coding juga tersedia, tetapi terpisah dari ingress grup.
-  Link memerlukan admin grup dan `workspace.manage`; status run disanitasi dan
-  push/PR hanya dapat berlanjut ke confirmation Workspace-private. Actor
-  resolver dan lease authority production belum ada, jadi surface ini tidak
-  reachable.
+- Phase L group-coding kini dirangkai sesudah observation authority dan sebelum
+  ambient batching ketika coding runtime aktif. Resolver membuat actor opaque
+  dari account/scope/participant/message tepercaya; controller tetap
+  merevalidasi live group epoch, membership Workspace, permission, dan link
+  durable sebelum serta sesudah admission. Start/status/correction/cancel dan
+  anchor mutable group-safe tersedia. Source/diff/path/error/repository metadata
+  tidak mempunyai renderer grup.
+- Link Workspace dibuka lewat handoff Telegram private: admin grup meminta link,
+  owner Workspace menyetujui interaction exact, lalu principal WhatsApp baru
+  mendapat membership. Request publish grup hanya membuat offer confirmation
+  Telegram Workspace-private; approval/effect broker tidak pernah berasal dari
+  bubble grup.
+- Disable, removal, dan authority epoch change mencabut link serta handoff,
+  menginterupsi scheduler exact, mem-fence run/sandbox/working copy, dan
+  mempertahankan pending commit barrier. Recovery startup juga menutup group
+  reference stale dan orphan admission sebelum ingress dibuka.
+- `npm run acceptance:whatsapp` menyediakan harness live nonkritis dengan
+  confirmation environment explicit, auth tester yang sudah dipasangkan, dan
+  output digest-only. Ia menguji remove/re-add, notice, start/anchor, ambient,
+  quote correction, duplicate replay, status quote, emergency routing, dan
+  admin cancel; harness sengaja berakhir non-sukses bila scope participant,
+  crash/reconnect, waiting input, atau workspace publish belum dijalankan.
 - `WHATSAPP_ACCOUNTS` mendukung beberapa alias account satu proses, masing-masing
   dengan auth folder, socket, cache, reconnect, generation, dan queue sendiri.
 - Satu nomor nyata pernah QR/login/`open` dan membalas satu jalur dasar.
@@ -139,9 +157,10 @@ Refreshed: 15 Agustus 2026 pada working tree composition GroupAgentRun;
 - Dua nomor nyata sekaligus belum diuji. Tidak ada failover atau rebind otomatis
   antar-account.
 - Pending confirmation dan authority epoch grup tidak durable lintas restart.
-- Group AgentRun composition baru dibuktikan otomatis, belum diuji fault/live
-  end-to-end pada WhatsApp nyata. Flag tetap opt-in; tidak ada klaim deduplikasi
-  server, reconnect delivery, atau kualitas executor pada grup nyata.
+- Group AgentRun dan group-coding composition dibuktikan otomatis, belum diuji
+  fault/live end-to-end lengkap pada WhatsApp nyata. Flag tetap opt-in; tidak
+  ada klaim deduplikasi server, reconnect delivery, atau kualitas executor pada
+  grup nyata.
 - Cleanup retry durable hanya terkoordinasi dalam satu proses. Startup menahan
   WhatsApp dan reaktivasi ditahan bila intent tidak dapat dituntaskan; retry
   aktivasi otomatis tetap in-memory. Belum ada lease/supervisor multi-instance,
@@ -202,6 +221,10 @@ Refreshed: 15 Agustus 2026 pada working tree composition GroupAgentRun;
   `tests/group-agent-run-work-processor.test.ts`,
   `tests/group-agent-run-executor.test.ts`,
   `tests/group-agent-run-worker.test.ts`, dan
-  `tests/group-run-anchor.test.ts`, serta
-  `tests/group-workspace-coding-controller.test.ts`.
+  `tests/group-run-anchor.test.ts`,
+  `tests/group-workspace-coding-controller.test.ts`,
+  `tests/group-coding-ingress.test.ts`,
+  `tests/group-coding-delivery-service.test.ts`,
+  `tests/group-coding-run-driver.test.ts`, dan
+  `tests/group-coding-lifecycle-fence.test.ts`.
 - Keputusan: ADR-009, ADR-011, ADR-016, ADR-023, ADR-024, ADR-037, ADR-039.

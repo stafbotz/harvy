@@ -1,0 +1,43 @@
+[Unit]
+Description=Harvy isolated Linux sandbox service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=harvy-sandbox
+Group=harvy-sandbox
+EnvironmentFile=/etc/harvy/sandbox-service.env
+Environment=HOME=/var/lib/harvy-sandbox
+Environment=XDG_RUNTIME_DIR=/run/harvy-sandbox
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/opt/harvy-sandbox-service
+ExecStart=/usr/bin/node /opt/harvy-sandbox-service/dist/src/sandbox-service.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=120s
+StateDirectory=harvy-sandbox
+RuntimeDirectory=harvy-sandbox
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RemoveIPC=yes
+Delegate=yes
+ReadWritePaths=/var/lib/harvy-sandbox /run/harvy-sandbox
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

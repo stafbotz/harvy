@@ -48,6 +48,30 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     });
   }
 
+  async listAuthorityStatesByPrincipal(
+    principal: { channel: WorkspaceMembership["channel"]; principalKey: string },
+  ): Promise<WorkspaceAuthorityState[]> {
+    const database = await this.readDatabase();
+    const workspaceKeys = new Set(
+      database.memberships
+        .filter((membership) =>
+          membership.channel === principal.channel &&
+          membership.principalKey === principal.principalKey &&
+          membership.revokedAt === null
+        )
+        .map((membership) => membership.workspaceKey),
+    );
+    return database.workspaces
+      .filter((workspace) => workspaceKeys.has(workspace.workspaceKey))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt, "en"))
+      .map((workspace) => ({
+        workspace: structuredClone(workspace),
+        memberships: database.memberships
+          .filter((membership) => membership.workspaceKey === workspace.workspaceKey)
+          .map((membership) => structuredClone(membership)),
+      }));
+  }
+
   async saveAuthorityState(
     state: WorkspaceAuthorityState,
     expectedAclEpoch: number | null,

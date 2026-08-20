@@ -43,6 +43,7 @@ histori; jangan gunakan sebagai status terbaru.
 | Refactor lintas modul atau aliran data | [`engineering/ARCHITECTURE.md`](engineering/ARCHITECTURE.md) |
 | Mutasi, adapter, UI, safety, group, atau authority | [`engineering/INVARIANTS.md`](engineering/INVARIANTS.md) |
 | Setup, env, debug, model routing, probe | [`engineering/DEVELOPMENT.md`](engineering/DEVELOPMENT.md) |
+| Deploy sandbox/local-git/GitHub broker/WhatsApp acceptance | [`../deploy/sandbox/README.md`](../deploy/sandbox/README.md), [`../deploy/local-git/README.md`](../deploy/local-git/README.md), [`../deploy/github-broker/README.md`](../deploy/github-broker/README.md), [`../deploy/whatsapp/README.md`](../deploy/whatsapp/README.md) |
 | Strategi tes, bukti otomatis/manual | [`engineering/TESTING.md`](engineering/TESTING.md) |
 | Branch, handoff, materialitas docs, hook | [`operations/WORKFLOW.md`](operations/WORKFLOW.md) |
 | Console localhost dan operasi pilot | [`operations/HARVY_CONSOLE.md`](operations/HARVY_CONSOLE.md) |

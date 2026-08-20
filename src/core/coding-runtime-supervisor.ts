@@ -16,6 +16,7 @@ export type CodingRuntimeState =
   | "idle"
   | "starting"
   | "maintenance_ready"
+  | "runtime_ready"
   | "degraded"
   | "stopping"
   | "stopped"
@@ -23,8 +24,8 @@ export type CodingRuntimeState =
 
 export interface CodingRuntimeStartupReport {
   version: 1;
-  state: "maintenance_ready" | "degraded";
-  codingAdmission: "closed";
+  state: "maintenance_ready" | "runtime_ready" | "degraded";
+  codingAdmission: "open" | "closed";
   sandbox: Pick<SandboxHealth, "available" | "runtime" | "checkedAt">;
   githubInitialPass: GitHubReconciliationCycleReport;
   projectDeletionInitialPass: ProjectDeletionRecoveryCycleReport;
@@ -33,22 +34,32 @@ export interface CodingRuntimeStartupReport {
 export interface CodingRuntimeStatus {
   version: 1;
   state: CodingRuntimeState;
-  codingAdmission: "closed";
+  codingAdmission: "open" | "closed";
 }
 
 export interface CodingRuntimeSupervisorDependencies {
   sandbox: SandboxRunnerLifecycle;
-  scheduler: Pick<CodingRunScheduler, "stop" | "drain">;
+  scheduler: Pick<CodingRunScheduler, "stop" | "drain"> &
+    Partial<Pick<CodingRunScheduler, "start">>;
   createGitHubRecoveryWorker(): GitHubReconciliationWorker;
   createProjectDeletionRecoveryWorker(): ProjectDeletionRecoveryWorker;
+  /** Health/conformance checks for local-git, broker, and other required ports. */
+  verifyProductionDependencies?(): Promise<void>;
+  /** Reconcile commit barriers and launch resumable durable runs before ingress. */
+  recoverCodingRuns?(): Promise<void>;
+  /** Background application drivers that must seal and drain with the scheduler. */
+  runLifecycle?: {
+    stop(): void;
+    drain(): Promise<void>;
+  };
 }
 
 /**
- * App-owned, default-off lifecycle for the local Phase G-J maintenance stack.
- * Startup fences sandbox leases, observes one bounded GitHub page, then resumes
- * one bounded deletion page. It deliberately never starts coding admission:
- * health alone is not deployment conformance, a trusted actor resolver, or a
- * production CodingWorkerDriver.
+ * App-owned, default-off lifecycle for the production coding stack. Startup
+ * fences sandbox leases, observes one bounded GitHub page, then resumes one
+ * bounded deletion page. Coding admission stays closed throughout maintenance
+ * and opens only when explicitly enabled after every production dependency,
+ * exact conformance check, and durable run recovery succeeds.
  */
 export class CodingRuntimeSupervisor {
   private state: CodingRuntimeState = "idle";
@@ -60,11 +71,16 @@ export class CodingRuntimeSupervisor {
   private stopRequested = false;
   private stopFailures: unknown[] = [];
   private schedulerStopped = false;
+  private runLifecycleStopped = false;
   private githubStopped = false;
   private deletionStopped = false;
   private sandboxStopped = false;
+  private codingAdmission: "open" | "closed" = "closed";
 
-  constructor(private readonly dependencies: CodingRuntimeSupervisorDependencies) {}
+  constructor(
+    private readonly dependencies: CodingRuntimeSupervisorDependencies,
+    private readonly options: { enableCodingAdmission?: boolean } = {},
+  ) {}
 
   async start(): Promise<CodingRuntimeStartupReport> {
     if (
@@ -108,13 +124,18 @@ export class CodingRuntimeSupervisor {
     return {
       version: 1,
       state: this.state,
-      codingAdmission: "closed",
+      codingAdmission: this.codingAdmission,
     };
   }
 
   private async startInternal(): Promise<CodingRuntimeStartupReport> {
     try {
       const sandbox = validateSandboxHealth(await this.dependencies.sandbox.start());
+      this.assertStillStarting();
+      if (this.options.enableCodingAdmission === true && !sandbox.available) {
+        throw new Error("Sandbox production tidak tersedia; coding admission ditutup.");
+      }
+      await this.dependencies.verifyProductionDependencies?.();
       this.assertStillStarting();
 
       this.githubWorker = this.dependencies.createGitHubRecoveryWorker();
@@ -164,10 +185,23 @@ export class CodingRuntimeSupervisor {
         githubReport.unresolved > 0 ||
         deletionReport.failed > 0 ||
         deletionReport.blocked > 0;
+      if (!degraded && this.options.enableCodingAdmission === true) {
+        if (!this.dependencies.scheduler.start) {
+          throw new Error("Scheduler coding production tidak memiliki start().");
+        }
+        this.dependencies.scheduler.start();
+        await this.dependencies.recoverCodingRuns?.();
+        this.assertStillStarting();
+        this.codingAdmission = "open";
+      }
       const report: CodingRuntimeStartupReport = {
         version: 1,
-        state: degraded ? "degraded" : "maintenance_ready",
-        codingAdmission: "closed",
+        state: degraded
+          ? "degraded"
+          : this.codingAdmission === "open"
+            ? "runtime_ready"
+            : "maintenance_ready",
+        codingAdmission: this.codingAdmission,
         sandbox: {
           available: sandbox.available,
           runtime: sandbox.runtime,
@@ -201,6 +235,7 @@ export class CodingRuntimeSupervisor {
   }
 
   private stopComponents(): void {
+    this.codingAdmission = "closed";
     const attempts: Array<{
       stopped: () => boolean;
       markStopped: () => void;
@@ -210,6 +245,11 @@ export class CodingRuntimeSupervisor {
         stopped: () => this.schedulerStopped,
         markStopped: () => { this.schedulerStopped = true; },
         stop: () => this.dependencies.scheduler.stop(),
+      },
+      {
+        stopped: () => this.runLifecycleStopped,
+        markStopped: () => { this.runLifecycleStopped = true; },
+        stop: () => this.dependencies.runLifecycle?.stop(),
       },
       {
         stopped: () => this.githubStopped,
@@ -237,8 +277,9 @@ export class CodingRuntimeSupervisor {
       if (attempt.stopped()) continue;
       try {
         if (
-          (attempt === attempts[1] && !this.githubWorker) ||
-          (attempt === attempts[2] && !this.deletionWorker)
+          (attempt === attempts[1] && !this.dependencies.runLifecycle) ||
+          (attempt === attempts[2] && !this.githubWorker) ||
+          (attempt === attempts[3] && !this.deletionWorker)
         ) continue;
         attempt.stop();
         attempt.markStopped();
@@ -269,6 +310,11 @@ export class CodingRuntimeSupervisor {
     const failures: unknown[] = this.stopFailures.splice(0);
     try {
       await this.dependencies.scheduler.drain();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await this.dependencies.runLifecycle?.drain();
     } catch (error) {
       failures.push(error);
     }
@@ -310,6 +356,13 @@ function validateSandboxHealth(input: SandboxHealth): SandboxHealth {
     (input.runtime !== "isolated-linux" && input.runtime !== null) ||
     (input.available && input.runtime !== "isolated-linux") ||
     (!input.available && input.runtime !== null) ||
+    (input.available && (
+      !input.identity ||
+      !/^[a-f0-9]{64}$/u.test(input.identity.serviceIdentityDigest) ||
+      !/^[a-f0-9]{64}$/u.test(input.identity.runtimeImageDigest) ||
+      !/^[a-f0-9]{64}$/u.test(input.identity.policyDigest)
+    )) ||
+    (!input.available && input.identity !== null) ||
     typeof input.checkedAt !== "string" ||
     !Number.isFinite(Date.parse(input.checkedAt)) ||
     (input.reason !== null && typeof input.reason !== "string")

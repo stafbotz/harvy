@@ -246,8 +246,9 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   juga mempunyai baseline per giliran: korelasi boundary→handler, waktu tunggu
   batch/FIFO/handler/total, model-call rate, safety fallback, serta ringkasan
   p50/p95 tanpa menyimpan isi. ADR-022 menambah purpose privacy-memory sebagai
-  overhead dan `safeActionBlockedRate`. Dashboard agregat dan TTFR terpisah
-  belum ada.
+  overhead dan `safeActionBlockedRate`. TTFR delivery pertama dan waktu final
+  kini disimpan content-free serta mempunyai p50/p95 terpisah; dashboard/SLO
+  agregat lintas owner belum ada.
 - [x] Log operasional produksi terpisah dari telemetry: NDJSON terstruktur,
   trace per giliran, allowlist scalar tanpa pesan error bebas, redaksi
   isi/identitas/kredensial, rotasi ukuran+hari, retensi dan batas disk,
@@ -338,10 +339,11 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   adapter ini belum RunStore produksi, multi-instance outbox/reconciler,
   job queue kedua, atau authority tool write. Lihat `ADR-017`, `ADR-018`,
   `ADR-026`, dan `ADR-027`.
-- [x] Scope & Authority v1 sebagai fondasi core: `WorkspaceScope`, principal
-  pseudonim, membership/role/permission, `aclEpoch`, invalidasi scope lama,
-  capability filter, dan adapter file atomik. Belum ada ingress, UI, artifact,
-  atau wiring Workspace untuk pengguna; lihat `ADR-016`.
+- [x] Scope & Authority v1: `WorkspaceScope`, principal pseudonim,
+  membership/role/permission, `aclEpoch`, invalidasi scope lama, capability
+  filter, dan adapter file atomik. Private Telegram serta WhatsApp group-coding
+  sekarang membentuk actor hanya dari ingress tepercaya dan merangkai Workspace
+  opt-in; storage authority masih single-process. Lihat `ADR-016`.
 - [x] Fondasi ProjectWorkspace Phase G: upload/GitHub archive masuk parser ZIP
   aman tanpa shell, snapshot immutable content-addressed, revision/rollback,
   quota+retention, memory namespace project, ACL/CAS, guard authority+revision
@@ -352,8 +354,9 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   pending effect ambigu menahan saga. Tombstone tidak menghapus konten remote.
   Tombstone incomplete memiliki locator content-free exact-bound dan worker
   bounded dapat melanjutkan cleanup lokal tanpa membuat scope pengguna; worker
-  ini masih single-process dan belum dirangkai ke startup aplikasi.
-  Belum ada ingress atau UI Workspace; lihat `ADR-033`.
+  kini dirangkai sebelum coding admission tetapi masih single-process.
+  Private Telegram mempunyai create/select/upload surface opt-in. Lihat
+  `ADR-033`.
 - [x] Kontrak SandboxRunner Phase H: trust domain Linux terpisah, binding exact,
   network-off, quota/admission/watchdog/artifact cap, bundle snapshot
   content-addressed tanpa host path, operation/request digest, download artifact
@@ -361,11 +364,11 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   (termasuk adapter SQLite), dan default fail-closed.
   Path/content snapshot dan argv yang sensitif atau menyerupai credential
   ditolak sebelum callback atau boundary transport.
-  Client HTTP strict yang mendukung service-auth proof tersedia default-off
-  untuk mengirim bundle exact tanpa host path; mode loopback hanya fixture dev,
-  bukan bukti isolasi.
-  Environment ini tidak mempunyai Docker/Podman/runner nyata; isolation live
-  belum terbukti dan capability tetap mati. Lihat `ADR-034`.
+  Client HTTP strict dan backend rootless Podman production tersedia terpisah,
+  termasuk deployment unit, identity digest, 15-scenario hostile harness, dan
+  receipt conformance exact. Mode loopback tetap fixture dev. Environment ini
+  tidak mempunyai Docker/Podman/runner nyata; isolation live belum terbukti dan
+  capability tetap mati. Lihat `ADR-034`.
 - [x] Fondasi CodingRun Phase I: single writer, worker read-only terserialisasi,
   structured patch, ChangeSet/freshness, validator evidence terikat task dan
   command, repository-map/plan/task-review evidence, executor workspace
@@ -383,10 +386,11 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   menunggu provider asli quiescent saat shutdown, dan hanya dapat dibuka dengan
   conformance receipt deployment exact. Invocation terjadwal menahan pending
   commit sampai recovery authority terpisah merekonsiliasinya. Supervisor maintenance mengurutkan
-  sandbox recovery, GitHub unknown initial pass, dan deletion initial pass,
-  tetapi selalu menjaga coding admission tertutup. Worker driver, verifier
-  conformance, composition/surface produksi, dan store multi-instance belum
-  dipasang; lihat `ADR-035`.
+  sandbox recovery, GitHub unknown initial pass, deletion initial pass, run
+  recovery, dan conformance sebelum membuka admission. AI worker iterative,
+  validator production, verifier receipt, private/group surface, progress
+  anchor, dan composition startup/shutdown kini dipasang opt-in. Store
+  multi-instance belum ada; lihat `ADR-035`.
 - [x] Policy GitHub Phase J: local commit dipisah dari branch/push/draft PR;
   exact effect, contract confirmation authority/grant, workflow approval terpisah,
   ACL+App+remote-ref intersection, deterministic idempotency, pending receipt,
@@ -402,14 +406,16 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   Receipt `unknown` dapat ditemukan sebagai locator content-free dan diamati
   oleh worker bounded satu proses tanpa scope pengguna atau replay efek;
   installation revoked masih dapat menyelesaikan observasi historis tetapi
-  tidak dapat mengotorisasi publish baru. Worker belum dirangkai di `app.ts`.
+  tidak dapat mengotorisasi publish baru. Worker dirangkai pada startup coding
+  sebelum admission.
   Project deletion mem-purge ledger/selection lokal hanya setelah effect
   `unknown` selesai; ia tidak menghapus repository atau installation remote.
-  Daemon local-git/object store, GitHub App broker, provision secret
-  identitas service + verifier server-side,
-  dan confirmation controller produksi belum ada; credential GitHub tidak
-  masuk project metadata, approval, receipt, prompt, atau sandbox, dan
-  capability default-off.
+  Daemon local-git/object store, credential-owning GitHub App broker, provision
+  secret identity+verifier server-side, installation flow, dan confirmation
+  controller production kini tersedia. GitHub live E2E belum dijalankan karena
+  App credential/repository uji tidak tersedia; ledger tetap single-service dan
+  capability default-off. Credential GitHub tidak masuk project metadata,
+  approval, receipt, prompt, atau sandbox.
   Lihat `ADR-036`.
 - [x] Matriks authority grup dan shared room memory eksplisit: anggota
   mengusulkan preview, admin terkini mengonfirmasi ID yang sama, delivery gagal
@@ -423,7 +429,10 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   ingress, executor/processor, worker durable, Baileys fenced delivery, usage,
   recovery, serta shutdown. Reachability tetap default-off lewat
   `WHATSAPP_GROUP_AGENT_RUN_ENABLED` dan memerlukan binding/enrollment live;
-  acceptance WhatsApp nyata belum dilakukan dan group-coding tetap terpisah.
+  acceptance WhatsApp nyata belum dilakukan. Group-coding kini dirangkai
+  sebelum ambient batching dengan actor resolver tepercaya, link Workspace
+  private, output allowlist, publish handoff private, dan authority lifecycle
+  fence; reachability tetap opt-in dan belum live-accepted.
   Lihat `ADR-037`.
 - [x] Memori terstruktur per pengguna yang dapat dilihat dan dihapus. Memori
   biasa disimpan otomatis disertai pemberitahuan, memori sensitif hanya dengan
@@ -487,17 +496,22 @@ pada startup dan hanya mengizinkan operator mengatur harga pasangan itu;
 credential dan base URL tidak ikut ke browser.
 
 Capability baru juga tidak ditebak dari tier atau gateway. Registry memasangkan
-provider+ID exact; tanpa `AI_MODEL_PROFILES`, model memakai kontrak
-compatibility dan reasoning control baru tetap mati. Execution policy kini
+provider+ID exact; model memakai kontrak compatibility tanpa profile operator
+atau record live code-owned. Profile
+`google-ai-studio/gemini-3.5-flash-lite` pada endpoint resmi menjadi record
+code-owned pertama setelah live smoke exact; custom gateway dan fallback tetap
+tertutup. Execution policy kini
 memisahkan role, requested/effective effort, dan verbosity metadata dari tier,
 tetapi routing model masih tiga tier. RunBudget kumulatif sekarang menjadi
 prerequisite yang tersedia untuk Agent Runtime privat. Ceiling general sekarang
 berasal dari role lalu di-clamp profile exact; work call juga tidak dapat
 memakai separuh token/biaya yang dilindungi untuk final synthesis.
 Compaction tekanan konteks dan satu recovery untuk typed truncation kini ada.
-`toughest`/K3, wire visible verbosity, tokenizer calibration, dan finalizer
-terminal tetap berada di change set Phase C lanjutan; lihat ADR-025, ADR-026,
-ADR-028, dan ADR-029.
+Visible verbosity sudah terpisah dari reasoning effort pada policy. `toughest`/
+K3 default-off kini terpasang hanya untuk repeated coding-validator failure;
+target toughest live, fallback provider, tokenizer calibration, dan finalizer
+terminal umum tetap terbuka. Lihat ADR-025, ADR-026, ADR-028, ADR-029, dan
+ADR-040.
 
 Fondasi Phase D untuk active run sekarang tersedia khusus orkestrasi eksplisit
 Telegram privat. Ia belum berarti coding sandbox, artifact pipeline, app

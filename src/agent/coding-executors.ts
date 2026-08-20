@@ -631,6 +631,8 @@ async function boundedSandboxHealth(
       typeof value.available !== "boolean" ||
       (value.runtime !== null && value.runtime !== "isolated-linux") ||
       (value.available && value.runtime !== "isolated-linux") ||
+      (value.available && !value.identity) ||
+      (!value.available && value.identity !== null) ||
       typeof value.checkedAt !== "string" ||
       !Number.isFinite(Date.parse(value.checkedAt)) ||
       (value.available ? value.reason !== null : typeof value.reason !== "string")
@@ -642,6 +644,7 @@ async function boundedSandboxHealth(
     return {
       available: false,
       runtime: null,
+      identity: null,
       checkedAt: new Date().toISOString(),
       reason: "SandboxRunner tidak sehat saat bootstrap.",
     };

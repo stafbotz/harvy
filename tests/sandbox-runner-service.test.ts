@@ -33,6 +33,14 @@ import { SqliteSandboxLeaseJournal } from "../src/storage/sqlite-sandbox-lease-j
 const NOW = new Date("2026-08-10T04:00:00.000Z");
 const SNAPSHOT = "a".repeat(64);
 
+function sandboxIdentity() {
+  return {
+    serviceIdentityDigest: "1".repeat(64),
+    runtimeImageDigest: "2".repeat(64),
+    policyDigest: "3".repeat(64),
+  };
+}
+
 class SandboxRunnerService extends BaseSandboxRunnerService {
   override allocate(
     binding: SandboxBinding,
@@ -53,6 +61,7 @@ describe("SandboxRunner Phase H policy boundary", () => {
     assert.deepEqual(await runner.health(), {
       available: false,
       runtime: null,
+      identity: null,
       checkedAt: NOW.toISOString(),
       reason: "runner offline",
     });
@@ -1004,6 +1013,7 @@ class FakeSandboxTransport implements SandboxTransport {
     return {
       available: this.healthAvailable,
       runtime: this.healthAvailable ? "isolated-linux" : null,
+      identity: this.healthAvailable ? sandboxIdentity() : null,
       checkedAt: NOW.toISOString(),
       reason: this.healthAvailable ? null : "runner unavailable",
     };

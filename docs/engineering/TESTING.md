@@ -28,6 +28,28 @@ npm test
 `npm test` membangun TypeScript dan menjalankan seluruh `dist/tests/*.test.js`.
 Perintah dianggap lulus hanya jika exit code `0` dan tidak ada test gagal.
 
+Perubahan coding trust-domain juga wajib menjalankan:
+
+```bash
+npm run context:check
+git diff --check
+npm run acceptance:sandbox
+npm run acceptance:github
+npm run acceptance:provider
+npm run acceptance:whatsapp
+```
+
+Empat acceptance terakhir bukan unit test dan sengaja mempunyai gerbang
+operator/infrastruktur. Sandbox memerlukan host Linux non-root dengan rootless
+Podman, cgroup v2, image+seccomp exact, lalu seluruh hostile-code scenario.
+GitHub memerlukan GitHub App dan repository uji nonkritis serta confirmation
+environment yang mengizinkan draft PR. Provider memerlukan profile exact untuk
+model yang benar-benar dideploy. WhatsApp memerlukan grup, nomor Harvy, dan
+tester yang sudah dipasangkan; script tidak pernah pairing/logout otomatis.
+Exit nonzero karena prerequisite/scope parsial harus dicatat `NOT RUN` atau
+`INCOMPLETE`, bukan diubah menjadi PASS. Receipt/screenshot sintetis tidak
+menggantikan state Linux/GitHub/WhatsApp/provider yang diamati.
+
 Baseline working tree fondasi ProjectWorkspace/Coding Phase G–J pada 13 Agustus
 2026 adalah **1.101 test lulus dalam 136 suite**, diverifikasi dengan `npm test`
 (build TypeScript ikut di dalamnya). Angka ini tidak mencakup provider
@@ -288,6 +310,15 @@ penolakan lokal, serta metadata ledger content-free. Tes adapter DeepSeek bukan
 bukti provider production. Live smoke harus memakai data sintetis dan mencatat
 model/profile exact serta tanggal dokumentasi capability yang diverifikasi.
 
+Pada 20 Agustus 2026, `npm run acceptance:provider` lulus terhadap
+`google-ai-studio/gemini-3.5-flash-lite` dengan profile digest
+`4d4c4f299b84b5a1767c96a54e6591a53c06a90807aba16d78a04fe4967d7d5c`.
+Yang diamati: effort wire, native tool `finish_reason=tool_calls`, thought
+signature, assistant+signature replay, terminal `stop`, output ceiling
+`length` yang diklasifikasi truncated, context-pressure rejection sebelum
+network, timeout, dan dua retry attempt. Fallback dinonaktifkan selama smoke;
+hasil ini bukan bukti fallback, SLA, Telegram, atau kualitas `toughest`.
+
 Tes wajib membuktikan root sederhana memakai `cheap`, pekerjaan kompleks
 memakai root `ambitious`, dan mode testing dapat memetakan keduanya ke satu
 model. Planner hanya boleh melihat capability yang mempunyai executor run;
@@ -375,9 +406,8 @@ staging per-tier tersedia.
 Probe `coba-agent.ts` belum dijalankan ulang setelah planner berpindah ke native
 function calling. Satu percobaan Telegram nyata pada 6 Agustus membuktikan
 primary menerima native calls, tetapi build pre-fix berhenti karena loop lokal
-sebelum reply. Perbaikan continuation sesudah insiden baru dibuktikan oleh
-gerbang otomatis terhadap provider palsu; smoke post-fix primary dan Telegram
-masih NOT RUN.
+sebelum reply. Smoke provider sintetis post-fix kini lulus pada profile exact
+di atas; Telegram post-fix tetap NOT RUN.
 
 Matriks bukti dan checklist Telegram staging Agent Acceptance v1 berada di
 [`../evidence/agent-acceptance-v1-2026-08-04/README.md`](../evidence/agent-acceptance-v1-2026-08-04/README.md).

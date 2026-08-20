@@ -176,6 +176,11 @@ export interface SandboxLeaseJournal {
 export interface SandboxHealth {
   available: boolean;
   runtime: "isolated-linux" | null;
+  identity: {
+    serviceIdentityDigest: string;
+    runtimeImageDigest: string;
+    policyDigest: string;
+  } | null;
   checkedAt: string;
   reason: string | null;
 }

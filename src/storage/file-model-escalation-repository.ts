@@ -67,6 +67,14 @@ export class FileModelEscalationRepository implements ModelEscalationRepository 
     });
   }
 
+  async listReserved(): Promise<ModelEscalationRecord[]> {
+    return this.exclusive(async () =>
+      (await this.readDatabase()).records
+        .filter((record) => record.status === "reserved")
+        .map((record) => structuredClone(record))
+    );
+  }
+
   async save(
     input: Omit<ModelEscalationRecord, "stateRevision">,
     expectedStateRevision: number,

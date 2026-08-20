@@ -163,6 +163,7 @@ describe("kontrak konteks coding agent", () => {
       "safety-privacy.md",
       "console.md",
       "platform.md",
+      "coding.md",
     ]) {
       assert.match(statusIndex, new RegExp(`status/${name.replace(".", "\\.")}`, "u"));
       assert.ok((await stat(resolve(repositoryRoot, "docs/engineering/status", name))).isFile());
@@ -170,9 +171,11 @@ describe("kontrak konteks coding agent", () => {
   });
 
   it("membuat hook struktural tanpa memaksa LOG untuk commit kecil", async () => {
-    const [hook, generator] = await Promise.all([
+    const [hook, generator, contractScript, freshnessScript] = await Promise.all([
       text(".githooks/pre-commit"),
       text("scripts/session-context.mjs"),
+      text("scripts/context-contract.mjs"),
+      text("scripts/context-freshness.mjs"),
     ]);
 
     assert.doesNotMatch(hook, /Commit ditahan:.*LOG|LOG.*tidak ikut berubah|grep\s+-q.*LOG/iu);
@@ -183,7 +186,9 @@ describe("kontrak konteks coding agent", () => {
     assert.match(hook, /AGENTS/u);
     assert.match(hook, /agent\/CURRENT\\\.md/u);
     assert.match(hook, /LOG\\\.md/u);
-    assert.match(generator, /tests\/agent-context-contract\.test\.ts/u);
+    assert.match(contractScript, /tests\/agent-context-contract\.test\.ts/u);
+    assert.match(generator, /buildSessionContext|runContextCheck/u);
+    assert.match(freshnessScript, /validateContextFreshness/u);
   });
 
   it("memvalidasi snapshot staged dan menolak kontrak usang atau dihapus", async () => {
@@ -198,6 +203,8 @@ describe("kontrak konteks coding agent", () => {
       ".agent/rules/00-harvy-bootstrap.md",
       ".githooks/pre-commit",
       "scripts/session-context.mjs",
+      "scripts/context-contract.mjs",
+      "scripts/context-freshness.mjs",
       "scripts/session-context.sh",
       "docs/LOG.md",
       "docs/agent/CURRENT.md",
@@ -210,9 +217,11 @@ describe("kontrak konteks coding agent", () => {
       "docs/engineering/status/safety-privacy.md",
       "docs/engineering/status/console.md",
       "docs/engineering/status/platform.md",
+      "docs/engineering/status/coding.md",
       "docs/operations/WORKFLOW.md",
       "docs/INDEX.md",
       "tests/agent-context-contract.test.ts",
+      "tests/agent-context-freshness.test.ts",
       "package.json",
     ];
 
@@ -225,12 +234,19 @@ describe("kontrak konteks coding agent", () => {
         cwd: repositoryRoot,
         env: gitEnvironment,
       });
-      const { stdout: generatorSource } = await execFileAsync(
-        "git",
-        ["show", ":scripts/session-context.mjs"],
-        { cwd: repositoryRoot, env: gitEnvironment },
-      );
-      await writeFile(stagedGenerator, generatorSource, "utf8");
+
+      for (const scriptName of [
+        "session-context.mjs",
+        "context-contract.mjs",
+        "context-freshness.mjs",
+      ]) {
+        const { stdout: scriptSource } = await execFileAsync(
+          "git",
+          ["show", `:scripts/${scriptName}`],
+          { cwd: repositoryRoot, env: gitEnvironment },
+        );
+        await writeFile(resolve(temporaryDirectory, scriptName), scriptSource, "utf8");
+      }
 
       const stagedEnvironment = {
         ...gitEnvironment,

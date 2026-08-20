@@ -72,13 +72,21 @@ export async function extractSafeZip(
     limits?: Partial<SafeZipLimits>;
     now?: () => Date;
     makeId?: () => string;
+    /** GitHub zipballs have one synthetic owner-repository-sha root. */
+    stripSingleRoot?: boolean;
+    /** Only credential-brokered repository archives may preserve Git tree executability. */
+    preserveRegularFileExecutability?: boolean;
   } = {},
 ): Promise<{
   archiveSha256: string;
   manifest: ProjectSnapshotManifest;
 }> {
   const limits = resolveZipLimits(options.limits);
-  const parsed = parseZip(archive, limits);
+  const parsed = parseZip(
+    archive,
+    limits,
+    options.preserveRegularFileExecutability === true,
+  );
   const absoluteDestination = resolve(destination);
   const temporary = `${absoluteDestination}.extract-${safeTemporaryId(
     (options.makeId ?? randomUUID)(),
@@ -87,7 +95,10 @@ export async function extractSafeZip(
   await mkdir(temporary, { recursive: false });
   let installed = false;
   try {
-    for (const entry of parsed.entries) {
+    const entries = options.stripSingleRoot
+      ? stripSingleArchiveRoot(parsed.entries)
+      : parsed.entries;
+    for (const entry of entries) {
       const target = resolveProjectPath(temporary, entry.path);
       if (entry.directory) {
         await mkdir(target, { recursive: true, mode: 0o700 });
@@ -111,9 +122,18 @@ export async function extractSafeZip(
       });
       await chmod(target, entry.executable ? 0o700 : 0o600);
     }
+    const executableOverrides = process.platform === "win32" &&
+        options.preserveRegularFileExecutability === true
+      ? new Map(
+          entries
+            .filter((entry) => !entry.directory)
+            .map((entry) => [entry.path, entry.executable] as const),
+        )
+      : undefined;
     const manifest = await scanProjectTree(temporary, {
       limits,
       ...(options.now ? { now: options.now } : {}),
+      ...(executableOverrides ? { executableOverrides } : {}),
     });
     await rename(temporary, absoluteDestination);
     installed = true;
@@ -126,6 +146,34 @@ export async function extractSafeZip(
       await rm(temporary, { recursive: true, force: true });
     }
   }
+}
+
+function stripSingleArchiveRoot(entries: readonly ZipEntry[]): ZipEntry[] {
+  const roots = new Set(entries.map((entry) => entry.path.split("/")[0]));
+  if (roots.size !== 1) {
+    throw new Error("Archive GitHub harus mempunyai tepat satu direktori root.");
+  }
+  const root = [...roots][0]!;
+  const prefix = `${root}/`;
+  const stripped: ZipEntry[] = [];
+  for (const entry of entries) {
+    if (entry.path === root) {
+      if (!entry.directory) {
+        throw new Error("Root archive GitHub harus berupa direktori.");
+      }
+      continue;
+    }
+    if (!entry.path.startsWith(prefix)) {
+      throw new Error("Entry archive GitHub keluar dari direktori root.");
+    }
+    const path = entry.path.slice(prefix.length);
+    if (!path) throw new Error("Path archive GitHub kosong setelah normalisasi.");
+    stripped.push({ ...entry, path });
+  }
+  if (!stripped.some((entry) => !entry.directory)) {
+    throw new Error("Archive GitHub tidak memuat file project.");
+  }
+  return stripped;
 }
 
 export function inspectSafeZip(
@@ -152,7 +200,11 @@ export function inspectSafeZip(
   };
 }
 
-function parseZip(archive: Buffer, limits: SafeZipLimits): ParsedZip {
+function parseZip(
+  archive: Buffer,
+  limits: SafeZipLimits,
+  preserveRegularFileExecutability = false,
+): ParsedZip {
   if (!Buffer.isBuffer(archive) || archive.length === 0) {
     throw new Error("Artifact ZIP kosong atau tidak sah.");
   }
@@ -285,8 +337,10 @@ function parseZip(archive: Buffer, limits: SafeZipLimits): ParsedZip {
       {
         path,
         directory,
-        // Archive permission bits are untrusted and intentionally neutralized.
-        executable: false,
+        // Generic uploads remain neutralized. Brokered GitHub zipballs may
+        // preserve only the ordinary file executable bit represented by Git.
+        executable: preserveRegularFileExecutability &&
+          fileType === 0o100000 && (unixMode & 0o111) !== 0,
         flags,
         method,
         crc32: expectedCrc,

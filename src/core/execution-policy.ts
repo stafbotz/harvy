@@ -69,6 +69,8 @@ export interface ExecutionPolicyInput {
   promptMaterial?: ProviderPromptMaterial;
   sourcePrivacyDomain?: string;
   targetPrivacyDomain?: string;
+  /** Visible length is code-owned and independent from reasoning effort. */
+  visibleVerbosity?: Verbosity;
 }
 
 const EFFORT_ORDER: readonly ReasoningEffort[] = [
@@ -156,7 +158,7 @@ export class ExecutionPolicy {
     const effectiveEffort = input.profile
       ? supportedEffort(requestedEffort, input.profile)
       : null;
-    const verbosity = verbosityFor(input.role);
+    const verbosity = input.visibleVerbosity ?? verbosityFor(input.role);
 
     return Object.freeze({
       tier: input.tier === "toughest" ? "ambitious" : input.tier,

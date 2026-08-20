@@ -21,10 +21,12 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   command Telegram, serta menangani shutdown. Saat flag GroupAgentRun aktif,
   composition yang sama merutekan observation grup authorized sebelum batching
   ke controller, executor/processor, worker, delivery Baileys fenced, recovery,
-  dan drain.
-  Modul ProjectWorkspace/Coding/Sandbox/GitHub belum dirangkai di composition
-  root; capability-nya tetap default-off sampai backend, provisioning,
-  conformance, dan composition live terverifikasi.
+  dan drain. Saat `HARVY_CODING_RUNTIME_ENABLED=true`, root yang sama merangkai
+  Workspace authority, project/run/evidence store, AI coding writer, validator,
+  sandbox/local-git trust-domain client, optional GitHub App broker, private
+  Telegram controllers, group-coding ingress, recovery supervisor, dan
+  shutdown fence. Runtime tetap gagal tertutup sebelum receipt conformance
+  sandbox exact dan health identity cocok; semua flag default-off.
 
 ## Domain
 
@@ -82,7 +84,10 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   `coding-runtime-supervisor.ts` (startup maintenance berurutan dan shutdown
   caller-before-sandbox yang tetap menutup coding admission); rangkaian ini
   memiliki bounded provider/action lifecycle, map/plan/task review, ChangeSet,
-  validator, serta commit recovery. `project-deletion-coordinator.ts`
+  validator, serta commit recovery. `coding-runtime-composition.ts` memasang
+  private/group controllers dan `group-coding-lifecycle-fence.ts` menutup
+  authority revocation tanpa membentuk user scope baru.
+  `project-deletion-coordinator.ts`
   (tombstone-first cleanup run, sandbox, evidence, GitHub lokal, memory, dan
   payload), `project-deletion-recovery-worker.ts` (enumerasi locator
   content-free dan cleanup scope-free satu page per siklus),
@@ -130,6 +135,29 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   memasangnya sesudah observation authority dan sebelum batch chat hanya ketika
   flag eksplisit aktif; admission binding/mode/cleanup serta transport fence
   tetap diperiksa pada claim dan send.
+
+## Trust-domain service production
+
+- `src/sandbox-service.ts` + `src/sandbox/oci-sandbox-backend.ts` menjalankan
+  project hostile pada rootless OCI Linux yang disposable. Snapshot dikirim
+  sebagai bundle ke tmpfs, bukan host mount. Image, seccomp, quota, namespace,
+  network-off, output/artifact, dan lifecycle adalah config/policy code-owned.
+- `src/local-git-service.ts` + `src/local-git/local-git-backend.ts` memiliki
+  repository/object/operation root sendiri tanpa credential remote. Ia memakai
+  Git plumbing terstruktur, object verification, atomic ref CAS, dan bundle
+  content-addressed.
+- `src/github-broker-service.ts` + `src/github-app/` adalah trust domain
+  credential-owning. App key/OAuth secret/installation token tidak masuk Harvy
+  atau sandbox. Broker melakukan repository archive, exact non-force publish,
+  draft PR, effect ledger, dan reconciliation di balik service-auth.
+- Ketiga service dapat dideploy terpisah melalui `deploy/`. Implementasi
+  tersedia tidak sama dengan live acceptance; runtime control plane hanya
+  mengaktifkan coding sesudah conformance receipt exact.
+- Private CodingRun menyimpan pertanyaan `waiting_input` pada record run dan
+  menampilkannya lewat satu Run Anchor mutable. Reply anchor menjadi ChangeSet
+  baru; traffic percakapan lain tetap pada chat lane. Publish privat bergerak
+  sebagai tiga offer exact terpisah—branch, push, lalu draft PR—dan setiap
+  callback membentuk confirmation grant baru sesudah authority dire-resolve.
 
 ## AI
 

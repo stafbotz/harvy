@@ -85,6 +85,8 @@ export interface TurnPerformanceSummary {
   batchWaitMs: PercentileSummary;
   queueWaitMs: PercentileSummary;
   handlingLatencyMs: PercentileSummary;
+  timeToFirstResponseMs: PercentileSummary;
+  timeToFinalResponseMs: PercentileSummary;
   averageModelCalls: number;
   boundaryClassifierRate: number;
   riskTriageRate: number;
@@ -168,6 +170,10 @@ export class TelemetryService implements UsageObserver {
   private readonly pendingEvents = new Map<string, ProductEvent[]>();
   private readonly pendingTurns = new Map<string, TurnTelemetryRecord[]>();
   private readonly openTurns = new Map<string, number>();
+  private readonly turnResponseTimes = new Map<
+    string,
+    { firstMs: number; finalMs: number }
+  >();
   private readonly turnAccumulators = new Map<string, TurnAccumulator>();
   private readonly closedTurns = new Map<string, number>();
   private readonly lifecycleQueues = new Map<string, Promise<void>>();
@@ -395,6 +401,21 @@ export class TelemetryService implements UsageObserver {
     });
   }
 
+  /** Called only after a user-visible delivery API has acknowledged success. */
+  async noteTurnResponse(ownerId: string, turnId: string | null): Promise<void> {
+    if (!turnId) return;
+    await this.exclusive(ownerId, async () => {
+      const key = turnKey(ownerId, turnId);
+      const openedAt = this.openTurns.get(key);
+      if (openedAt === undefined || this.closedTurns.has(key)) return;
+      const elapsed = Math.max(0, this.now().getTime() - openedAt);
+      const current = this.turnResponseTimes.get(key);
+      this.turnResponseTimes.set(key, current
+        ? { firstMs: current.firstMs, finalMs: Math.max(current.finalMs, elapsed) }
+        : { firstMs: elapsed, finalMs: elapsed });
+    });
+  }
+
   /** Menutup satu span giliran secara idempoten dan menulis metrik tanpa isi. */
   async recordTurn(completion: TurnTelemetryCompletion): Promise<void> {
     if (!completion.turnId) return;
@@ -407,6 +428,7 @@ export class TelemetryService implements UsageObserver {
       const batchWaitMs = nonNegativeInteger(completion.batchWaitMs);
       const queueWaitMs = nonNegativeInteger(completion.queueWaitMs);
       const handlingLatencyMs = nonNegativeInteger(completion.handlingLatencyMs);
+      const responseTimes = this.turnResponseTimes.get(key) ?? null;
       const record: TurnTelemetryRecord = {
         id: turnRecordId(completion.ownerId, completion.turnId),
         at: this.now().toISOString(),
@@ -423,6 +445,8 @@ export class TelemetryService implements UsageObserver {
           nonNegativeInteger(completion.totalLatencyMs),
           batchWaitMs + queueWaitMs + handlingLatencyMs,
         ),
+        timeToFirstResponseMs: responseTimes?.firstMs ?? null,
+        timeToFinalResponseMs: responseTimes?.finalMs ?? null,
         ...accumulator,
       };
       const pending = this.pendingTurns.get(completion.ownerId) ?? [];
@@ -430,6 +454,7 @@ export class TelemetryService implements UsageObserver {
       this.pendingTurns.set(completion.ownerId, pending);
       this.openTurns.delete(key);
       this.turnAccumulators.delete(key);
+      this.turnResponseTimes.delete(key);
       this.markTurnClosed(key);
       recorded = true;
     });
@@ -848,6 +873,7 @@ export class TelemetryService implements UsageObserver {
       if (openedAt >= cutoff) continue;
       this.openTurns.delete(key);
       this.turnAccumulators.delete(key);
+      this.turnResponseTimes.delete(key);
     }
     for (const [key, closedAt] of this.closedTurns) {
       if (closedAt < cutoff) this.closedTurns.delete(key);
@@ -866,6 +892,9 @@ export class TelemetryService implements UsageObserver {
     }
     for (const key of this.turnAccumulators.keys()) {
       if (key.startsWith(prefix)) this.turnAccumulators.delete(key);
+    }
+    for (const key of this.turnResponseTimes.keys()) {
+      if (key.startsWith(prefix)) this.turnResponseTimes.delete(key);
     }
     for (const key of this.closedTurns.keys()) {
       if (key.startsWith(prefix)) this.closedTurns.delete(key);
@@ -981,6 +1010,16 @@ export function summarizeTurnPerformance(
     queueWaitMs: percentiles(records.map((record) => record.queueWaitMs)),
     handlingLatencyMs: percentiles(
       records.map((record) => record.handlingLatencyMs),
+    ),
+    timeToFirstResponseMs: percentiles(
+      records.flatMap((record) =>
+        record.timeToFirstResponseMs === null ? [] : [record.timeToFirstResponseMs]
+      ),
+    ),
+    timeToFinalResponseMs: percentiles(
+      records.flatMap((record) =>
+        record.timeToFinalResponseMs === null ? [] : [record.timeToFinalResponseMs]
+      ),
     ),
     averageModelCalls: turnCount === 0
       ? 0

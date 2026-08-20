@@ -485,9 +485,9 @@ export class SandboxRunnerService implements SandboxRunner, SandboxRunnerLifecyc
           if (!current) return;
           const disposing = await this.transitionToDisposing(
             current,
-            "project_deletion",
+            "project_authority_fence",
           );
-          await this.fenceAndRemove(disposing, "project deletion dispose");
+          await this.fenceAndRemove(disposing, "project authority fence dispose");
         });
       } catch (error) {
         failures.push(error);
@@ -500,7 +500,7 @@ export class SandboxRunnerService implements SandboxRunner, SandboxRunnerLifecyc
     if (failures.length > 0 || unresolved.length > 0) {
       throw new AggregateError(
         failures,
-        "Sandbox project deletion belum membuktikan seluruh cancellation fence.",
+        "Sandbox project authority belum membuktikan seluruh cancellation fence.",
       );
     }
   }
@@ -1491,13 +1491,27 @@ function validatedAdmission(value: SandboxAdmissionPolicy): Readonly<SandboxAdmi
 function validateHealth(value: SandboxHealth): void {
   assertExactObject(
     value,
-    ["available", "runtime", "checkedAt", "reason"],
+    ["available", "runtime", "identity", "checkedAt", "reason"],
     "sandbox health",
   );
+  if (value.identity !== null) {
+    assertExactObject(
+      value.identity,
+      ["serviceIdentityDigest", "runtimeImageDigest", "policyDigest"],
+      "sandbox runtime identity",
+    );
+  }
   if (
     typeof value?.available !== "boolean" ||
     (value.runtime !== null && value.runtime !== "isolated-linux") ||
     (value.available && value.runtime !== "isolated-linux") ||
+    (value.available && (
+      !value.identity ||
+      !/^[a-f0-9]{64}$/u.test(value.identity.serviceIdentityDigest) ||
+      !/^[a-f0-9]{64}$/u.test(value.identity.runtimeImageDigest) ||
+      !/^[a-f0-9]{64}$/u.test(value.identity.policyDigest)
+    )) ||
+    (!value.available && value.identity !== null) ||
     (value.available && value.reason !== null) ||
     (!value.available && (typeof value.reason !== "string" || !value.reason))
   ) {

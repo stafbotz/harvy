@@ -75,6 +75,7 @@ export class LocalGitService {
         ["code.read"],
         async () => {
           const binding = await this.readBinding(scope, projectId, expectedRevision);
+          await this.prepareBinding(scope, binding);
           const result = await this.transportCall(
             "Local git status",
             (signal) => this.transport.status(binding, signal),
@@ -117,6 +118,7 @@ export class LocalGitService {
         ["code.read"],
         async () => {
           const binding = await this.readBinding(scope, projectId, expectedRevision);
+          await this.prepareBinding(scope, binding);
           const result = await this.transportCall(
             "Local git diff",
             (signal) => this.transport.diff(binding, signal),
@@ -150,6 +152,7 @@ export class LocalGitService {
         ["code.read"],
         async () => {
           const binding = await this.readBinding(scope, projectId, expectedRevision);
+          await this.prepareBinding(scope, binding);
           const result = await this.transportCall(
             "Local git log",
             (signal) => this.transport.log(binding, limit, signal),
@@ -281,7 +284,6 @@ export class LocalGitService {
     if (
       !project ||
       project.revision !== expectedRevision ||
-      project.source.type !== "github" ||
       !project.git
     ) {
       throw new Error(
@@ -296,6 +298,43 @@ export class LocalGitService {
       headCommit: project.git.headCommit,
       branch: project.git.branch,
     };
+  }
+
+  private async prepareBinding(
+    scope: WorkspaceAgentScope,
+    binding: LocalGitBinding,
+  ): Promise<void> {
+    const snapshotHandle = await this.projects.getSnapshotHandle(
+      scope,
+      binding.projectId,
+      binding.workspaceRevision,
+    );
+    await this.projects.withLocalGitSnapshotSource(
+      scope,
+      snapshotHandle,
+      (snapshotSource) => this.transportCall(
+        "Local git prepare",
+        async (signal) => {
+          const transfer = verifiedProjectSnapshotTransfer(
+            snapshotSource,
+            binding.snapshotId,
+            signal,
+          );
+          const prepared = await this.transport.prepare(
+            binding,
+            transfer.descriptor,
+            transfer.content,
+            signal,
+          );
+          if (!transfer.completed()) {
+            throw new Error("Local git transport tidak mengonsumsi seluruh prepare snapshot.");
+          }
+          if (!sameBinding(prepared.binding, binding)) {
+            throw new Error("Local git prepare berasal dari binding lain.");
+          }
+        },
+      ),
+    );
   }
 
   private async commitBinding(

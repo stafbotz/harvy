@@ -69,6 +69,34 @@ export class HttpLocalGitTransport implements LocalGitTransport {
     });
   }
 
+  async prepare(
+    bindingInput: LocalGitBinding,
+    snapshotInput: ProjectSnapshotBundleDescriptor,
+    content: AsyncIterable<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<{ binding: LocalGitBinding }> {
+    const binding = bindingEnvelope(bindingInput);
+    const snapshot = snapshotEnvelope(snapshotInput, binding.snapshotId);
+    const envelope = { version: 1 as const, binding, snapshot };
+    const raw = await this.client.postUpload(
+      "/v1/local-git/prepare",
+      trustDomainRequestId("local-git-prepare", envelope),
+      envelope,
+      {
+        mediaType: snapshot.mediaType,
+        sha256: snapshot.bundleSha256,
+        size: snapshot.size,
+        chunks: content,
+      },
+      signal,
+    );
+    const result = wireResult(raw, "prepare local git");
+    exactKeys(result, ["binding"], "prepare local git");
+    const observed = parseBinding(result.binding);
+    if (!same(observed, binding)) throw protocolError("Binding prepare local git tidak cocok.");
+    return Object.freeze({ binding: observed });
+  }
+
   async status(bindingInput: LocalGitBinding, signal?: AbortSignal): Promise<LocalGitStatus> {
     const binding = bindingEnvelope(bindingInput);
     const envelope = { version: 1 as const, binding };

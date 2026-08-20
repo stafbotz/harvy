@@ -6,6 +6,7 @@ import {
 } from "../src/core/workspace-authority-service.js";
 import type {
   WorkspaceAuthorityState,
+  WorkspacePrincipal,
   WorkspaceRepository,
 } from "../src/domain/workspace.js";
 import { AgentHarness } from "../src/harness/agent-harness.js";
@@ -318,6 +319,18 @@ class MemoryWorkspaceRepository implements WorkspaceRepository {
   ): Promise<WorkspaceAuthorityState | null> {
     const state = this.states.get(workspaceKey);
     return state ? structuredClone(state) : null;
+  }
+
+  async listAuthorityStatesByPrincipal(
+    principal: WorkspacePrincipal,
+  ): Promise<WorkspaceAuthorityState[]> {
+    return [...this.states.values()]
+      .filter((state) => state.memberships.some((membership) =>
+        membership.channel === principal.channel &&
+        membership.principalKey === principal.principalKey &&
+        membership.revokedAt === null
+      ))
+      .map((state) => structuredClone(state));
   }
 
   async saveAuthorityState(

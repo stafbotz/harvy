@@ -50,16 +50,39 @@ export class HttpSandboxTransport implements SandboxTransport {
       signal,
     );
     const result = wireResult(raw, "health sandbox");
-    exactKeys(result, ["available", "runtime", "checkedAt", "reason"], "health sandbox");
+    exactKeys(
+      result,
+      ["available", "runtime", "identity", "checkedAt", "reason"],
+      "health sandbox",
+    );
+    const identity = result.identity === null
+      ? null
+      : exactClone(
+          result.identity,
+          ["serviceIdentityDigest", "runtimeImageDigest", "policyDigest"],
+          "identity health sandbox",
+        ) as Record<string, unknown>;
     if (typeof result.available !== "boolean" ||
       (result.runtime !== null && result.runtime !== "isolated-linux") ||
-      (result.available && (result.runtime !== "isolated-linux" || result.reason !== null)) ||
-      (!result.available && typeof result.reason !== "string")) {
+      (result.available && (
+        result.runtime !== "isolated-linux" || result.reason !== null || !identity ||
+        Object.values(identity).some((digest) =>
+          typeof digest !== "string" || !/^[a-f0-9]{64}$/u.test(digest)
+        )
+      )) ||
+      (!result.available && (typeof result.reason !== "string" || identity !== null))) {
       throw protocolError("Health sandbox tidak sah.");
     }
     return Object.freeze({
       available: result.available,
       runtime: result.available ? "isolated-linux" : null,
+      identity: result.available
+        ? {
+            serviceIdentityDigest: identity!.serviceIdentityDigest as string,
+            runtimeImageDigest: identity!.runtimeImageDigest as string,
+            policyDigest: identity!.policyDigest as string,
+          }
+        : null,
       checkedAt: iso(result.checkedAt, "waktu health sandbox"),
       reason: result.reason === null ? null : safeText(result.reason, "alasan health sandbox", 512),
     });

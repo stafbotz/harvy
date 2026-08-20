@@ -271,7 +271,7 @@ describe("Project deletion saga", () => {
       {
         repositoryId: "repo-1",
         installationId: "installation-1",
-        archive: zip("export const value = 1;\n"),
+        archive: githubZip("export const value = 1;\n"),
         git: {
           baseCommit: "a".repeat(40),
           branch: "main",
@@ -325,7 +325,7 @@ describe("Project deletion saga", () => {
       {
         repositoryId: "repo-serialized",
         installationId: "installation-serialized",
-        archive: zip("export const value = 1;\n"),
+        archive: githubZip("export const value = 1;\n"),
         git: {
           baseCommit: "b".repeat(40),
           branch: "main",
@@ -759,7 +759,13 @@ async function createFixture(options: {
 class DeletionSandbox implements SandboxRunner {
   fenceCalls = 0;
   async health(): Promise<SandboxHealth> {
-    return { available: false, runtime: null, checkedAt: NOW.toISOString(), reason: "test" };
+    return {
+      available: false,
+      runtime: null,
+      identity: null,
+      checkedAt: NOW.toISOString(),
+      reason: "test",
+    };
   }
   async allocate(): Promise<SandboxLease> { throw new Error("not used"); }
   async execute(_lease: SandboxLease, _request: SandboxExecRequest): Promise<SandboxExecResult> {
@@ -793,5 +799,13 @@ function zip(content: string): Buffer {
   return buildZip([
     { name: "src/", content: "" },
     { name: "src/index.ts", content },
+  ]);
+}
+
+function githubZip(content: string): Buffer {
+  return buildZip([
+    { name: "owner-repository-deadbeef/", content: "" },
+    { name: "owner-repository-deadbeef/src/", content: "" },
+    { name: "owner-repository-deadbeef/src/index.ts", content },
   ]);
 }

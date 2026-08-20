@@ -1,0 +1,38 @@
+[Unit]
+Description=Harvy credentialless local git object service
+After=network-online.target
+
+[Service]
+Type=simple
+User=harvy-local-git
+Group=harvy-local-git
+EnvironmentFile=/etc/harvy/local-git-service.env
+Environment=HOME=/var/lib/harvy-local-git
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/opt/harvy-local-git-service
+ExecStart=/usr/bin/node /opt/harvy-local-git-service/dist/src/local-git-service.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+StateDirectory=harvy-local-git
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RemoveIPC=yes
+ReadWritePaths=/var/lib/harvy-local-git
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

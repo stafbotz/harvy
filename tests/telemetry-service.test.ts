@@ -634,6 +634,8 @@ describe("TelemetryService", () => {
         queueWaitMs: 5,
         handlingLatencyMs: 20,
         totalLatencyMs: 35,
+        timeToFirstResponseMs: null,
+        timeToFinalResponseMs: null,
         modelCallCount: 5,
         failedModelCallCount: 1,
         boundaryCallCount: 1,
@@ -682,6 +684,41 @@ describe("TelemetryService", () => {
 
     assert.equal(repository.turns.length, 1);
     assert.equal(repository.turns[0]?.urgentAcknowledgementCount, 1);
+  });
+
+  it("mengukur TTFR dan final response dari delivery aktual secara terpisah", async () => {
+    const repository = new MemoryTelemetryRepository();
+    let nowMs = Date.parse("2026-08-15T00:00:00.000Z");
+    const telemetry = new TelemetryService(
+      repository,
+      options(),
+      () => new Date(nowMs),
+    );
+    await telemetry.beginTurn("student", "turn-response");
+    nowMs += 250;
+    await telemetry.noteTurnResponse("student", "turn-response");
+    nowMs += 750;
+    await telemetry.noteTurnResponse("student", "turn-response");
+    nowMs += 500;
+    await telemetry.recordTurn({
+      ownerId: "student",
+      turnId: "turn-response",
+      subjectKind: "private",
+      channel: "telegram",
+      outcome: "completed",
+      bubbleCount: 2,
+      batchWaitMs: 0,
+      queueWaitMs: 0,
+      handlingLatencyMs: 1_500,
+      totalLatencyMs: 1_500,
+    });
+    await telemetry.drain();
+
+    assert.equal(repository.turns[0]?.timeToFirstResponseMs, 250);
+    assert.equal(repository.turns[0]?.timeToFinalResponseMs, 1_000);
+    const summary = await telemetry.performanceSummary("student", new Date(0));
+    assert.deepEqual(summary.timeToFirstResponseMs, { p50: 250, p95: 250 });
+    assert.deepEqual(summary.timeToFinalResponseMs, { p50: 1_000, p95: 1_000 });
   });
 
   it("menghitung p50/p95 dan rate dengan turn tanpa model sebagai denominator", async () => {

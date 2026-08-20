@@ -9,6 +9,8 @@ import {
   ModelProfileRegistry,
   type ModelProfile,
 } from "./ai/model-profile.js";
+import { liveVerifiedModelProfiles } from
+  "./ai/live-verified-model-profiles.js";
 import type { TierPrice } from "./core/telemetry-service.js";
 import { isValidTimeZone } from "./core/time-policy.js";
 import type {
@@ -494,6 +496,10 @@ export function loadAiConfig(): AiConfig {
     const explicitProfiles = loadExplicitModelProfiles();
     const modelProfiles = configuredModelProfiles({
       configuredModels,
+      codeOwnedProfiles: liveVerifiedModelProfiles(
+        "google-ai-studio",
+        baseUrl,
+      ),
       explicitProfiles,
     });
     const toughest = configuredToughest(
@@ -551,6 +557,7 @@ export function loadAiConfig(): AiConfig {
   const explicitProfiles = loadExplicitModelProfiles();
   const modelProfiles = configuredModelProfiles({
     configuredModels,
+    codeOwnedProfiles: liveVerifiedModelProfiles("openrouter", baseUrl),
     explicitProfiles,
   });
   const toughest = configuredToughest(
@@ -581,8 +588,9 @@ const MAX_AI_MODEL_PROFILES_CHARACTERS = 64_000;
 const MAX_AI_MODEL_PROFILES = 32;
 
 /**
- * Capability baru hanya aktif lewat deklarasi exact provider+model. Endpoint
- * resmi tidak cukup untuk membuktikan capability setiap model di dalamnya.
+ * Capability operator hanya aktif lewat deklarasi exact provider+model.
+ * Profile code-owned tetap memerlukan live evidence exact; nama endpoint saja
+ * tidak cukup untuk mempromosikan model baru.
  */
 function loadExplicitModelProfiles(): readonly ModelProfile[] {
   const raw = process.env.AI_MODEL_PROFILES?.trim() ?? "";
@@ -725,6 +733,7 @@ function optionalPositiveInteger(value: unknown): number | null {
 
 function configuredModelProfiles(input: {
   configuredModels: readonly ConfiguredModel[];
+  codeOwnedProfiles: readonly ModelProfile[];
   explicitProfiles: readonly ModelProfile[];
 }): ModelProfileRegistry {
   const profiles = new Map<string, ModelProfile>();
@@ -757,6 +766,20 @@ function configuredModelProfiles(input: {
       contextWindow: null,
       maxOutputTokens: null,
     });
+  }
+  for (const profile of input.codeOwnedProfiles) {
+    const key = `${profile.provider}\u0000${profile.id}`;
+    const configured = input.configuredModels.find(
+      (model) => model.providerId === profile.provider && model.modelId === profile.id,
+    );
+    if (!configured) continue;
+    // Registry saat ini tidak dapat membawa profile berbeda untuk primary dan
+    // fallback pada pasangan yang sama. Tetap compatibility sampai fallback
+    // wire contract mempunyai bukti dan execution plan sendiri.
+    if (configured.sources.some(
+      (source) => source.origin === "fallback" && source.active,
+    )) continue;
+    profiles.set(key, profile);
   }
   for (const profile of input.explicitProfiles) {
     const key = `${profile.provider}\u0000${profile.id}`;

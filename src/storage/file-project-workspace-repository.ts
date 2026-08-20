@@ -275,7 +275,6 @@ function validateProject(value: unknown): asserts value is ProjectWorkspace {
   if (project.pendingGitCommit !== undefined) {
     const pending = project.pendingGitCommit;
     if (
-      project.source.type !== "github" ||
       !project.git ||
       pending.snapshotId !== project.baseSnapshot ||
       pending.sourceRevision !== project.revision ||
@@ -455,8 +454,6 @@ function validateLocalGitTransition(
       receipt.baseCommit !== pending.baseCommit ||
       receipt.branch !== pending.targetBranch ||
       receipt.parentCommit !== pending.parentCommit ||
-      current.source.type !== "github" ||
-      next.source.type !== "github" ||
       JSON.stringify(current.source) !== JSON.stringify(next.source) ||
       next.baseSnapshot !== current.baseSnapshot ||
       JSON.stringify(next.storageUsage) !== JSON.stringify(current.storageUsage) ||
@@ -473,8 +470,6 @@ function validateLocalGitTransition(
   }
   if (next.pendingGitCommit) {
     if (
-      current.source.type !== "github" ||
-      next.source.type !== "github" ||
       JSON.stringify(current.source) !== JSON.stringify(next.source) ||
       nextReceipts.length !== currentReceipts.length ||
       next.pendingGitCommit.sourceRevision !== next.revision ||

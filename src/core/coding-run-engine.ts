@@ -108,6 +108,23 @@ interface ExecutedSandboxResult {
   durableEvidenceIds: string[];
 }
 
+export interface CodingRunAdmissionFence {
+  version: 1;
+  source: "group";
+  cause: "group_disabled" | "group_authority_changed";
+  runId: string;
+  ownerWorkspaceKey: string;
+  projectId: string;
+  effectId: string;
+  authorityRef: string;
+}
+
+export interface CodingRunAdmissionFenceResult {
+  run: CodingRun;
+  /** A local workspace commit may be ambiguous and must be reconciled first. */
+  pendingCommit: boolean;
+}
+
 class SandboxCleanupError extends Error {
   override readonly name = "SandboxCleanupError";
 
@@ -293,6 +310,7 @@ export class CodingRunEngine {
         activeElapsedMs: 0,
         coordinatorDecisions: 0,
       },
+      pendingQuestion: null,
       pendingCommit: null,
       commitReceipts: [],
       result: null,
@@ -504,11 +522,19 @@ export class CodingRunEngine {
     scope: WorkspaceAgentScope,
     runId: string,
     reasonCodeInput: string,
+    questionInput: string,
   ): Promise<CodingRun> {
     const reasonCode = boundedText(reasonCodeInput, 109, "pause reasonCode");
+    const prompt = boundedTaskText(questionInput, 2_000, "pause question");
     return this.authorizedExclusive(scope, runId, ["code.write"], async () => {
       let run = await this.requireMutableRun(scope, runId, "code.write", true);
-      if (run.status === "waiting_input") return run;
+      if (run.status === "waiting_input") {
+        if (
+          run.pendingQuestion?.reasonCode === reasonCode &&
+          run.pendingQuestion.prompt === prompt
+        ) return run;
+        throw new Error("CodingRun sudah menunggu pertanyaan lain.");
+      }
       if (run.status !== "running") {
         throw new Error("CodingRun tidak dapat dipause pada status ini.");
       }
@@ -517,6 +543,13 @@ export class CodingRunEngine {
       return this.saveRun(run, {
         status: "waiting_input",
         phase: "waiting_input",
+        pendingQuestion: {
+          questionId: opaqueId("coding-question", this.makeId()),
+          reasonCode,
+          prompt,
+          instructionRevision: run.instructionRevision,
+          requestedAt: at,
+        },
         events: appendEvent(
           run.events,
           makeEvent(
@@ -549,6 +582,7 @@ export class CodingRunEngine {
       return this.saveRun(run, {
         status: "running",
         phase: resumePhase(run),
+        pendingQuestion: null,
         writer: writerLease(this.writerId, now),
         events: appendEvent(
           run.events,
@@ -731,6 +765,7 @@ export class CodingRunEngine {
         instructionRevision,
         status: "running",
         phase: "mapping",
+        pendingQuestion: null,
         repositoryMap: null,
         plan: null,
         constraints: [
@@ -871,7 +906,19 @@ export class CodingRunEngine {
     kind: CodingValidatorKind,
     signal?: AbortSignal,
     expectedStateRevision?: number,
-  ): Promise<{ run: CodingRun; receipt: CodingValidatorReceipt }> {
+  ): Promise<{
+    run: CodingRun;
+    receipt: CodingValidatorReceipt;
+    diagnostic?: {
+      status: SandboxExecResult["status"];
+      exitCode: number | null;
+      signal: string | null;
+      stdout: string;
+      stderr: string;
+      truncated: boolean;
+      artifacts: SandboxExecResult["artifacts"];
+    };
+  }> {
     const initial = await this.requireMutableRun(scope, runId);
     const commands = await validationCommands(this.validatorPolicy, initial);
     const command = validatorCommand(commands, kind);
@@ -962,7 +1009,19 @@ export class CodingRunEngine {
           ),
         ),
       });
-      return { run: saved, receipt };
+      return {
+        run: saved,
+        receipt,
+        diagnostic: {
+          status: result.status,
+          exitCode: result.exitCode,
+          signal: result.signal,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          truncated: result.truncated,
+          artifacts: structuredClone(result.artifacts),
+        },
+      };
     });
   }
 
@@ -1322,6 +1381,7 @@ export class CodingRunEngine {
       const cancelled = await this.saveRun(run, {
         status: "cancelled",
         phase: "cancelled",
+        pendingQuestion: null,
         events: appendEvent(
           run.events,
           makeEvent(
@@ -1338,6 +1398,75 @@ export class CodingRunEngine {
       await this.projects.disposeWorkingCopy(scope, runtime.working);
       this.runtimes.delete(runId);
       return cancelled;
+    });
+  }
+
+  /**
+   * Fail-closed cancellation for a durable group admission after the group
+   * authority itself is no longer usable. It is deliberately incapable of
+   * selecting an arbitrary run: every immutable binding and admission effect
+   * must match the already persisted CodingRun before a state mutation occurs.
+   */
+  async cancelByAdmissionFence(
+    input: CodingRunAdmissionFence,
+  ): Promise<CodingRunAdmissionFenceResult> {
+    const fence = validateAdmissionFence(input);
+    const initial = await this.repository.load(fence.runId);
+    if (!initial) throw new Error("CodingRun lifecycle fence tidak ditemukan.");
+    assertAdmissionFence(initial, fence);
+    if (terminal(initial.status)) return { run: initial, pendingCommit: false };
+    const operations = [...(this.inFlightOperations.get(fence.runId) ?? [])];
+    operations.forEach((entry) => entry.abort.abort(
+      new Error("CodingRun dihentikan karena authority group berubah."),
+    ));
+    await callTransportWithDeadline(
+      "CodingRun group authority quiescence",
+      this.deletionQuiescenceMs,
+      async () => {
+        await Promise.all(operations.map((entry) => entry.done));
+      },
+    );
+    await this.sandbox.fenceProjectRuns({
+      ownerWorkspaceKey: fence.ownerWorkspaceKey,
+      projectId: fence.projectId,
+    });
+    return this.exclusive(fence.runId, async () => {
+      const run = await this.repository.load(fence.runId);
+      if (!run) throw new Error("CodingRun lifecycle fence tidak ditemukan.");
+      assertAdmissionFence(run, fence);
+      if (terminal(run.status)) return { run, pendingCommit: false };
+      if (run.pendingCommit) {
+        // Never erase an exact-effect barrier: the snapshot may already have
+        // committed. Recovery must report completed/partial before cleanup.
+        return { run, pendingCommit: true };
+      }
+      const at = this.now().toISOString();
+      const cancelled = await this.saveRun(run, {
+        status: "cancelled",
+        phase: "cancelled",
+        pendingQuestion: null,
+        events: appendEvent(
+          run.events,
+          makeEvent(
+            this.makeId,
+            "run.cancelled",
+            run.instructionRevision,
+            fence.cause,
+            at,
+          ),
+        ),
+        completedAt: at,
+        updatedAt: at,
+      });
+      await this.projects.disposeWorkingCopyReferenceForRunFence({
+        projectId: run.binding.projectId,
+        ownerWorkspaceKey: run.binding.ownerWorkspaceKey,
+        workingCopyId: run.workingCopyId,
+        workspaceRevision: run.binding.workspaceRevision,
+        baseSnapshot: run.binding.baseSnapshot,
+      });
+      this.runtimes.delete(run.runId);
+      return { run: cancelled, pendingCommit: false };
     });
   }
 
@@ -1400,6 +1529,7 @@ export class CodingRunEngine {
           await this.saveRun(refreshed, {
             status: "cancelled",
             phase: "cancelled",
+            pendingQuestion: null,
             pendingCommit: null,
             events: appendEvent(
               refreshed.events,
@@ -1985,6 +2115,7 @@ export class CodingRunEngine {
           ...withoutStateRevision(run),
           status: "failed",
           phase: "failed",
+          pendingQuestion: null,
           events: appendEvent(
             run.events,
             makeEvent(
@@ -2076,6 +2207,7 @@ export class CodingRunEngine {
         ...withoutStateRevision(current),
         status: "failed",
         phase: "failed",
+        pendingQuestion: null,
         pendingCommit: null,
         events: appendEvent(
           current.events,
@@ -2128,6 +2260,7 @@ export class CodingRunEngine {
           ...withoutStateRevision(current),
           status: "stale",
           phase: "failed",
+          pendingQuestion: null,
           events: appendEvent(
             current.events,
             makeEvent(
@@ -2344,6 +2477,54 @@ function validateCodingRunAdmission(
     throw new Error("Admission provenance CodingRun tidak sah.");
   }
   return Object.freeze(structuredClone(value));
+}
+
+function validateAdmissionFence(
+  value: CodingRunAdmissionFence,
+): CodingRunAdmissionFence {
+  const keys = Object.keys(value).sort();
+  const expected = [
+    "authorityRef", "cause", "effectId", "ownerWorkspaceKey", "projectId",
+    "runId", "source", "version",
+  ].sort();
+  if (JSON.stringify(keys) !== JSON.stringify(expected)) {
+    throw new Error("Schema lifecycle fence CodingRun tidak exact.");
+  }
+  const fence = structuredClone(value);
+  if (
+    fence.version !== 1 || fence.source !== "group" ||
+    (fence.cause !== "group_disabled" &&
+      fence.cause !== "group_authority_changed")
+  ) throw new Error("Lifecycle fence CodingRun tidak sah.");
+  for (const [field, raw] of [
+    ["runId", fence.runId],
+    ["ownerWorkspaceKey", fence.ownerWorkspaceKey],
+    ["projectId", fence.projectId],
+    ["effectId", fence.effectId],
+    ["authorityRef", fence.authorityRef],
+  ] as const) {
+    const clean = boundedText(raw, 512, `lifecycle fence ${field}`);
+    if (clean !== raw || containsSecretLikeValue(clean)) {
+      throw new Error(`Lifecycle fence ${field} tidak sah.`);
+    }
+  }
+  return Object.freeze(fence);
+}
+
+function assertAdmissionFence(
+  run: CodingRun,
+  fence: CodingRunAdmissionFence,
+): void {
+  if (
+    run.runId !== fence.runId ||
+    run.binding.ownerWorkspaceKey !== fence.ownerWorkspaceKey ||
+    run.binding.projectId !== fence.projectId ||
+    run.admission?.source !== fence.source ||
+    run.admission.effectId !== fence.effectId ||
+    run.admission.authorityRef !== fence.authorityRef
+  ) {
+    throw new Error("Lifecycle fence tidak cocok admission CodingRun exact.");
+  }
 }
 
 function validateRunLimits(value: CodingRunLimits): CodingRunLimits {

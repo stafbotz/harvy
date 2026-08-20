@@ -21,6 +21,14 @@ import { privateAgentScope, type WorkspaceAgentScope } from "../src/harness/scop
 const NOW = "2026-08-11T00:00:00.000Z";
 const SHA = "a".repeat(64);
 
+function sandboxIdentity() {
+  return {
+    serviceIdentityDigest: "1".repeat(64),
+    runtimeImageDigest: "2".repeat(64),
+    policyDigest: "3".repeat(64),
+  };
+}
+
 describe("coding agent executors G–I", () => {
   it("memasang capability hanya dari executor nyata dan health sandbox positif", async () => {
     const fixture = fakeCodingDependencies();
@@ -46,6 +54,7 @@ describe("coding agent executors G–I", () => {
         return {
           available: true,
           runtime: "isolated-linux" as const,
+          identity: sandboxIdentity(),
           checkedAt: NOW,
           reason: null,
         };
@@ -75,6 +84,7 @@ describe("coding agent executors G–I", () => {
       sandboxHealth: async () => ({
         available: true,
         runtime: "isolated-linux",
+        identity: sandboxIdentity(),
         checkedAt: NOW,
         reason: null,
       }),
@@ -276,6 +286,7 @@ describe("coding agent executors G–I", () => {
       sandboxHealth: async () => ({
         available: true,
         runtime: "isolated-linux",
+        identity: sandboxIdentity(),
         checkedAt: NOW,
         reason: null,
       }),

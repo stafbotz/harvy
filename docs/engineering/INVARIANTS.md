@@ -590,9 +590,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   yang dicocokkan exact ke ledger; tombstone hanya memberi authority cleanup
   monotonik, tidak pernah membentuk scope pengguna, membuat efek coding/publish
   non-cleanup, atau menyapu trash project lain. Worker memproses satu page secara non-overlap, mendukung
-  stop/drain, dan hanya mencatat agregat. Primitive ini masih single-process dan
-  belum dirangkai di startup aplikasi. Penghapusan lokal tidak pernah menghapus
-  remote.
+  stop/drain, dan hanya mencatat agregat. Worker dirangkai pada startup coding
+  opt-in sebelum admission, tetapi store/lease-nya masih single-process.
+  Penghapusan lokal tidak pernah menghapus remote.
 
 ## Sandbox dan CodingRun
 
@@ -601,7 +601,8 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   Binding owner+project+snapshot+revision+run, network-off, no-secret/no-host,
   unprivileged/read-only root, syscall/capability policy, CPU/memory/disk/PID,
   admission, lease, watchdog, output/artifact cap adalah code-owned. Capability
-  tetap unavailable sampai backend nyata membuktikannya.
+  tetap unavailable sampai backend OCI exact membuktikannya lewat seluruh
+  hostile-code suite dan receipt conformance deployment yang masih fresh.
 - **Lease sandbox adalah write-ahead lifecycle durable.** `allocating` disimpan
   sebelum transport; timeout, output/snapshot invalid, atau hasil ambigu
   mengarantina lalu memindahkan record ke `disposing`. Restart memasang exact
@@ -666,6 +667,12 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   Setiap action memakai state revision exact, dan provider call diregistrasi
   sebelum project lock dilepas agar deletion dapat abort lalu menunggu
   quiescence dengan deadline fail-closed.
+- **`waiting_input` coding selalu berarti ada pertanyaan terikat.** Jeda yang
+  meminta manusia membawa question ID, prompt credential-free, reason code,
+  instruction revision, dan timestamp durable. Run Anchor privat merender
+  pertanyaan itu; hanya reply anchor tepercaya yang menjadi revision. Batas
+  action per invocation adalah checkpoint internal berstatus `running`, bukan
+  alasan untuk mengonsumsi chat berikutnya sebagai jawaban.
 - **Scheduler tidak menyimpan scope basi dan tidak menyamakan abort dengan
   quiescence.** Admission coordinator bersifat immediate, dibatasi global dan
   per-workspace, serta mengikat `expectedStateRevision` melalui reservasi CAS
@@ -680,7 +687,10 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   Startup menuntaskan sandbox journal recovery, lalu mengamati tepat satu page
   GitHub unknown sebelum tepat satu page deletion recovery. Report content-free
   bersifat initial pass, bukan klaim backlog habis, dan coding admission tetap
-  `closed`. Shutdown menyegel scheduler, kedua worker, serta sandbox secara
+  `closed` selama recovery. Ia baru menjadi `open` bila sandbox identity cocok
+  receipt conformance exact, dependency lain sehat, tidak ada unresolved/
+  blocked report, scheduler berhasil dibuka, dan pending run/barrier recovery
+  selesai. Shutdown menyegel scheduler, kedua worker, serta sandbox secara
   sinkron; men-drain caller lebih dulu; lalu memanggil sandbox `drain` dan
   `close` paling akhir. Failure stop/drain dilaporkan fail-closed dan dapat
   di-retry; tidak ada scope pengguna sintetis saat startup.
@@ -728,14 +738,19 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   authority publish baru. Terminal ACK wajib membawa effect ID dan permanent
   operation fence exact; hasil malformed/timeout tetap `unknown`. Siklus worker
   bounded satu page, non-overlap, stop/drain menunggu kandidat aktif, dan log
-  hanya membawa agregat. Primitive lokal ini belum berarti startup app atau
-  recovery multi-instance sudah aktif.
+  hanya membawa agregat. Worker ini dirangkai pada startup coding opt-in;
+  adapter file dan initial pass tersebut belum berarti recovery multi-instance.
 - **Konfirmasi publish hanya dari interaction workspace privat.** Grant dan
   digest approval mengikat interaction ID serta audience `workspace-private`;
   interaction group atau replay lintas interaction gagal sebelum persistence
   atau transport. Project deletion mem-purge ledger/selection lokal hanya
   setelah seluruh receipt `unknown` terminal; remote unlink/delete tetap milik
   broker credential-owning dan bukan efek saga lokal.
+- **Satu tombol publish hanya mengotorisasi satu tahap.** Aplikasi privat
+  menerbitkan offer branch, push exact/workflow, dan draft PR secara berurutan;
+  setiap tahap memerlukan grant baru. Re-resolution membership/ACL dilakukan
+  sebelum approval, sehingga offer process-local lama gagal tertutup setelah
+  authority epoch berubah.
 
 ## Isolasi data
 
@@ -771,6 +786,24 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   code-owned. Satu pertanyaan terbuka memiliki horizon maksimal sepuluh menit;
   cancel/expiry menutupnya tanpa membuat jawaban palsu. Record diretensi paling
   lama tujuh hari dan purge lifecycle wajib dirangkai sebelum surface aktif.
+- **Group coding memakai irisan authority, bukan membership grup saja.** Actor
+  hanya boleh diterbitkan resolver ingress tepercaya. Start/status/update/
+  cancel harus memeriksa generation+epoch grup, link durable, membership serta
+  ACL Workspace terbaru, dan permission operasi exact. Reference run wajib
+  durable sebelum schedule; authority diperiksa lagi sesudah persistence agar
+  revocation yang berlomba tidak meloloskan writer.
+- **Group coding tidak mempunyai jalur source ke audience grup.** Renderer grup
+  hanya menerima fase/status/jumlah file/validator code-owned. Source, diff,
+  path, stack trace, repository metadata, task brief, evidence detail, dan
+  credential tidak boleh menjadi payload delivery grup. Request push/PR hanya
+  membuat handoff Workspace-private; broker approval tetap berasal dari
+  interaction privat exact.
+- **Revocation group coding adalah lifecycle fence.** Disable, removal, atau
+  authority epoch change mencabut link/handoff lebih dulu, lalu menginterupsi
+  invocation exact dan mem-fence run, sandbox, serta working copy dari binding
+  durable. Pending local commit tidak boleh dihapus atau ditebak; ia menahan
+  recovery sampai reconciliation berotoritas menyelesaikannya. Re-add membuat
+  link baru dan tidak menghidupkan reference lama.
 - **Notice grup harus terkirim sebelum pesan diproses.** Binding menyimpan
   `joinedAt`, notice version, account, dan status disable. `append`/history,
   echo sendiri, pesan tanpa teks, serta timestamp sebelum `joinedAt` diabaikan.

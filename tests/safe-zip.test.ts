@@ -7,6 +7,38 @@ import { extractSafeZip, inspectSafeZip } from "../src/core/safe-zip.js";
 import { buildZip } from "./zip-test-fixture.js";
 
 describe("safe ZIP ingestion", () => {
+  it("menghapus tepat satu root sintetis untuk zipball GitHub", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-safe-zip-root-"));
+    const destination = join(root, "snapshot");
+    const archive = buildZip([
+      { name: "owner-repo-deadbeef/", content: "" },
+      { name: "owner-repo-deadbeef/src/", content: "" },
+      {
+        name: "owner-repo-deadbeef/src/index.ts",
+        content: "export {};\n",
+        unixMode: 0o100755,
+      },
+    ]);
+    const result = await extractSafeZip(archive, destination, {
+      stripSingleRoot: true,
+      preserveRegularFileExecutability: true,
+    });
+    assert.deepEqual(result.manifest.files.map((file) => file.path), ["src/index.ts"]);
+    assert.equal(result.manifest.files[0]?.executable, true);
+    assert.equal(await readFile(join(destination, "src", "index.ts"), "utf8"), "export {};\n");
+  });
+
+  it("menolak mode zipball bila archive tidak mempunyai satu root bersama", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-safe-zip-multi-root-"));
+    await assert.rejects(
+      extractSafeZip(buildZip([
+        { name: "first/a.txt", content: "a" },
+        { name: "second/b.txt", content: "b" },
+      ]), join(root, "snapshot"), { stripSingleRoot: true }),
+      /tepat satu direktori root/iu,
+    );
+  });
+
   it("memvalidasi seluruh archive sebelum ekstraksi dan tidak mengeksekusi file", async () => {
     const root = await mkdtemp(join(tmpdir(), "harvy-safe-zip-"));
     const destination = join(root, "snapshot");

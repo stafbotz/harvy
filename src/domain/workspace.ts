@@ -65,6 +65,10 @@ export interface WorkspaceRepository {
   loadAuthorityState(
     workspaceKey: string,
   ): Promise<WorkspaceAuthorityState | null>;
+  /** Trusted directory lookup; callers pass a code-derived principal. */
+  listAuthorityStatesByPrincipal(
+    principal: WorkspacePrincipal,
+  ): Promise<WorkspaceAuthorityState[]>;
   /**
    * Mengganti workspace dan seluruh membership-nya dalam satu commit. `null`
    * hanya untuk create; angka lain adalah epoch yang wajib masih sama (CAS).

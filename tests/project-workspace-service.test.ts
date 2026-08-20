@@ -89,18 +89,53 @@ describe("ProjectWorkspace Phase G", () => {
     assert.notEqual(committed.baseSnapshot, project.baseSnapshot);
     await assert.rejects(access(working.internalPath));
 
+    const pending = committed.pendingGitCommit!;
+    assert.ok(pending, "upload coding revision harus menyiapkan local-git exact effect");
+    await assert.rejects(
+      fixture.projects.rollback(fixture.ownerScope, project.id, 2, 1),
+      /Pending local git effect/iu,
+    );
+    const locallyCommitted = await fixture.projects.recordLocalGitCommit(
+      fixture.ownerScope,
+      project.id,
+      committed.revision,
+      {
+        operationId: pending.operationId,
+        projectId: project.id,
+        snapshotId: committed.baseSnapshot,
+        sourceWorkspaceRevision: committed.revision,
+        branch: pending.targetBranch,
+        parentCommit: pending.parentCommit,
+        commit: GIT_COMMIT,
+        treeHash: GIT_TREE,
+        objectBundle: {
+          version: 1,
+          artifactId: `git-bundle-${GIT_BUNDLE_SHA}`,
+          sha256: GIT_BUNDLE_SHA,
+          size: GIT_BUNDLE.byteLength,
+          mediaType: "application/vnd.git.bundle",
+          commit: GIT_COMMIT,
+          parentCommit: pending.parentCommit,
+          treeHash: GIT_TREE,
+        },
+        authorName: "Harvy Bot",
+        authorEmail: "bot@harvy.local",
+        committedAt: NOW.toISOString(),
+      },
+    );
+
     const rolledBack = await fixture.projects.rollback(
       fixture.ownerScope,
       project.id,
-      2,
+      locallyCommitted.revision,
       1,
     );
-    assert.equal(rolledBack.revision, 3);
+    assert.equal(rolledBack.revision, 4);
     assert.equal(rolledBack.baseSnapshot, project.baseSnapshot);
     const restored = await fixture.projects.createWorkingCopy(
       fixture.ownerScope,
       project.id,
-      3,
+      4,
     );
     assert.equal(
       await readFile(join(restored.internalPath, "src", "index.ts"), "utf8"),
@@ -340,7 +375,15 @@ describe("ProjectWorkspace Phase G", () => {
 
   it("mematerialisasi selection GitHub secara deterministik dan idempoten", async () => {
     const fixture = await createFixture();
-    const archive = zip("selected repository\n");
+    const archive = buildZip([
+      { name: "stafbotz-harvy-abcdef0/", content: "" },
+      { name: "stafbotz-harvy-abcdef0/src/", content: "" },
+      {
+        name: "stafbotz-harvy-abcdef0/src/index.ts",
+        content: "selected repository\n",
+        unixMode: 0o100755,
+      },
+    ]);
     const input = {
       selectionId: "selection-1",
       installationConnectionId: "connection-1",
@@ -381,6 +424,17 @@ describe("ProjectWorkspace Phase G", () => {
       "binding-1",
     );
     assert.equal(activated.revision, 2);
+    assert.deepEqual(
+      (await fixture.projects.readManifest(
+        fixture.ownerScope,
+        activated.id,
+        activated.baseSnapshot,
+      ))?.files.map((file) => ({
+        path: file.path,
+        executable: file.executable,
+      })),
+      [{ path: "src/index.ts", executable: true }],
+    );
     assert.equal((await fixture.projects.list(fixture.ownerScope)).length, 1);
     assert.equal(
       (await fixture.projects.get(fixture.ownerScope, created.id))?.revision,
@@ -402,7 +456,7 @@ describe("ProjectWorkspace Phase G", () => {
       {
         repositoryId: "repository-1",
         installationId: "installation-1",
-        archive: zip("before\n"),
+        archive: githubZip("before\n"),
         git: { baseCommit: GIT_BASE, headCommit: GIT_HEAD, branch: "main" },
       },
     );
@@ -434,7 +488,7 @@ describe("ProjectWorkspace Phase G", () => {
       {
         repositoryId: "repository-1",
         installationId: "installation-1",
-        archive: zip("before\n"),
+        archive: githubZip("before\n"),
         git: { baseCommit: GIT_BASE, headCommit: GIT_HEAD, branch: "main" },
       },
     );
@@ -780,6 +834,14 @@ function zip(content: string): Buffer {
   return buildZip([
     { name: "src/", content: "" },
     { name: "src/index.ts", content },
+  ]);
+}
+
+function githubZip(content: string): Buffer {
+  return buildZip([
+    { name: "owner-repository-deadbeef/", content: "" },
+    { name: "owner-repository-deadbeef/src/", content: "" },
+    { name: "owner-repository-deadbeef/src/index.ts", content },
   ]);
 }
 

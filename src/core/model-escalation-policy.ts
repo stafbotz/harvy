@@ -239,6 +239,17 @@ export class OneShotModelEscalationService {
     return this.settle(record, "unknown", "outcome_unknown", null);
   }
 
+  /** A process restart never replays an invocation whose settlement is unknown. */
+  async recoverReserved(): Promise<number> {
+    const reserved = await this.repository.listReserved();
+    let recovered = 0;
+    for (const record of reserved) {
+      const settled = await this.markReservedUnknown(record.stageKey);
+      if (settled?.status === "unknown") recovered += 1;
+    }
+    return recovered;
+  }
+
   private async settleFailure(
     record: ModelEscalationRecord,
     outcome: "candidate_rejected" | "provider_failure" | "execution_failure",

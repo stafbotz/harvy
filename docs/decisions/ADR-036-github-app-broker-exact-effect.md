@@ -74,10 +74,9 @@ Harvy, sandbox, prompt, metadata project, atau receipt.
 ## Konsekuensi
 
 Policy broker dapat menolak stale/replay/force dan bundle substitution tanpa
-melihat credential GitHub. Client transport tersedia default-off, tetapi belum
-ada daemon local-git/object store, GitHub App broker, provision secret identitas
-service + verifier server-side,
-atau confirmation controller produksi. Worker rekonsiliasi lokal juga belum
-dirangkai pada startup aplikasi dan bukan lease/reconciler multi-instance,
-dan capability tetap default-off; boolean fence/fake test bukan bukti backend
-benar-benar linearizable atau publish live.
+melihat credential GitHub. Daemon local-git, credential-owning GitHub App
+broker, HMAC verifier server-side, installation flow, private confirmation,
+exact bundle push, draft PR, serta startup reconciliation kini tersedia dan
+tetap default-off. Ledger service masih file/single-service dan GitHub E2E belum
+live-accepted dengan App+repository uji; conformance fake bukan bukti remote
+effect linearizable atau publish production multi-instance.

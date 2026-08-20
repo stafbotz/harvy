@@ -139,6 +139,8 @@ export interface ChatRequest {
   timeoutMs?: number;
   /** Batasi rotasi kunci untuk keputusan UX yang punya jalur mundur lokal. */
   maxAttempts?: number;
+  /** Trusted caller may forbid provider fallback for exact-bound stages. */
+  fallbackPolicy?: "configured" | "disabled";
   /** Pembatalan lifecycle dari pemilik request, terpisah dari timeout. */
   signal?: AbortSignal;
   /**
@@ -408,6 +410,13 @@ export class AiClient {
     request: ChatRequest,
     state: LogicalRequestState,
   ): Promise<CompletionResult> {
+    if (
+      request.fallbackPolicy !== undefined &&
+      request.fallbackPolicy !== "configured" &&
+      request.fallbackPolicy !== "disabled"
+    ) {
+      throw new AiError("Kebijakan fallback request tidak sah.");
+    }
     const primary: AiProviderTarget = {
       origin: "primary",
       providerId: this.options.providerId ?? "primary",
@@ -417,7 +426,9 @@ export class AiClient {
     };
     // Native tool support belum dibuktikan pada provider cadangan. Jangan
     // mengubah wire contract diam-diam saat circuit fallback terbuka.
-    const fallback = request.tools ? undefined : this.options.fallback;
+    const fallback = request.tools || request.fallbackPolicy === "disabled"
+      ? undefined
+      : this.options.fallback;
     if (
       fallback &&
       !request.signal?.aborted &&

@@ -1,75 +1,79 @@
 # Current Context
 
-Refreshed: 2026-08-15
+Refreshed: 2026-08-20
+Baseline: ee8f1ef
+Context-Version: 1
 
 ## Verified baseline
 
-- Product capability baseline: working tree composition GroupAgentRun di atas
-  commit dasar `d6560cb` (15 Agustus 2026).
-- Product gate: `npm test` PASS, 1.348 test dalam 169 suite, 0 gagal. Suite
-  terarah GroupAgentRun+startup PASS 40/40. Smoke dev mencapai ready, shutdown
-  bersih, exit 0, dan tidak menyisakan runtime lock.
-- Context contract: `npm run context:check` PASS; bootstrap 5.125 byte,
-  estimasi 1.282 token.
+- Working tree vertical slice berada di atas `main`/`origin/main` commit dasar
+  `ee8f1ef`; tidak ada commit implementasi atau PR baru.
+- `npm run check` PASS. `npm test` PASS 1.413/1.413 dalam 183 suite, 0 gagal.
+  `npm run context:check` dan `git diff --check` PASS; diff check hanya memberi
+  peringatan line-ending Windows.
+- Provider exact `google-ai-studio/gemini-3.5-flash-lite` PASS live smoke pada
+  20 Agustus 2026. Sandbox, GitHub, dan WhatsApp guard tetap berhenti sebelum
+  efek karena masing-masing memerlukan Linux, confirmation draft-PR nonkritis,
+  dan confirmation grup uji nonkritis.
 
 ## Recent material changes
 
-- Fase G–M menyediakan ProjectWorkspace/safe ZIP, sandbox/coding/GitHub policy
-  fail-closed, GroupAgentRun/group-coding core, dan escalation `toughest`.
-  Coding/GitHub tetap default-off tanpa backend trust-domain serta conformance.
-- GroupAgentRun kini dirangkai sesudah observation authority dan sebelum batch
-  chat ke guarded controller, executor/processor, worker durable, usage, serta
-  Baileys delivery fence. Reachability tetap flag eksplisit dan admission live;
-  group-coding masih tidak reachable.
-- Dev control dipasang sebelum network Telegram. Stop/reload saat startup
-  mengabort request, menghentikan polling yang terlambat hidup, dan melepas
-  runtime lock melalui cleanup normal.
+- Production coding composition kini menghubungkan private Telegram Workspace,
+  ZIP/GitHub selection, iterative CodingRun, Run Anchor, validator/evidence,
+  local Git commit, exact GitHub confirmation, startup recovery, serta shutdown
+  fence. Runtime tetap default-off dan hanya membuka scheduler setelah receipt
+  conformance sandbox exact. Trust-domain service rootless OCI, credential-free
+  local-git/object bundle, dan credential-owning GitHub App broker tersedia;
+  hostile-code/GitHub live evidence belum tersedia pada host ini.
+- CodingRun `waiting_input` kini menyimpan pertanyaan target durable dan hanya
+  reply Anchor tepercaya yang menjadi revision; checkpoint internal tetap
+  `running`. Publish privat membuktikan branch, exact push, dan draft PR memakai
+  confirmation berbeda, serta menolak offer setelah ACL epoch berubah. Profile
+  provider exact code-owned hanya berlaku pada model+endpoint Google yang lulus
+  effort/tool/signature replay/finish/pressure/timeout/retry smoke.
+- Group coding dirangkai setelah authority observation dan sebelum ambient
+  batching, dengan trusted actor, durable Workspace link/handoff, audience-safe
+  status, private publish confirmation, dan lifecycle fence pada disable/
+  removal/epoch change. `toughest` hanya one-shot critic setelah validator gagal
+  berulang. Telemetry memisahkan TTFR dari time-to-final.
 
 ## Active cross-subsystem blockers
 
-- Agent Runtime setelah perubahan continuation/context-pressure belum
-  di-smoke-test ulang terhadap provider utama atau Telegram.
-- Tidak ada runner Linux terverifikasi pada environment ini; Phase H live,
-  seccomp/cgroup/mount/network/secret isolation, dan output streaming belum
-  dibuktikan. Capability sandbox wajib tetap mati.
-- Daemon local-git/object store, GitHub App broker live, provision secret
-  identitas service + verifier server-side,
-  trusted confirmation controller, dan Workspace ingress/UI belum ada. GitHub
-  capability tetap mati; credential GitHub tidak boleh masuk metadata project,
-  prompt, atau sandbox.
-- Metadata project/run/evidence/deletion/GitHub masih file/single-process;
-  produksi perlu distributed admission, transport/object store, dan outbox.
-  Supervisor/worker coding lokal belum dirangkai di `app.ts`; local detach
-  bukan remote GitHub unlink/delete.
-- Procedural memory privat yang belajar strategi bantuan dari bukti berulang
-  belum ada; semantic/episodic/graph dan procedure project tidak menggantikannya.
-- Dual model misclassification can still miss pre-save consent for sensitive
-  memory. Do not claim this privacy gap is closed.
-- False-positive/false-negative safety pada corpus model aktual belum diukur;
-  selective routing baru terverifikasi otomatis dan belum membuktikan kanal
-  nyata.
-- Forced shutdown/crash tetap dapat meninggalkan runtime lock stale. Pastikan
-  PID pemilik sudah mati sebelum menghapus lock.
-- WhatsApp group behavior dan GroupAgentRun composition masih beta; full
-  behavior, fault/reconnect delivery, dan dua akun nyata belum diuji end-to-end.
+- Host ini Windows tanpa Docker/Podman/nerdctl/WSL Linux. Seluruh 15 hostile
+  scenario harus lulus pada Linux non-root, image+seccomp+runtime exact sebelum
+  receipt diterbitkan dan sandbox/coding production diaktifkan.
+- GitHub App private credential, installation, callback deployment, dan
+  repository uji nonkritis tidak tersedia. Branch `harvy/*`, exact push, stale
+  remote, cancellation setelah push, dan draft PR belum diamati live.
+- Provider primary exact sudah live-smoke, tetapi provider fallback tetap tanpa
+  wire evidence dan sengaja nonaktif untuk coding. Tidak ada target model
+  `toughest`+privacy domain yang dikonfigurasi, jadi critic live belum diuji.
+- WhatsApp GroupAgentRun/group-coding belum menjalani participant kedua,
+  assigned waiting input, crash-after-send, reconnect proses, authority churn,
+  dan private publish flow pada grup nyata.
+- Control-plane Workspace/project/run/evidence/GitHub/group, local-git dan
+  broker ledger masih file/single-service. Hanya lease sandbox memakai SQLite
+  CAS lintas proses. Distributed authority lease, shared object store, outbox/
+  dispatcher, dan reconciliation multi-instance belum ada; jangan klaim
+  horizontal-safe.
+- Procedural memory belum ada dan sengaja ditunda sampai blocker live P0/P1
+  serta durability utama selesai. Gap privacy/safety lama tetap berlaku:
+  dual-model sensitive-memory misclassification dan FP/FN corpus model aktual
+  belum diukur live.
 
 ## Route to detail
 
 - [Agent Runtime](../engineering/status/agent-runtime.md)
 - [Telegram](../engineering/status/telegram.md)
 - [WhatsApp](../engineering/status/whatsapp.md)
-- [Tasks and sessions](../engineering/status/tasks.md)
 - [Memory and data](../engineering/status/memory.md)
 - [Project workspace and coding](../engineering/status/coding.md)
 - [Safety and privacy](../engineering/status/safety-privacy.md)
-- [Console](../engineering/status/console.md)
 - [Platform](../engineering/status/platform.md)
 
 ## Maintenance
 
-Replace stale bullets; do not append chronology. Refresh baseline and gate
-results from actual Git/test output, carry at most three recent material changes
-from `docs/LOG.md`, and keep only cross-subsystem blockers here. Never include
-credentials, identifiers, raw logs, prompts, or user quotations. Run
-`npm run context:check`; this file must remain at most 5,120 bytes and total
-bootstrap output at most 8,192 bytes.
+Replace stale bullets; do not append chronology. Keep at most three recent
+changes and only cross-subsystem blockers. Never include credentials,
+identifiers, raw logs, prompts, or user quotations. This file must remain at
+most 5,120 bytes and total bootstrap output at most 8,192 bytes.

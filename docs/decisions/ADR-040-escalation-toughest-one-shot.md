@@ -56,11 +56,12 @@ isi prompt, dan tidak dapat mengulang panggilan ambigu sesudah restart.
 
 ## Konsekuensi
 
-Harvy mempunyai primitive Phase M yang dapat dipasang pada validator tertentu
-tanpa menjadikan model terkuat ambient. Belum ada target `toughest` yang
-dikonfigurasi atau invocation yang dirangkai di composition root, dan runner
-evaluasi model nyata belum dijalankan. Tidak ada klaim kualitas, harga, privacy
-provider live, atau ketersediaan K3 produksi.
+Harvy memasang primitive Phase M pada repeated deterministic coding-validator
+failure. Target tetap default-off; bila exact profile+privacy domain tersedia,
+ia hanya memberi satu recovery hint read-only kepada integration writer dan
+wajib diikuti revalidation. Runner provider/model nyata belum berhasil
+dijalankan, sehingga tidak ada klaim kualitas, harga, privacy provider live,
+atau ketersediaan K3 production.
 
 ## Bukti
 
@@ -69,3 +70,5 @@ profile exact, sensitive cross-domain denial, one-shot/no-tool, replay restart,
 candidate/provider failure, unknown recovery, collision, schema, dan transisi
 terminal. Tes config, execution policy, client/ledger, serta corpus routing
 mengunci default-off, inventaris mode, metadata non-wire, dan variant A–E.
+`coding-validator-escalation` mengunci repeated-failure trigger, primary-only,
+one-shot, no-tool/delegation, privacy-domain denial, dan budget shared.

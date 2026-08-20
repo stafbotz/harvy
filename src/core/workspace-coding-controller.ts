@@ -47,6 +47,20 @@ export interface UploadedProjectView {
   archiveSha256: string;
 }
 
+export interface WorkspaceView {
+  workspaceKey: string;
+  displayName: string;
+  role: "owner" | "admin" | "editor" | "viewer";
+  aclEpoch: number;
+}
+
+export interface WorkspaceProjectView {
+  projectId: string;
+  revision: number;
+  source: "upload" | "github";
+  snapshotId: string;
+}
+
 export interface CreatedCodingRunView {
   runId: string;
   projectId: string;
@@ -78,6 +92,58 @@ export class WorkspaceCodingController {
     private readonly projects: ProjectWorkspaceService,
     private readonly codingRuns: CodingRunCreator,
   ) {}
+
+  async createWorkspace(
+    actorInput: AuthenticatedWorkspaceActor,
+    commandInput: { displayName: string },
+  ): Promise<WorkspaceView> {
+    const { principal } = await this.resolveActor(actorInput);
+    assertExactKeys(commandInput, ["displayName"], "create workspace command");
+    const created = await this.authority.createWorkspace(
+      safeDisplayName(commandInput.displayName),
+      principal,
+    );
+    return Object.freeze({
+      workspaceKey: created.workspace.workspaceKey,
+      displayName: created.workspace.displayName,
+      role: created.owner.role,
+      aclEpoch: created.workspace.aclEpoch,
+    });
+  }
+
+  async listWorkspaces(
+    actorInput: AuthenticatedWorkspaceActor,
+  ): Promise<WorkspaceView[]> {
+    const { principal } = await this.resolveActor(actorInput);
+    return (await this.authority.listWorkspaces(principal)).map((entry) =>
+      Object.freeze({
+        workspaceKey: entry.workspace.workspaceKey,
+        displayName: entry.workspace.displayName,
+        role: entry.membership.role,
+        aclEpoch: entry.workspace.aclEpoch,
+      })
+    );
+  }
+
+  async listProjects(
+    actorInput: AuthenticatedWorkspaceActor,
+    commandInput: { workspaceKey: string },
+  ): Promise<WorkspaceProjectView[]> {
+    const { principal } = await this.resolveActor(actorInput);
+    assertExactKeys(commandInput, ["workspaceKey"], "list projects command");
+    const scope = await this.resolveScope(
+      safeKey(commandInput.workspaceKey, "workspaceKey"),
+      principal,
+    );
+    return (await this.projects.list(scope)).map((project) =>
+      Object.freeze({
+        projectId: project.id,
+        revision: project.revision,
+        source: project.source.type,
+        snapshotId: project.baseSnapshot,
+      })
+    );
+  }
 
   async uploadZip(
     actorInput: AuthenticatedWorkspaceActor,
@@ -283,6 +349,19 @@ function safeKey(value: unknown, field: string): string {
     );
   }
   return value;
+}
+
+function safeDisplayName(value: unknown): string {
+  if (
+    typeof value !== "string" || !value.trim() || value.trim().length > 80 ||
+    /\p{Cc}/u.test(value) || containsSecretLikeValue(value)
+  ) {
+    throw new WorkspaceCodingControllerError(
+      "workspace_run_invalid",
+      "Nama workspace tidak sah.",
+    );
+  }
+  return value.trim();
 }
 
 function assertExactKeys(

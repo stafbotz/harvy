@@ -8,7 +8,7 @@ import type {
 } from "../domain/telemetry.js";
 
 interface TelemetryDatabase {
-  version: 3;
+  version: 4;
   usage: AiUsageRecord[];
   events: ProductEvent[];
   turns: TurnTelemetryRecord[];
@@ -148,26 +148,26 @@ export class FileTelemetryRepository implements TelemetryRepository {
         !Array.isArray(parsed.events) ||
         (parsed.version !== 1 &&
           parsed.version !== 2 &&
-          parsed.version !== 3) ||
-        (parsed.version === 3 && !Array.isArray(parsed.turns))
+          parsed.version !== 3 && parsed.version !== 4) ||
+        ((parsed.version === 3 || parsed.version === 4) && !Array.isArray(parsed.turns))
       ) {
         throw new Error("Format basis observabilitas tidak dikenali.");
       }
       const database: TelemetryDatabase = {
-        version: 3,
+        version: 4,
         usage: parsed.usage.map(normalizeUsageRecord),
         events: parsed.events as ProductEvent[],
         turns: Array.isArray(parsed.turns)
           ? parsed.turns.map(normalizeTurnRecord)
           : [],
       };
-      if (parsed.version !== 3) {
+      if (parsed.version !== 4) {
         await this.persistDatabase(database);
       }
       return database;
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") {
-        return { version: 3, usage: [], events: [], turns: [] };
+        return { version: 4, usage: [], events: [], turns: [] };
       }
       throw error;
     }
@@ -229,6 +229,8 @@ function normalizeTurnRecord(value: unknown, index: number): TurnTelemetryRecord
     queueWaitMs: count(record.queueWaitMs),
     handlingLatencyMs: count(record.handlingLatencyMs),
     totalLatencyMs: count(record.totalLatencyMs),
+    timeToFirstResponseMs: nullableCount(record.timeToFirstResponseMs),
+    timeToFinalResponseMs: nullableCount(record.timeToFinalResponseMs),
     modelCallCount: count(record.modelCallCount),
     failedModelCallCount: count(record.failedModelCallCount),
     boundaryCallCount: count(record.boundaryCallCount),
@@ -318,6 +320,12 @@ function count(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : 0;
+}
+
+function nullableCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null;
 }
 
 function finiteNonNegative(value: unknown): number {

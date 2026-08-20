@@ -9,6 +9,14 @@ data/memori/
 # Kredensial linked-device WhatsApp. Kebocoran folder ini setara mengambil alih
 # sesi nomor Harvy; tidak boleh pernah masuk Git.
 data/whatsapp-auth/
+# Coding snapshots/evidence and all local secret mounts are private runtime
+# state. Service deployments should normally place these outside the checkout;
+# these guards protect the documented development defaults.
+data/coding-runtime/
+data/sandbox-service/
+data/local-git-service/
+data/github-broker/
+secrets/
 # Log operasional append-only. Isinya sudah disaring, tetapi tetap merupakan
 # artefak runtime dan tidak boleh masuk riwayat Git.
 data/logs/

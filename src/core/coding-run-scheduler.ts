@@ -200,6 +200,39 @@ export class CodingRunScheduler {
     return result;
   }
 
+  /** Abort one exact active invocation; durable cancellation stays in engine. */
+  async interrupt(
+    scopeInput: WorkspaceAgentScope,
+    runIdInput: string,
+  ): Promise<void> {
+    const scope = validateScopeSnapshot(scopeInput);
+    return this.interruptByBinding(scope.workspaceKey, runIdInput);
+  }
+
+  /**
+   * Code-owned lifecycle fence for an already admitted exact run binding.
+   * This deliberately accepts no membership/ACL snapshot: group removal can
+   * invalidate that snapshot before the control plane gets a chance to stop
+   * hostile work. It grants no engine mutation authority and only aborts the
+   * exact process-local invocation already keyed by workspace + run.
+   */
+  async interruptByBinding(
+    workspaceKeyInput: string,
+    runIdInput: string,
+  ): Promise<void> {
+    const workspaceKey = safeText(workspaceKeyInput, 512);
+    if (!workspaceKey) {
+      throw new Error("workspaceKey CodingRun interrupt tidak sah.");
+    }
+    const runId = safeText(runIdInput, 512);
+    if (!runId) throw new Error("runId CodingRun interrupt tidak sah.");
+    const key = `${workspaceKey}\0${runId}`;
+    const invocation = this.active.get(key);
+    if (!invocation) return;
+    invocation.controller.abort(new Error("CodingRun dihentikan oleh lifecycle fence."));
+    await invocation.quiesced;
+  }
+
   stop(): void {
     if (this.state === "stopped" || this.state === "stopping") return;
     this.state = "stopping";
@@ -340,7 +373,8 @@ function validateConformanceReceipt(
     !validTimestamp(receipt.expiresAt) ||
     Date.parse(receipt.verifiedAt) > now.getTime() ||
     Date.parse(receipt.expiresAt) <= now.getTime() ||
-    Date.parse(receipt.expiresAt) <= Date.parse(receipt.verifiedAt)
+    Date.parse(receipt.expiresAt) <= Date.parse(receipt.verifiedAt) ||
+    Date.parse(receipt.expiresAt) - Date.parse(receipt.verifiedAt) > 7 * 24 * 60 * 60_000
   ) {
     throw new Error("Coding runtime conformance receipt tidak sah atau kedaluwarsa.");
   }

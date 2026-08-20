@@ -77,6 +77,8 @@ export interface ModelEscalationRepository {
     record: Omit<ModelEscalationRecord, "stateRevision">,
   ): Promise<ModelEscalationReserveResult>;
   load(stageKey: string): Promise<ModelEscalationRecord | null>;
+  /** Content-free startup recovery inventory. */
+  listReserved(): Promise<ModelEscalationRecord[]>;
   save(
     record: Omit<ModelEscalationRecord, "stateRevision">,
     expectedStateRevision: number,

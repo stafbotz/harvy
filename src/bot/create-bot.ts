@@ -30,6 +30,11 @@ import type {
   Understanding,
 } from "../ai/understand.js";
 import type { AppConfig } from "../config.js";
+import type { CodingRun } from "../domain/coding-run.js";
+import { renderCodingRunAnchor } from "../coding/coding-run-anchor.js";
+import type { CodingRuntimeComposition } from "../core/coding-runtime-composition.js";
+import type { PrivateCodingRunHandle } from "../core/private-coding-application.js";
+import type { PrivateGitHubPublishOffer } from "../core/private-github-application.js";
 import {
   adaptiveActions,
   replyHasBlockingQuestion,
@@ -257,6 +262,10 @@ export function createBot(
     NOOP_OPERATIONAL_LOGGER.child("telegram.bot"),
   agentRuns: AgentRunService | null = null,
   memoryContextCompiler: MemoryContextCompiler | null = null,
+  codingRuntime: Pick<
+    CodingRuntimeComposition,
+    "application" | "privateGitHub" | "issuePrivateActor"
+  > | null = null,
 ): HarvyBot {
   const currentTurnId = (): string | null =>
     currentUsageAttribution()?.turnId ?? null;
@@ -275,6 +284,24 @@ export function createBot(
       );
     }
   };
+  const noteTurnResponse = async (
+    ownerId: string,
+    turnId: string | null = currentTurnId(),
+  ): Promise<void> => {
+    const observer = telemetry as TelemetryService & {
+      noteTurnResponse?: (ownerId: string, turnId: string | null) => Promise<void>;
+    };
+    if (!observer.noteTurnResponse) return;
+    try {
+      await observer.noteTurnResponse(ownerId, turnId);
+    } catch (error) {
+      logger.warn(
+        "turn_response_telemetry_failed",
+        "Timestamp response giliran gagal dicatat.",
+        { error },
+      );
+    }
+  };
   const dropKeyboard = (ctx: Context): Promise<void> =>
     dropKeyboardSafely(ctx, logger);
   const safeEdit = (
@@ -283,6 +310,16 @@ export function createBot(
     keyboard?: InlineKeyboard,
   ): Promise<void> => safeEditSafely(ctx, text, keyboard, logger);
   const bot = new Bot(config.telegramBotToken);
+  bot.use(async (ctx, next) => {
+    const originalReply = ctx.reply.bind(ctx);
+    ctx.reply = (async (...args: Parameters<Context["reply"]>) => {
+      const sent = await originalReply(...args);
+      const turnId = currentUsageAttribution()?.turnId ?? null;
+      if (turnId) await noteTurnResponse(ownerOf(ctx), turnId);
+      return sent;
+    }) as Context["reply"];
+    await next();
+  });
   const pending = new PendingStore();
   const held = new HeldMessageStore();
   const actionOffers = new ActionOfferStore();
@@ -290,6 +327,22 @@ export function createBot(
   const activeAgentWork = new Map<
     string,
     { runId: string; controller: AbortController; promise: Promise<void> }
+  >();
+  const activeCodingWork = new Set<Promise<void>>();
+  const codingAnchors = new Map<
+    string,
+    { runId: string; chatId: number; messageId: number }
+  >();
+  const codingAnchorUpdates = new Map<
+    string,
+    {
+      chatId: number;
+      messageId: number;
+      lastText: string;
+      pendingText: string | null;
+      timer: ReturnType<typeof setTimeout> | null;
+      sending: boolean;
+    }
   >();
   let stoppingActiveAgentWork = false;
 
@@ -517,6 +570,7 @@ export function createBot(
       batch.turnId,
     );
     await batch.carrier.reply(URGENT_ACKNOWLEDGEMENT);
+    await noteTurnResponse(_ownerId, batch.turnId);
   });
 
   /**
@@ -628,6 +682,319 @@ export function createBot(
     );
   });
 
+  bot.command("project", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "drain",
+      "Perintah /project gagal:",
+      async () => {
+        if (!codingRuntime) {
+          await ctx.reply("Runtime coding belum diaktifkan oleh deployment Harvy.");
+          return;
+        }
+        if (!await codingConsent(ctx, ownerId)) return;
+        const actor = privateCodingActor(ctx, codingRuntime);
+        const command = commandTail(ctx.message?.text ?? "", "project");
+        if (/^new\s+/iu.test(command)) {
+          const selected = await codingRuntime.application.createWorkspace(
+            actor,
+            command.replace(/^new\s+/iu, ""),
+          );
+          await ctx.reply(`Workspace dibuat dan dipilih:\n${selected.workspaceKey}`);
+          return;
+        }
+        if (command === "list") {
+          const workspaces = await codingRuntime.application.listWorkspaces(actor);
+          await ctx.reply(
+            workspaces.length === 0
+              ? "Belum ada workspace. Buat dengan /project new <nama>."
+              : ["Workspace:", ...workspaces.map((workspace) =>
+                  `• ${workspace.displayName} — ${workspace.workspaceKey} (${workspace.role})`
+                )].join("\n"),
+          );
+          return;
+        }
+        if (/^use\s+/iu.test(command)) {
+          const selected = await codingRuntime.application.selectWorkspace(
+            actor,
+            command.replace(/^use\s+/iu, "").trim(),
+          );
+          await ctx.reply(`Workspace aktif: ${selected.workspaceKey}`);
+          return;
+        }
+        if (command === "projects") {
+          const projects = await codingRuntime.application.listProjects(actor);
+          await ctx.reply(
+            projects.length === 0
+              ? "Workspace ini belum punya project. Upload file ZIP untuk membuatnya."
+              : ["Project:", ...projects.map((project) =>
+                  `• ${project.projectId} — ${project.source}, revision ${project.revision}`
+                )].join("\n"),
+          );
+          return;
+        }
+        if (/^use-project\s+/iu.test(command)) {
+          const selected = await codingRuntime.application.selectProject(
+            actor,
+            command.replace(/^use-project\s+/iu, "").trim(),
+          );
+          await ctx.reply(
+            `Project aktif: ${selected.projectId} (revision ${selected.projectRevision})`,
+          );
+          return;
+        }
+        if (/^group-confirm\s+/iu.test(command)) {
+          const confirmed = await codingRuntime.application.confirmGroupWorkspaceLink(
+            actor,
+            command.replace(/^group-confirm\s+/iu, "").trim(),
+          );
+          await ctx.reply(
+            confirmed.status === "approved"
+              ? "Link grup disetujui. Kembali ke grup dan ulangi @Harvy hubungkan workspace."
+              : "Link grup sudah disetujui untuk Workspace aktif.",
+          );
+          return;
+        }
+        await ctx.reply([
+          "Kelola project coding:",
+          "/project new <nama>",
+          "/project list",
+          "/project use <workspaceKey>",
+          "/project projects",
+          "/project use-project <projectId>",
+          "/project group-confirm <kode dari grup>",
+          "Atau kirim sebuah file ZIP.",
+        ].join("\n"));
+      },
+    );
+  });
+
+  bot.command("code", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "drain",
+      "Perintah /code gagal:",
+      async () => {
+        if (!codingRuntime) {
+          await ctx.reply("Runtime coding belum diaktifkan oleh deployment Harvy.");
+          return;
+        }
+        if (!await codingConsent(ctx, ownerId)) return;
+        const request = commandTail(ctx.message?.text ?? "", "code");
+        if (!request) {
+          await ctx.reply("Tulis task setelah /code, misalnya: /code perbaiki token expired.");
+          return;
+        }
+        const actor = privateCodingActor(ctx, codingRuntime);
+        let anchorMessageId: number | null = null;
+        let pendingRun: CodingRun | null = null;
+        const handle = await codingRuntime.application.startCoding(
+          actor,
+          request,
+          async (run) => {
+            pendingRun = run;
+            if (anchorMessageId !== null) {
+              scheduleCodingAnchor(run, ctx.chat.id, anchorMessageId);
+            }
+          },
+        );
+        const sent = await ctx.reply(handle.initialAnchor.text);
+        anchorMessageId = sent.message_id;
+        codingAnchors.set(ownerId, {
+          runId: handle.runId,
+          chatId: ctx.chat.id,
+          messageId: sent.message_id,
+        });
+        if (pendingRun) scheduleCodingAnchor(pendingRun, ctx.chat.id, sent.message_id);
+        trackCodingCompletion(ctx, ownerId, handle, sent.message_id);
+      },
+    );
+  });
+
+  bot.command("code_status", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(ctx, ownerId, "drain", "Status coding gagal:", async () => {
+      if (!codingRuntime) {
+        await ctx.reply("Runtime coding belum diaktifkan.");
+        return;
+      }
+      const actor = privateCodingActor(ctx, codingRuntime);
+      const current = await codingRuntime.application.current(actor);
+      if (!current.run) {
+        await ctx.reply("Tidak ada CodingRun foreground aktif.");
+        return;
+      }
+      const sent = await ctx.reply(renderCodingRunAnchor(current.run).text);
+      codingAnchors.set(ownerId, {
+        runId: current.run.runId,
+        chatId: ctx.chat.id,
+        messageId: sent.message_id,
+      });
+    });
+  });
+
+  bot.command("code_cancel", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(ctx, ownerId, "drain", "Pembatalan coding gagal:", async () => {
+      if (!codingRuntime) {
+        await ctx.reply("Runtime coding belum diaktifkan.");
+        return;
+      }
+      const run = await codingRuntime.application.cancel(
+        privateCodingActor(ctx, codingRuntime),
+      );
+      const anchor = codingAnchors.get(ownerId);
+      if (anchor?.runId === run.runId) {
+        await flushCodingAnchor(run, anchor.chatId, anchor.messageId);
+        codingAnchors.delete(ownerId);
+      } else {
+        await ctx.reply(renderCodingRunAnchor(run).text);
+      }
+    });
+  });
+
+  bot.command("github", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(ctx, ownerId, "drain", "Perintah /github gagal:", async () => {
+      if (!codingRuntime?.privateGitHub) {
+        await ctx.reply("GitHub App Broker belum diaktifkan oleh deployment Harvy.");
+        return;
+      }
+      if (!await codingConsent(ctx, ownerId)) return;
+      const actor = privateCodingActor(ctx, codingRuntime);
+      const command = commandTail(ctx.message?.text ?? "", "github");
+      if (command === "connect") {
+        const started = await codingRuntime.privateGitHub.beginInstallation(actor);
+        await ctx.reply([
+          "Buka URL GitHub App berikut di browser. Jangan paste PAT atau token ke chat.",
+          started.authorizationUrl ?? "Session installation sudah dibuat; cek statusnya.",
+          `Connection: ${started.connection.connectionId}`,
+          "Setelah installation selesai: /github status <connectionId>",
+        ].join("\n\n"));
+        return;
+      }
+      if (/^status\s+/iu.test(command)) {
+        const connectionId = command.replace(/^status\s+/iu, "").trim();
+        const connection = await codingRuntime.privateGitHub.installationStatus(
+          actor,
+          connectionId,
+        );
+        await ctx.reply([
+          `Connection: ${connection.connectionId}`,
+          `Status: ${connection.status}`,
+          `Installation: ${connection.installationId ?? "belum tersedia"}`,
+          connection.status === "active"
+            ? `Lanjut: /github repos ${connection.connectionId}`
+            : "Selesaikan installation di browser lalu cek lagi.",
+        ].join("\n"));
+        return;
+      }
+      if (/^repos\s+/iu.test(command)) {
+        const connectionId = command.replace(/^repos\s+/iu, "").trim();
+        const page = await codingRuntime.privateGitHub.listRepositories(
+          actor,
+          connectionId,
+        );
+        await ctx.reply([
+          "Repository yang dipilih GitHub App:",
+          ...page.repositories.map((repository) =>
+            `• ${repository.repositoryFullName} — id ${repository.repositoryId} (${repository.visibility})`
+          ),
+          "",
+          `Pilih: /github use ${connectionId} <repositoryId>`,
+        ].join("\n"));
+        return;
+      }
+      if (/^use\s+/iu.test(command)) {
+        const parts = command.replace(/^use\s+/iu, "").trim().split(/\s+/u);
+        if (parts.length !== 2) {
+          await ctx.reply("Format: /github use <connectionId> <repositoryId>");
+          return;
+        }
+        const provisioned = await codingRuntime.privateGitHub.selectAndProvision(
+          actor,
+          { connectionId: parts[0]!, repositoryId: parts[1]! },
+        );
+        await ctx.reply([
+          "Repository GitHub sudah menjadi project workspace terisolasi.",
+          `Repository: ${provisioned.selection.repositoryFullName}`,
+          `Base commit: ${provisioned.selection.baseCommit}`,
+          `Project: ${provisioned.project.id}`,
+          "Mulai dengan /code <task>.",
+        ].join("\n"));
+        return;
+      }
+      await ctx.reply([
+        "GitHub App workspace-private:",
+        "/github connect",
+        "/github status <connectionId>",
+        "/github repos <connectionId>",
+        "/github use <connectionId> <repositoryId>",
+      ].join("\n"));
+    });
+  });
+
+  bot.command("publish", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(ctx, ownerId, "drain", "Persiapan publish gagal:", async () => {
+      if (!codingRuntime?.privateGitHub) {
+        await ctx.reply("GitHub App Broker belum diaktifkan.");
+        return;
+      }
+      if (!await codingConsent(ctx, ownerId)) return;
+      const runId = commandTail(ctx.message?.text ?? "", "publish");
+      const actor = privateCodingActor(ctx, codingRuntime);
+      const offer = runId
+        ? await codingRuntime.privateGitHub.preparePublishOfferForRun(actor, runId)
+        : await codingRuntime.privateGitHub.preparePublishOffer(actor);
+      if (!offer) {
+        await ctx.reply("Draft PR untuk CodingRun terbaru sudah dibuat.");
+        return;
+      }
+      await sendPublishOffer(ctx, offer);
+    });
+  });
+
+  bot.on("message:document", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(ctx, ownerId, "drain", "Upload project ZIP gagal:", async () => {
+      if (!codingRuntime) {
+        await ctx.reply("Runtime coding belum diaktifkan oleh deployment Harvy.");
+        return;
+      }
+      if (!await codingConsent(ctx, ownerId)) return;
+      const document = ctx.message.document;
+      if (
+        !document.file_name?.toLocaleLowerCase("en-US").endsWith(".zip") &&
+        document.mime_type !== "application/zip"
+      ) {
+        await ctx.reply("Untuk project coding, kirim archive berformat ZIP.");
+        return;
+      }
+      const telegramFile = await ctx.api.getFile(document.file_id);
+      if (!telegramFile.file_path) throw new Error("Telegram tidak menyediakan path file ZIP.");
+      const archive = await downloadTelegramZip(
+        config.telegramBotToken,
+        telegramFile.file_path,
+        document.file_size,
+      );
+      const selected = await codingRuntime.application.uploadZip(
+        privateCodingActor(ctx, codingRuntime),
+        archive,
+      );
+      await ctx.reply([
+        "ZIP sudah dipasang sebagai project terisolasi.",
+        `Project: ${selected.projectId}`,
+        `Revision: ${selected.projectRevision}`,
+        "Mulai dengan /code <task>.",
+      ].join("\n"));
+    });
+  });
+
   bot.on("message:text", (ctx) => {
     const ownerId = ownerOf(ctx);
     const text = ctx.message.text.trim();
@@ -642,6 +1009,38 @@ export function createBot(
           await ctx.reply(
             ["Aku belum punya perintah itu.", "", HELP_MESSAGE].join("\n"),
           );
+        },
+      );
+      return;
+    }
+
+    const codingAnchor = codingAnchors.get(ownerId);
+    if (
+      codingRuntime && codingAnchor &&
+      ctx.message.reply_to_message?.message_id === codingAnchor.messageId
+    ) {
+      enqueueBotAction(
+        ctx,
+        ownerId,
+        "drain",
+        "Correction CodingRun gagal:",
+        async () => {
+          if (!await codingConsent(ctx, ownerId)) return;
+          const handle = await codingRuntime.application.revise(
+            privateCodingActor(ctx, codingRuntime),
+            {
+              sourceMessageId: `telegram:${ctx.message.message_id}`,
+              content: text,
+              kind: "constraint",
+            },
+            (run) => scheduleCodingAnchor(
+              run,
+              codingAnchor.chatId,
+              codingAnchor.messageId,
+            ),
+          );
+          await ctx.reply("Constraint diterapkan ke revision CodingRun terbaru.");
+          trackCodingCompletion(ctx, ownerId, handle, codingAnchor.messageId);
         },
       );
       return;
@@ -676,6 +1075,40 @@ export function createBot(
         { error },
       );
     });
+    if (action === "codingpub") {
+      enqueueBotAction(
+        ctx,
+        ownerId,
+        "drain",
+        "Confirmation publish GitHub gagal:",
+        async () => {
+          if (!codingRuntime?.privateGitHub) {
+            await ctx.reply("GitHub App Broker tidak tersedia.");
+            return;
+          }
+          if (!await codingConsent(ctx, ownerId)) return;
+          const confirmed = await codingRuntime.privateGitHub.confirmPublishOffer(
+            privateCodingActor(ctx, codingRuntime),
+            target,
+          );
+          await dropKeyboard(ctx);
+          await ctx.reply([
+            `Efek ${confirmed.receipt.capability} tercatat ${confirmed.receipt.status}.`,
+            `Effect: ${confirmed.receipt.effectId}`,
+            `Commit: ${confirmed.receipt.commit}`,
+            ...(confirmed.receipt.url ? [`URL: ${confirmed.receipt.url}`] : []),
+          ].join("\n"));
+          if (confirmed.nextOffer) await sendPublishOffer(ctx, confirmed.nextOffer);
+          else if (
+            confirmed.receipt.status === "committed" &&
+            confirmed.receipt.capability === "github.pr.create"
+          ) {
+            await ctx.reply("Workflow publish selesai: branch exact, push exact, dan draft PR sudah terbukti.");
+          }
+        },
+      );
+      return;
+    }
     if (
       action === "consent" ||
       action === "safety" ||
@@ -725,6 +1158,7 @@ export function createBot(
       await drainOnboarding();
       await messageBatcher.drainAll();
       await stopActiveAgentWork();
+      await Promise.allSettled([...activeCodingWork]);
       await history.drain?.();
       await memories.drain?.();
       await telemetry.drain();
@@ -2424,6 +2858,165 @@ export function createBot(
     const work = [...activeAgentWork.values()];
     for (const active of work) active.controller.abort();
     await Promise.allSettled(work.map((active) => active.promise));
+  }
+
+  async function codingConsent(ctx: Context, ownerId: string): Promise<boolean> {
+    if (!await profiles.needsOnboarding(ownerId)) return true;
+    await ctx.reply("Selesaikan perkenalan dan persetujuan lewat /start sebelum memakai coding agent.");
+    return false;
+  }
+
+  function scheduleCodingAnchor(
+    run: CodingRun,
+    chatId: number,
+    messageId: number,
+  ): void {
+    const text = renderCodingRunAnchor(run).text;
+    let delivery = codingAnchorUpdates.get(run.runId);
+    if (!delivery) {
+      delivery = {
+        chatId,
+        messageId,
+        lastText: "",
+        pendingText: text,
+        timer: null,
+        sending: false,
+      };
+      codingAnchorUpdates.set(run.runId, delivery);
+    } else {
+      delivery.pendingText = text;
+    }
+    if (delivery.timer || delivery.sending) return;
+    delivery.timer = setTimeout(() => {
+      delivery!.timer = null;
+      void deliverCodingAnchor(run.runId);
+    }, 1_200);
+    delivery.timer.unref?.();
+  }
+
+  async function deliverCodingAnchor(runId: string): Promise<void> {
+    const delivery = codingAnchorUpdates.get(runId);
+    if (!delivery || delivery.sending || delivery.pendingText === null) return;
+    const text = delivery.pendingText;
+    delivery.pendingText = null;
+    if (text === delivery.lastText) return;
+    delivery.sending = true;
+    try {
+      await bot.api.editMessageText(delivery.chatId, delivery.messageId, text);
+      delivery.lastText = text;
+    } catch {
+      logger.warn(
+        "coding_anchor_update_failed",
+        "Run Anchor coding gagal diperbarui; state durable tetap tersedia.",
+      );
+    } finally {
+      delivery.sending = false;
+      if (delivery.pendingText !== null && delivery.timer === null) {
+        delivery.timer = setTimeout(() => {
+          delivery.timer = null;
+          void deliverCodingAnchor(runId);
+        }, 1_200);
+        delivery.timer.unref?.();
+      }
+    }
+  }
+
+  async function flushCodingAnchor(
+    run: CodingRun,
+    chatId: number,
+    messageId: number,
+  ): Promise<void> {
+    const current = codingAnchorUpdates.get(run.runId);
+    if (current?.timer) clearTimeout(current.timer);
+    codingAnchorUpdates.delete(run.runId);
+    try {
+      await bot.api.editMessageText(chatId, messageId, renderCodingRunAnchor(run).text);
+    } catch {
+      // Final state remains queryable through /code_status.
+    }
+  }
+
+  function trackCodingCompletion(
+    ctx: Context,
+    ownerId: string,
+    handle: PrivateCodingRunHandle,
+    messageId: number,
+  ): void {
+    const work = handle.completion.then(async (outcome) => {
+      await flushCodingAnchor(outcome.run, ctx.chat!.id, messageId);
+      if (outcome.localCommit) {
+        await ctx.api.sendMessage(ctx.chat!.id, [
+          "Commit lokal terverifikasi dibuat.",
+          `Commit: ${outcome.localCommit.commit.slice(0, 12)}`,
+          `Tree: ${outcome.localCommit.treeHash.slice(0, 12)}`,
+          `Branch: ${outcome.localCommit.branch}`,
+          "Belum ada push remote tanpa confirmation exact.",
+        ].join("\n"));
+      }
+      if (outcome.stoppedReason === "local_git_commit_failed") {
+        await ctx.api.sendMessage(
+          ctx.chat!.id,
+          "Perubahan project tersimpan dan validator lulus, tetapi commit git lokal belum terbukti. Publish tetap tertutup.",
+        );
+      }
+      if (isTerminalCodingRun(outcome.run)) {
+        const anchor = codingAnchors.get(ownerId);
+        if (anchor?.runId === outcome.run.runId) codingAnchors.delete(ownerId);
+      }
+    }).catch(async () => {
+      logger.error(
+        "private_coding_completion_failed",
+        "CodingRun private berhenti sebelum delivery akhir.",
+        new Error("private_coding_completion_failed"),
+      );
+      await ctx.api.sendMessage(
+        ctx.chat!.id,
+        "CodingRun berhenti. Gunakan /code_status untuk melihat state faktual terakhir.",
+      ).catch(() => undefined);
+    }).finally(() => {
+      handle.unsubscribeProgress();
+      activeCodingWork.delete(work);
+    });
+    work.catch(() => undefined);
+    activeCodingWork.add(work);
+  }
+
+  async function sendPublishOffer(
+    ctx: Context,
+    offer: PrivateGitHubPublishOffer,
+  ): Promise<void> {
+    await ctx.reply([
+      "Confirmation GitHub exact (workspace-private)",
+      `Capability: ${offer.capability}`,
+      `Repository: ${offer.repositoryFullName}`,
+      `Branch: ${offer.branch}`,
+      `Commit: ${offer.commit}`,
+      `Base commit: ${offer.baseCommit}`,
+      `Effect ID: ${offer.effectId}`,
+      `Audience: ${offer.audience}`,
+      `Actor membership: ${offer.actorMembershipId}`,
+      `Authority revision: ${offer.authorityRevision}`,
+      `Expires: ${offer.expiresAt}`,
+    ].join("\n"), {
+      reply_markup: {
+        inline_keyboard: [[{
+          text: `Konfirmasi ${publishCapabilityLabel(offer.capability)}`,
+          callback_data: `codingpub:${offer.offerId}`,
+        }]],
+      },
+    });
+  }
+
+  function privateCodingActor(
+    ctx: Context,
+    runtime: Pick<CodingRuntimeComposition, "issuePrivateActor">,
+  ) {
+    if (!ctx.from) throw new Error("Principal Telegram private tidak tersedia.");
+    return runtime.issuePrivateActor({
+      channel: "telegram",
+      platformId: String(ctx.from.id),
+      interactionId: `telegram:${ctx.update.update_id}:${ctx.message?.message_id ?? 0}`,
+    });
   }
 
   function contextSnapshotForActiveRun(
@@ -4627,6 +5220,82 @@ function knowledgeFields(item: ExtractedMemory): Pick<
 
 function ownerOf(ctx: Context): string {
   return String(ctx.from?.id ?? ctx.chat?.id ?? "tidak-dikenal");
+}
+
+function commandTail(text: string, command: string): string {
+  const pattern = new RegExp(`^/${command}(?:@[A-Za-z0-9_]+)?(?:\\s+|$)`, "iu");
+  return text.replace(pattern, "").trim();
+}
+
+async function downloadTelegramZip(
+  botToken: string,
+  filePath: string,
+  declaredSize?: number,
+): Promise<Buffer> {
+  const maximum = 32 * 1024 * 1024;
+  if (
+    (declaredSize !== undefined &&
+      (!Number.isSafeInteger(declaredSize) || declaredSize < 1 || declaredSize > maximum)) ||
+    !/^[A-Za-z0-9_./-]{1,512}$/u.test(filePath) ||
+    filePath.split("/").some((part) => !part || part === "." || part === "..")
+  ) throw new Error("Descriptor ZIP Telegram tidak sah atau terlalu besar.");
+  const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.telegram.org/file/bot${botToken}/${encodedPath}`,
+      {
+        redirect: "error",
+        cache: "no-store",
+        signal: AbortSignal.timeout(60_000),
+      },
+    );
+  } catch {
+    throw new Error("Download ZIP Telegram gagal.");
+  }
+  const contentLength = Number(response.headers.get("content-length") ?? "NaN");
+  if (
+    !response.ok || !response.body ||
+    (Number.isFinite(contentLength) &&
+      (!Number.isSafeInteger(contentLength) || contentLength < 1 || contentLength > maximum))
+  ) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("Response ZIP Telegram tidak sah atau terlalu besar.");
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const item = await reader.read();
+      if (item.done) break;
+      total += item.value.byteLength;
+      if (total > maximum) throw new Error("ZIP Telegram melewati batas 32 MiB.");
+      chunks.push(Buffer.from(item.value));
+    }
+  } catch {
+    await reader.cancel().catch(() => undefined);
+    throw new Error("Download ZIP Telegram gagal atau melewati batas.");
+  }
+  if (total < 1 || (declaredSize !== undefined && total !== declaredSize)) {
+    throw new Error("Ukuran ZIP Telegram tidak cocok descriptor.");
+  }
+  return Buffer.concat(chunks, total);
+}
+
+function isTerminalCodingRun(run: CodingRun): boolean {
+  return run.status === "completed" || run.status === "failed" ||
+    run.status === "cancelled" || run.status === "stale" ||
+    run.status === "partial";
+}
+
+function publishCapabilityLabel(capability: PrivateGitHubPublishOffer["capability"]): string {
+  switch (capability) {
+    case "github.branch.create": return "buat branch";
+    case "github.push_branch": return "push exact commit";
+    case "github.workflow.write": return "push workflow exact";
+    case "github.pr.create": return "buat draft PR";
+  }
 }
 
 function telegramUpdateKind(ctx: Context): string {
