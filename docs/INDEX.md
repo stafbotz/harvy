@@ -48,7 +48,6 @@ histori; jangan gunakan sebagai status terbaru.
 | Branch, handoff, materialitas docs, hook | [`operations/WORKFLOW.md`](operations/WORKFLOW.md) |
 | Console localhost dan operasi pilot | [`operations/HARVY_CONSOLE.md`](operations/HARVY_CONSOLE.md) |
 | Paket/cohort pilot | [`product/PILOT_BETA_DAN_PAKET.md`](product/PILOT_BETA_DAN_PAKET.md) |
-| Riset sementara agent engineering | [`research/AGENT_ENGINEERING_RESEARCH.md`](research/AGENT_ENGINEERING_RESEARCH.md) |
 | Menjalankan Harvy | [`../README.md`](../README.md) |
 
 Gunakan pencarian heading/istilah sebelum membuka rentang:

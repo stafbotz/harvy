@@ -38,6 +38,30 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-20 — Riset agent dipromosikan dan dibersihkan
+
+Scope: `docs/research/`, navigasi dokumentasi, serta bukti implementasi agent,
+memory, sandbox, provider, dan control plane.
+
+Changed: tujuh draf riset non-normatif dihapus setelah audit penuh. Temuan yang
+diterima sudah hidup pada kontrak, kode, tes, dan status subsystem: bounded
+AgentRun/checkpoint, scope dan approval code-owned, episodic/semantic memory,
+context-pressure serta observation compaction, fallback provider berbatas,
+console operasi, dan sandbox OCI `network=none` dengan GitHub berada di broker
+terpisah. Tidak ada perilaku runtime baru. Self-installing skill, device
+spoofing, command blacklist, dan network allowlist tidak diadopsi: sebagian
+lebih lemah daripada isolation yang berjalan, sementara procedural/social
+learning dan fallback native masih memerlukan keputusan atau bukti live yang
+tercatat di STATUS.
+
+Verified: seluruh isi `docs/research/` dibaca; implementasi dan tes terkait
+diperiksa terhadap kontrak/status aktual. `docs/INDEX.md` tidak lagi menautkan
+draf yang dihapus. `npm run context:check` PASS dan `git diff --check` PASS
+dengan peringatan konversi line-ending Windows saja.
+
+Not verified: `npm run check`, `npm test`, dan acceptance live tidak dijalankan
+ulang karena tidak ada perubahan kode atau perilaku runtime.
+
 ## 2026-08-20 — Coding input target dan publish privat exact
 
 Scope: CodingRun/coordinator/worker, private coding session, private GitHub
