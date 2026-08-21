@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  formatMemories,
+  formatMemoryPortrait,
   HELP_MESSAGE,
+  MEMORY_PORTRAIT_EMPTY,
   memoryNoteLines,
 } from "../src/bot/messages.js";
 import {
@@ -82,8 +83,13 @@ const SCREENS: [string, string][] = [
   ["sapaan pengguna lama", welcomeBack(0)],
   ["sapaan pengguna lama dengan tugas", welcomeBack(3)],
   ["bantuan", HELP_MESSAGE],
-  ["daftar memori kosong", formatMemories([])],
-  ["daftar memori", formatMemories([memory()])],
+  ["potret memori kosong", MEMORY_PORTRAIT_EMPTY],
+  [
+    "potret memori",
+    formatMemoryPortrait(
+      "Kamu sekarang kelas 11 IPA dan sedang banyak memikirkan sekolah.",
+    ),
+  ],
   ["catatan memori", memoryNoteLines([memory()])],
   ["tugas tercatat", taskSavedHeading(() => 0)],
   ["tugas ditolak", taskDeclinedNote(() => 0)],
@@ -107,5 +113,9 @@ describe("naskah yang dilihat pengguna", () => {
     for (const [name, text] of SCREENS) {
       assert.doesNotMatch(text, /\bPengguna\b/, name);
     }
+  });
+
+  it("mencantumkan /memori sebagai jalan melihat pemahaman Harvy", () => {
+    assert.match(HELP_MESSAGE, /\/memori — lihat yang aku ingat tentang kamu/iu);
   });
 });

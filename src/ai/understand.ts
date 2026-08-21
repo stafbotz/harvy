@@ -69,6 +69,8 @@ export interface Understanding {
   taskAction: TaskAction | null;
   /** Tindakan eksplisit terhadap memori; fakta baru sendiri bukan tindakan list. */
   memoryAction: MemoryAction | null;
+  /** Topik bahasa alami untuk forget; bukan ID storage dan belum memberi izin mutasi. */
+  memoryTarget?: string | null;
   /** Sinyal routing compiler; triase tetap menjadi penilai khusus. */
   riskHint: RiskHint;
   /** @deprecated Kompatibilitas sementara untuk policy/model test lama. */
@@ -165,6 +167,7 @@ export function parseUnderstanding(raw: string): Understanding | null {
   let task = readTask(payload["task"]);
   let taskAction = readTaskAction(payload["taskAction"]);
   let memoryAction = readMemoryAction(payload["memoryAction"]);
+  let memoryTarget = readShortText(payload["memoryTarget"], 120);
   const memories = readMemories(payload["memories"]);
   let intent = readIntent(payload["intent"]);
   if (!intent) return null;
@@ -203,6 +206,7 @@ export function parseUnderstanding(raw: string): Understanding | null {
   } else if (memoryAction !== "remember") {
     memoryAction = null;
   }
+  if (intent !== "memory" || memoryAction !== "forget") memoryTarget = null;
 
   const controlAction =
     intent === "control" ? readControlAction(payload["controlAction"]) : null;
@@ -218,6 +222,7 @@ export function parseUnderstanding(raw: string): Understanding | null {
     intent,
     taskAction,
     memoryAction,
+    memoryTarget,
     riskHint,
     safetySensitive: riskHint.level !== "none",
     needsStepByStep: payload["needsStepByStep"] === true,

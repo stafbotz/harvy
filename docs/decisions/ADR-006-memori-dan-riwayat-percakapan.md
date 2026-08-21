@@ -9,6 +9,8 @@
   dari attention context otomatis 12 episode.
 - Ditindaklanjuti: `ADR-031` menambah semantic projection, Context Pack, dan
   lifecycle suppression; `ADR-032` menambah graph temporal turunan.
+- UX daftar/tombol per-item disupersesi `ADR-043`; primary MemoryItem dan hak
+  cascade deletion yang ditetapkan ADR ini tetap berlaku.
 
 ## Konteks
 
@@ -58,11 +60,12 @@ Jenis memori menentukan perlakuannya:
 | `context` | ujian biologi minggu depan, sedang lomba | otomatis |
 | `personal` | kesehatan, keluarga, relasi, gender, orientasi seksual, tekanan emosional berat | **ditawarkan** |
 
-Yang otomatis tetap **diberitahukan** saat disimpan sebagai satu baris `📎` di
-ujung balasan, lengkap dengan tombol Lupakan pada pesan yang sama. Bentuk bubble
-sementara dengan tombol Oke dihapus 26 Juli 2026 karena memotong percakapan
-seperti pop-up. Pasal 4 nomor 2 meminta pengguna tahu sebelum sesuatu yang baru
-disimpan; ia tidak meminta Harvy bertanya untuk setiap remah.
+Yang otomatis tetap **diberitahukan** saat disimpan lewat copy `💭` yang adaptif
+dan menempel di ujung balasan. Sejak ADR-043, pemberitahuan itu tidak lagi
+memasang tombol Lupakan per item; pengguna mengoreksi atau melupakan dengan
+bahasa biasa, sementara `/memori` dan Data & izin menjaga transparansi. Pasal 4
+nomor 2 meminta pengguna tahu sebelum sesuatu yang baru disimpan; ia tidak
+meminta Harvy bertanya atau membuka pengelola record untuk setiap remah.
 
 Secara kontrak, yang sensitif tidak boleh disimpan tanpa jawaban pengguna.
 Pasal 4 nomor 3 melarang informasi sensitif disimpan otomatis.

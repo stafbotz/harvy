@@ -49,6 +49,223 @@ import { privateAgentScope, scopeKey } from "../src/harness/scope.js";
 import { FileAgentRunRepository } from "../src/storage/file-agent-run-repository.js";
 
 describe("alur adapter Telegram", () => {
+  it("menyatukan /memori, pertanyaan natural, dan Data & izin pada satu potret", async () => {
+    const memory = memoryItem("memory-portrait", "Sekarang kelas 12");
+    let portraitCalls = 0;
+    let compilerCalls = 0;
+    let portraitCompilerCalls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "memory",
+          memoryAction: "list",
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        memoryPortrait: async (context: HarvyContext) => {
+          portraitCalls += 1;
+          assert.ok(context.memories.some((item) => item.id === memory.id));
+          return "Kamu sekarang kelas 12 dan lebih nyaman dengan penjelasan sederhana.";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          list: async () => [memory],
+          relevantTo: async () => [memory],
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+        memoryContextCompiler: {
+          compilePrivate: async (
+            _ownerId: string,
+            request: string,
+            context: HarvyContext,
+          ) => {
+            compilerCalls += 1;
+            if (/profilku.*preferensi.*hubungan/iu.test(request)) {
+              portraitCompilerCalls += 1;
+            }
+            return {
+              context,
+              plan: {} as never,
+              manifest: {
+                selectedCount: 1,
+                selectedCharacters: memory.content.length,
+                failedRouteCount: 0,
+              },
+            };
+          },
+        } as unknown as MemoryContextCompiler,
+      },
+    );
+
+    await harness.bot.handleUpdate(commandUpdate("/memori", 1));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(callbackUpdate("control:memories", 2));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(
+      messageUpdate("apa yang kamu ingat tentang aku?", 3),
+    );
+    await harness.bot.drainPending();
+
+    const portraits = harness.sent.filter((text) =>
+      text.startsWith("Yang aku ingat tentang kamu\n\n"));
+    assert.equal(portraits.length, 3);
+    assert.equal(new Set(portraits).size, 1);
+    assert.equal(portraitCalls, 3);
+    assert.ok(compilerCalls >= 3);
+    assert.equal(portraitCompilerCalls, 3);
+    assert.equal(findCallbacks(harness.telegramCalls, "memchange:").length, 3);
+    assert.equal(findCallbacks(harness.telegramCalls, "memedit:").length, 0);
+    assert.equal(findCallbacks(harness.telegramCalls, "memforget:").length, 0);
+    assert.doesNotMatch(portraits[0] ?? "", /• .* — /u);
+  });
+
+  it("menampilkan empty state tanpa tombol Ubah bila belum ada yang berarti", async () => {
+    let portraitCalls = 0;
+    const harness = basicHarness(
+      {
+        memoryPortrait: async () => {
+          portraitCalls += 1;
+          return "tidak boleh dipanggil";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          list: async () => [],
+          relevantTo: async () => [],
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(commandUpdate("/memori", 1));
+    await harness.bot.drainPending();
+
+    assert.equal(portraitCalls, 0);
+    assert.match(harness.sent.at(-1) ?? "", /Belum banyak/iu);
+    assert.equal(findCallbacks(harness.telegramCalls, "memchange:").length, 0);
+  });
+
+  it("membuka Ubah sebagai percakapan biasa tanpa meminta ID atau membuat mode", async () => {
+    let understood = "";
+    const memory = memoryItem("memory-change", "Sedang mempertimbangkan ITB");
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async (message: string) => {
+          understood = message;
+          return understanding();
+        },
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Oke, ceritakan bagian yang sekarang lebih pas.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          list: async () => [memory],
+          relevantTo: async () => [memory],
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(callbackUpdate("memchange:", 1));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(
+      messageUpdate("bagian kuliah itu kayaknya nggak pas", 2),
+    );
+    await harness.bot.drainPending();
+
+    assert.ok(harness.sent.includes(
+      "Ada yang salah atau udah berubah? Bilang aja. Kamu juga bisa minta aku melupakan sesuatu.",
+    ));
+    assert.equal(understood, "bagian kuliah itu kayaknya nggak pas");
+    assert.equal(harness.sent.some((text) => /ID memori|nomor item/iu.test(text)), false);
+  });
+
+  it("melupakan topik natural melalui cascade MemoryService, bukan edit atau delete mentah", async () => {
+    const sohit = memoryItem("memory-sohit", "Sohit adalah pacarku");
+    const school = memoryItem("memory-school", "Sekarang kelas 12");
+    const forgotten: string[] = [];
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "memory",
+          memoryAction: "forget",
+          memoryTarget: "Sohit",
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          list: async () => [sohit, school],
+          relevantTo: async () => [sohit],
+          forget: async (_ownerId: string, id: string) => {
+            forgotten.push(id);
+            return id === sohit.id ? sohit : null;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("lupain semua yang kamu tahu soal Sohit"),
+    );
+    await harness.bot.drainPending();
+
+    assert.deepEqual(forgotten, [sohit.id]);
+    assert.match(harness.sent.at(-1) ?? "", /soal Sohit.*sudah aku lupakan/iu);
+  });
+
+  it("tetap meminta konfirmasi untuk permintaan natural menghapus semua ingatan", async () => {
+    let wipes = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "memory",
+          memoryAction: "forget",
+          memoryTarget: "semua ingatan tentang aku",
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          markUsed: async () => undefined,
+          forgetAll: async () => {
+            wipes += 1;
+            return 0;
+          },
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("hapus semua ingatanmu tentang aku"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(wipes, 0);
+    assert.match(harness.sent.at(-1) ?? "", /mulai mengenal lagi/iu);
+    assert.ok(findCallback(harness.telegramCalls, "memallyes:"));
+  });
+
+  it("menolak /memori di grup dan mengarahkannya ke chat privat", async () => {
+    const harness = basicHarness({} as Conversation);
+
+    await harness.bot.handleUpdate(groupCommandUpdate("/memori", 1));
+    await harness.bot.drainPending();
+
+    assert.match(harness.sent.at(-1) ?? "", /khusus chat pribadi/iu);
+  });
+
   it("tidak menyimpan tugas dari usulan model tanpa izin eksplisit", async () => {
     const sent: string[] = [];
     const turns: ConversationTurn[] = [];

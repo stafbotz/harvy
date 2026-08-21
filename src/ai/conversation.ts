@@ -92,6 +92,12 @@ import {
   parseMemoryPrivacy,
 } from "./memory-privacy.js";
 import {
+  MEMORY_PORTRAIT_MAX_CHARACTERS,
+  MEMORY_PORTRAIT_PROMPT,
+  memoryPortraitInput,
+  parseMemoryPortrait,
+} from "./memory-portrait.js";
+import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
 } from "../observability/operational-logger.js";
@@ -215,6 +221,7 @@ const MEMORY_PRIVACY_TIMEOUT_MS = 8_000;
 const GROUP_INGRESS_MAX_TOKENS = 192;
 const GROUP_INGRESS_TIMEOUT_MS = 8_000;
 const INSIGHT_MAX_TOKENS = 512;
+const MEMORY_PORTRAIT_MAX_TOKENS = 768;
 
 /**
  * Ringkasan sengaja diberi jatah kecil.
@@ -663,6 +670,53 @@ export class Conversation {
     });
 
     return parseInsightDraft(raw);
+  }
+
+  /**
+   * Menulis representasi sesaat dari context pack memory yang sudah dibatasi.
+   * Hasil ini hanya untuk layar pengguna dan tidak pernah disimpan sebagai
+   * canonical memory atau dipakai untuk mengubah source di belakang layar.
+   */
+  async memoryPortrait(
+    context: HarvyContext,
+    ownerId?: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const modelRoute = resolveModelRoute("everyday_conversation", this.routing);
+    const raw = await this.client.complete({
+      model: modelRoute.modelId,
+      temperature: 0.4,
+      maxTokens: MEMORY_PORTRAIT_MAX_TOKENS,
+      execution: this.execution(
+        modelRoute.tier,
+        "synthesizer",
+        "conversation",
+        MEMORY_PORTRAIT_MAX_TOKENS,
+        GENERAL_MODEL_DEADLINE_MS,
+        {
+          modelId: modelRoute.modelId,
+          cognitiveRole: modelRoute.role,
+          difficulty: "normal",
+          stakes: "low",
+          uncertainty: "medium",
+        },
+      ),
+      json: true,
+      validateResponse: (content) => parseMemoryPortrait(content) !== null,
+      ...(signal ? { signal } : {}),
+      usage: this.usage(ownerId, modelRoute.tier, "summary"),
+      messages: [
+        { role: "system", content: MEMORY_PORTRAIT_PROMPT },
+        { role: "user", content: memoryPortraitInput(context) },
+      ],
+    });
+    const summary = parseMemoryPortrait(raw);
+    if (!summary) {
+      throw new Error(
+        `Model mengembalikan potret memori yang tidak sah atau melebihi ${MEMORY_PORTRAIT_MAX_CHARACTERS} karakter.`,
+      );
+    }
+    return summary;
   }
 
   async reply(

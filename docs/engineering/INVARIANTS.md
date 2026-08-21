@@ -33,8 +33,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   berjudul "Membuat pengingat". Sejak `ADR-008`, penyimpanan tugas mempunyai
   pagar kode lagi: teks pengguna harus meminta catat/simpan/ingatkan dan membawa
   isi konkret. Permintaan prioritas dan pengingat kosong tetap percakapan.
-  Kontrol daftar memori masih memeriksa pasangan intent/action; jangan
-  melemahkan promptnya tanpa penjaga pengganti.
+  Kontrol potret memori masih memeriksa pasangan intent/action. Scoped forget
+  juga wajib menemukan kata forget eksplisit pada teks pengguna dan hanya
+  memilih source owner-local; target hasil model tidak menjadi izin mutasi.
 - `TaskService` menerima `now: () => Date` agar dapat diuji. Tes memakai
   `MemoryRepository` yang mengimplementasi `TaskRepository`, bukan berkas nyata.
 - ID tugas tidak pernah ditampilkan kepada pengguna. Semua tindakan berjalan
@@ -69,13 +70,14 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   pemahaman.
 - **Riwayat chat bukan daftar memori.** Intent `history` menjawab kemampuan,
   isi chat sebelumnya, dan rujukan "yang tadi" dari konteks. Intent `memory`
-  hanya membuka kontrol catatan terstruktur melalui
-  `memoryAction: list|forget|edit`. Fakta atau preferensi baru tetap percakapan
-  biasa dengan `memoryAction: remember` dan usulan pada field `memories`;
-  keberadaannya bukan izin membuka daftar.
-- **Percakapan dan tombol adalah antarmuka utama, bukan perintah `/`.** Perintah
-  hanya pelengkap opsional. Jangan menambah perintah baru sebagai cara memakai
-  sebuah fitur; jalannya lewat pesan bebas dan tombol. Untuk tindakan adaptif,
+  memakai `memoryAction: list|forget|edit`, tetapi `list` merender potret yang
+  sama dengan `/memori` dan Data & izin—bukan daftar record. Fakta, koreksi,
+  atau preferensi baru tetap percakapan biasa dengan usulan pada field
+  `memories`; keberadaannya bukan izin membuka potret atau menghapus source.
+- **Percakapan dan tombol adalah antarmuka utama; perintah `/` hanya shortcut.**
+  `/memori` boleh menjadi entry point karena ia menuju renderer yang sama
+  dengan pertanyaan bebas dan Data & izin, bukan implementasi fitur kedua.
+  Untuk tindakan adaptif,
   model hanya boleh mengusulkan ID dari allowlist; label/callback dibangun kode,
   maksimum satu tindakan adaptif per giliran, terikat pemilik, kedaluwarsa, dan
   sekali pakai. Tombol
@@ -151,21 +153,28 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   salah menilai kandidat sensitif sebagai biasa, jalur otomatis masih dapat
   terlewati. Ini keterbatasan yang wajib disebut apa adanya, bukan diklaim sudah
   tertutup.
-  Jenis biasa wajib diumumkan berikut jalan keluarnya di pesan yang sama; bila
-  pemberitahuan itu gagal terkirim, catatan yang baru ditulis wajib dibatalkan.
+  Jenis biasa wajib diumumkan secara natural; bila pemberitahuan itu gagal
+  terkirim, catatan yang baru ditulis wajib dibatalkan. Jalan keluar tetap
+  mudah lewat percakapan, `/memori`, dan Data & izin.
 - **Pemberitahuan memori menempel di balasan, bukan menjadi bubble sendiri.**
-  `withMemoryNotes` menambahkan satu baris `📎` di ujung bubble terakhir dan
-  `memoryNoteActions` memasang tombol Lupakan pada pesan yang sama. Bubble
-  tersendiri memenuhi Pasal 4 nomor 2 tetapi memotong percakapan seperti pop-up.
-  Karena balasan itu pesan sungguhan, tombolnya memakai `memdrop:` yang hanya
-  membuang barisnya lewat `withoutMemoryNote` — bukan `memforget:` yang menimpa
-  seluruh pesan dengan daftar memori.
-- **Fitur memori tidak boleh hidup tanpa kendalinya.** Daftar, sunting satu,
-  lupakan satu, dan lupakan semua adalah bagian dari fiturnya, bukan pekerjaan
-  susulan — Pasal 4 nomor 4. Penyuntingan mempertahankan ID, jenis, dan metadata
-  serta memeriksa pemilik sebelum menulis. Konfirmasi Lupakan semua, tarik
-  persetujuan, dan hapus seluruh data wajib membawa token pending sekali pakai;
-  callback lama tidak boleh berlaku pada data yang dibuat setelah promptnya.
+  `withMemoryNotes` menambahkan copy `💭` adaptif di ujung bubble terakhir tanpa
+  tombol per-item. Bubble tersendiri memenuhi Pasal 4 nomor 2 tetapi memotong
+  percakapan seperti pop-up. Callback `memdrop:` lama hanya dipertahankan untuk
+  tombol yang sudah terlanjur terkirim sebelum migrasi.
+- **Fitur memori tidak boleh hidup tanpa kendalinya.** Potret naratif, koreksi,
+  scoped forget, dan lupakan semua adalah bagian dari fiturnya—Pasal 4 nomor 4.
+  Tombol `Ubah` tidak membuat pending/form; pesan berikutnya melewati pipeline
+  percakapan biasa agar correction/supersession berbeda dari deletion. Scoped
+  forget tetap memanggil `MemoryService.forget` per source agar cascade dan
+  suppression berlaku. Konfirmasi Lupakan semua, tarik persetujuan, dan hapus
+  seluruh data wajib membawa token pending sekali pakai; callback lama tidak
+  boleh berlaku pada data yang dibuat setelah promptnya.
+- **Potret memori adalah view dinamis, bukan canonical memory.** `/memori`,
+  pertanyaan natural, dan Data & izin wajib memakai `showMemories` yang sama.
+  Context-nya melewati query plan serta budget compiler; synthesis tidak memuat
+  seluruh archive/procedure/error lesson, tidak disimpan balik sebagai memory,
+  dan tidak boleh menampilkan confidence, status, ID, provenance, graph,
+  embedding, atau metadata lain kepada pengguna.
 - **Primary memory tetap kendali pengguna; knowledge dan graph hanya turunan.**
   Semantic record wajib menunjuk MemoryItem atau episode/sequence, sedangkan
   setiap relation wajib menunjuk semantic source yang masih ada. Confidence,
@@ -1050,7 +1059,7 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 ## Pending store
 
 - `PendingStore` adalah mirror in-memory satu langkah bertoken per pengguna.
-  Tawaran pencatatan, Ubah tenggat, sunting memori, pemilihan waktu
+  Tawaran pencatatan, Ubah tenggat, pemilihan waktu
   pengingat/check-in, jam tenang custom, izin memori sensitif, dan konfirmasi
   destruktif bergantung padanya, jadi semuanya memang mati setelah restart.
   Callback wajib membawa token proposal; klik lama tidak boleh menyimpan

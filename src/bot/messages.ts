@@ -4,7 +4,7 @@ import type { AdaptiveActionId } from "../core/action-policy.js";
 import { formatClockMinute } from "../core/time-policy.js";
 import type { UsageSummary } from "../core/telemetry-service.js";
 import type { EconomyUsageView } from "../core/economy-service.js";
-import type { MemoryItem, MemoryKind } from "../domain/memory.js";
+import type { MemoryItem } from "../domain/memory.js";
 import type { QuietHours, UserProfile } from "../domain/profile.js";
 import type { ActiveSession, SessionKind } from "../domain/session.js";
 import type { StudentTask, TaskImportance } from "../domain/task.js";
@@ -13,21 +13,6 @@ const IMPORTANCE_LABEL: Record<TaskImportance, string> = {
   1: "santai",
   2: "biasa",
   3: "penting",
-};
-
-/**
- * Nama jenis memori dalam bahasa yang dimengerti pengguna.
- *
- * Konstitusi Pasal 4 nomor 4 memberi hak menghapus satu memori. Hak itu hanya
- * berguna kalau pemiliknya paham apa yang sedang ia hapus, sehingga label
- * teknis seperti "context" tidak boleh muncul di layar.
- */
-const KIND_LABEL: Record<MemoryKind, string> = {
-  profile: "tentang kamu",
-  preference: "cara belajarmu",
-  routine: "kebiasaanmu",
-  context: "yang sedang berjalan",
-  personal: "hal pribadi",
 };
 
 /**
@@ -47,9 +32,10 @@ export const HELP_MESSAGE = [
   "",
   "Kalau keadaanmu lagi berantakan, Harvy bisa menawarkan sesi untuk menjernihkan, memilih prioritas, mulai satu langkah kecil, belajar bertahap, menyusun rencana, atau menyiapkan pesan untuk orang lain. Hanya satu sesi aktif, dan check-in dikirim sekali kalau kamu sendiri memilih waktunya.",
   "",
-  "Aku juga nyimpen beberapa hal biar kamu nggak perlu ngulang cerita: kelasmu, cara belajar yang cocok, apa yang lagi kamu hadapi. Buat hal pribadi aku selalu nanya dulu. Tanya aja “apa yang kamu ingat tentang aku”, dan kamu bisa nyuruh aku lupain apa pun kapan aja.",
+  "Aku juga nyimpen beberapa hal biar kamu nggak perlu ngulang cerita: kelasmu, cara belajar yang cocok, apa yang lagi kamu hadapi. Buat hal pribadi aku selalu nanya dulu. Pakai /memori atau tanya aja apa yang aku ingat tentang kamu. Kalau ada yang salah, berubah, atau ingin dilupakan, cukup bilang.",
   "",
   "/tugas — lihat semua tugasmu",
+  "/memori — lihat yang aku ingat tentang kamu",
   "/penggunaan — lihat kapasitas dan waktu pembaruan Harvy",
   "/dukung — informasi kontribusi sukarela Harvy Commons",
   "/bantuan — tampilkan pesan ini",
@@ -160,42 +146,38 @@ function shorten(title: string, limit = 28): string {
  * Pemberitahuan bahwa sesuatu baru saja diingat.
  *
  * Pasal 4 nomor 2 meminta pengguna tahu sebelum sesuatu yang baru disimpan.
- * Untuk memori biasa, Harvy tidak meminta izin — tetapi ia tetap harus
- * mengatakannya, dan jalan keluarnya harus ada di pesan yang sama.
- *
- * Dulu ini bubble tersendiri dengan tombol Oke dan Lupakan. Bentuk itu memenuhi
- * Pasal 4 nomor 2 tetapi memotong percakapan: di tengah cerita, sebuah pop-up
- * muncul dan meminta ditutup. Sekarang ia menjadi satu baris tipis di ujung
- * balasan yang sama. Yang diwajibkan Pasal 4 tetap ada — pengguna diberi tahu,
- * dan jalan keluarnya berada di pesan yang sama — tanpa menyuruhnya menutup
- * apa pun untuk melanjutkan.
+ * Catatan ini tetap tipis dan menempel pada percakapan, tetapi tidak lagi
+ * meminta pengguna mengelola setiap penyimpanan lewat tombol database.
  */
-export const MEMORY_NOTE_PREFIX = "📎";
+export const MEMORY_NOTE_PREFIX = "💭";
 
 export function memoryNoteLines(items: MemoryItem[]): string {
-  return items
-    .map((item) => `${MEMORY_NOTE_PREFIX} aku inget ini: ${item.content}`)
-    .join("\n");
+  if (items.length > 1) {
+    return [
+      `${MEMORY_NOTE_PREFIX} Siap, beberapa hal yang berguna dari ceritamu aku ingat supaya kamu nggak perlu mengulangnya:`,
+      ...items.map((item) => `• ${item.content}`),
+    ].join("\n");
+  }
+  const item = items[0];
+  if (!item) return "";
+  switch (item.kind) {
+    case "preference":
+      return `${MEMORY_NOTE_PREFIX} Oke, yang ini aku ingat supaya caraku membantumu lebih pas: ${item.content}`;
+    case "routine":
+      return `${MEMORY_NOTE_PREFIX} Siap, kebiasaan ini aku ingat: ${item.content}`;
+    case "context":
+      return `${MEMORY_NOTE_PREFIX} Oke, yang sedang berjalan ini aku ingat: ${item.content}`;
+    case "personal":
+      return `${MEMORY_NOTE_PREFIX} Siap, dengan izinmu aku ingat: ${item.content}`;
+    case "profile":
+      return `${MEMORY_NOTE_PREFIX} Siap, yang ini aku ingat: ${item.content}`;
+  }
 }
 
 /** Menempelkan catatan ke bubble terakhir sebuah balasan. */
 export function withMemoryNotes(bubble: string, items: MemoryItem[]): string {
   if (items.length === 0) return bubble;
   return [bubble.trimEnd(), "", memoryNoteLines(items)].join("\n");
-}
-
-export function memoryNoteActions(items: MemoryItem[]): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-
-  if (items.length === 1 && items[0]) {
-    return keyboard.text("Lupakan itu", `memdrop:${items[0].id}`);
-  }
-
-  for (const item of items) {
-    keyboard.text(`Lupakan: ${shorten(item.content)}`, `memdrop:${item.id}`).row();
-  }
-
-  return keyboard;
 }
 
 /**
@@ -247,38 +229,33 @@ export function memoryConsentActions(token: string): InlineKeyboard {
     .text("Jangan", `memskip:${token}`);
 }
 
-export function formatMemories(items: MemoryItem[]): string {
-  if (items.length === 0) {
-    return [
-      "Sejauh ini aku belum nyimpen apa pun tentang kamu.",
-      "",
-      "Kalau nanti ada yang kusimpan, aku selalu bilang, dan kamu bisa nyuruh aku lupain kapan aja.",
-    ].join("\n");
-  }
+export const MEMORY_PORTRAIT_TITLE = "Yang aku ingat tentang kamu";
+export const MEMORY_PORTRAIT_EMPTY = [
+  MEMORY_PORTRAIT_TITLE,
+  "",
+  "Belum banyak. Kita masih baru saling kenal, jadi belum ada banyak hal yang benar-benar perlu kusimpan.",
+  "",
+  "Kalau nanti ada hal yang berguna untuk kuingat, aku akan menggunakannya supaya kamu nggak perlu terus mengulang cerita.",
+].join("\n");
+export const MEMORY_PORTRAIT_UNAVAILABLE = [
+  MEMORY_PORTRAIT_TITLE,
+  "",
+  "Aku masih punya beberapa ingatan tentang kamu, tapi sekarang aku belum bisa menyusunnya menjadi ringkasan yang jujur. Coba buka lagi sebentar lagi, ya.",
+].join("\n");
+export const MEMORY_CHANGE_PROMPT =
+  "Ada yang salah atau udah berubah? Bilang aja. Kamu juga bisa minta aku melupakan sesuatu.";
+export const MEMORY_WIPE_PROMPT = [
+  "Ini bakal membuatku melupakan semua yang kusimpan tentang kamu, termasuk riwayat obrolan kita.",
+  "",
+  "Setelah ini, beberapa percakapan mungkin terasa seperti kita mulai mengenal lagi.",
+].join("\n");
 
-  return [
-    "Ini yang aku inget tentang kamu:",
-    "",
-    ...items.map((item) => `• ${item.content} — ${KIND_LABEL[item.kind]}`),
-    "",
-    "Tekan tombolnya kalau ada yang mau aku lupain.",
-  ].join("\n");
+export function formatMemoryPortrait(summary: string): string {
+  return [MEMORY_PORTRAIT_TITLE, "", summary.trim()].join("\n");
 }
 
-export function memoryListActions(items: MemoryItem[]): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-
-  for (const item of items) {
-    keyboard
-      .text(`Ubah: ${shorten(item.content, 20)}`, `memedit:${item.id}`)
-      .text("Lupakan", `memforget:${item.id}`)
-      .row();
-  }
-
-  return keyboard
-    .text("Lupakan semua tentang aku", "memall:")
-    .row()
-    .text("Data & izin", "control:data");
+export function memoryPortraitActions(): InlineKeyboard {
+  return new InlineKeyboard().text("Ubah", "memchange:");
 }
 
 /**
@@ -290,7 +267,7 @@ export function memoryListActions(items: MemoryItem[]): InlineKeyboard {
  */
 export function memoryWipeConfirmActions(token: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Ya, lupakan semua", `memallyes:${token}`)
+    .text("Ya, lupakan semuanya", `memallyes:${token}`)
     .text("Batal", `memallno:${token}`);
 }
 
@@ -431,7 +408,9 @@ export const CHECK_IN_MESSAGE =
 
 export function dataControlActions(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Lihat & ubah memori", "control:memories")
+    .text("Lihat yang aku ingat", "control:memories")
+    .row()
+    .text("Hapus semua ingatan", "memall:")
     .row()
     .text("Didengerin dulu", "style:listen")
     .text("Langsung saran", "style:advice")

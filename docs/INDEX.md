@@ -105,6 +105,7 @@ ADR dibaca hanya bila task menyentuh keputusan tersebut:
 | [`ADR-040`](decisions/ADR-040-escalation-toughest-one-shot.md) | eskalasi toughest validator-driven, one-shot, privacy path, dan evaluasi routing A–E |
 | [`ADR-041`](decisions/ADR-041-routing-role-dan-bounded-orchestration.md) | routing semantik tiga lapis, cognitive role, bounded specialist graph, adaptive resource, dan handoff provider-neutral |
 | [`ADR-042`](decisions/ADR-042-long-term-memory-dan-evidence-backed-learning.md) | hot/warm/cold memory, SQLite archive/outbox, user model, procedure/error lesson, embedding cache, dan deletion fence |
+| [`ADR-043`](decisions/ADR-043-potret-naratif-dan-kontrol-memori-natural.md) | potret naratif `/memori`, renderer bersama, kontrol natural, dan notification tanpa tombol per-item |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.

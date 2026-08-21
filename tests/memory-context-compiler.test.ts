@@ -88,6 +88,25 @@ describe("memory query plan", () => {
       errorLessons: false,
     });
   });
+
+  it("membatasi potret pengguna pada episode, semantic, graph, dan user model", () => {
+    const plan = planMemoryQuery(
+      "Apa yang kamu ingat tentangku sekarang dan dulu: profilku, preferensi, kebiasaan, tujuan, hubungan, proyek, serta hal penting yang berubah?",
+      { now: NOW },
+    );
+
+    assert.equal(plan.temporal.mode, "historical");
+    assert.deepEqual(plan.routes, {
+      episodic: true,
+      semantic: true,
+      graph: true,
+      personalization: true,
+      procedural: false,
+      errorLessons: false,
+    });
+    assert.equal(plan.limits.contextItems, 8);
+    assert.equal(plan.limits.contextCharacters, 3_000);
+  });
 });
 
 describe("memory context compiler", () => {

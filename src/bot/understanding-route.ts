@@ -6,7 +6,8 @@ import type {
 } from "../ai/understand.js";
 
 export type ImmediateUnderstandingRoute =
-  | { kind: "memory-control"; action: "list" | "forget" | "edit" }
+  | { kind: "memory-control"; action: "list" | "edit" }
+  | { kind: "memory-control"; action: "forget"; target: string | null }
   | { kind: "control"; action: ControlAction }
   | { kind: "save-task"; task: ExtractedTask }
   | { kind: "conversation" };
@@ -33,7 +34,13 @@ export function immediateUnderstandingRoute(
     understanding.intent === "memory" &&
     isMemoryControl(understanding.memoryAction)
   ) {
-    return { kind: "memory-control", action: understanding.memoryAction };
+    return understanding.memoryAction === "forget"
+      ? {
+          kind: "memory-control",
+          action: "forget",
+          target: understanding.memoryTarget?.trim() || null,
+        }
+      : { kind: "memory-control", action: understanding.memoryAction };
   }
 
   if (

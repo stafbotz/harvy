@@ -37,6 +37,46 @@ export function deriveMemoryMetadata(
     };
   }
 
+  const formerPartner = captureValue(clean, [
+    /^(.+?)\s+(?:sudah\s+|udah\s+)?(?:bukan|tidak lagi menjadi|nggak lagi jadi)\s+pacar(?:ku| saya)?(?:\s+lagi)?$/iu,
+    /^(?:aku\s+)?(?:sudah|udah)?\s*(?:tidak|nggak|gak|ga)\s+(?:lagi\s+)?(?:berpacaran|pacaran)\s+(?:dengan\s+)?(.+)$/iu,
+    /^tidak lagi berpacaran dengan\s+(.+)$/iu,
+  ]);
+  if (formerPartner) {
+    return {
+      subject: "user",
+      predicate: "romantic_partner",
+      value: `tidak:${formerPartner}`,
+      correction: true,
+      provenance: "asserted",
+      graphProjection: {
+        from: { type: "person", canonicalName: "Pengguna" },
+        relation: "no_longer_partner_of",
+        to: { type: "person", canonicalName: formerPartner },
+      },
+    };
+  }
+
+  const partner = captureValue(clean, [
+    /^(.+?)\s+(?:adalah|merupakan)\s+pacar(?:ku| saya)$/iu,
+    /^pacar(?:ku| saya)(?: sekarang)?(?: adalah)?\s+(.+)$/iu,
+    /^(?:aku\s+)?(?:berpacaran|pacaran)\s+dengan\s+(.+)$/iu,
+  ]);
+  if (partner) {
+    return {
+      subject: "user",
+      predicate: "romantic_partner",
+      value: partner,
+      correction: correctionSignal,
+      provenance: "asserted",
+      graphProjection: {
+        from: { type: "person", canonicalName: "Pengguna" },
+        relation: "partner_of",
+        to: { type: "person", canonicalName: partner },
+      },
+    };
+  }
+
   const school = captureValue(clean, [
     /^(?:sekolah di|sekolah(?:ku)?(?: sekarang)?(?: adalah)?)\s+(.+)$/iu,
     /^(?:aku\s+)?(?:sekolah|pindah sekolah)\s+(?:di|ke)\s+(.+)$/iu,
@@ -66,6 +106,27 @@ export function deriveMemoryMetadata(
     /^(?:jurusan(?:ku)?|aku mengambil jurusan)(?: adalah)?\s+(.+)$/iu,
   ]);
   if (major) return scalar("major", major, correctionSignal);
+
+  const stoppedConsidering = captureValue(clean, [
+    /^(?:aku\s+)?(?:sudah|udah|sekarang)?\s*(?:tidak|nggak|gak|ga)\s+(?:lagi\s+)?(?:mempertimbangkan|condong ke|memilih)\s+(.+?)(?:\s+lagi)?$/iu,
+    /^(.+?)\s+(?:sudah|udah)\s+(?:tidak|nggak|gak|ga)\s+berlaku$/iu,
+  ]);
+  if (stoppedConsidering) {
+    return scalar(
+      "college_preference",
+      `tidak:${stoppedConsidering}`,
+      true,
+    );
+  }
+
+  const collegePreference = captureValue(clean, [
+    /^(?:aku\s+)?(?:sekarang\s+)?(?:lebih\s+)?(?:condong|tertarik)\s+(?:ke|pada)\s+(.+)$/iu,
+    /^(?:aku\s+)?(?:sedang\s+)?mempertimbangkan\s+(.+)$/iu,
+    /^(?:pilihan\s+)?kampus(?:ku)?(?: sekarang)?(?: adalah)?\s+(.+)$/iu,
+  ]);
+  if (collegePreference) {
+    return scalar("college_preference", collegePreference, correctionSignal);
+  }
 
   const favorite = /^(warna|makanan|minuman|pelajaran|musik|genre|olahraga)\s+favorit(?:ku)?(?: adalah)?\s+(.+)$/iu.exec(clean);
   if (favorite?.[1] && favorite[2]) {
@@ -163,4 +224,7 @@ function normalize(value: string): string {
 const CORRECTION_PATTERNS = [
   /\b(koreksi|ralat|sebenarnya|bukan lagi|sudah pindah|sekarang bukan)\b/u,
   /\bbukan\b.+\b(tapi|melainkan)\b/u,
+  /\b(?:sudah|udah|sekarang)\s+(?:tidak|nggak|gak|ga)\b/u,
+  /\b(?:tidak|nggak|gak|ga)\b.+\blagi\b/u,
+  /\b(?:sudah|udah)\s+(?:tidak|nggak|gak|ga)\s+berlaku\b/u,
 ];

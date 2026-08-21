@@ -59,4 +59,44 @@ describe("deriveMemoryMetadata", () => {
     assert.equal(metadata.value, "audio");
     assert.equal(metadata.correction, true);
   });
+
+  it("membedakan perubahan pilihan kuliah dari deletion", () => {
+    const previous = deriveMemoryMetadata(
+      "context",
+      "Sedang mempertimbangkan ITB",
+      "aku sedang mempertimbangkan ITB",
+    );
+    const corrected = deriveMemoryMetadata(
+      "context",
+      "Tidak lagi mempertimbangkan ITB",
+      "aku udah nggak mempertimbangkan ITB lagi",
+    );
+
+    assert.equal(previous.predicate, "college_preference");
+    assert.equal(previous.value, "ITB");
+    assert.equal(previous.correction, false);
+    assert.equal(corrected.predicate, "college_preference");
+    assert.equal(corrected.value, "tidak:ITB");
+    assert.equal(corrected.correction, true);
+  });
+
+  it("merepresentasikan hubungan yang berakhir sebagai correction temporal", () => {
+    const previous = deriveMemoryMetadata(
+      "personal",
+      "Sohit adalah pacarku",
+      "Sohit adalah pacarku",
+    );
+    const corrected = deriveMemoryMetadata(
+      "personal",
+      "Sohit bukan pacarku lagi",
+      "Sohit bukan pacarku lagi",
+    );
+
+    assert.equal(previous.predicate, "romantic_partner");
+    assert.equal(previous.value, "Sohit");
+    assert.equal(corrected.predicate, "romantic_partner");
+    assert.equal(corrected.value, "tidak:Sohit");
+    assert.equal(corrected.correction, true);
+    assert.equal(corrected.graphProjection?.relation, "no_longer_partner_of");
+  });
 });

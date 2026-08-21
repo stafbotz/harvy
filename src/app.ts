@@ -12,6 +12,7 @@ import {
   withUsageAttribution,
 } from "./ai/usage-attribution.js";
 import { createBot } from "./bot/create-bot.js";
+import { telegramCommands } from "./bot/commands.js";
 import { startAgentRunRetentionWorker } from "./agent/agent-run-retention-worker.js";
 import {
   aiClientOptions,
@@ -1145,24 +1146,10 @@ try {
   // Aktivitas jaringan pertama baru boleh berjalan setelah control IPC aktif.
   // Sedikit perintah saja; cara utama memakai Harvy adalah menulis biasa.
   try {
-    await bot.api.setMyCommands([
-      { command: "tugas", description: "Lihat yang harus dikerjakan" },
-      { command: "bantuan", description: "Lihat cara pakai" },
-      ...(codingRuntime
-        ? [
-            { command: "project", description: "Kelola workspace/project coding" },
-            { command: "code", description: "Mulai CodingRun pada project aktif" },
-            { command: "code_status", description: "Lihat status CodingRun" },
-            { command: "code_cancel", description: "Batalkan CodingRun aktif" },
-          ]
-        : []),
-      ...(codingRuntime?.privateGitHub
-        ? [
-            { command: "github", description: "Hubungkan GitHub App dan pilih repo" },
-            { command: "publish", description: "Siapkan publish exact ke draft PR" },
-          ]
-        : []),
-    ], undefined, telegramStartupSignal);
+    await bot.api.setMyCommands(telegramCommands({
+      codingRuntime: codingRuntime !== null,
+      githubPublishing: Boolean(codingRuntime?.privateGitHub),
+    }), undefined, telegramStartupSignal);
   } catch (error) {
     // Abort/failure yang tiba setelah shutdown dimulai bukan kegagalan runtime.
     if (!shutdownPromise) throw error;

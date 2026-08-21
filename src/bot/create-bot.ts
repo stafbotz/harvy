@@ -7,6 +7,7 @@ import {
 import { randomUUID } from "node:crypto";
 import type { HarvyContext } from "../ai/context.js";
 import type { Conversation, ConversationRuntime } from "../ai/conversation.js";
+import { hasMemoryPortraitEvidence } from "../ai/memory-portrait.js";
 import { ByokProviderError } from "../ai/client.js";
 import {
   currentUsageAttribution,
@@ -56,6 +57,12 @@ import type { InsightService } from "../core/insight-service.js";
 import { isSensitiveMemory } from "../core/memory-policy.js";
 import { deriveMemoryMetadata } from "../core/memory-candidate.js";
 import type { MemoryService } from "../core/memory-service.js";
+import {
+  hasExplicitMemoryForgetRequest,
+  isExplicitForgetAllMemories,
+  memoriesMatchingNaturalTarget,
+  naturalMemoryTargetLabel,
+} from "../core/memory-natural-control.js";
 import { ProfileService, shouldAskStyle } from "../core/profile-service.js";
 import type { DataControlService } from "../core/data-control-service.js";
 import {
@@ -122,7 +129,7 @@ import {
   confirmActions,
   dataControlActions,
   deleteAllConfirmActions,
-  formatMemories,
+  formatMemoryPortrait,
   formatEconomyUsage,
   formatSession,
   formatTask,
@@ -130,12 +137,14 @@ import {
   formatUsage,
   HELP_MESSAGE,
   helpActions,
+  MEMORY_CHANGE_PROMPT,
+  MEMORY_PORTRAIT_EMPTY,
+  MEMORY_PORTRAIT_UNAVAILABLE,
+  MEMORY_WIPE_PROMPT,
   memoryConsentActions,
-  memoryListActions,
-  memoryNoteActions,
   memoryNoteLines,
+  memoryPortraitActions,
   memoryWipeConfirmActions,
-  mergeKeyboards,
   normalizeTelegramText,
   quietHoursActions,
   reminderActions,
@@ -200,6 +209,8 @@ import {
 
 /** Jarak bawaan antara pengingat dan tenggat. */
 const REMINDER_LEAD_MS = 60 * 60 * 1000;
+const MEMORY_PORTRAIT_QUERY =
+  "Apa yang kamu ingat tentangku sekarang dan dulu: profilku, preferensi, kebiasaan, tujuan, hubungan, proyek, serta hal penting yang berubah?";
 
 const AI_FAILURE_MESSAGE =
   "Maaf, aku lagi nggak bisa mikir sekarang — sambungan ke otakku lagi bermasalah. Coba kirim lagi sebentar lagi, ya.";
@@ -756,6 +767,21 @@ export function createBot(
         await clearPending(ownerId);
         actionOffers.clear(ownerId);
         await ctx.reply(HELP_MESSAGE, { reply_markup: helpActions() });
+      },
+    );
+  });
+
+  bot.command("memori", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "cancel",
+      "Perintah /memori gagal:",
+      async () => {
+        await clearPending(ownerId);
+        actionOffers.clear(ownerId);
+        await showMemories(ctx, ownerId);
       },
     );
   });
@@ -1895,8 +1921,11 @@ export function createBot(
       const proposedRoute = immediateUnderstandingRoute(understanding, text);
       const proposedRouteAllowed = proposedRoute.kind === "save-task"
         ? effectPermissions.ordinaryTask
-        : proposedRoute.kind === "memory-control" ||
-            proposedRoute.kind === "control"
+        : proposedRoute.kind === "memory-control"
+          ? effectPermissions.explicitControl &&
+            (proposedRoute.action !== "forget" ||
+              hasExplicitMemoryForgetRequest(text))
+        : proposedRoute.kind === "control"
           ? effectPermissions.explicitControl
           : effectPermissions.generalState;
       if (proposedRoute.kind !== "conversation" && !proposedRouteAllowed) {
@@ -1909,7 +1938,53 @@ export function createBot(
 
       if (route.kind === "memory-control") {
         await clearPending(ownerId);
-        await showMemories(ctx, ownerId);
+        if (route.action === "list") {
+          await showMemories(ctx, ownerId);
+          return;
+        }
+        if (route.action === "edit") {
+          await ctx.reply(MEMORY_CHANGE_PROMPT);
+          await history.append(ownerId, "harvy", MEMORY_CHANGE_PROMPT);
+          return;
+        }
+        if (route.action !== "forget") return;
+        if (isExplicitForgetAllMemories(text)) {
+          await confirmMemoryWipe(ctx, ownerId);
+          return;
+        }
+
+        const current = await memories.list(ownerId);
+        const matches = memoriesMatchingNaturalTarget(
+          current,
+          route.target,
+          text,
+        );
+        if (matches.length === 0) {
+          const response =
+            "Aku belum yakin bagian mana yang kamu maksud. Sebut aja topiknya—misalnya ‘lupain yang soal sekolah’.";
+          await ctx.reply(response);
+          await history.append(ownerId, "harvy", response);
+          return;
+        }
+
+        const stoppedRun = await discardAgentRunForMemoryChange(ownerId);
+        for (const match of matches) {
+          await memories.forget(ownerId, match.id);
+        }
+        const label = naturalMemoryTargetLabel(route.target, text);
+        const forgottenSubject = label === "yang tadi"
+          ? "yang tadi"
+          : `yang soal ${label}`;
+        const response = [
+          `Oke, ${forgottenSubject} sudah aku lupakan.`,
+          ...(stoppedRun
+            ? [
+                "Pekerjaan planning yang memakai ingatan itu juga kuhentikan supaya salinan lamanya nggak dipakai lagi.",
+              ]
+            : []),
+        ].join("\n\n");
+        await ctx.reply(response);
+        await history.append(ownerId, "harvy", response);
         return;
       }
 
@@ -3826,10 +3901,7 @@ export function createBot(
   ): Promise<SentMessageRef | null> {
     const bubbles = splitReplyBubbles(text);
     if (bubbles.length === 0) return null;
-    const replyKeyboard = mergeKeyboards(
-      notes.length > 0 ? memoryNoteActions(notes) : undefined,
-      keyboard,
-    );
+    const replyKeyboard = keyboard;
 
     let lastMessage: SentMessageRef | null = null;
     const delivered: string[] = [];
@@ -3879,9 +3951,7 @@ export function createBot(
   ): Promise<void> {
     if (items.length === 0) return;
 
-    await ctx.reply(memoryNoteLines(items), {
-      reply_markup: memoryNoteActions(items),
-    });
+    await ctx.reply(memoryNoteLines(items));
   }
 
   async function assessMemorySensitivity(
@@ -4028,14 +4098,83 @@ export function createBot(
   }
 
   async function showMemories(ctx: Context, ownerId: string): Promise<void> {
-    const items = await memories.list(ownerId);
-    const text = formatMemories(items);
+    const [items, conversationContext] = await Promise.all([
+      memories.list(ownerId),
+      history.context(ownerId),
+    ]);
+    let portraitContext: HarvyContext = {
+      summary: conversationContext.summary,
+      // Potret tidak membaca raw turn. Compiler hanya memerlukan bentuk context
+      // yang sama untuk menerapkan validity/suppression pada source lain.
+      turns: [],
+      memories: items,
+    };
 
-    await ctx.reply(
-      text,
-      items.length > 0 ? { reply_markup: memoryListActions(items) } : {},
-    );
+    if (memoryContextCompiler) {
+      try {
+        const compiled = await memoryContextCompiler.compilePrivate(
+          ownerId,
+          MEMORY_PORTRAIT_QUERY,
+          portraitContext,
+          { allowRetrieval: true },
+        );
+        portraitContext = compiled.context;
+        logger.info(
+          "memory_portrait_context_compiled",
+          "Context bounded untuk potret memori selesai dikompilasi.",
+          {
+            selectedCount: compiled.manifest.selectedCount,
+            selectedCharacters: compiled.manifest.selectedCharacters,
+            failedRouteCount: compiled.manifest.failedRouteCount,
+          },
+        );
+      } catch (error) {
+        logger.warn(
+          "memory_portrait_context_failed",
+          "Compiler potret memori gagal; hanya primary memory yang dipakai.",
+          { errorType: error instanceof Error ? error.name : "unknown" },
+        );
+      }
+    }
+
+    const hasEvidence = hasMemoryPortraitEvidence(portraitContext);
+    let text = MEMORY_PORTRAIT_EMPTY;
+    if (hasEvidence) {
+      await bestEffortTyping(ctx, logger);
+      try {
+        const summary = await conversation.memoryPortrait(
+          portraitContext,
+          ownerId,
+        );
+        text = formatMemoryPortrait(summary);
+      } catch (error) {
+        logger.warn(
+          "memory_portrait_generation_failed",
+          "Potret memori tidak dapat disintesis; fallback tanpa data dipakai.",
+          { errorType: error instanceof Error ? error.name : "unknown" },
+        );
+        text = MEMORY_PORTRAIT_UNAVAILABLE;
+      }
+    }
+
+    await ctx.reply(text, hasEvidence
+      ? { reply_markup: memoryPortraitActions() }
+      : {});
     await history.append(ownerId, "harvy", text);
+  }
+
+  async function confirmMemoryWipe(
+    ctx: Context,
+    ownerId: string,
+  ): Promise<void> {
+    await sendPendingPrompt(
+      ownerId,
+      { kind: "confirm-memory-wipe" },
+      (token) =>
+        ctx.reply(MEMORY_WIPE_PROMPT, {
+          reply_markup: memoryWipeConfirmActions(token),
+        }).then(() => undefined),
+    );
   }
 
   async function saveTask(
@@ -4304,7 +4443,6 @@ export function createBot(
         await safeEdit(
           ctx,
           saved ? memoryNoteLines([saved]) : "Ternyata udah aku inget sebelumnya.",
-          saved ? memoryNoteActions([saved]) : undefined,
         );
         return;
       }
@@ -4361,39 +4499,20 @@ export function createBot(
       }
 
       case "memedit": {
-        const item = (await memories.list(ownerId)).find(
-          (memory) => memory.id === target,
-        );
-        if (!item) {
-          await safeEdit(ctx, "Catatan itu sudah nggak ada.");
-          return;
-        }
-        await sendPendingPrompt(
-          ownerId,
-          {
-            kind: "edit-memory",
-            memoryId: item.id,
-          },
-          () =>
-            ctx.reply(
-              `Tulis versi penggantinya untuk “${item.content}”. Maksimal satu kalimat pendek.`,
-            ).then(() => undefined),
-        );
+        // Kompatibilitas tombol lama: jangan membuka formulir edit record lagi.
+        await ctx.reply(MEMORY_CHANGE_PROMPT);
+        return;
+      }
+
+      case "memchange": {
+        // Tidak membuat pending mode. Pesan berikutnya tetap melewati alur
+        // percakapan normal agar koreksi, perubahan, dan forget dibaca utuh.
+        await ctx.reply(MEMORY_CHANGE_PROMPT);
         return;
       }
 
       case "memall": {
-        await sendPendingPrompt(
-          ownerId,
-          { kind: "confirm-memory-wipe" },
-          (token) =>
-            ctx.reply(
-              [
-                "Yakin? Aku bakal ngelupain semua catatan tentang kamu sekaligus seluruh riwayat obrolan kita. Ini nggak bisa dibatalin.",
-              ].join("\n"),
-              { reply_markup: memoryWipeConfirmActions(token) },
-            ).then(() => undefined),
-        );
+        await confirmMemoryWipe(ctx, ownerId);
         return;
       }
 
@@ -5169,26 +5288,13 @@ export function createBot(
     forgotten?: string,
     missing = false,
   ): Promise<void> {
-    const remaining = await memories.list(ownerId);
     const heading = missing
       ? "Itu udah nggak ada."
       : forgotten
       ? `Udah aku lupain: ${forgotten}`
       : "Udah aku lupain.";
-
-    if (remaining.length === 0) {
-      await safeEdit(
-        ctx,
-        `${heading}\n\nSekarang nggak ada lagi yang aku inget tentang kamu.`,
-      );
-      return;
-    }
-
-    await safeEdit(
-      ctx,
-      [heading, "", formatMemories(remaining)].join("\n"),
-      memoryListActions(remaining),
-    );
+    await safeEdit(ctx, heading);
+    await showMemories(ctx, ownerId);
   }
 
   async function scheduleReminder(

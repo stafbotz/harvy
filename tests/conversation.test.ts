@@ -382,6 +382,48 @@ describe("pemahaman pesan", () => {
   });
 });
 
+describe("sintesis potret memori", () => {
+  it("memakai satu request summary bounded dan mengembalikan narasi tervalidasi", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, JSON.stringify({
+        summary:
+          "Kamu sedang memikirkan pilihan kuliah. Aku punya kesan kamu lebih nyaman belajar malam, tapi aku belum terlalu yakin.",
+      })),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const portrait = await conversation.memoryPortrait({
+      summary: "Pernah membicarakan kuliah.",
+      turns: [{ role: "user", text: "raw turn tidak ikut", at: NOW }],
+      memories: [profileMemory()],
+      retrieved: [{
+        id: "user-model:internal-id",
+        sources: ["user-model"],
+        text: "Lebih nyaman belajar malam",
+        score: 0.4,
+        validFrom: null,
+        validUntil: null,
+        status: "uncertain",
+        sensitivity: "normal",
+        sourceEpisodeIds: [],
+        sourceSequences: [],
+        sourceMemoryIds: [],
+      }],
+    }, "student");
+
+    assert.match(portrait, /belum terlalu yakin/iu);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.json, true);
+    assert.equal(requests[0]?.usage?.purpose, "summary");
+    assert.match(requests[0]?.messages[0]?.content ?? "", /potret singkat/iu);
+    assert.match(requests[0]?.messages.at(-1)?.content ?? "", /uncertain/u);
+    assert.doesNotMatch(requests[0]?.messages.at(-1)?.content ?? "", /raw turn tidak ikut/u);
+    assert.doesNotMatch(requests[0]?.messages.at(-1)?.content ?? "", /internal-id/u);
+  });
+});
+
 describe("balasan percakapan", () => {
   it("memakai everyday untuk normal dan orkestrator langsung untuk deep", async () => {
     const requests: ChatRequest[] = [];

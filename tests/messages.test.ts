@@ -8,7 +8,7 @@ import {
   deleteAllConfirmActions,
   MAX_BUBBLE_PAUSE_MS,
   memoryConsentActions,
-  memoryNoteActions,
+  memoryPortraitActions,
   memoryWipeConfirmActions,
   normalizeTelegramText,
   sessionActions,
@@ -68,22 +68,22 @@ describe("catatan memori pada balasan", () => {
     // Pasal 4 nomor 2 meminta pengguna diberi tahu, bukan meminta percakapan
     // dipotong pop-up yang harus ditutup dulu.
     assert.match(bubble, /^Oke, aku ngerti\./);
-    assert.match(bubble, /📎 aku inget ini: Nama pengguna Dimas/);
+    assert.match(bubble, /💭 Siap, yang ini aku ingat: Nama pengguna Dimas/);
   });
 
   it("tidak mengubah bubble ketika tidak ada yang diingat", () => {
     assert.equal(withMemoryNotes("Oke.", []), "Oke.");
   });
 
-  it("menawarkan satu tombol Lupakan untuk satu catatan", () => {
-    const keyboard = memoryNoteActions([memory()]);
+  it("menawarkan satu tombol Ubah pada potret, bukan tombol per-item", () => {
+    const keyboard = memoryPortraitActions();
     const buttons = keyboard.inline_keyboard.flat();
 
     assert.equal(buttons.length, 1);
-    assert.equal(buttons[0]?.text, "Lupakan itu");
+    assert.equal(buttons[0]?.text, "Ubah");
     assert.match(
       (buttons[0] as { callback_data?: string }).callback_data ?? "",
-      /^memdrop:mem00001$/,
+      /^memchange:$/,
     );
   });
 
@@ -94,7 +94,7 @@ describe("catatan memori pada balasan", () => {
     // Balasan itu pesan sungguhan. Menimpanya dengan daftar memori berarti
     // menghapus percakapan hanya karena satu tombol ditekan.
     assert.match(after, /^Oke, aku ngerti\./);
-    assert.doesNotMatch(after, /📎/);
+    assert.doesNotMatch(after, /💭/);
     assert.match(after, /aku lupain/i);
   });
 
@@ -163,6 +163,10 @@ describe("tombol fitur Harvy Loop", () => {
         assert.ok(Buffer.byteLength(callback, "utf8") <= 64);
       }
     }
+    const dataCallbacks = dataControlActions().inline_keyboard.flat()
+      .map((button) => "callback_data" in button ? button.callback_data : "");
+    assert.ok(dataCallbacks.includes("control:memories"));
+    assert.ok(dataCallbacks.includes("memall:"));
   });
 
   it("mengikat persetujuan memori sensitif ke token proposal", () => {

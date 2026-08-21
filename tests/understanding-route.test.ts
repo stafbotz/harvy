@@ -117,6 +117,16 @@ describe("routing hasil pemahaman di adapter bot", () => {
       ),
       { kind: "memory-control", action: "edit" },
     );
+    assert.deepEqual(
+      immediateUnderstandingRoute(
+        sample({
+          intent: "memory",
+          memoryAction: "forget",
+          memoryTarget: "Sohit",
+        }),
+      ),
+      { kind: "memory-control", action: "forget", target: "Sohit" },
+    );
   });
 
   it("membawa kontrol data langsung ke adapter", () => {

@@ -1,15 +1,21 @@
 # Status — Memory dan Data
 
-Verified: 21 Agustus 2026 pada working tree long-term memory; archive SQLite,
-outbox learning, user model, procedural/error memory, persistent embedding
-index, compiler konteks, lifecycle, dan kontrol data teruji otomatis. Baca
-untuk memory, history, compaction, learning, storage, atau kontrol data yang
-bukan policy safety.
+Verified: 21 Agustus 2026 pada working tree long-term memory dan UX `/memori`;
+archive SQLite, outbox learning, user model, procedural/error memory,
+persistent embedding index, compiler konteks, lifecycle, kontrol data, serta
+renderer Telegram teruji otomatis. Baca untuk memory, history, compaction,
+learning, storage, atau kontrol data yang bukan policy safety.
 
 ## Keadaan saat ini
 
-- MemoryItem yang dapat dilihat dan disunting pengguna tetap berada di Markdown
-  per owner. Layer `_knowledge` adalah proyeksi turunan owner-scoped: semantic
+- MemoryItem yang dapat dikendalikan pengguna tetap berada di Markdown per
+  owner. `/memori`, pertanyaan natural, dan Data & izin kini memakai satu
+  renderer potret naratif, bukan daftar `content — kind`. Potret disintesis
+  ulang dari context pack bounded dan tidak menjadi source memory baru.
+  Tombol tunggal `Ubah` hanya mengembalikan pengguna ke percakapan bebas;
+  scoped forget memakai topik natural, sedangkan hapus semua ingatan tetap
+  bertoken dan terpisah di Data & izin. Layer `_knowledge` adalah proyeksi
+  turunan owner-scoped: semantic
   memory, provenance, validity interval, status `active|superseded|uncertain|
   expired`, suppression receipt, entity, dan relation temporal. Graph tidak
   pernah menjadi authority tanpa semantic source.
@@ -31,6 +37,13 @@ bukan policy safety.
   provenance, health, serta satu budget context bersama. Sapaan/perhitungan
   biasa tidak memanggil archive, embedding, graph berat, procedure, lesson,
   user model, atau reflection.
+- Potret `/memori` adalah satu-satunya jalur UI yang sengaja membayar synthesis
+  khusus. Query potret memilih primary, episode relevan, semantic, graph, dan
+  user model dalam budget compiler 8 item/3.000 karakter; procedure dan error
+  lesson tidak dimuat. Prompt synthesis menerima maksimal 16 primary, 12
+  evidence, dan 1.800 karakter shared experience, menyatakan status uncertain
+  secara manusiawi, serta menolak output berupa daftar atau metadata internal.
+  Sapaan dan giliran biasa tidak menjalankan synthesis ini.
 - `MEMORY_EMBEDDING_MODEL` mengaktifkan adapter embeddings kompatibel OpenAI.
   Document vector kini dicache durable berdasarkan scope, source ID,
   normalized content hash, exact model ID, dan model version/config; query
@@ -52,6 +65,12 @@ bukan policy safety.
   generation fence; completion extractor lama gagal commit. Penarikan consent
   juga dipersistenkan sebagai blocked scope + generation baru sehingga pending
   learning tidak berjalan lagi setelah restart sampai consent diberikan ulang.
+- Notifikasi ordinary memory tetap menempel pada balasan dan adaptif menurut
+  jenis/jumlah, tetapi tidak lagi memasang tombol `Lupakan itu` per item.
+  Pengguna tetap dapat berkata `yang tadi jangan disimpan`, `lupain yang soal
+  X`, atau memakai kontrol Data & izin. Mutasi scoped forget memerlukan kata
+  forget eksplisit dari teks pengguna sebelum matcher owner-local boleh memilih
+  source; model tidak diberi kuasa menghapus hanya dari klasifikasinya.
 - Ekspor v4 mencakup primary memory, hot history, cold archive, semantic/graph,
   user model, versioned procedures, error lessons, candidates, dan metadata
   outbox tanpa credential atau payload operational tersembunyi. Insight
@@ -80,6 +99,11 @@ bukan policy safety.
   user acceptance pasca-delivery, runtime group/project, skill promotion, dan
   connector/multimodal producer belum dirangkai. Namespace/data model sudah
   generic, tetapi mapping authority lintas channel tidak ditebak.
+- Potret menerima status dan validity dari Context Pack, tetapi bentuk evidence
+  terpilih saat ini tidak membawa nilai confidence dan stability user-model
+  secara terpisah. Target forget topikal juga hanya dapat menghapus primary
+  source yang cocok secara lexical/alias; detail episode-only tanpa primary
+  source memerlukan permintaan yang lebih spesifik atau hapus semua ingatan.
 - Dua model masih dapat sama-sama salah menilai isi sensitif sebagai biasa.
   Consent, notice, export, dan forget membatasi dampak, tetapi bukan pengganti
   klasifikasi yang sempurna. Episode juga merupakan ringkasan model; provenance
@@ -91,6 +115,8 @@ bukan policy safety.
   `src/core/memory-context-compiler.ts`, `src/core/memory-query-plan.ts`,
   `src/core/history-service.ts`, `src/core/history-search.ts`,
   `src/core/long-term-memory-service.ts`,
+  `src/core/memory-natural-control.ts`, `src/ai/memory-portrait.ts`,
+  `src/bot/create-bot.ts`,
   `src/storage/sqlite-long-term-memory-repository.ts`,
   `src/storage/file-memory-knowledge-repository.ts`, dan
   `src/ai/embedding-client.ts`.
@@ -100,9 +126,10 @@ bukan policy safety.
   `tests/file-memory-knowledge-repository.test.ts`,
   `tests/history-search.test.ts`, `tests/history-service.test.ts`, dan
   `tests/data-control-service.test.ts`, `tests/long-term-memory.test.ts`, dan
-  `tests/persistent-embedding-index.test.ts`.
-- Gerbang terakhir: tes terarah memory/runtime 189 test lulus; `npm run check`
-  PASS; `npm test` PASS, 1.461/1.461 test dalam 190 suite; `npm run
-  context:check` PASS; dan `git diff --check` PASS selain peringatan line-ending
-  Windows.
-- Keputusan: ADR-006, ADR-014, ADR-030, ADR-031, ADR-032, ADR-042.
+  `tests/persistent-embedding-index.test.ts`, `tests/memory-portrait.test.ts`,
+  `tests/memory-natural-control.test.ts`, dan `tests/create-bot-flow.test.ts`.
+- Gerbang terakhir: tes terarah potret/parser/copy/routing 122/122 dan flow
+  Telegram/matcher 72/72 lulus; `npm run check` PASS; `npm test` PASS,
+  1.542/1.542 test dalam 198 suite; `npm run context:check` PASS; dan `git diff
+  --check` PASS selain peringatan line-ending Windows.
+- Keputusan: ADR-006, ADR-014, ADR-030, ADR-031, ADR-032, ADR-042, ADR-043.
