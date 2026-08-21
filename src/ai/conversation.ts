@@ -28,9 +28,13 @@ import {
 } from "./identity.js";
 import {
   resolveModel,
-  selectTier,
+  resolveModelRoute,
+  selectConversationModelRole,
+  type CognitiveModelBinding,
+  type CognitiveModelRole,
   type ConversationIntent,
   type ModelTier,
+  type RoutingAssessment,
 } from "./model-policy.js";
 import {
   agentNativeTools,
@@ -122,7 +126,9 @@ import {
 } from "../core/execution-policy.js";
 import type { ModelRole } from "../domain/model-execution.js";
 import {
+  resolveModelProfileById,
   resolveModelProfile,
+  resolveModelRouteProfile,
   type ModelProfileRegistry,
 } from "./model-profile.js";
 import type { RunBudgetAccount } from "../core/run-budget.js";
@@ -135,6 +141,8 @@ export interface RoutingConfig {
   testingModel: string;
   testingModels?: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
+  /** Cognitive role binding terpisah dari tier; optional untuk kompatibilitas. */
+  roleBindings?: Partial<Record<CognitiveModelRole, CognitiveModelBinding>>;
   modelProfiles?: ModelProfileRegistry;
   /** Harga all-in per tier untuk reservation biaya RunBudget. */
   prices?: Record<ModelTier, TierPrice>;
@@ -150,6 +158,8 @@ export interface ConversationRuntime {
   /** Kontrak suara/intent untuk jawaban final Agent Runtime. */
   style?: StylePreference | null;
   intent?: ConversationIntent;
+  /** Assessment advisory dari turn awal; checkpoint mode tetap authority. */
+  routingAssessment?: RoutingAssessment | null;
   /** ID durable code-owned; model/provider tidak boleh memilihnya. */
   runId?: string;
   /** RunMailbox yang tiba sebelum checkpoint pertama, sudah dibatasi core. */
@@ -229,6 +239,12 @@ interface RequestedAgentDecision {
   assistant: ChatAssistantToolMessage;
 }
 
+const DELEGATION_CAPABILITY_IDS = new Set([
+  "agent.delegate.parallel",
+  "agent.delegate.specialist",
+]);
+const MAX_DELEGATION_ACTIONS_PER_RUN = 2;
+
 /**
  * Menyatukan pemahaman dan balasan menjadi satu alur percakapan.
  *
@@ -261,25 +277,31 @@ export class Conversation {
     context: HarvyContext = EMPTY_CONTEXT,
     runtime: ConversationRuntime = {},
   ): Promise<Understanding | null> {
+    const modelRoute = resolveModelRoute("mechanical", this.routing);
     const timeZone = runtime.timeZone ?? this.defaultTimeZone;
     const { context: boundedContext, manifest: contextManifest } =
       compileHarvyContext(context);
     const raw = await this.client.complete({
-      model: resolveModel("cheap", this.routing),
+      model: modelRoute.modelId,
       temperature: 0,
       maxTokens: UNDERSTANDING_MAX_TOKENS,
       execution: this.execution(
-        "cheap",
+        modelRoute.tier,
         "extractor",
         "mechanical",
         UNDERSTANDING_MAX_TOKENS,
         GENERAL_MODEL_DEADLINE_MS,
+        {
+          modelId: modelRoute.modelId,
+          cognitiveRole: modelRoute.role,
+          difficulty: "mechanical",
+        },
       ),
       json: true,
       validateResponse: (content) => parseUnderstanding(content) !== null,
       ...(runtime.signal ? { signal: runtime.signal } : {}),
       contextManifest,
-      usage: this.usage(runtime.ownerId, "cheap", "understanding"),
+      usage: this.usage(runtime.ownerId, modelRoute.tier, "understanding"),
       messages: [
         {
           role: "system",
@@ -659,16 +681,22 @@ export class Conversation {
       return CAPYBARA_MODEL_REPLY;
     }
 
-    const selected = selectTier({
-      intent: understanding.intent,
-      messageLength: message.length,
-      needsStepByStep: understanding.needsStepByStep,
-      risk: triage.level,
-    });
-    const tier =
+    const routingAssessment =
+      runtime.routingAssessment ?? understanding.routingAssessment ?? null;
+    const cognitiveRole =
       runtime.session?.kind === "tutor" && triage.level === "biasa"
-        ? "ambitious"
-        : selected;
+        ? "orchestrator"
+        : triage.level === "biasa"
+          ? selectConversationModelRole({
+              intent: understanding.intent,
+              messageLength: message.length,
+              needsStepByStep: understanding.needsStepByStep,
+              assessment: routingAssessment,
+              risk: triage.level,
+            })
+          : "everyday_conversation";
+    const modelRoute = resolveModelRoute(cognitiveRole, this.routing);
+    const tier = modelRoute.tier;
     const timeZone = runtime.timeZone ?? this.defaultTimeZone;
     const { context: boundedContext, manifest: contextManifest } =
       compileHarvyContext(context);
@@ -708,14 +736,25 @@ export class Conversation {
     const depth = depthDirective(message);
     const execution = this.execution(
       tier,
-      tier === "ambitious" ? "synthesizer" : "conversationalist",
+      cognitiveRole === "orchestrator" ? "synthesizer" : "conversationalist",
       triage.level === "biasa" ? "conversation" : "safety",
       null,
       GENERAL_MODEL_DEADLINE_MS,
+      {
+        modelId: modelRoute.modelId,
+        cognitiveRole,
+        ...(routingAssessment
+          ? {
+              difficulty: routingAssessment.complexity,
+              stakes: routingAssessment.factualStakes,
+              uncertainty: routingAssessment.ambiguity,
+            }
+          : {}),
+      },
     );
 
     const reply = await this.client.complete({
-      model: resolveModel(tier, this.routing),
+      model: modelRoute.modelId,
       temperature: 0.7,
       maxTokens: execution.maxOutputTokens,
       execution,
@@ -776,9 +815,9 @@ export class Conversation {
   /**
    * Agent Runtime v1 untuk giliran biasa yang read-only.
    *
-   * Root cheap menangani pekerjaan sederhana dan tool atomik. Root ambitious
-   * hanya dipilih kode untuk pekerjaan kompleks dan menjadi satu-satunya yang
-   * dapat melihat capability delegasi paralel.
+   * Root everyday menangani pekerjaan sederhana dan tool atomik. Root
+   * orchestrator hanya dipilih kode untuk pekerjaan kompleks dan menjadi
+   * satu-satunya yang dapat melihat capability delegasi bounded.
    */
   async agent(
     message: string,
@@ -799,7 +838,9 @@ export class Conversation {
       "settings.time.get",
       "calendar.agenda",
       "terminal.run",
-      ...(mode === "orchestrate" ? ["agent.delegate.parallel"] : []),
+      ...(mode === "orchestrate"
+        ? ["agent.delegate.parallel", "agent.delegate.specialist"]
+        : []),
     ]);
     const executors = this.agentExecutors.filter((executor) =>
       allowed.has(executor.capabilityId)
@@ -872,20 +913,22 @@ export class Conversation {
             observation.status !== "ok",
         )
       : false;
-    // Langkah nol adalah satu-satunya tempat delegasi dapat dieksekusi. Dengan
-    // mengosongkan konteks di fase ini, root tidak dapat menyalin memori atau
-    // riwayat tersimpan ke instruksi worker. Konteks kembali untuk sintesis.
-    const plannerContext =
-      mode === "orchestrate" && input.step === 0 ? EMPTY_CONTEXT : context;
-    const plannerSourceContext =
-      mode === "orchestrate" && input.step === 0
-        ? EMPTY_CONTEXT
-        : sourceContext;
+    const delegationCount = input.observations.filter((observation) =>
+      isDelegationCapability(observation.capabilityId)
+    ).length;
     let plannerInput: AgentPlannerInput = {
       ...input,
       callableCapabilities: input.callableCapabilities.filter(
-        (capability) =>
-          !(input.step > 0 && capability.id === "agent.delegate.parallel"),
+        (capability) => {
+          if (
+            capability.id === "agent.delegate.parallel" && input.step > 0
+          ) return false;
+          if (
+            isDelegationCapability(capability.id) &&
+            delegationCount >= MAX_DELEGATION_ACTIONS_PER_RUN
+          ) return false;
+          return true;
+        },
       ),
     };
     const mustReadLiveState = required !== null && !observed && !requiredFailed;
@@ -903,37 +946,50 @@ export class Conversation {
           function: { name: requiredCapability.nativeTool!.name },
         }
       : undefined;
-    const isContextFreeFanout =
-      mode === "orchestrate" && input.step === 0 && !mustReadLiveState;
+    // Selama model masih dapat mendelegasikan, jangan hadirkan summary, recent
+    // turns, atau memory. Original request dan observation bounded tetap ada;
+    // konteks pribadi baru kembali setelah authority delegasi dihapus.
+    const isContextFreeDelegation =
+      mode === "orchestrate" && !mustReadLiveState &&
+      plannerInput.callableCapabilities.some((capability) =>
+        isDelegationCapability(capability.id)
+      );
+    const plannerContext = isContextFreeDelegation ? EMPTY_CONTEXT : context;
+    const plannerSourceContext = isContextFreeDelegation
+      ? EMPTY_CONTEXT
+      : sourceContext;
+    const canDelegate = plannerInput.callableCapabilities.some((capability) =>
+      isDelegationCapability(capability.id)
+    );
     let planned = await this.requestAgentDecision(
       plannerInput,
       plannerContext,
-      isContextFreeFanout
+      isContextFreeDelegation
         ? compileHarvyContext(EMPTY_CONTEXT).manifest
         : contextManifest,
       plannerSourceContext,
       mode,
       runtime,
       signal,
-      isContextFreeFanout,
-      isContextFreeFanout,
+      isContextFreeDelegation,
+      isContextFreeDelegation,
       nativeThread,
       runBudget,
-      input.step > 0 ? "synthesizer" : "planner",
+      input.step > 0 && !canDelegate ? "synthesizer" : "planner",
       forcedToolChoice,
     );
     let decision = planned.decision;
-    // Jawaban/pertanyaan langsung dari fase fanout belum melihat konteks. Ulangi
-    // sekali sebagai sintesis kontekstual dengan delegasi dihapus dari authority.
+    // Jawaban atau tool nondelegasi dari fase context-free belum melihat konteks.
+    // Ulangi sekali dengan konteks kembali dan seluruh delegasi dihapus.
     if (
-      isContextFreeFanout &&
+      isContextFreeDelegation &&
       (decision.kind !== "action" ||
-        decision.capabilityId !== "agent.delegate.parallel")
+        !isDelegationCapability(decision.capabilityId))
     ) {
       plannerInput = {
         ...input,
         callableCapabilities: input.callableCapabilities.filter(
-          (capability) => capability.id !== "agent.delegate.parallel",
+          (capability) => !isDelegationCapability(capability.id),
         ),
       };
       planned = await this.requestAgentDecision(
@@ -999,8 +1055,12 @@ export class Conversation {
     role: Extract<ModelRole, "planner" | "synthesizer">,
     toolChoice: ChatToolChoice = "required",
   ): Promise<RequestedAgentDecision> {
-    const tier: ModelTier = mode === "orchestrate" ? "ambitious" : "cheap";
-    const profile = resolveModelProfile(tier, this.routing);
+    const cognitiveRole = mode === "orchestrate"
+      ? "orchestrator"
+      : "everyday_conversation";
+    const modelRoute = resolveModelRoute(cognitiveRole, this.routing);
+    const tier = modelRoute.tier;
+    const profile = resolveModelRouteProfile(modelRoute, this.routing);
     const execution = this.execution(
       tier,
       role,
@@ -1008,6 +1068,17 @@ export class Conversation {
       null,
       45_000,
       {
+        modelId: modelRoute.modelId,
+        cognitiveRole,
+        difficulty:
+          runtime.routingAssessment?.complexity ??
+          (mode === "orchestrate" ? "deep" : "normal"),
+        ...(runtime.routingAssessment?.factualStakes
+          ? { stakes: runtime.routingAssessment.factualStakes }
+          : {}),
+        ...(runtime.routingAssessment?.ambiguity
+          ? { uncertainty: runtime.routingAssessment.ambiguity }
+          : {}),
         maxSteps: 6,
         allowTools: true,
         allowDelegation: mode === "orchestrate" && role === "planner",
@@ -1040,7 +1111,7 @@ export class Conversation {
         effectivePlannerInput.callableCapabilities,
       );
       return {
-        model: resolveModel(tier, this.routing),
+        model: modelRoute.modelId,
         temperature: 0.1,
         maxTokens: plan.maxOutputTokens,
         execution: plan,
@@ -1089,7 +1160,7 @@ export class Conversation {
             ...currentPlannerInput,
             callableCapabilities:
               currentPlannerInput.callableCapabilities.filter(
-                (capability) => capability.id !== "agent.delegate.parallel",
+                (capability) => !isDelegationCapability(capability.id),
               ),
           }
         : currentPlannerInput;
@@ -1149,6 +1220,17 @@ export class Conversation {
         null,
         45_000,
         {
+          modelId: modelRoute.modelId,
+          cognitiveRole,
+          difficulty:
+            runtime.routingAssessment?.complexity ??
+            (mode === "orchestrate" ? "deep" : "normal"),
+          ...(runtime.routingAssessment?.factualStakes
+            ? { stakes: runtime.routingAssessment.factualStakes }
+            : {}),
+          ...(runtime.routingAssessment?.ambiguity
+            ? { uncertainty: runtime.routingAssessment.ambiguity }
+            : {}),
           maxSteps: 6,
           allowTools: true,
           allowDelegation: false,
@@ -1180,7 +1262,11 @@ export class Conversation {
     insight: UserInsight | null = null,
     runtime: Omit<ConversationRuntime, "session"> = {},
   ): Promise<string> {
-    const tier: ModelTier = session.kind === "tutor" ? "ambitious" : "efficient";
+    const cognitiveRole = session.kind === "tutor"
+      ? "orchestrator"
+      : "everyday_conversation";
+    const modelRoute = resolveModelRoute(cognitiveRole, this.routing);
+    const tier = modelRoute.tier;
     const timeZone = runtime.timeZone ?? this.defaultTimeZone;
     const { context: boundedContext, manifest: contextManifest } =
       compileHarvyContext(context);
@@ -1194,14 +1280,19 @@ export class Conversation {
     })}\n\n${this.harness.capabilityContext(this.runtimeScope(runtime))}`;
     const execution = this.execution(
       tier,
-      tier === "ambitious" ? "synthesizer" : "conversationalist",
+      cognitiveRole === "orchestrator" ? "synthesizer" : "conversationalist",
       "conversation",
       null,
       GENERAL_MODEL_DEADLINE_MS,
+      {
+        modelId: modelRoute.modelId,
+        cognitiveRole,
+        difficulty: session.kind === "tutor" ? "deep" : "normal",
+      },
     );
 
     return this.client.complete({
-      model: resolveModel(tier, this.routing),
+      model: modelRoute.modelId,
       temperature: 0.6,
       maxTokens: execution.maxOutputTokens,
       execution,
@@ -1246,6 +1337,11 @@ export class Conversation {
     maxOutputTokens: number | null,
     deadlineMs: number,
     options: {
+      modelId?: string;
+      cognitiveRole?: CognitiveModelRole;
+      difficulty?: RoutingAssessment["complexity"];
+      stakes?: RoutingAssessment["factualStakes"];
+      uncertainty?: RoutingAssessment["ambiguity"];
       maxSteps?: number;
       allowTools?: boolean;
       allowDelegation?: boolean;
@@ -1257,8 +1353,16 @@ export class Conversation {
       tier,
       role,
       workClass,
-      profile: resolveModelProfile(tier, this.routing),
+      profile: options.modelId
+        ? resolveModelProfileById(options.modelId, this.routing)
+        : resolveModelProfile(tier, this.routing),
       deadlineMs,
+      ...(options.cognitiveRole
+        ? { cognitiveRole: options.cognitiveRole }
+        : {}),
+      ...(options.difficulty ? { difficulty: options.difficulty } : {}),
+      ...(options.stakes ? { stakes: options.stakes } : {}),
+      ...(options.uncertainty ? { uncertainty: options.uncertainty } : {}),
       ...(maxOutputTokens !== null ? { maxOutputTokens } : {}),
       ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
       ...(options.allowTools !== undefined
@@ -1354,6 +1458,10 @@ function withDelegationDisclosure(result: AgentRunResult): AgentRunResult {
     }
   }
   return result;
+}
+
+function isDelegationCapability(capabilityId: string): boolean {
+  return DELEGATION_CAPABILITY_IDS.has(capabilityId);
 }
 
 function sessionIntent(session: ActiveSession): ConversationIntent {

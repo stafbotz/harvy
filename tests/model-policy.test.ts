@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { resolveModel, selectTier } from "../src/ai/model-policy.js";
+import {
+  resolveModel,
+  resolveModelRoute,
+  selectConversationModelRole,
+  selectGlobalRoute,
+  selectTier,
+  type RoutingAssessment,
+} from "../src/ai/model-policy.js";
 
 describe("kebijakan pemilihan model", () => {
   it("memakai tingkatan menengah untuk percakapan keselamatan", () => {
@@ -61,6 +68,76 @@ describe("kebijakan pemilihan model", () => {
     assert.equal(tier, "ambitious");
   });
 
+  it("memisahkan global route dari deep orchestration memakai assessment", () => {
+    assert.equal(selectGlobalRoute({
+      intent: "smalltalk",
+      messageLength: 3,
+      assessment: assessment(),
+    }), "conversation");
+    assert.equal(selectConversationModelRole({
+      intent: "smalltalk",
+      messageLength: 8,
+      assessment: assessment(),
+    }), "everyday_conversation");
+
+    assert.equal(selectGlobalRoute({
+      intent: "question",
+      messageLength: 10,
+      deterministicFastPath: true,
+      assessment: assessment({ toolNeed: "internal_state" }),
+    }), "deterministic");
+    assert.equal(selectGlobalRoute({
+      intent: "question",
+      messageLength: 28,
+      specializedFlow: true,
+      assessment: assessment({ complexity: "deep", planningRequired: true }),
+    }), "specialized");
+  });
+
+  it("mengirim request pendek bernuansa ke orkestrator tanpa proxy panjang", () => {
+    assert.equal(selectGlobalRoute({
+      intent: "feeling",
+      messageLength: 52,
+      assessment: assessment({
+        complexity: "deep",
+        ambiguity: "high",
+        emotionalNuance: "high",
+        factualStakes: "high",
+      }),
+    }), "orchestrate");
+    assert.equal(selectGlobalRoute({
+      intent: "question",
+      messageLength: 52,
+      assessment: assessment({ complexity: "deep", confidence: 0.2 }),
+    }), "specialized");
+  });
+
+  it("tidak menganggap transformasi mekanis panjang sebagai deep", () => {
+    assert.equal(selectGlobalRoute({
+      intent: "request",
+      messageLength: 2_000,
+      needsStepByStep: true,
+      assessment: assessment({
+        complexity: "mechanical",
+        planningRequired: false,
+        executionSize: "heavy",
+        transformationMechanical: true,
+      }),
+    }), "conversation");
+  });
+
+  it("mengarahkan planning kompleks berdasarkan kebutuhan, bukan kata/model", () => {
+    assert.equal(selectGlobalRoute({
+      intent: "request",
+      messageLength: 80,
+      assessment: assessment({
+        complexity: "deep",
+        planningRequired: true,
+        executionSize: "heavy",
+      }),
+    }), "orchestrate");
+  });
+
   it("mengarahkan semua tingkatan ke satu model selama mode uji", () => {
     const routing = {
       mode: "testing" as const,
@@ -91,4 +168,49 @@ describe("kebijakan pemilihan model", () => {
     assert.equal(resolveModel("efficient", routing), "model-efisien");
     assert.equal(resolveModel("ambitious", routing), "model-ambisius");
   });
+
+  it("mengikat cognitive role ke exact model tanpa menjadikannya ladder", () => {
+    const routing = {
+      mode: "production" as const,
+      testingModel: "",
+      models: {
+        cheap: "model-murah",
+        efficient: "model-sehari-hari",
+        ambitious: "model-default-dalam",
+      },
+      roleBindings: {
+        challenger: { tier: "efficient" as const, modelId: "model-penantang" },
+        verifier: { tier: "cheap" as const, modelId: "model-verifier" },
+      },
+    };
+
+    assert.deepEqual(resolveModelRoute("challenger", routing), {
+      role: "challenger",
+      tier: "efficient",
+      modelId: "model-penantang",
+    });
+    assert.deepEqual(resolveModelRoute("verifier", routing), {
+      role: "verifier",
+      tier: "cheap",
+      modelId: "model-verifier",
+    });
+    assert.equal(resolveModelRoute("heavy_executor", routing).modelId, "model-default-dalam");
+  });
 });
+
+function assessment(
+  overrides: Partial<RoutingAssessment> = {},
+): RoutingAssessment {
+  return {
+    complexity: "normal",
+    ambiguity: "low",
+    planningRequired: false,
+    emotionalNuance: "low",
+    executionSize: "small",
+    factualStakes: "low",
+    transformationMechanical: false,
+    toolNeed: "none",
+    confidence: 0.95,
+    ...overrides,
+  };
+}

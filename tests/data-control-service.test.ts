@@ -11,6 +11,8 @@ import type { TaskService } from "../src/core/task-service.js";
 import type { TelemetryService } from "../src/core/telemetry-service.js";
 import type { AgentRunService } from "../src/core/agent-run-service.js";
 import type { DurableAgentRunExport } from "../src/domain/agent-run.js";
+import type { LongTermMemoryService } from
+  "../src/core/long-term-memory-service.js";
 
 function cast<T>(value: object): T {
   return value as T;
@@ -74,22 +76,34 @@ describe("DataControlService", () => {
           return 1;
         },
       }),
+      null,
+      cast<LongTermMemoryService>({
+        suspendPrivateOwner(): void {
+          calls.push("long-term-suspend");
+        },
+        async forgetPrivateOwner(): Promise<void> {
+          calls.push("long-term");
+        },
+      }),
     );
 
     await service.deleteAll("student");
     assert.equal(calls[0], "tombstone");
-    assert.deepEqual(new Set(calls.slice(1, 3)), new Set([
+    assert.deepEqual(new Set(calls.slice(1, 4)), new Set([
       "memory-suspend",
       "history-suspend",
+      "long-term-suspend",
     ]));
     assert.equal(calls.at(-1), "profile");
     assert.deepEqual(new Set(calls), new Set([
       "tombstone",
       "memory-suspend",
       "history-suspend",
+      "long-term-suspend",
       "session",
       "tasks",
       "history",
+      "long-term",
       "insight",
       "memories",
       "telemetry",
@@ -164,6 +178,9 @@ describe("DataControlService", () => {
         async snapshot() {
           return null;
         },
+        async archiveSnapshot() {
+          return [];
+        },
       }),
       cast<ProfileService>({
         async load() {
@@ -211,14 +228,34 @@ describe("DataControlService", () => {
           return { runId: "run-export" } as DurableAgentRunExport;
         },
       }),
+      null,
+      cast<LongTermMemoryService>({
+        async snapshotPrivateOwner() {
+          return {
+            userModel: [],
+            procedures: [],
+            errorLessons: [],
+            candidates: [],
+            learningEvents: [],
+          };
+        },
+      }),
     );
 
     const exported = await service.export("student");
     assert.equal(exported.aiTelemetryRetained.events.length, 1);
     assert.equal(exported.hiddenSafetyData.included, false);
     assert.equal(exported.activeAgentRun?.runId, "run-export");
-    assert.equal(exported.version, 3);
+    assert.equal(exported.version, 4);
     assert.equal(exported.derivedMemory, null);
+    assert.deepEqual(exported.archivedHistory, []);
+    assert.deepEqual(exported.learnedMemory, {
+      userModel: [],
+      procedures: [],
+      errorLessons: [],
+      candidates: [],
+      learningEvents: [],
+    });
     assert.equal(insightRead, false);
   });
 });

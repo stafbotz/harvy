@@ -11,6 +11,7 @@ import {
 } from "../src/ai/safety.js";
 import type { HarvyContext } from "../src/ai/context.js";
 import type { Conversation } from "../src/ai/conversation.js";
+import type { RoutingAssessment } from "../src/ai/model-policy.js";
 import { createBot } from "../src/bot/create-bot.js";
 import { PRE_CONSENT_SAFETY } from "../src/bot/onboarding.js";
 import type { AppConfig } from "../src/config.js";
@@ -1608,6 +1609,97 @@ describe("alur adapter Telegram", () => {
     assert.ok((deliveredTurn?.length ?? 0) > 10);
   });
 
+  it("assessment normal memakai everyday reply tanpa menyalakan agent graph", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({
+        intent: "question",
+        routingAssessment: routingAssessment(),
+      }),
+      agent: async () => {
+        agentCalls += 1;
+        return { status: "completed", reply: "jalur agent" };
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Fotosintesis mengubah cahaya menjadi energi kimia.";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate("jelaskan fotosintesis"));
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
+  });
+
+  it("request pendek bernuansa masuk orkestrator meski di bawah 280 karakter", async () => {
+    let modeSeen = "";
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({
+        intent: "question",
+        routingAssessment: routingAssessment({
+          complexity: "deep",
+          ambiguity: "high",
+          emotionalNuance: "high",
+          factualStakes: "high",
+        }),
+      }),
+      agent: async (_message: string, mode: string) => {
+        modeSeen = mode;
+        return { status: "completed", reply: "Kita timbang pilihanmu pelan-pelan." };
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(
+      messageUpdate("Ayahku meninggal. Besok aku ujian. Aku harus gimana?"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(modeSeen, "orchestrate");
+  });
+
+  it("transformasi mekanis panjang tidak otomatis masuk orkestrator", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({
+        intent: "request",
+        needsStepByStep: true,
+        routingAssessment: routingAssessment({
+          complexity: "mechanical",
+          executionSize: "heavy",
+          transformationMechanical: true,
+        }),
+      }),
+      agent: async () => {
+        agentCalls += 1;
+        return { status: "completed", reply: "jalur agent" };
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Daftar sudah diformat.";
+      },
+    } as unknown as Conversation);
+    const message = `ubah nama berikut ke format Firstname Surname langkah demi langkah: ${
+      "SURNAME, FIRSTNAME; ".repeat(30)
+    }`;
+
+    await harness.bot.handleUpdate(messageUpdate(message));
+    await harness.bot.drainPending();
+
+    assert.equal(message.length > 280, true);
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
+  });
+
   it("memberi copy jujur dan membuang debit saat run awal kehabisan budget", async () => {
     let discarded = 0;
     const harness = basicHarness(
@@ -3049,6 +3141,7 @@ function config(): AppConfig {
     memoryFile: "unused",
     memoryFolder: "unused",
     historyFile: "unused",
+    longTermMemoryFile: "unused",
     profileFile: "unused",
     sessionFile: "unused",
     agentRunFile: "unused",
@@ -3445,6 +3538,23 @@ function understanding(
     actionGoal: null,
     task: null,
     memories: [],
+    ...overrides,
+  };
+}
+
+function routingAssessment(
+  overrides: Partial<RoutingAssessment> = {},
+): RoutingAssessment {
+  return {
+    complexity: "normal",
+    ambiguity: "low",
+    planningRequired: false,
+    emotionalNuance: "low",
+    executionSize: "small",
+    factualStakes: "low",
+    transformationMechanical: false,
+    toolNeed: "none",
+    confidence: 0.95,
     ...overrides,
   };
 }

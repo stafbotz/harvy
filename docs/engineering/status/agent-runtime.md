@@ -1,7 +1,8 @@
 # Status — Agent Runtime
 
-Refreshed: 20 Agustus 2026 pada targeted CodingRun input, provider exact, dan
-wiring validator-driven Phase M. Bukti gerbang terbaru dicatat di
+Refreshed: 20 Agustus 2026 pada routing role-aware, bounded specialist graph,
+provider-neutral handoff, dan adaptive resource primitive. Bukti gerbang
+terbaru dicatat di
 `docs/LOG.md`.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
@@ -13,9 +14,17 @@ agent, scope/authority, atau executor internal.
 - Planner memakai native tool calling tertutup. Plain text, function asing,
   multi-call, argumen rusak, dan control output kosong ditolak sebelum kernel.
 - Seluruh call conversation/group/worker production membawa execution plan
-  code-owned berisi role, work class, requested/effective effort, verbosity,
-  deadline, output ceiling, dan izin tool/delegasi. Tier/model routing lama
-  tetap authority pemilihan model.
+  code-owned berisi stage role, cognitive role bila berlaku, work class,
+  requested/effective effort, verbosity, deadline, output ceiling, dan izin
+  tool/delegasi. Cognitive role terpisah dari tier accounting; optional exact
+  binding berasal dari `AI_MODEL_ROLE_BINDINGS`, bukan nama provider/model di
+  business policy.
+- Global route baru memilih handler pertama melalui
+  `deterministic|conversation|specialized|orchestrate`. Assessment semantic
+  tertutup memakai complexity, ambiguity, planning, emotional nuance,
+  execution size, factual stakes, mechanical transformation, tool need, dan
+  confidence. Payload hilang/low-confidence tetap memakai fallback lama;
+  panjang 280 karakter bukan lagi proxy utama runtime baru.
 - Planner memegang assistant turn provider selama invocation dan memutar ulang
   reasoning/reasoning details/content serta Gemini thought signature hanya
   melalui exact profile dan binding provider+model. Metadata ini tidak masuk
@@ -29,13 +38,21 @@ agent, scope/authority, atau executor internal.
   mendapat satu recovery tanpa delegasi setelah freshness diperiksa ulang,
   tetap dalam RunBudget yang sama; incomplete/content filter lain tidak
   di-retry.
-- Tool callable saat ini read-only: daftar/detail tugas, status sesi, waktu,
-  agenda internal Harvy, terminal virtual in-memory, dan delegasi read-only.
+- Tool callable composition saat ini read-only: daftar/detail tugas, status
+  sesi, waktu, agenda internal Harvy, terminal virtual in-memory, dan delegasi
+  paralel read-only. Metadata discovery dapat membuat shortlist/high-recall
+  ter-page tanpa schema atau authority baru, tetapi belum dirangkai ke planner
+  karena callable subset masih kecil.
 - Pertanyaan waktu sempit tetap dijawab dari clock deterministik. Ia melewati
   boundary/understanding/triage hanya bila tidak ada episode hangat dalam 30
   menit; episode hangat tetap menjalani pipeline keselamatan dan pemahaman.
-- Delegasi hanya dari root ambitious pada langkah awal, depth satu, 2–3 worker,
-  tanpa memory/history/tool/credential, dengan deadline dan output berbatas.
+- Root everyday menangani tool atomik; root orchestrator menangani deep route
+  dan berbicara langsung tanpa rewrite model lain. Delegasi paralel tetap pada
+  langkah awal. Kontrak specialist one-hop dapat meminta strong worker, heavy
+  executor, verifier, atau challenger secara langsung, maksimal dua aksi
+  delegasi per run, tanpa memory/history/tool/credential atau continuation root.
+  Specialist catalog/executor default-off dan authorization default-deny;
+  composition production belum memasangnya.
 - Satu `RunBudgetAccount` code-owned mengikat root, physical retry/fallback,
   tool, dan seluruh worker. Default: 96.000 token, USD 1, 6 langkah, 5 tool,
   12 model attempt, 45 detik aktif, dan 3 worker konkuren. Reservation dibuat
@@ -43,6 +60,11 @@ agent, scope/authority, atau executor internal.
   tidak dapat memakai separuh token/biaya yang dilindungi untuk final
   synthesis—48.000 token pada default, maksimal 49.152; view dan checkpoint
   mempertahankan reserve.
+- `ResourceRequestPolicy` menambah proposal closed-set untuk reasoning, step,
+  context, specialist, capability, atau tool tambahan. Grant hanya berasal dari
+  adaptive reserve dan hard remainder code-owned; step tambahan memerlukan
+  progress marker terstruktur. Primitive ini belum mengubah default RunBudget,
+  checkpoint, atau scheduler aktif.
 - Ceiling general kini dimiliki execution policy: conversationalist/worker
   8.192 token, planner/synthesizer/recovery 32.768, critic 4.096, lalu di-clamp
   profile exact. Classifier/extractor dan call product-bounded tetap memakai
@@ -95,9 +117,16 @@ agent, scope/authority, atau executor internal.
   read-only critic tanpa tool/delegasi; hint tidak menjadi patch atau approval
   sampai integration writer menerapkan dan validator code-owned lulus ulang.
 - Execution policy memakai `verbosity` terpisah dari requested/effective
-  reasoning effort. Coding critic dapat high-reasoning dengan output ceiling
-  dan visible answer ringkas; tier maupun effort tidak mengubah panjang jawaban
-  pengguna secara implisit.
+  reasoning effort. Deep orchestrator, heavy executor, verifier, dan challenger
+  dapat memperoleh effort lebih tinggi berdasarkan difficulty/stakes/
+  uncertainty serta profile exact, sementara visible answer tetap ringkas.
+  Tier maupun effort tidak mengubah panjang jawaban pengguna secara implisit.
+- `WorkBrief`/`AgentHandoff` exact dan bounded menjadi kontrak lintas model.
+  `workBriefRef` opaque dari kernel mengikat request/handoff ke run tanpa
+  membuka user ID atau isi request sebagai authority.
+  Raw reasoning, scratchpad, credential, provider continuation, dan field
+  authority ditolak; PLAN_CONFLICT serta evidence gap memakai status/failure
+  code provider-neutral.
 
 ## Batas dan defect aktif
 
@@ -121,6 +150,10 @@ agent, scope/authority, atau executor internal.
   harga tier nonnol atau reported provider cost; token/attempt tetap terjaga
   bila harga belum lengkap. Actual provider usage satu attempt dapat melewati
   reservation, lalu work non-final berikutnya dihentikan.
+- Kualitas `RoutingAssessment` belum diuji pada provider/corpus percakapan
+  nyata. Role binding exact baru terbukti melalui config/unit test; tidak ada
+  klaim model role production aktif. Specialist, runtime resource grant, dan
+  capability discovery planner masih foundation default-off/tidak terangkai.
 - Active store/receipt/recovery di atas baru file lokal satu proses dan hanya
   untuk mode `orchestrate` privat Telegram. Belum ada RunStore produksi,
   lease/CAS multi-instance, dispatcher/outbox exactly-once, reconciler eksternal,
@@ -143,13 +176,19 @@ agent, scope/authority, atau executor internal.
 
 - Kode: `src/agent/`, `src/agent/time-fast-path.ts`, `src/harness/`,
   `src/harness/observation-compaction.ts`, `src/ai/agent.ts`,
-  `src/ai/agent-context-pressure.ts`, `src/core/run-budget.ts`,
+  `src/ai/agent-context-pressure.ts`, `src/ai/model-policy.ts`,
+  `src/ai/specialist.ts`, `src/agent/specialist-delegation.ts`,
+  `src/domain/agent-handoff.ts`, `src/core/resource-request-policy.ts`,
+  `src/harness/capability-discovery.ts`, `src/core/run-budget.ts`,
   `src/core/agent-run-service.ts`, `src/core/run-mailbox-policy.ts`,
   `src/bot/run-anchor.ts`, dan `src/storage/file-agent-run-repository.ts`.
 - Tes: `tests/agent-runtime.test.ts`, `tests/agent-harness.test.ts`,
   `tests/create-bot-flow.test.ts`, `tests/harness-context-budget.test.ts`,
   `tests/harness-scope-capabilities.test.ts`, `tests/model-profile.test.ts`,
-  `tests/execution-policy.test.ts`, `tests/provider-adapter.test.ts`,
+  `tests/model-policy.test.ts`, `tests/capability-discovery.test.ts`,
+  `tests/specialist-delegation.test.ts`,
+  `tests/resource-request-policy.test.ts`, `tests/execution-policy.test.ts`,
+  `tests/provider-adapter.test.ts`,
   `tests/run-budget.test.ts`, `tests/active-agent-run-service.test.ts`,
   `tests/run-mailbox-anchor.test.ts`, `tests/agent-context-pressure.test.ts`,
   `tests/observation-compaction.test.ts`, dan `tests/client.test.ts`.
@@ -163,4 +202,4 @@ agent, scope/authority, atau executor internal.
   `src/coding/production-coding-validator-policy.ts`, dan
   `src/core/coding-runtime-composition.ts`.
 - Keputusan: ADR-012, ADR-016, ADR-017, ADR-018, ADR-021, ADR-025, ADR-026,
-  ADR-027, ADR-028, ADR-029, ADR-040.
+  ADR-027, ADR-028, ADR-029, ADR-040, ADR-041.

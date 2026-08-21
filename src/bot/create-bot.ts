@@ -11,7 +11,7 @@ import {
   currentUsageAttribution,
   withUsageAttribution,
 } from "../ai/usage-attribution.js";
-import { selectAgentMode } from "../ai/model-policy.js";
+import { selectGlobalRoute } from "../ai/model-policy.js";
 import { liveStateRequirement } from "../ai/agent.js";
 import {
   canUseDirectTimeFastPath,
@@ -1838,16 +1838,21 @@ export function createBot(
             requiresLiveState ||
             requiresAgentPlanning)
         ) {
-          const mode = selectAgentMode({
+          const globalRoute = selectGlobalRoute({
             intent: agentIntent,
             messageLength: text.length,
             needsStepByStep: understanding.needsStepByStep,
+            assessment: understanding.routingAssessment ?? null,
+            specializedFlow: requiresLiveState,
+            forceOrchestration: requiresAgentPlanning,
+            risk: triage.level,
           });
-          const planningMode = requiresAgentPlanning
+          const planningMode = globalRoute === "orchestrate"
             ? "orchestrate"
-            : mode;
+            : "tools";
           if (
             !isModelIdentityQuestion(text) &&
+            (globalRoute === "specialized" || globalRoute === "orchestrate") &&
             shouldUseAgentRuntime(text, planningMode)
           ) {
             if (
@@ -1890,6 +1895,7 @@ export function createBot(
                   timeZone,
                   style: profile.stylePreference,
                   intent: agentIntent,
+                  routingAssessment: understanding.routingAssessment ?? null,
                 },
               );
               if (agentResult.status === "stopped") {
@@ -1953,6 +1959,7 @@ export function createBot(
                 timeZone,
                 session: null,
                 plannedActionLabels: plannedActions.map(adaptiveActionLabel),
+                routingAssessment: understanding.routingAssessment ?? null,
               },
             );
           }
@@ -1971,6 +1978,7 @@ export function createBot(
               timeZone,
               session: effectPermissions.generalState ? engagedSession : null,
               plannedActionLabels: plannedActions.map(adaptiveActionLabel),
+              routingAssessment: understanding.routingAssessment ?? null,
             },
           );
         }

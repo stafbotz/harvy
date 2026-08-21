@@ -1,12 +1,11 @@
 /**
- * Memilih model berdasarkan kesulitan pekerjaan, bukan paket yang dibayar
- * pengguna.
+ * Memilih model berdasarkan kebutuhan pekerjaan, bukan paket yang dibayar
+ * pengguna atau nama provider/model tertentu.
  *
- * Ini keputusan produk, bukan sekadar penghematan. `docs/PROJECT.md`
- * menetapkan routing berdasarkan kesulitan tugas, dan Konstitusi Pasal 3.13
- * menempatkan model AI sebagai alat yang tunduk pada kepentingan pengguna.
- * Pelajar yang tidak membayar tetap berhak mendapat model terbaik ketika
- * persoalannya memang sulit.
+ * `ModelTier` tetap menjadi kelas biaya/accounting yang kompatibel dengan
+ * konfigurasi lama. `CognitiveModelRole` menyatakan pekerjaan intelektual yang
+ * dibutuhkan. Binding role ke tier atau exact model adalah konfigurasi tepercaya
+ * dan dapat diganti tanpa mengubah policy bisnis.
  *
  * Modul ini murni: tidak memanggil jaringan dan tidak membaca konfigurasi.
  */
@@ -15,6 +14,41 @@ import type { RiskLevel } from "../core/safety-policy.js";
 export type ModelTier = "cheap" | "efficient" | "ambitious";
 /** Slot escalation-only; ordinary routing never returns it. */
 export type ExecutionModelTier = ModelTier | "toughest";
+
+/** Peran kognitif bukan ladder IQ dan bukan nama provider/model. */
+export const COGNITIVE_MODEL_ROLES = [
+  "mechanical",
+  "everyday_conversation",
+  "orchestrator",
+  "strong_worker",
+  "heavy_executor",
+  "verifier",
+  "challenger",
+] as const;
+
+export type CognitiveModelRole = (typeof COGNITIVE_MODEL_ROLES)[number];
+
+/** Binding code-owned/config-owned; model tidak pernah memilihnya sendiri. */
+export interface CognitiveModelBinding {
+  /** Kelas accounting dan fallback konfigurasi lama. */
+  tier: ModelTier;
+  /** Exact model aktif untuk role ini; kosong berarti memakai model tier. */
+  modelId?: string;
+}
+
+export interface RoleAwareRoutingConfig {
+  mode: "testing" | "production";
+  testingModel: string;
+  testingModels?: Partial<Record<ModelTier, string>>;
+  models: Record<ModelTier, string>;
+  roleBindings?: Partial<Record<CognitiveModelRole, CognitiveModelBinding>>;
+}
+
+export interface ResolvedModelRoute {
+  role: CognitiveModelRole;
+  tier: ModelTier;
+  modelId: string;
+}
 
 export type ConversationIntent =
   | "task"
@@ -26,12 +60,46 @@ export type ConversationIntent =
   | "memory"
   | "control";
 
+export type WorkComplexity = "mechanical" | "normal" | "deep";
+export type RoutingDegree = "low" | "medium" | "high";
+export type ExecutionSize = "small" | "medium" | "heavy";
+export type RoutingToolNeed =
+  | "none"
+  | "internal_state"
+  | "calculation"
+  | "execution"
+  | "external";
+
+/**
+ * Data semantik bounded dari extractor murah. Seluruh field advisory dan
+ * diperlakukan sebagai input tidak tepercaya oleh policy di bawah.
+ */
+export interface RoutingAssessment {
+  complexity: WorkComplexity;
+  ambiguity: RoutingDegree;
+  planningRequired: boolean;
+  emotionalNuance: RoutingDegree;
+  executionSize: ExecutionSize;
+  factualStakes: RoutingDegree;
+  transformationMechanical: boolean;
+  toolNeed: RoutingToolNeed;
+  confidence: number;
+}
+
 export interface RoutingInput {
   intent: ConversationIntent;
-  /** Panjang pesan pengguna dalam karakter. */
+  /** Panjang hanya fallback kompatibilitas bila assessment baru tidak ada. */
   messageLength: number;
   /** Pengguna meminta dituntun bertahap, bukan sekadar jawaban. */
   needsStepByStep?: boolean;
+  /** Assessment semantic baru; null/undefined mempertahankan route lama. */
+  assessment?: RoutingAssessment | null;
+  /** Fast path lokal yang sudah diputuskan kode sebelum model routing. */
+  deterministicFastPath?: boolean;
+  /** Flow/tool khusus yang dipilih high-precision code-owned preflight. */
+  specializedFlow?: boolean;
+  /** Override planning lokal yang berasal dari intent eksplisit pengguna. */
+  forceOrchestration?: boolean;
   /**
    * Percakapan menyinggung keselamatan, seperti menyakiti diri, kekerasan,
    * pelecehan, atau eksploitasi.
@@ -41,74 +109,145 @@ export interface RoutingInput {
   risk?: RiskLevel;
 }
 
+export type GlobalWorkRoute =
+  | "deterministic"
+  | "conversation"
+  | "specialized"
+  | "orchestrate";
 export type AgentRoutingMode = "tools" | "orchestrate";
 
-/** Di atas panjang ini, sebuah pertanyaan dianggap berpotensi berlapis. */
-const LONG_MESSAGE = 280;
+/** Hanya dipakai untuk fallback checkpoint/fixture sebelum assessment baru. */
+const LEGACY_LONG_MESSAGE = 280;
+
+const DEFAULT_ROLE_TIERS: Readonly<Record<CognitiveModelRole, ModelTier>> =
+  Object.freeze({
+    mechanical: "cheap",
+    everyday_conversation: "efficient",
+    orchestrator: "ambitious",
+    strong_worker: "efficient",
+    heavy_executor: "ambitious",
+    verifier: "ambitious",
+    challenger: "ambitious",
+  });
 
 /**
- * Route agent baru cheap-first. Ia hanya dipanggil sesudah triase menyatakan
- * giliran biasa dan pasti; keselamatan serta sesi tetap memakai policy lama.
+ * Global router hanya memilih siapa yang menangani request pertama. Ia tidak
+ * memprediksi atau memaksakan perjalanan internal task setelah orkestrasi.
  */
+export function selectGlobalRoute(input: RoutingInput): GlobalWorkRoute {
+  if (input.deterministicFastPath) return "deterministic";
+  if (input.forceOrchestration) return "orchestrate";
+
+  // Safety mempunyai compiler dan review selektif tersendiri. Nuansa emosi
+  // tidak boleh secara otomatis mengaktifkan agent graph atau tool.
+  if (
+    input.risk === "dukungan" || input.risk === "bahaya" ||
+    input.safetySensitive
+  ) return "conversation";
+
+  // High-precision flow code-owned tidak boleh dikalahkan classifier semantik.
+  // Planning eksplisit sudah ditangani forceOrchestration di atas.
+  if (input.specializedFlow) return "specialized";
+
+  const assessment = input.assessment;
+  // Low-confidence semantic output cannot override compatibility/high-precision
+  // routing. It remains useful telemetry/eval data but not a route signal.
+  if (assessment && assessment.confidence >= 0.55) {
+    const mechanical =
+      assessment.complexity === "mechanical" ||
+      assessment.transformationMechanical;
+    const deep =
+      assessment.complexity === "deep" ||
+      (assessment.planningRequired && !mechanical) ||
+      (assessment.executionSize === "heavy" && !mechanical) ||
+      (assessment.emotionalNuance === "high" &&
+        (assessment.ambiguity === "high" ||
+          assessment.factualStakes === "high")) ||
+      (assessment.ambiguity === "high" &&
+        assessment.factualStakes === "high");
+    if (deep) return "orchestrate";
+    if (assessment.toolNeed !== "none") {
+      return "specialized";
+    }
+    return "conversation";
+  }
+
+  // Compatibility untuk checkpoint/test double lama. Runtime baru meminta
+  // assessment sehingga panjang tidak lagi menjadi proxy utama.
+  if (input.needsStepByStep || input.messageLength > LEGACY_LONG_MESSAGE) {
+    return "orchestrate";
+  }
+  return input.intent === "question" || input.intent === "request"
+    ? "specialized"
+    : "conversation";
+}
+
+/** Adapter kompatibilitas untuk surface yang masih memakai dua mode agent. */
 export function selectAgentMode(input: RoutingInput): AgentRoutingMode {
-  return input.needsStepByStep || input.messageLength > LONG_MESSAGE
+  return selectGlobalRoute(input) === "orchestrate"
     ? "orchestrate"
     : "tools";
 }
 
+/** Suara user-facing: everyday atau orchestrator, tanpa rewrite lintas model. */
+export function selectConversationModelRole(
+  input: RoutingInput,
+): Extract<CognitiveModelRole, "everyday_conversation" | "orchestrator"> {
+  return selectGlobalRoute(input) === "orchestrate"
+    ? "orchestrator"
+    : "everyday_conversation";
+}
+
+/**
+ * Compatibility tier policy. Call path baru sebaiknya memilih cognitive role
+ * lalu memakai `resolveModelRoute`; fungsi ini tetap menjaga pemanggil lama.
+ */
 export function selectTier(input: RoutingInput): ModelTier {
-  // Keselamatan memakai `efficient`, bukan `ambitious`. Keputusan pemilik
-  // produk pada 27 Juli 2026: di produksi tingkatan ini adalah GPT 5.6 Luna,
-  // dan itu dinilai cukup untuk percakapan yang berat. Tingkatan tertinggi
-  // disimpan untuk pekerjaan yang memang membutuhkan penalaran panjang.
-  // `PROJECT.md` dan `ADR-003` sudah diselaraskan dengan keputusan ini.
   if (input.risk === "dukungan" || input.risk === "bahaya") return "efficient";
   if (input.safetySensitive) return "efficient";
 
   switch (input.intent) {
     case "question":
     case "request":
-      return input.needsStepByStep || input.messageLength > LONG_MESSAGE
+      return selectGlobalRoute(input) === "orchestrate"
         ? "ambitious"
         : "efficient";
 
     case "feeling":
-      // Menanggapi keadaan diri butuh kepekaan bahasa, bukan penalaran berat.
       return "efficient";
 
     case "task":
     case "smalltalk":
     case "history":
     case "control":
-      // Balasan pendek dan rutin; pekerjaan beratnya sudah selesai di ekstraksi.
-      return "cheap";
-
     case "memory":
-      // Pengguna sedang mengurus apa yang Harvy ingat tentang dirinya. Jawabannya
-      // disusun kode dari daftar memori, bukan dikarang model.
       return "cheap";
   }
 }
 
 /**
  * Menerjemahkan tingkatan menjadi ID model yang benar-benar dipanggil.
- *
- * Selama masa pengembangan seluruh tingkatan mengarah ke satu model uji agar
- * biaya tetap nol. Menghentikan mode uji cukup dengan mengubah `AI_MODE`.
+ * Selama mode testing, fallback satu model lama tetap berlaku.
  */
 export function resolveModel(
   tier: ModelTier,
-  routing: {
-    mode: "testing" | "production";
-    testingModel: string;
-    testingModels?: Partial<Record<ModelTier, string>>;
-    models: Record<ModelTier, string>;
-  },
+  routing: RoleAwareRoutingConfig,
 ): string {
   if (routing.mode !== "testing") return routing.models[tier];
-
-  // Peta per tingkatan boleh diisi sebagian. Yang tidak diisi jatuh ke satu
-  // model uji, seperti sebelumnya — tetapi begitu satu tingkatan diberi model
-  // sendiri, routing akhirnya dapat diamati tanpa membayar harga produksi.
   return routing.testingModels?.[tier] || routing.testingModel;
+}
+
+/** Memisahkan role kognitif dari tier accounting dan exact model aktif. */
+export function resolveModelRoute(
+  role: CognitiveModelRole,
+  routing: RoleAwareRoutingConfig,
+): ResolvedModelRoute {
+  const binding = routing.roleBindings?.[role];
+  const tier = binding?.tier ?? DEFAULT_ROLE_TIERS[role];
+  const configuredModel = binding?.modelId?.trim();
+  const modelId = configuredModel || resolveModel(tier, routing);
+  if (!modelId) {
+    throw new Error(`Model untuk cognitive role ${role} belum dikonfigurasi.`);
+  }
+  return Object.freeze({ role, tier, modelId });
 }

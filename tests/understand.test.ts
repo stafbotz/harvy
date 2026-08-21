@@ -380,6 +380,64 @@ describe("pembacaan balasan model", () => {
     );
   });
 
+  it("membaca assessment routing tertutup tanpa memberi authority model", () => {
+    const understanding = parseUnderstanding(JSON.stringify({
+      intent: "request",
+      riskHint: { level: "none", category: null, confidence: 1 },
+      needsStepByStep: false,
+      routingAssessment: {
+        complexity: "deep",
+        ambiguity: "high",
+        planningRequired: true,
+        emotionalNuance: "medium",
+        executionSize: "heavy",
+        factualStakes: "high",
+        transformationMechanical: false,
+        toolNeed: "execution",
+        confidence: 0.87,
+      },
+    }));
+
+    assert.deepEqual(understanding?.routingAssessment, {
+      complexity: "deep",
+      ambiguity: "high",
+      planningRequired: true,
+      emotionalNuance: "medium",
+      executionSize: "heavy",
+      factualStakes: "high",
+      transformationMechanical: false,
+      toolNeed: "execution",
+      confidence: 0.87,
+    });
+  });
+
+  it("mengabaikan assessment asing atau berlebih secara fail-closed", () => {
+    const base = {
+      complexity: "normal",
+      ambiguity: "low",
+      planningRequired: false,
+      emotionalNuance: "low",
+      executionSize: "small",
+      factualStakes: "low",
+      transformationMechanical: false,
+      toolNeed: "none",
+      confidence: 0.9,
+    };
+    for (const routingAssessment of [
+      { ...base, complexity: "superintelligence" },
+      { ...base, provider: "pilih-model-mahal" },
+      { ...base, confidence: 2 },
+    ]) {
+      const understanding = parseUnderstanding(JSON.stringify({
+        intent: "question",
+        riskHint: { level: "none", category: null, confidence: 1 },
+        routingAssessment,
+      }));
+      assert.equal(understanding?.intent, "question");
+      assert.equal(understanding?.routingAssessment, null);
+    }
+  });
+
   it("menyaring tindakan adaptif asing, duplikat, dan lebih dari tiga", () => {
     const understanding = parseUnderstanding(
       JSON.stringify({

@@ -178,6 +178,32 @@ tingkatan kecuali yang diberi model sendiri lewat `AI_MODEL_TESTING_CHEAP`,
 kosong, routing tetap dihitung tetapi tidak dapat diamati — jangan mengklaim
 routing sudah terbukti setelah menguji dalam keadaan itu.
 
+### Binding cognitive role
+
+Tier `cheap|efficient|ambitious` tetap menjadi kelas accounting, harga, budget,
+dan fallback kompatibilitas. Pekerjaan kognitif dipilih terpisah melalui role
+`mechanical`, `everyday_conversation`, `orchestrator`, `strong_worker`,
+`heavy_executor`, `verifier`, atau `challenger`. `AI_MODEL_ROLE_BINDINGS`
+adalah object JSON tertutup yang dapat mengikat sebagian role ke tier dan exact
+model pada provider mode aktif:
+
+```json
+{
+  "everyday_conversation": { "tier": "efficient" },
+  "orchestrator": {
+    "tier": "ambitious",
+    "modelId": "vendor/model-id-exact"
+  }
+}
+```
+
+Role asing, tier di luar tiga kelas itu, field tambahan, atau ID model rusak
+menggagalkan startup. Exact role model otomatis masuk inventaris Console dan
+memakai harga tier binding. Ia tetap memperoleh profile `compatibility` sampai
+pasangan exact tersebut juga dideklarasikan melalui `AI_MODEL_PROFILES` atau
+memiliki bukti code-owned. Binding role tidak mengaktifkan specialist capability
+atau membuktikan provider behavior dengan sendirinya.
+
 ### Profile capability model
 
 `AI_MODEL_PROFILES` adalah array JSON opsional untuk capability yang telah
@@ -191,7 +217,7 @@ lain, dan pasangan yang juga menjadi fallback aktif tetap compatibility. Base
 URL atau substring nama model tidak pernah dipakai untuk menebak capability.
 
 Setiap entry wajib mempunyai schema penuh berikut; ID harus sudah berada di
-salah satu slot model environment (aktif maupun tidak aktif):
+salah satu slot model environment atau exact role binding:
 
 ```json
 [

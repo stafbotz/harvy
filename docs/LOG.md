@@ -38,6 +38,63 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-21 — Long-term memory dan evidence-backed learning
+
+Scope: history/memory core, SQLite cold storage, embedding index, learning
+worker, query/context integration, data control, lifecycle, tes, dan ADR-042.
+
+Changed: episode kini masuk cold FTS5 archive sebelum hot cap 32 memangkasnya;
+archive bertahan restart dan tidak dimuat pada fast path/startup. User model,
+versioned procedure, error lesson, typed evidence, candidate, serta durable
+learning outbox ditambahkan dengan idempotency, crash recovery, deterministic
+promotion/health, dan generation fence. Document embedding dicache berdasarkan
+content hash+exact model identity. Query plan/context compiler memilih source
+baru secara selektif dalam satu budget. Forget/delete/export v4 mencakup cold,
+learned, event, dan derived layer; current instruction tetap mengalahkan
+learned preference.
+
+Verified: tes terarah memory/runtime 189/189 PASS; `npm run check` PASS;
+`npm test` PASS, 1.461 test dalam 190 suite, 0 gagal; `npm run context:check`
+PASS; `git diff --check` PASS selain peringatan line-ending Windows.
+
+Not verified: provider embedding live, Telegram/WhatsApp live,
+multi-node worker, PostgreSQL/pgvector/object storage, ANN cold retrieval,
+learning group/project/connector/multimodal, LLM synthesis, dan skill promotion.
+
+Next: evaluasi precision/context pollution dan procedure reuse pada traffic
+consented sebelum menambah producer atau promotion ke reusable skill.
+
+## 2026-08-20 — Routing role dan bounded orchestration
+
+Scope: understanding/global routing, model role/config/profile, execution
+policy, Agent Runtime delegation, handoff/resource/discovery contract, tes, dan
+ADR-041.
+
+Changed: assessment semantic tertutup kini membedakan mechanical/normal/deep,
+nuansa, planning, stakes, size, serta tool need; panjang 280 karakter tinggal
+fallback legacy. Ordinary chat berbicara lewat everyday role dan deep chat lewat
+orkestrator langsung. Tier accounting tetap kompatibel sementara role dapat
+diikat ke exact model lewat config. Specialist one-hop memakai WorkBrief/
+AgentHandoff tanpa reasoning privat, authorization default-deny, context-free
+delegation, dan batas dua aksi; production tetap default-off. Execution effort
+dapat naik dari difficulty/stakes/uncertainty. Resource grant dan capability
+discovery ditambahkan sebagai primitive code-owned yang belum dirangkai ke
+RunBudget/planner aktif. `toughest`, selective safety, dan continuation tidak
+diubah. Entri LOG terlama dipindah utuh ke arsip 2026-08-09 sesuai batas ukuran.
+
+Verified: tes terarah 229/229 PASS; `npm run check` PASS; `npm test` PASS,
+1.448 test dalam 187 suite, 0 gagal; `npm run context:check` PASS;
+`git diff --check` PASS selain peringatan line-ending Windows.
+
+Not verified: provider/model atau Telegram/WhatsApp live, kualitas corpus
+routing nyata, latency/token/cost production, specialist production, adaptive
+reserve runtime, progressive schema retrieval, connection/OAuth, dan capability
+acquisition/sandbox pihak ketiga.
+
+Next: evaluasi assessment pada corpus tanpa menambah call ordinary; kemudian
+rangkai resource reserve dan specialist hanya bersama privacy/objective policy
+serta telemetry outcome content-free.
+
 ## 2026-08-20 — Riset agent dipromosikan dan dibersihkan
 
 Scope: `docs/research/`, navigasi dokumentasi, serta bukti implementasi agent,
@@ -342,84 +399,3 @@ Next: pasang dan conformance-test runner, daemon local-git, object store, serta
 GitHub App broker di trust domain terpisah; provision secret identitas service,
 verifier server-side, dan
 confirmation controller; lalu baru rangkai executor/surface dan capability.
-
-## 2026-08-10 — Retrieval memori dan graph temporal Phase E/F
-
-Scope: semantic/episodic memory, MemoryQueryPlan/ContextCompiler, embedding
-port, temporal graph, lifecycle storage/delete/export, adapter bot privat, tes,
-dan kontrak dokumentasi memory.
-
-Changed: FTS episode lama kini menjadi salah satu route Context Pack bounded,
-bersama semantic cosine retrieval opt-in dan graph temporal derived. Semantic
-memory membawa provenance, confidence, sensitivity, status, dan validity;
-consolidation menangani contradiction, correction, supersession, serta
-recurrence. Temporal/privacy/suppression/freshness filter berlaku pada recent
-summary maupun seluruh route retrieval. Forget/edit/full-delete melakukan
-cascade tanpa resurrection, export memuat state turunan, dan file repository
-memvalidasi namespace/provenance/projection secara fail-closed. ADR-030 mencatat
-slice FTS; ADR-031 dan ADR-032 mengikat consumer semantic/Context Pack dan graph.
-
-Verified: `npm run check` PASS; `npm test` PASS, 953 test dalam 120 suite,
-0 gagal; `npm run context:check` PASS dengan output 3.924 byte (estimasi 981
-token). Tes otomatis mencakup owner isolation, old-relevant ranking, vector
-threshold, current/as-of, correction/recurrence, graph depth/provenance,
-suppression, restart, CAS/race, export, dan deletion.
-
-Not verified: provider embedding nyata, Telegram/WhatsApp live, kualitas pada
-corpus percakapan nyata, multi-process/file lease, serta consumer group/project.
-
-Next: Phase berikutnya dapat memasang consumer project/group dan procedural
-memory; storage multi-instance memerlukan keputusan serta migrasi tersendiri.
-
-## 2026-08-09 — RunMailbox idempotent dan lossless
-
-Scope: active AgentRun service/repository, adapter Telegram, checkpoint input,
-tes regresi, dan kontrak Agent Runtime.
-
-Changed: `sourceMessageId` kini mengikat envelope mailbox per run. Replay
-identik lintas restart lokal menjadi no-op tanpa acknowledgment kedua;
-kind/content/question yang bertabrakan gagal tertutup. Mailbox dan ChangeSet
-ditulis berpasangan. Update pending dibawa utuh dan kronologis melalui beberapa
-input checkpoint; capacity envelope/ledger menghasilkan backpressure sebelum
-revision naik, sementara slot pembatalan tetap tersedia. Record lama dengan
-replay identik tetap dapat dibaca, tetapi collision ditolak.
-
-Verified: tes terarah service/repository/mailbox 35/35 PASS; flow Telegram
-duplicate ikut PASS dalam suite penuh. `npm run check` PASS; `npm test` PASS,
-866 test dalam 110 suite, 0 gagal; `npm run context:check` PASS;
-`git diff --check` PASS selain peringatan line-ending.
-
-Not verified: provider/model nyata, Telegram live, storage/lease multi-instance,
-dispatcher/outbox/reconciler eksternal, dan throughput ledger pada filesystem
-produksi.
-
-Next: lakukan smoke provider+Telegram yang masih tertunda atau lanjutkan
-RunStore/dispatcher produksi sesuai urutan deployment; jangan mengklaim
-exactly-once lintas instance.
-
-## 2026-08-09 — Context pressure dan recovery truncation Agent
-
-Scope: AI conversation/client, agent harness, context manifest, observation
-compaction, tes regresi, dan kontrak Agent Runtime.
-
-Changed: native Agent Runtime kini menjaga continuation lossless di bawah
-threshold profile exact, lalu membangun state provider-neutral dari kernel saat
-input plus output ceiling mendekati context window. Observation besar membawa
-head/tail, ukuran asli, dan artifact reference bila tersedia tanpa merusak JSON.
-Typed `finish_reason=length` boleh mendapat satu recovery tanpa delegasi,
-setelah freshness diperiksa ulang, dalam cumulative RunBudget yang sama;
-partial/incomplete lain tetap tidak dipublikasikan. ADR-029 mengikat keputusan
-dan batasnya.
-
-Verified: tes terarah 76/76 PASS sebelum freshness regression; suite akhir
-terkait recovery/pressure/harness 48/48 PASS; hardening profile/envelope 9/9
-dan audit independen 33/33 PASS. `npm run check` PASS; `npm test` PASS, 860
-test dalam 110 suite, 0 gagal; `npm run context:check` dan `git diff --check`
-PASS.
-
-Not verified: tokenizer/usage dan latency provider nyata, profile/model live,
-Telegram/WhatsApp live, artifact full retrieval, serta finalizer terminal.
-
-Next: perbaiki idempotency `sourceMessageId` dan agregasi update RunMailbox yang
-masih dapat memotong koreksi terbaru; setelah itu lanjutkan batas Phase C atau
-RunStore produksi sesuai urutan deployment.

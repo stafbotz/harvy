@@ -81,6 +81,20 @@ describe("capability catalog", () => {
     );
   });
 
+  it("menjaga specialist default-off dan hanya available lewat opt-in tepercaya", () => {
+    const scope = privateAgentScope("telegram", "1");
+    const defaultEntry = createHarvyCapabilityCatalog().snapshot(scope).entries
+      .find((entry) => entry.id === "agent.delegate.specialist");
+    const installedEntry = createHarvyCapabilityCatalog({
+      specialistDelegationInstalled: true,
+    }).snapshot(scope).entries
+      .find((entry) => entry.id === "agent.delegate.specialist");
+
+    assert.equal(defaultEntry?.available, false);
+    assert.equal(installedEntry?.available, true);
+    assert.match(installedEntry?.description ?? "", /WorkBrief/u);
+  });
+
   it("menyatakan gap kanal privat tanpa membuat katalog kedua", () => {
     const catalog = createHarvyCapabilityCatalog();
     const telegram = catalog.snapshot(privateAgentScope("telegram", "1"));

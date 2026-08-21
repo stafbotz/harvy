@@ -29,6 +29,8 @@ import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
 } from "../observability/operational-logger.js";
+import type { DurableEpisodeArchive } from "../domain/long-term-memory.js";
+import { privateMemoryNamespace } from "./memory-namespace.js";
 
 /**
  * Mengekstrak satu episode terstruktur dari giliran yang sudah terlalu tua.
@@ -69,6 +71,7 @@ export class HistoryService {
     private readonly now: () => Date = () => new Date(),
     private readonly logger: OperationalLogger =
       NOOP_OPERATIONAL_LOGGER.child("core.history"),
+    private readonly archive: DurableEpisodeArchive | null = null,
   ) {}
 
   async context(ownerId: string): Promise<ConversationContext> {
@@ -167,17 +170,26 @@ export class HistoryService {
   async forget(ownerId: string, blockWrites = false): Promise<boolean> {
     this.forgettingOwners.add(ownerId);
     if (blockWrites) this.blockedOwners.add(ownerId);
+    this.archive?.suspend(privateMemoryNamespace(ownerId));
     this.forgetGeneration.set(ownerId, this.generationOf(ownerId) + 1);
     this.retryAfter.delete(ownerId);
 
     try {
       const active = this.compactions.get(ownerId);
       if (active) await active;
-      return await this.exclusive(ownerId, () =>
-        this.repository.remove(ownerId),
-      );
+      return await this.exclusive(ownerId, async () => {
+        const [active, archived] = await Promise.all([
+          this.repository.remove(ownerId),
+          this.archive?.remove(privateMemoryNamespace(ownerId)) ??
+            Promise.resolve(false),
+        ]);
+        return active || archived;
+      });
     } finally {
       this.forgettingOwners.delete(ownerId);
+      if (!blockWrites) {
+        this.archive?.allow(privateMemoryNamespace(ownerId));
+      }
     }
   }
 
@@ -200,13 +212,19 @@ export class HistoryService {
       if (!this.canRead(ownerId) || generation !== this.generationOf(ownerId)) {
         return [];
       }
-      const history = await this.repository.load(ownerId);
+      const [history, archived] = await Promise.all([
+        this.repository.load(ownerId),
+        this.archive?.search(privateMemoryNamespace(ownerId), query, options) ??
+          Promise.resolve([]),
+      ]);
       if (
-        !history ||
         !this.canRead(ownerId) ||
         generation !== this.generationOf(ownerId)
       ) return [];
-      return searchConversationEpisodes(history.episodes, query, options);
+      const active = history
+        ? searchConversationEpisodes(history.episodes, query, options)
+        : [];
+      return mergeEpisodeMatches(active, archived, options.limit);
     });
   }
 
@@ -217,6 +235,7 @@ export class HistoryService {
    */
   suspend(ownerId: string): void {
     this.blockedOwners.add(ownerId);
+    this.archive?.suspend(privateMemoryNamespace(ownerId));
     this.forgetGeneration.set(ownerId, this.generationOf(ownerId) + 1);
     this.retryAfter.delete(ownerId);
   }
@@ -224,11 +243,22 @@ export class HistoryService {
   /** Membuka riwayat baru hanya setelah persetujuan baru diberikan. */
   allow(ownerId: string): void {
     this.blockedOwners.delete(ownerId);
+    this.archive?.allow(privateMemoryNamespace(ownerId));
   }
 
   /** Salinan lengkap untuk ekspor pengguna, bukan jendela prompt. */
   async snapshot(ownerId: string) {
     return this.exclusive(ownerId, () => this.repository.load(ownerId));
+  }
+
+  /** Cold episodes untuk export/data control; tidak pernah dipakai fast path. */
+  async archiveSnapshot(ownerId: string): Promise<ConversationEpisode[]> {
+    if (!this.canRead(ownerId)) return [];
+    const generation = this.generationOf(ownerId);
+    const episodes = await this.archive?.list(privateMemoryNamespace(ownerId)) ?? [];
+    return this.canRead(ownerId) && generation === this.generationOf(ownerId)
+      ? episodes
+      : [];
   }
 
   /** Menunggu seluruh compaction yang sudah dimulai sebelum shutdown selesai. */
@@ -362,6 +392,15 @@ export class HistoryService {
       const episodes = retainConversationEpisode(latest.episodes, episode);
       if (!episodes) return false;
 
+      // Archive is the durable source for all compacted episodes. It is written
+      // before the bounded hot state is allowed to evict anything; retries are
+      // idempotent by episodeId+sourceHash.
+      await this.archive?.archive(privateMemoryNamespace(ownerId), episode);
+      if (
+        this.generationOf(ownerId) !== generation ||
+        this.blockedOwners.has(ownerId)
+      ) return false;
+
       await this.repository.save({
         ...latest,
         episodes,
@@ -435,6 +474,28 @@ export class HistoryService {
       }
     }
   }
+}
+
+function mergeEpisodeMatches(
+  active: readonly HistoricalEpisodeMatch[],
+  archived: readonly HistoricalEpisodeMatch[],
+  limit: number | undefined,
+): HistoricalEpisodeMatch[] {
+  const byId = new Map<string, HistoricalEpisodeMatch>();
+  for (const match of [...active, ...archived]) {
+    const current = byId.get(match.episodeId);
+    if (!current || match.score > current.score) {
+      byId.set(match.episodeId, structuredClone(match));
+    }
+  }
+  const maximum = Number.isFinite(limit)
+    ? Math.max(0, Math.min(8, Math.floor(limit ?? 4)))
+    : 4;
+  return [...byId.values()].sort((left, right) =>
+    right.score - left.score ||
+    right.createdAt.localeCompare(left.createdAt) ||
+    left.episodeId.localeCompare(right.episodeId))
+    .slice(0, maximum);
 }
 
 const COMPACTION_RETRY_MS = 60_000;

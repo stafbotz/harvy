@@ -25,6 +25,7 @@ export const MEMORY_STORAGE_LIMIT = 128;
  */
 export class MemoryService {
   private readonly derivations = new Map<string, Promise<void>>();
+  private readonly learnings = new Map<string, Promise<void>>();
   private readonly blockedOwners = new Set<string>();
   private readonly sourceQueues = new Map<string, Promise<void>>();
   private readonly ownerGenerations = new Map<string, number>();
@@ -35,6 +36,7 @@ export class MemoryService {
     private readonly lifecycle: MemoryDerivationLifecycle | null = null,
     private readonly logger: OperationalLogger =
       NOOP_OPERATIONAL_LOGGER.child("core.memory"),
+    private readonly learning: MemoryLearningLifecycle | null = null,
   ) {}
 
   async remember(input: NewMemory): Promise<MemoryItem | null> {
@@ -78,6 +80,8 @@ export class MemoryService {
       }
       this.scheduleDerivation(input.ownerId, () =>
         this.lifecycle?.rememberSource(item, input) ?? Promise.resolve());
+      this.scheduleLearning(input.ownerId, () =>
+        this.learning?.rememberSource(item, input) ?? Promise.resolve());
       return item;
     });
   }
@@ -103,6 +107,7 @@ export class MemoryService {
       if (isExpired(item, now)) {
         await this.drainOwner(ownerId);
         await this.lifecycle?.forgetSource(item, "expired");
+        await this.learning?.forgetSource(item);
         await this.repository.remove(ownerId, item.id);
         continue;
       }
@@ -148,6 +153,7 @@ export class MemoryService {
 
       await this.drainOwner(ownerId);
       await this.lifecycle?.forgetSource(item, "forgotten");
+      await this.learning?.forgetSource(item);
       return (await this.repository.remove(ownerId, id)) ? item : null;
     });
   }
@@ -187,6 +193,18 @@ export class MemoryService {
           ),
           correction: true,
         });
+        this.scheduleLearning(ownerId, () =>
+          this.learning?.editSource(item, updated, {
+            ownerId,
+            kind: updated.kind,
+            content: updated.content,
+            ...deriveMemoryMetadata(
+              updated.kind,
+              updated.content,
+              updated.content,
+            ),
+            correction: true,
+          }) ?? Promise.resolve());
       } catch (error) {
         await this.repository.save(item);
         throw error;
@@ -201,6 +219,7 @@ export class MemoryService {
     try {
       return await this.exclusiveSource(ownerId, async () => {
         await this.drainOwner(ownerId);
+        await this.learning?.forgetPrivateOwner(ownerId);
         await this.lifecycle?.forgetPrivateOwner(ownerId);
         return this.repository.removeAll(ownerId);
       });
@@ -214,12 +233,14 @@ export class MemoryService {
     this.blockedOwners.add(ownerId);
     this.ownerGenerations.set(ownerId, this.generationOf(ownerId) + 1);
     this.lifecycle?.suspendPrivateOwner(ownerId);
+    this.learning?.suspendPrivateOwner(ownerId);
   }
 
   /** Hanya dipanggil sesudah persetujuan baru benar-benar tersimpan. */
   allow(ownerId: string): void {
     this.blockedOwners.delete(ownerId);
     this.lifecycle?.allowPrivateOwner(ownerId);
+    this.learning?.allowPrivateOwner(ownerId);
   }
 
   async drain(): Promise<void> {
@@ -228,6 +249,9 @@ export class MemoryService {
     await Promise.all([...this.derivations.values()].map((derivation) =>
       derivation.catch(() => undefined)));
     await this.lifecycle?.drain();
+    await Promise.all([...this.learnings.values()].map((learning) =>
+      learning.catch(() => undefined)));
+    await this.learning?.drain();
   }
 
   /** Menandai memori yang benar-benar ikut membantu sebuah balasan. */
@@ -279,6 +303,26 @@ export class MemoryService {
 
   private async drainOwner(ownerId: string): Promise<void> {
     await this.derivations.get(ownerId)?.catch(() => undefined);
+    await this.learnings.get(ownerId)?.catch(() => undefined);
+  }
+
+  private scheduleLearning(
+    ownerId: string,
+    operation: () => Promise<void>,
+  ): void {
+    if (!this.learning) return;
+    const previous = this.learnings.get(ownerId) ?? Promise.resolve();
+    const next = previous.then(operation, operation).catch((error: unknown) => {
+      this.logger.error(
+        "memory_learning_enqueue_failed",
+        "Learning turunan memory gagal dipersistenkan.",
+        error,
+      );
+    });
+    this.learnings.set(ownerId, next);
+    void next.finally(() => {
+      if (this.learnings.get(ownerId) === next) this.learnings.delete(ownerId);
+    });
   }
 
   private async exclusiveSource<T>(
@@ -321,6 +365,21 @@ export interface MemoryDerivationLifecycle {
     item: MemoryItem,
     reason?: "forgotten" | "edited" | "expired",
   ): Promise<void>;
+  forgetPrivateOwner(ownerId: string): Promise<void>;
+  suspendPrivateOwner(ownerId: string): void;
+  allowPrivateOwner(ownerId: string): void;
+  drain(): Promise<void>;
+}
+
+/** Secondary learned views; primary memory remains user-controlled authority. */
+export interface MemoryLearningLifecycle {
+  rememberSource(item: MemoryItem, input: NewMemory): Promise<void>;
+  editSource(
+    previous: MemoryItem,
+    updated: MemoryItem,
+    input?: NewMemory,
+  ): Promise<void>;
+  forgetSource(item: MemoryItem): Promise<void>;
   forgetPrivateOwner(ownerId: string): Promise<void>;
   suspendPrivateOwner(ownerId: string): void;
   allowPrivateOwner(ownerId: string): void;

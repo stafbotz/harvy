@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ConversationEpisode, EpisodeClaimField } from "../domain/history.js";
 import type { MemoryItem, NewMemory } from "../domain/memory.js";
+import type {
+  EmbeddingDocument,
+  PersistentEmbeddingIndex,
+} from "../domain/long-term-memory.js";
 import {
   type MemoryEntity,
   type MemoryGraphProjection,
@@ -22,6 +26,10 @@ import {
   validateMemoryNamespace,
 } from "./memory-namespace.js";
 import { deriveMemoryMetadata } from "./memory-candidate.js";
+import {
+  NOOP_OPERATIONAL_LOGGER,
+  type OperationalLogger,
+} from "../observability/operational-logger.js";
 
 const MAX_CONSOLIDATION_CANDIDATES = 32;
 const MAX_SEMANTIC_MEMORIES = 512;
@@ -118,6 +126,9 @@ export class MemoryKnowledgeService {
     private readonly embeddingProvider: TextEmbeddingProvider | null = null,
     private readonly now: () => Date = () => new Date(),
     private readonly makeId: () => string = randomUUID,
+    private readonly embeddingIndex: PersistentEmbeddingIndex | null = null,
+    private readonly logger: OperationalLogger =
+      NOOP_OPERATIONAL_LOGGER.child("core.memory-knowledge"),
   ) {}
 
   hasSemanticProvider(): boolean {
@@ -288,11 +299,20 @@ export class MemoryKnowledgeService {
     reason: "forgotten" | "edited" | "expired" = "forgotten",
   ): Promise<void> {
     const namespace = privateMemoryNamespace(item.ownerId);
+    const before = await this.repository.load(namespace);
+    const affected = before?.semanticMemories.filter((memory) =>
+      memory.sourceMemoryIds.includes(item.id)) ?? [];
+    const semanticSourceIds = affected.map((memory) => `semantic:${memory.id}`);
+    const episodeIds = unique(affected.flatMap((memory) => memory.sourceEpisodes));
     await this.mutate(namespace, (state) => {
       this.forgetSourceInState(state, item, reason, this.now().toISOString());
       state.suppressions = retainSuppressions(state.suppressions);
       projectTemporalGraph(state);
     }, { deletion: true });
+    await Promise.all([
+      this.embeddingIndex?.removeSources(namespace, semanticSourceIds),
+      this.embeddingIndex?.removeEpisodeSources(namespace, episodeIds),
+    ]);
   }
 
   async consolidate(
@@ -401,8 +421,28 @@ export class MemoryKnowledgeService {
     ];
     if (documents.length === 0) return [];
 
+    const cacheDocuments: EmbeddingDocument[] = documents.map((document) => ({
+      sourceId: document.id,
+      contentHash: memoryContentHash(document.text),
+      text: document.text,
+    }));
+    const cached = this.embeddingIndex
+      ? await this.embeddingIndex.load(
+          namespace,
+          this.embeddingProvider,
+          cacheDocuments,
+        )
+      : new Map<string, number[]>();
+    const missing = cacheDocuments.filter((document) => !cached.has(document.sourceId));
+    if (this.embeddingIndex) {
+      this.logger.debug(
+        missing.length === 0 ? "embedding_cache_hit" : "embedding_cache_miss",
+        "Persistent embedding cache diperiksa tanpa mencatat content.",
+        { hitCount: cached.size, missCount: missing.length },
+      );
+    }
     const vectors = await this.embeddingProvider.embed(
-      [cleanQuery, ...documents.map((document) => document.text)],
+      [cleanQuery, ...missing.map((document) => document.text)],
       options.signal,
     );
     const latest = await this.repository.load(namespace);
@@ -413,12 +453,41 @@ export class MemoryKnowledgeService {
     ) {
       return [];
     }
-    const normalized = validateEmbeddings(vectors, documents.length + 1);
+    const normalized = validateEmbeddings(vectors, missing.length + 1);
     const queryVector = normalized[0]!;
+    const missingVectors = normalized.slice(1);
+    if (this.embeddingIndex && missing.length > 0) {
+      await this.embeddingIndex.store(
+        namespace,
+        this.embeddingProvider,
+        missing,
+        missingVectors,
+      );
+      const afterStore = await this.repository.load(namespace);
+      if (
+        this.isBlocked(namespace) ||
+        generation !== this.generationOf(namespace) ||
+        (afterStore?.revision ?? null) !== (loaded?.revision ?? null)
+      ) {
+        await this.embeddingIndex.removeSources(
+          namespace,
+          missing.map((document) => document.sourceId),
+        );
+        return [];
+      }
+    }
+    const freshlyEmbedded = new Map(
+      missing.map((document, index) => [document.sourceId, missingVectors[index]!]),
+    );
+    const documentVectors = cacheDocuments.map((document) =>
+      cached.get(document.sourceId) ?? freshlyEmbedded.get(document.sourceId));
+    if (documentVectors.some((vector) => vector === undefined)) {
+      throw new Error("Index embedding tidak mengembalikan seluruh document.");
+    }
     return documents
       .map((document, index) => ({
         document,
-        score: cosine(queryVector, normalized[index + 1]!),
+        score: cosine(queryVector, documentVectors[index]!),
       }))
       .filter((match) => match.score >= MIN_SEMANTIC_SCORE)
       .sort((left, right) =>
@@ -659,6 +728,7 @@ export class MemoryKnowledgeService {
       });
       projectTemporalGraph(state);
     }, { deletion: true });
+    await this.embeddingIndex?.removeEpisodeSources(namespace, [...removed]);
   }
 
   suspend(namespaceInput: MemoryKnowledgeNamespace): void {
@@ -683,6 +753,7 @@ export class MemoryKnowledgeService {
     // membuat state suppression baru setelah full-delete mengosongkan file.
     this.removed.add(key);
     await this.exclusive(namespace, () => this.repository.remove(namespace));
+    await this.embeddingIndex?.removeScope(namespace);
   }
 
   suspendPrivateOwner(ownerId: string): void {

@@ -2,10 +2,9 @@
  * Riwayat percakapan: giliran mentah terbaru dan episode terstruktur dari
  * rentang yang sudah dipadatkan.
  *
- * Berbeda dari memori, isinya tidak dimaksudkan bertahan tanpa batas. Setiap
- * giliran mentah hanya diringkas satu kali; episode lama tidak dimasukkan lagi
- * ke peringkas sehingga koreksi dan provenance tidak mengalami drift karena
- * rangkuman berulang.
+ * Giliran mentah tetap bounded. Episode hasil compaction ditulis satu kali ke
+ * cold archive sebelum hot corpus boleh memangkasnya; episode lama tidak
+ * diringkas ulang sehingga koreksi dan provenance tidak mengalami drift.
  */
 export type TurnRole = "user" | "harvy";
 
@@ -25,10 +24,8 @@ export const EPISODE_CLAIM_MAX_CHARS = 280;
 export const EPISODE_CLAIMS_PER_FIELD_LIMIT = 4;
 export const EPISODE_TOTAL_CLAIMS_LIMIT = 24;
 /**
- * Batas episode padat yang tetap tersedia sebagai sumber pencarian lokal.
- * Ini bukan attention budget prompt; hanya sebagian terbaru yang dirender
- * otomatis. Pemisahan ini membuat episode lama dapat dicari tanpa menyuntikkan
- * seluruh riwayat pada setiap giliran.
+ * Batas episode padat di hot JSON store. Cold archive tidak memakai cap ini;
+ * ini juga bukan attention budget prompt dan hanya sebagian terbaru dirender.
  */
 export const HISTORY_EPISODE_RETENTION_LIMIT = 32;
 /** Episode terbaru yang boleh masuk context otomatis tanpa query retrieval. */

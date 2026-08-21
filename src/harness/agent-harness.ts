@@ -287,6 +287,13 @@ export interface WorkspaceScopeAuthority {
   ): boolean | Promise<boolean>;
 }
 
+export interface AgentRunOutcomeObserver {
+  observeAgentRun(
+    input: Pick<AgentRunInput, "scope" | "request">,
+    result: AgentRunResult,
+  ): Promise<void>;
+}
+
 type FreshnessState =
   | "current"
   | "stale"
@@ -302,6 +309,7 @@ export class AgentHarness {
   constructor(
     private readonly catalog: CapabilityCatalog,
     private readonly workspaceAuthority?: WorkspaceScopeAuthority,
+    private readonly outcomeObserver?: AgentRunOutcomeObserver,
   ) {}
 
   capabilities(scope: AgentScope): CapabilitySnapshot {
@@ -318,6 +326,9 @@ export class AgentHarness {
     if (state.runBudget) {
       result.checkpoint.runBudget = state.runBudget.checkpoint();
     }
+    // Only the small durable event enqueue is awaited. Candidate processing is
+    // owned by its background worker and cannot change this run's result.
+    await this.outcomeObserver?.observeAgentRun(input, result).catch(() => undefined);
     return result;
   }
 

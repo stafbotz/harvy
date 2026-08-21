@@ -1,6 +1,6 @@
 # Current Context
 
-Refreshed: 2026-08-20
+Refreshed: 2026-08-21
 Baseline: ee8f1ef
 Context-Version: 1
 
@@ -18,6 +18,11 @@ Context-Version: 1
 
 ## Recent material changes
 
+- Long-term memory kini memisahkan hot JSON dari cold SQLite archive FTS5.
+  User-model facts, versioned evidence-backed procedures, error lessons,
+  durable learning outbox, persistent embedding cache, selective retrieval,
+  generation-fenced forget, serta export v4 sudah dirangkai ke runtime.
+  Fast-path tidak mencari archive/vector/procedure dan context tetap satu budget.
 - Production coding composition kini menghubungkan private Telegram Workspace,
   ZIP/GitHub selection, iterative CodingRun, Run Anchor, validator/evidence,
   local Git commit, exact GitHub confirmation, startup recovery, serta shutdown
@@ -56,10 +61,12 @@ Context-Version: 1
   CAS lintas proses. Distributed authority lease, shared object store, outbox/
   dispatcher, dan reconciliation multi-instance belum ada; jangan klaim
   horizontal-safe.
-- Procedural memory belum ada dan sengaja ditunda sampai blocker live P0/P1
-  serta durability utama selesai. Gap privacy/safety lama tetap berlaku:
-  dual-model sensitive-memory misclassification dan FP/FN corpus model aktual
-  belum diukur live.
+- Long-term learning masih single-node SQLite/lexical cold search; producer
+  runtime awal baru primary memory dan observable Telegram private AgentRun.
+  Group/project/connector/multimodal learning, LLM synthesis, ANN/vector
+  ranking cold, dan skill promotion belum dirangkai. Gap privacy/safety lama
+  tetap berlaku: dual-model sensitive-memory misclassification dan FP/FN corpus
+  model aktual belum diukur live.
 
 ## Route to detail
 

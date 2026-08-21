@@ -319,11 +319,13 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
 - [ ] Research web baca-saja ditunda; implementasi vertical slice sebelumnya
   sudah dicabut dari runtime. Pengaktifan kembali memerlukan keputusan baru
   untuk scope, provider, egress, penyimpanan, dan acceptance end-to-end.
-- [x] Agent Runtime privat cheap-first untuk pertanyaan dan permintaan tenang:
+- [x] Agent Runtime privat role-aware untuk pertanyaan dan permintaan tenang:
   tool baca tugas/sesi/waktu/agenda Harvy, fast path jam deterministik, terminal
-  virtual sementara, serta root ambitious yang dapat mendelegasikan 2–3
-  subpekerjaan read-only kepada worker cheap/efficient secara paralel. Worker
-  tidak menerima tool/memori/delegasi. Planner memakai native function calling;
+  virtual sementara, everyday root untuk tool atomik, serta orchestrator root
+  untuk request deep. Orkestrator dapat mendelegasikan 2–3 subpekerjaan
+  read-only secara paralel; kontrak specialist one-hop juga tersedia default-off
+  dengan authorization code-owned dan batas graph dua aksi. Worker tidak
+  menerima tool/memori/delegasi. Planner memakai native function calling;
   definisi action berasal dari executor callable dan hasilnya tetap proposal
   bagi kernel, bukan izin eksekusi. Shell host, kalender eksternal, dan seluruh
   tool write tetap ditutup. Checkpoint klarifikasi dapat dilanjutkan
@@ -472,16 +474,20 @@ bukan paket yang dibayar pengguna**. Percakapan keselamatan memakai tingkatan
 `efficient` — keputusan pemilik produk 27 Juli 2026, menggantikan aturan lama
 yang selalu menaikkannya ke tingkatan tertinggi.
 
-| Tingkatan | Rencana model | Dipakai untuk |
-|---|---|---|
-| `cheap` | DeepSeek V4 Flash | Mengurai tugas, klasifikasi, balasan rutin, root agent/tool sederhana, worker murah |
-| `efficient` | GPT 5.6 Luna | Percakapan sehari-hari, keselamatan, langkah kecil, worker yang perlu bahasa lebih kuat |
-| `ambitious` | GPT 5.6 Terra | Tutoring bertahap, root orkestrator, sintesis dan perencanaan panjang |
+| Tier kompatibel | Dipakai untuk |
+|---|---|
+| `cheap` | accounting/fallback pekerjaan mekanis dan worker murah |
+| `efficient` | accounting/fallback percakapan sehari-hari dan strong worker |
+| `ambitious` | accounting/fallback orkestrasi, eksekusi berat, verifikasi, dan synthesis |
+
+Cognitive role tidak membentuk ladder IQ dan dapat diikat ke exact model melalui
+konfigurasi. Repository tidak mengklaim assignment provider/model tertentu
+aktif sampai profile serta deployment exact benar-benar diverifikasi.
 
 Produksi memakai OpenRouter sebagai gerbang tunggal agar tagihan tidak tersebar.
-Selama pengembangan, `AI_MODE=testing` mengarahkan seluruh tingkatan—termasuk
-root ambitious dan worker—ke satu model cepat (Gemini 3.5 Flash-Lite dari
-Google AI Studio) kecuali override tier diisi. Mode testing boleh
+Selama pengembangan, `AI_MODE=testing` mengarahkan seluruh tier/role fallback ke
+satu model Google AI Studio kecuali override tier atau exact role binding
+diisi. Mode testing boleh
 memasang satu provider OpenAI-compatible sebagai cadangan agar gangguan
 sementara primary tidak menghentikan seluruh percakapan. Cadangan tidak pernah
 aktif di production, tidak menggantikan batas keselamatan, dan dapat menerima
@@ -489,7 +495,8 @@ permintaan yang sama setelah primary gagal; persetujuan pengguna dan notice
 grup menjelaskan kemungkinan lebih dari satu penyedia. Menghentikan mode uji
 cukup mengubah `AI_MODE` menjadi `production`.
 
-Seluruh ID model berada di `.env`, tidak ditulis di kode. Nama dan harga model
+Seluruh ID model berada di `.env`, termasuk optional
+`AI_MODEL_ROLE_BINDINGS`; tidak ada ID model di business policy. Nama dan harga model
 berubah cepat, jadi **verifikasi ejaan persisnya di daftar model penyedia
 sebelum dinyalakan**. Harvy Console membaca seluruh slot model yang nonkosong
 pada startup dan hanya mengizinkan operator mengatur harga pasangan itu;

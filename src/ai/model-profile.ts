@@ -1,4 +1,8 @@
-import type { ModelTier } from "./model-policy.js";
+import type {
+  ModelTier,
+  ResolvedModelRoute,
+  RoleAwareRoutingConfig,
+} from "./model-policy.js";
 import { resolveModel } from "./model-policy.js";
 import type { ReasoningEffort } from "../domain/model-execution.js";
 
@@ -88,12 +92,8 @@ export class ModelProfileRegistry {
   }
 }
 
-export interface ProfiledRoutingConfig {
-  mode: "testing" | "production";
+export interface ProfiledRoutingConfig extends RoleAwareRoutingConfig {
   providerId?: string;
-  testingModel: string;
-  testingModels?: Partial<Record<ModelTier, string>>;
-  models: Record<ModelTier, string>;
   modelProfiles?: ModelProfileRegistry;
 }
 
@@ -106,14 +106,26 @@ export function resolveModelProfile(
   tier: ModelTier,
   routing: ProfiledRoutingConfig,
 ): ModelProfile | null {
+  return resolveModelProfileById(resolveModel(tier, routing), routing);
+}
+
+/** Resolve profile exact untuk route role-aware tanpa menebak dari tier. */
+export function resolveModelRouteProfile(
+  route: ResolvedModelRoute,
+  routing: ProfiledRoutingConfig,
+): ModelProfile | null {
+  return resolveModelProfileById(route.modelId, routing);
+}
+
+export function resolveModelProfileById(
+  modelId: string,
+  routing: ProfiledRoutingConfig,
+): ModelProfile | null {
   if (!routing.providerId && !routing.modelProfiles) return null;
   if (!routing.providerId || !routing.modelProfiles) {
     throw new Error("Provider dan registry model harus dikonfigurasi bersama.");
   }
-  return routing.modelProfiles.require(
-    routing.providerId,
-    resolveModel(tier, routing),
-  );
+  return routing.modelProfiles.require(routing.providerId, modelId);
 }
 
 function immutableProfile(candidate: ModelProfile): ModelProfile {

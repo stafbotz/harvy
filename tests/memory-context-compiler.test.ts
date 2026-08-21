@@ -24,6 +24,8 @@ import type {
   MemoryKnowledgeState,
   TextEmbeddingProvider,
 } from "../src/domain/memory-knowledge.js";
+import type { LongTermMemoryRetriever } from
+  "../src/domain/long-term-memory.js";
 
 const NOW = new Date("2026-08-09T10:00:00.000Z");
 
@@ -42,8 +44,13 @@ describe("memory query plan", () => {
     assert.equal("scope" in plan, false);
   });
 
-  it("melewati sapaan, identitas, dan waktu lokal", () => {
-    for (const text of ["halo", "kamu siapa?", "jam berapa sekarang?"]) {
+  it("melewati sapaan, aritmetika, identitas, dan waktu lokal", () => {
+    for (const text of [
+      "halo",
+      "2 + 2 berapa?",
+      "kamu siapa?",
+      "jam berapa sekarang?",
+    ]) {
       assert.equal(memoryPlanUsesRetrieval(planMemoryQuery(text)), false, text);
     }
   });
@@ -76,11 +83,116 @@ describe("memory query plan", () => {
       episodic: false,
       semantic: false,
       graph: false,
+      personalization: false,
+      procedural: false,
+      errorLessons: false,
     });
   });
 });
 
 describe("memory context compiler", () => {
+  it("fast path tidak memanggil archive, embedding, procedure, lesson, atau user model", async () => {
+    const calls = {
+      archive: 0,
+      userModel: 0,
+      procedures: 0,
+      lessons: 0,
+    };
+    const historyService = {
+      episodesForRetrieval: async () => [],
+      episodesForContext: async () => [],
+      search: async () => {
+        calls.archive += 1;
+        return [];
+      },
+    } as unknown as HistoryService;
+    const longTerm = {
+      async searchUserModel() {
+        calls.userModel += 1;
+        return [];
+      },
+      async searchProcedures() {
+        calls.procedures += 1;
+        return [];
+      },
+      async searchErrorLessons() {
+        calls.lessons += 1;
+        return [];
+      },
+    } satisfies LongTermMemoryRetriever;
+    const knowledge = new MemoryKnowledgeService(new KnowledgeStore());
+    const compiler = new MemoryContextCompiler(
+      historyService,
+      knowledge,
+      () => NOW,
+      undefined,
+      longTerm,
+    );
+
+    const compiled = await compiler.compilePrivate(
+      "student",
+      "halo",
+      EMPTY_CONTEXT,
+    );
+    assert.equal(memoryPlanUsesRetrieval(compiled.plan), false);
+    assert.deepEqual(calls, {
+      archive: 0,
+      userModel: 0,
+      procedures: 0,
+      lessons: 0,
+    });
+    assert.equal(compiled.manifest.semanticRequested, false);
+  });
+
+  it("menggunakan satu budget bersama untuk user model, procedure, dan error lesson", async () => {
+    const historyService = {
+      episodesForRetrieval: async () => [],
+      episodesForContext: async () => [],
+      search: async () => [],
+    } as unknown as HistoryService;
+    const evidence = (source: "user-model" | "procedure" | "error-lesson") =>
+      Array.from({ length: 12 }, (_, index) => ({
+        id: `${source}:${index}`,
+        sources: [source],
+        text: `${source} ${index} ${"x".repeat(480)}`,
+        score: 10 - index / 10,
+        validFrom: null,
+        validUntil: null,
+        status: "active" as const,
+        sensitivity: "normal" as const,
+        sourceEpisodeIds: [],
+        sourceSequences: [],
+        sourceMemoryIds: [],
+      }));
+    const longTerm: LongTermMemoryRetriever = {
+      async searchUserModel() { return evidence("user-model"); },
+      async searchProcedures() { return evidence("procedure"); },
+      async searchErrorLessons() { return evidence("error-lesson"); },
+    };
+    const compiler = new MemoryContextCompiler(
+      historyService,
+      new MemoryKnowledgeService(new KnowledgeStore()),
+      () => NOW,
+      undefined,
+      longTerm,
+    );
+
+    const compiled = await compiler.compilePrivate(
+      "student",
+      "Tolong review implementasi error deployment repository ini",
+      EMPTY_CONTEXT,
+    );
+    const selected = compiled.context.retrieved ?? [];
+    assert.ok(selected.length <= compiled.plan.limits.contextItems);
+    assert.ok(
+      selected.reduce((total, item) => total + item.text.length, 0) <=
+        compiled.plan.limits.contextCharacters,
+    );
+    assert.equal(compiled.manifest.personalizationRequested, true);
+    assert.equal(compiled.manifest.proceduralRequested, true);
+    assert.equal(compiled.manifest.errorLessonsRequested, true);
+  });
+
   it("tidak memuat seluruh episode ketika semantic provider tidak tersedia", async () => {
     let episodeLoads = 0;
     let contextEpisodeLoads = 0;

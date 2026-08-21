@@ -59,6 +59,8 @@ export interface HarvyCapabilityCatalogOptions {
   virtualTerminalInstalled?: boolean;
   /** Fan-out read-only berbatas ke worker model cheap/efficient. */
   parallelDelegationInstalled?: boolean;
+  /** Direct one-hop specialist memakai WorkBrief provider-neutral. */
+  specialistDelegationInstalled?: boolean;
   /** Project-bound repository readers and structured patch executor. */
   codingWorkspaceInstalled?: boolean;
   /** Separately isolated SandboxRunner; never inferred from VirtualTerminal. */
@@ -220,6 +222,12 @@ export function createHarvyCapabilityCatalog(
       return {
         ...definition,
         installed: configured.parallelDelegationInstalled === true,
+      };
+    }
+    if (definition.id === "agent.delegate.specialist") {
+      return {
+        ...definition,
+        installed: configured.specialistDelegationInstalled === true,
       };
     }
     if (CODING_WORKSPACE_IDS.has(definition.id)) {
@@ -466,6 +474,20 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     channels: ["telegram"],
     installed: false,
     unavailableReason: "Koordinator sub-agent paralel belum dipasang.",
+  },
+  {
+    id: "agent.delegate.specialist",
+    version: "1",
+    title: "Specialist satu-hop",
+    description:
+      "meminta satu strong worker, heavy executor, verifier, atau challenger secara langsung melalui WorkBrief terstruktur tanpa reasoning privat",
+    effect: "none",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram"],
+    installed: false,
+    unavailableReason: "Worker specialist dan binding role belum dipasang.",
   },
   {
     id: "workspace.tree",

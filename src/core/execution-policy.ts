@@ -6,8 +6,11 @@ import type {
 } from "../domain/model-execution.js";
 import type { ModelProfile } from "../ai/model-profile.js";
 import type {
+  CognitiveModelRole,
   ExecutionModelTier,
   ModelTier,
+  RoutingDegree,
+  WorkComplexity,
 } from "../ai/model-policy.js";
 import {
   MODEL_ESCALATION_FAILURE_CODES,
@@ -30,6 +33,11 @@ export type ExecutionBudgetClass = "work" | "final";
 
 export interface ExecutionPlan extends ModelExecutionMetadata {
   tier: ModelTier;
+  /** Cognitive job is separate from the stage role and accounting tier. */
+  cognitiveRole?: CognitiveModelRole;
+  difficulty?: WorkComplexity;
+  stakes?: RoutingDegree;
+  uncertainty?: RoutingDegree;
   /** Hanya hadir untuk slot eskalasi; accounting tetap memakai ambitious. */
   routeTier?: "toughest";
   workClass: ExecutionWorkClass;
@@ -55,6 +63,12 @@ export type ExecutionEscalationReason =
 export interface ExecutionPolicyInput {
   tier: ExecutionModelTier;
   role: ModelRole;
+  cognitiveRole?: CognitiveModelRole;
+  difficulty?: WorkComplexity;
+  stakes?: RoutingDegree;
+  uncertainty?: RoutingDegree;
+  /** Hanya hasil grant ResourceRequestPolicy code-owned, bukan raw model output. */
+  grantedReasoningEffort?: ReasoningEffort;
   workClass: ExecutionWorkClass;
   profile: ModelProfile | null;
   /** Mechanical call biasanya memasang ceiling sempit secara eksplisit. */
@@ -153,8 +167,19 @@ export class ExecutionPolicy {
     if (allowTools && input.profile && !input.profile.supports.tools) {
       throw new Error("Profile model tidak mendukung tool.");
     }
+    validateCognitiveRole(input.cognitiveRole, input.role);
+    validateAdaptiveSignals(input);
 
-    const requestedEffort = requestedEffortFor(input.role, input.tier);
+    const baselineEffort = requestedEffortFor(input.role, input.tier);
+    const adaptiveEffort = adaptiveRequestedEffort(baselineEffort, input);
+    const requestedEffort = input.grantedReasoningEffort ?? adaptiveEffort;
+    if (
+      input.grantedReasoningEffort &&
+      EFFORT_ORDER.indexOf(input.grantedReasoningEffort) <
+        EFFORT_ORDER.indexOf(adaptiveEffort)
+    ) {
+      throw new Error("Grant reasoning tidak boleh menurunkan execution envelope.");
+    }
     const effectiveEffort = input.profile
       ? supportedEffort(requestedEffort, input.profile)
       : null;
@@ -164,6 +189,10 @@ export class ExecutionPolicy {
       tier: input.tier === "toughest" ? "ambitious" : input.tier,
       ...(input.tier === "toughest" ? { routeTier: "toughest" as const } : {}),
       role: input.role,
+      ...(input.cognitiveRole ? { cognitiveRole: input.cognitiveRole } : {}),
+      ...(input.difficulty ? { difficulty: input.difficulty } : {}),
+      ...(input.stakes ? { stakes: input.stakes } : {}),
+      ...(input.uncertainty ? { uncertainty: input.uncertainty } : {}),
       workClass: input.workClass,
       budgetClass: budgetClassFor(input.role),
       requestedEffort,
@@ -256,6 +285,33 @@ function requestedEffortFor(
   }
 }
 
+function adaptiveRequestedEffort(
+  baseline: ReasoningEffort,
+  input: ExecutionPolicyInput,
+): ReasoningEffort {
+  let target = baseline;
+  const raiseTo = (candidate: ReasoningEffort): void => {
+    if (EFFORT_ORDER.indexOf(candidate) > EFFORT_ORDER.indexOf(target)) {
+      target = candidate;
+    }
+  };
+
+  if (
+    input.cognitiveRole === "orchestrator" &&
+    (input.difficulty === "deep" ||
+      (input.stakes === "high" && input.uncertainty === "high"))
+  ) raiseTo("high");
+  if (
+    input.cognitiveRole === "heavy_executor" && input.difficulty === "deep"
+  ) raiseTo("high");
+  if (input.cognitiveRole === "verifier") raiseTo("high");
+  if (
+    input.cognitiveRole === "challenger" &&
+    (input.stakes === "high" || input.uncertainty === "high")
+  ) raiseTo("high");
+  return target;
+}
+
 function verbosityFor(role: ModelRole): Verbosity {
   switch (role) {
     case "extractor":
@@ -298,6 +354,52 @@ function validatePositiveInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} execution plan tidak sah.`);
   }
+}
+
+function validateCognitiveRole(
+  cognitiveRole: CognitiveModelRole | undefined,
+  stageRole: ModelRole,
+): void {
+  if (!cognitiveRole) return;
+  const allowed: Readonly<Record<CognitiveModelRole, readonly ModelRole[]>> = {
+    mechanical: ["extractor", "classifier", "worker"],
+    everyday_conversation: [
+      "conversationalist",
+      "planner",
+      "worker",
+      "synthesizer",
+      "recovery",
+    ],
+    orchestrator: ["conversationalist", "planner", "synthesizer", "recovery"],
+    strong_worker: ["worker"],
+    heavy_executor: ["worker"],
+    verifier: ["critic"],
+    challenger: ["critic"],
+  };
+  if (!allowed[cognitiveRole].includes(stageRole)) {
+    throw new Error("Cognitive role tidak cocok dengan stage role execution.");
+  }
+}
+
+function validateAdaptiveSignals(input: ExecutionPolicyInput): void {
+  if (
+    input.difficulty !== undefined &&
+    input.difficulty !== "mechanical" && input.difficulty !== "normal" &&
+    input.difficulty !== "deep"
+  ) throw new Error("Difficulty execution plan tidak sah.");
+  for (const [label, value] of [
+    ["stakes", input.stakes],
+    ["uncertainty", input.uncertainty],
+  ] as const) {
+    if (
+      value !== undefined && value !== "low" && value !== "medium" &&
+      value !== "high"
+    ) throw new Error(`${label} execution plan tidak sah.`);
+  }
+  if (
+    input.grantedReasoningEffort !== undefined &&
+    !EFFORT_ORDER.includes(input.grantedReasoningEffort)
+  ) throw new Error("Grant reasoning execution plan tidak sah.");
 }
 
 function validatePrivacyDomain(value: string | undefined, label: string): void {

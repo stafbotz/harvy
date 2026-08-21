@@ -167,10 +167,18 @@ export interface MemoryKnowledgeRepository {
  */
 export interface TextEmbeddingProvider {
   readonly modelId: string;
+  /** Exact model/config revision; defaults to modelId for legacy adapters. */
+  readonly modelVersion?: string;
   embed(texts: readonly string[], signal?: AbortSignal): Promise<number[][]>;
 }
 
-export type RetrievedMemorySource = "episode" | "semantic" | "graph";
+export type RetrievedMemorySource =
+  | "episode"
+  | "semantic"
+  | "graph"
+  | "user-model"
+  | "procedure"
+  | "error-lesson";
 
 /** Paket evidence yang tetap berstruktur sampai renderer prompt. */
 export interface RetrievedMemoryEvidence {

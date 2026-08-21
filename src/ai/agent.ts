@@ -232,6 +232,7 @@ export function agentPlannerInput(
     "<agent-input-json>",
     jsonForPrompt({
       mode,
+      ...(mode === "orchestrate" ? { workBriefRef: input.runId } : {}),
       request: input.request,
       scope: input.scope,
       callableCapabilities: input.callableCapabilities,
@@ -259,8 +260,8 @@ export function agentPlannerInput(
     }),
     "</agent-input-json>",
     mode === "orchestrate"
-      ? "Kamu adalah root ambitious. Delegasikan hanya bila 2–3 subpekerjaan benar-benar independen; setelah observation, sintesis sendiri."
-      : "Kamu adalah root cheap. Selesaikan langsung atau pakai tool atomik; capability delegasi tidak tersedia.",
+      ? "Kamu adalah root orchestrator. Selesaikan sendiri bila cukup; delegasi paralel atau specialist hanya bila benar-benar menambah nilai, lalu sintesis sendiri."
+      : "Kamu adalah root everyday. Selesaikan langsung atau pakai tool atomik; capability delegasi tidak tersedia.",
     "Panggil tepat satu native function untuk keputusan langkah ini.",
   ].join("\n");
 }

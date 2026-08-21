@@ -8,6 +8,7 @@ import type {
   RetrievedMemoryEvidence,
   RetrievedMemorySource,
 } from "../domain/memory-knowledge.js";
+import type { LongTermMemoryRetriever } from "../domain/long-term-memory.js";
 import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
@@ -37,10 +38,16 @@ export interface MemoryRetrievalManifest {
   readonly episodicRequested: boolean;
   readonly semanticRequested: boolean;
   readonly graphRequested: boolean;
+  readonly personalizationRequested: boolean;
+  readonly proceduralRequested: boolean;
+  readonly errorLessonsRequested: boolean;
   readonly semanticProviderAvailable: boolean;
   readonly episodicResultCount: number;
   readonly semanticResultCount: number;
   readonly graphResultCount: number;
+  readonly personalizationResultCount: number;
+  readonly proceduralResultCount: number;
+  readonly errorLessonResultCount: number;
   readonly suppressedCount: number;
   readonly deduplicatedCount: number;
   readonly selectedCount: number;
@@ -72,6 +79,7 @@ export class MemoryContextCompiler {
     private readonly now: () => Date = () => new Date(),
     private readonly logger: OperationalLogger =
       NOOP_OPERATIONAL_LOGGER.child("core.memory-context"),
+    private readonly longTerm: LongTermMemoryRetriever | null = null,
   ) {}
 
   /** Normalisasi lokal selalu-on; tidak memanggil embedding/provider. */
@@ -121,6 +129,11 @@ export class MemoryContextCompiler {
       memories: normalizedBase.memories,
     };
     if (!memoryPlanUsesRetrieval(plan)) {
+      this.logger.debug(
+        "memory_retrieval_skipped",
+        "Query plan memilih fast path tanpa long-term retrieval.",
+        { reason: "no_relevant_route" },
+      );
       const selected = fitContextPack(
         existingRetrieved,
         plan.limits.contextItems,
@@ -141,6 +154,18 @@ export class MemoryContextCompiler {
         }),
       };
     }
+    this.logger.debug(
+      "memory_retrieval_planned",
+      "Query plan memilih route memory secara selektif.",
+      {
+        episodic: plan.routes.episodic,
+        semantic: plan.routes.semantic,
+        graph: plan.routes.graph,
+        personalization: plan.routes.personalization,
+        procedural: plan.routes.procedural,
+        errorLessons: plan.routes.errorLessons,
+      },
+    );
 
     let failedRouteCount = 0;
     let episodesPromise: Promise<Awaited<
@@ -197,11 +222,52 @@ export class MemoryContextCompiler {
           return [];
         })
       : Promise.resolve([] as RetrievedMemoryEvidence[]);
+    const personalizationPromise = plan.routes.personalization && this.longTerm
+      ? this.longTerm.searchUserModel(
+          namespace,
+          plan.query,
+          plan.limits.perRoute,
+        ).catch((error: unknown) => {
+          failedRouteCount += 1;
+          this.routeFailure("personalization", error);
+          return [];
+        })
+      : Promise.resolve([] as RetrievedMemoryEvidence[]);
+    const proceduralPromise = plan.routes.procedural && this.longTerm
+      ? this.longTerm.searchProcedures(namespace, plan.query, {
+          limit: plan.limits.perRoute,
+        }).catch((error: unknown) => {
+          failedRouteCount += 1;
+          this.routeFailure("procedural", error);
+          return [];
+        })
+      : Promise.resolve([] as RetrievedMemoryEvidence[]);
+    const errorLessonsPromise = plan.routes.errorLessons && this.longTerm
+      ? this.longTerm.searchErrorLessons(
+          namespace,
+          plan.query,
+          plan.limits.perRoute,
+        ).catch((error: unknown) => {
+          failedRouteCount += 1;
+          this.routeFailure("error-lessons", error);
+          return [];
+        })
+      : Promise.resolve([] as RetrievedMemoryEvidence[]);
 
-    const [episodicRaw, semanticRaw, graphRaw] = await Promise.all([
+    const [
+      episodicRaw,
+      semanticRaw,
+      graphRaw,
+      personalizationRaw,
+      proceduralRaw,
+      errorLessonsRaw,
+    ] = await Promise.all([
       episodicPromise,
       semanticPromise,
       graphPromise,
+      personalizationPromise,
+      proceduralPromise,
+      errorLessonsPromise,
     ]);
     if (options.signal?.aborted) {
       return {
@@ -218,6 +284,18 @@ export class MemoryContextCompiler {
       ...episodicRaw.map((evidence) => ({ route: "episodic" as const, evidence })),
       ...semanticRaw.map((evidence) => ({ route: "semantic" as const, evidence })),
       ...graphRaw.map((evidence) => ({ route: "graph" as const, evidence })),
+      ...personalizationRaw.map((evidence) => ({
+        route: "user-model" as const,
+        evidence,
+      })),
+      ...proceduralRaw.map((evidence) => ({
+        route: "procedure" as const,
+        evidence,
+      })),
+      ...errorLessonsRaw.map((evidence) => ({
+        route: "error-lesson" as const,
+        evidence,
+      })),
     ];
     const safeTagged = await this.knowledge.filterSuppressed(
       namespace,
@@ -253,8 +331,24 @@ export class MemoryContextCompiler {
     const graph = deduplicateEvidence(safeTagged
       .filter((item) => item.route === "graph")
       .map((item) => item.evidence));
+    const personalization = deduplicateEvidence(safeTagged
+      .filter((item) => item.route === "user-model")
+      .map((item) => item.evidence));
+    const procedural = deduplicateEvidence(safeTagged
+      .filter((item) => item.route === "procedure")
+      .map((item) => item.evidence));
+    const errorLessons = deduplicateEvidence(safeTagged
+      .filter((item) => item.route === "error-lesson")
+      .map((item) => item.evidence));
     const suppressedCount = tagged.length - safeTagged.length;
-    const ranked = reciprocalRankFusion({ episodic, semantic, graph });
+    const ranked = reciprocalRankFusion({
+      episodic,
+      semantic,
+      graph,
+      personalization,
+      procedural,
+      errorLessons,
+    });
     const existingContent = new Set(
       plan.temporal.mode === "current"
         ? contextualBase.memories.map((memory) => normalize(memory.content))
@@ -299,10 +393,16 @@ export class MemoryContextCompiler {
         episodicRequested: plan.routes.episodic,
         semanticRequested: plan.routes.semantic,
         graphRequested: plan.routes.graph,
+        personalizationRequested: plan.routes.personalization,
+        proceduralRequested: plan.routes.procedural,
+        errorLessonsRequested: plan.routes.errorLessons,
         semanticProviderAvailable: this.knowledge.hasSemanticProvider(),
         episodicResultCount: episodicRaw.length,
         semanticResultCount: semanticRaw.length,
         graphResultCount: graphRaw.length,
+        personalizationResultCount: personalizationRaw.length,
+        proceduralResultCount: proceduralRaw.length,
+        errorLessonResultCount: errorLessonsRaw.length,
         suppressedCount: finalSuppressedCount,
         deduplicatedCount,
         selectedCount: selected.length,
@@ -415,12 +515,23 @@ export function reciprocalRankFusion(routes: {
   episodic: readonly RetrievedMemoryEvidence[];
   semantic: readonly RetrievedMemoryEvidence[];
   graph: readonly RetrievedMemoryEvidence[];
+  personalization?: readonly RetrievedMemoryEvidence[];
+  procedural?: readonly RetrievedMemoryEvidence[];
+  errorLessons?: readonly RetrievedMemoryEvidence[];
 }): RetrievedMemoryEvidence[] {
   const fused = new Map<string, RetrievedMemoryEvidence>();
-  for (const [source, matches] of Object.entries(routes) as [
+  const routeEntries: Array<[
     RetrievedMemorySource,
     readonly RetrievedMemoryEvidence[],
-  ][]) {
+  ]> = [
+    ["episode", routes.episodic],
+    ["semantic", routes.semantic],
+    ["graph", routes.graph],
+    ["user-model", routes.personalization ?? []],
+    ["procedure", routes.procedural ?? []],
+    ["error-lesson", routes.errorLessons ?? []],
+  ];
+  for (const [source, matches] of routeEntries) {
     matches.forEach((match, index) => {
       const key = evidenceIdentity(match);
       const score = 1 / (RRF_K + index + 1);
@@ -546,10 +657,16 @@ function emptyManifest(
     episodicRequested: plan.routes.episodic,
     semanticRequested: plan.routes.semantic,
     graphRequested: plan.routes.graph,
+    personalizationRequested: plan.routes.personalization,
+    proceduralRequested: plan.routes.procedural,
+    errorLessonsRequested: plan.routes.errorLessons,
     semanticProviderAvailable,
     episodicResultCount: 0,
     semanticResultCount: 0,
     graphResultCount: 0,
+    personalizationResultCount: 0,
+    proceduralResultCount: 0,
+    errorLessonResultCount: 0,
     suppressedCount: 0,
     deduplicatedCount: 0,
     selectedCount: 0,
@@ -588,7 +705,14 @@ function deduplicateEvidence(
 function uniqueSources(
   values: readonly RetrievedMemorySource[],
 ): RetrievedMemorySource[] {
-  const order: RetrievedMemorySource[] = ["episode", "semantic", "graph"];
+  const order: RetrievedMemorySource[] = [
+    "episode",
+    "semantic",
+    "graph",
+    "user-model",
+    "procedure",
+    "error-lesson",
+  ];
   const selected = new Set(values);
   return order.filter((source) => selected.has(source));
 }

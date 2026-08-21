@@ -145,8 +145,8 @@ Gunakan ID model persis seperti yang tercantum di dashboard provider.
 
 | Mode | Konfigurasi utama | Keterangan |
 |---|---|---|
-| <code>testing</code> | <code>GOOGLE_AI_STUDIO_API_KEYS</code>, <code>AI_MODEL_TESTING</code> | Satu model gratis lewat Google AI Studio; fallback OpenAI-compatible opsional |
-| <code>production</code> | <code>OPENROUTER_API_KEY</code>, <code>AI_MODEL_CHEAP</code>, <code>AI_MODEL_EFFICIENT</code>, <code>AI_MODEL_AMBITIOUS</code> | Tiga slot model dipilih sesuai tingkat kesulitan pekerjaan |
+| <code>testing</code> | <code>GOOGLE_AI_STUDIO_API_KEYS</code>, <code>AI_MODEL_TESTING</code> | Satu model default lewat Google AI Studio; fallback OpenAI-compatible opsional |
+| <code>production</code> | <code>OPENROUTER_API_KEY</code>, <code>AI_MODEL_CHEAP</code>, <code>AI_MODEL_EFFICIENT</code>, <code>AI_MODEL_AMBITIOUS</code> | Tiga slot tier kompatibel; binding role ke exact model bersifat opsional |
 
 Daftar lengkap variabel, default, retensi, harga, dan lokasi berkas ada di
 [<code>.env.example</code>](.env.example). Jangan commit <code>.env</code>,

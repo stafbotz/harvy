@@ -107,16 +107,21 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   sengaja terpisah; disposition keselamatan tetap milik triase risiko.
   `HistoryService` menerima fungsi peringkas episode dari luar supaya `core/`
   tetap bebas jaringan. `episodic-compaction.ts` membuat provenance/hash,
-  retensi, dan rendering context v2 tanpa merangkum ulang episode lama;
-  `history-search.ts` membangun index leksikal ephemeral owner-scoped dari
-  klaim episode, mengembalikan provenance minimal, dan tidak menyentuh insight
+  hot retention, dan rendering context v2 tanpa merangkum ulang episode lama;
+  `HistoryService` menulis episode ke `DurableEpisodeArchive` sebelum hot
+  eviction. `history-search.ts` menjadi scorer leksikal bersama untuk candidate
+  hot dan cold, mengembalikan provenance minimal, dan tidak menyentuh insight
   keselamatan. `memory-candidate.ts` melakukan derivation faktual lokal yang
   sempit; `memory-knowledge-service.ts` mengonsolidasikan semantic memory,
   contradiction/supersession, suppression, vector retrieval, dan graph temporal
-  derived. `memory-query-plan.ts` memilih route lokal; `memory-context-compiler.ts`
-  membentuk Context Pack bounded melalui FTS/vector/graph fusion, temporal dan
-  privacy filter, serta manifest content-free. Compaction membatasi satu request
-  lalu mengejar backlog antar-slot.
+  derived. `long-term-memory-service.ts` mengelola archive, typed user model,
+  versioned procedure, normalized error lesson, outcome evidence, deterministic
+  promotion/health, dan durable event worker dengan generation fence.
+  `memory-query-plan.ts` memilih route lokal; `memory-context-compiler.ts`
+  membentuk Context Pack bounded melalui hot+cold FTS, vector, graph,
+  personalization, procedure, dan lesson fusion, temporal/privacy filter, serta
+  manifest content-free. Compaction membatasi satu request lalu mengejar backlog
+  antar-slot; learning processing tidak berada pada jalur sapaan biasa.
   Core grup berada di `group-memory-service.ts` dan `group-turn-service.ts`:
   binding akun, statistik sosial berjendela, konteks pendek beridentitas, FIFO
   per grup, notice, kontrol dua langkah, planner nimbrung, triase/review,
@@ -226,10 +231,12 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   Untuk klarifikasi, checkpoint memasangkan prompt `need_input` dengan jawaban
   pengguna sehingga jawaban pendek tetap mempunyai referen tanpa menyimpan
   call ID atau metadata provider.
-  `src/core/execution-policy.ts` memisahkan role, work class, requested/effective
-  reasoning effort, verbosity metadata, deadline, output ceiling, serta izin
-  tool/delegasi dari tier/model routing lama. Seluruh call production membawa
-  plan. Call general yang tidak memasang ceiling sempit memperoleh emergency
+  `src/core/execution-policy.ts` memisahkan stage role, cognitive role, work
+  class, requested/effective reasoning effort, verbosity metadata, deadline,
+  output ceiling, serta izin tool/delegasi dari tier accounting dan exact model
+  binding. Difficulty/stakes/uncertainty dapat menaikkan reasoning envelope
+  tanpa menaikkan visible verbosity. Seluruh call production membawa plan.
+  Call general yang tidak memasang ceiling sempit memperoleh emergency
   ceiling per role lalu di-clamp profile exact; mekanis tetap eksplisit kecil.
   Agent Runtime privat juga membawa satu `RunBudgetAccount` dari root ke setiap
   physical retry/fallback, executor, dan worker. Model call mereservasi
@@ -336,7 +343,13 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   bawah `MEMORY_FOLDER`. `file-memory-knowledge-repository.ts` menyimpan
   semantic/graph projection di `_knowledge` dengan namespace hash, revision
   CAS, validasi owner/provenance/projection, batas 8 MiB, serta delete final dan
-  `.tmp`; adapter ini juga hanya single-process. `file-memory-repository.ts`
+  `.tmp`; adapter ini juga hanya single-process.
+  `sqlite-long-term-memory-repository.ts` memakai WAL+synchronous FULL, schema
+  STRICT, FTS5, foreign-key cascade, idempotency key, dan scope generation untuk
+  cold archive, learning outbox/candidate, user model, procedure/error lesson,
+  serta derived embedding cache. Canonical JSON record dapat dipindah ke adapter
+  database lain; FTS/vector tetap projection yang dapat dibangun ulang.
+  `file-memory-repository.ts`
   hanya sumber impor sekali jalan. `file-group-repository.ts` menyimpan binding akun, memori sosial grup,
   member-local memory, dan shared room memory yang terpisah per scope; reset
   state bersama tersedia atomik. `file-workspace-repository.ts` menyimpan

@@ -25,6 +25,7 @@ const AI_ENV_KEYS = [
   "AI_MODEL_AMBITIOUS",
   "AI_MODEL_TOUGHEST",
   "AI_TOUGHEST_PRIVACY_DOMAIN",
+  "AI_MODEL_ROLE_BINDINGS",
   "AI_MODEL_PROFILES",
   "MEMORY_EMBEDDING_MODEL",
 ] as const;
@@ -153,6 +154,80 @@ describe("konfigurasi fallback AI testing", () => {
       );
       assert.equal(shared?.active, true);
     });
+  });
+
+  it("mengikat cognitive role ke exact model tanpa mengubah tier accounting", () => {
+    withAiEnvironment(validTestingEnvironment({
+      AI_MODEL_ROLE_BINDINGS: JSON.stringify({
+        everyday_conversation: { tier: "efficient" },
+        orchestrator: {
+          tier: "ambitious",
+          modelId: "model-orchestrator",
+        },
+      }),
+      AI_MODEL_PROFILES: JSON.stringify([
+        explicitProfile("google-ai-studio", "model-orchestrator"),
+      ]),
+    }), () => {
+      const config = loadAiConfig();
+      assert.deepEqual(config.roleBindings, {
+        everyday_conversation: { tier: "efficient" },
+        orchestrator: {
+          tier: "ambitious",
+          modelId: "model-orchestrator",
+        },
+      });
+      const configured = config.configuredModels.find(
+        (model) => model.modelId === "model-orchestrator",
+      );
+      assert.equal(configured?.providerId, "google-ai-studio");
+      assert.equal(configured?.active, true);
+      assert.deepEqual(configured?.sources, [{
+        environmentVariable: "AI_MODEL_ROLE_BINDINGS.orchestrator",
+        mode: "testing",
+        origin: "primary",
+        tiers: ["ambitious"],
+        active: true,
+      }]);
+      assert.equal(
+        config.modelProfiles.require(
+          "google-ai-studio",
+          "model-orchestrator",
+        ).verification,
+        "explicit",
+      );
+    });
+  });
+
+  it("menolak cognitive role binding yang terbuka atau tidak sah", () => {
+    const invalid = [
+      "bukan-json",
+      JSON.stringify([]),
+      JSON.stringify({ role_buatan_model: { tier: "ambitious" } }),
+      JSON.stringify({ orchestrator: { tier: "toughest" } }),
+      JSON.stringify({ orchestrator: { modelId: "model" } }),
+      JSON.stringify({
+        orchestrator: {
+          tier: "ambitious",
+          modelId: "model",
+          provider: "bebas",
+        },
+      }),
+      JSON.stringify({
+        orchestrator: { tier: "ambitious", modelId: "model<rusak" },
+      }),
+      "x".repeat(8_193),
+    ];
+    for (const value of invalid) {
+      withAiEnvironment(validTestingEnvironment({
+        AI_MODEL_ROLE_BINDINGS: value,
+      }), () => {
+        assert.throws(
+          () => loadAiConfig(),
+          hasCode("CONFIG_AI_MODEL_ROLE_BINDINGS_INVALID"),
+        );
+      });
+    }
   });
 
   it("menjaga toughest default-off dan hanya mengaktifkan profile exact", () => {

@@ -9,7 +9,14 @@ import {
   parseRiskHint,
   type RiskHint,
 } from "../core/safety-policy.js";
-import type { ConversationIntent } from "./model-policy.js";
+import type {
+  ConversationIntent,
+  ExecutionSize,
+  RoutingAssessment,
+  RoutingDegree,
+  RoutingToolNeed,
+  WorkComplexity,
+} from "./model-policy.js";
 
 /**
  * Membaca balasan model menjadi data yang dapat dipercaya.
@@ -67,6 +74,11 @@ export interface Understanding {
   /** @deprecated Kompatibilitas sementara untuk policy/model test lama. */
   safetySensitive: boolean;
   needsStepByStep: boolean;
+  /**
+   * Assessment advisory dari extractor murah. Optional hanya untuk fixture dan
+   * payload lama; parser runtime selalu mengisi object sah atau null.
+   */
+  routingAssessment?: RoutingAssessment | null;
   task: ExtractedTask | null;
   memories: ExtractedMemory[];
   suggestedActions?: AdaptiveActionId[];
@@ -115,6 +127,20 @@ const SESSION_SIGNALS: readonly SessionSignal[] = [
   "stuck",
   "done",
   "cancel",
+];
+const WORK_COMPLEXITIES: readonly WorkComplexity[] = [
+  "mechanical",
+  "normal",
+  "deep",
+];
+const ROUTING_DEGREES: readonly RoutingDegree[] = ["low", "medium", "high"];
+const EXECUTION_SIZES: readonly ExecutionSize[] = ["small", "medium", "heavy"];
+const ROUTING_TOOL_NEEDS: readonly RoutingToolNeed[] = [
+  "none",
+  "internal_state",
+  "calculation",
+  "execution",
+  "external",
 ];
 const INTENT_ALIASES: Readonly<Record<string, ConversationIntent>> = {
   reminder: "task",
@@ -195,6 +221,7 @@ export function parseUnderstanding(raw: string): Understanding | null {
     riskHint,
     safetySensitive: riskHint.level !== "none",
     needsStepByStep: payload["needsStepByStep"] === true,
+    routingAssessment: readRoutingAssessment(payload["routingAssessment"]),
     task,
     memories,
     suggestedActions,
@@ -202,6 +229,69 @@ export function parseUnderstanding(raw: string): Understanding | null {
     controlAction,
     sessionSignal: readSessionSignal(payload["sessionSignal"]),
   };
+}
+
+function readRoutingAssessment(value: unknown): RoutingAssessment | null {
+  const keys = [
+    "complexity",
+    "ambiguity",
+    "planningRequired",
+    "emotionalNuance",
+    "executionSize",
+    "factualStakes",
+    "transformationMechanical",
+    "toolNeed",
+    "confidence",
+  ] as const;
+  if (!isRecord(value) || !hasExactKeys(value, keys)) return null;
+
+  const complexity = readClosedLabel(value["complexity"], WORK_COMPLEXITIES);
+  const ambiguity = readClosedLabel(value["ambiguity"], ROUTING_DEGREES);
+  const emotionalNuance = readClosedLabel(
+    value["emotionalNuance"],
+    ROUTING_DEGREES,
+  );
+  const executionSize = readClosedLabel(value["executionSize"], EXECUTION_SIZES);
+  const factualStakes = readClosedLabel(value["factualStakes"], ROUTING_DEGREES);
+  const toolNeed = readClosedLabel(value["toolNeed"], ROUTING_TOOL_NEEDS);
+  const confidence = value["confidence"];
+  if (
+    !complexity || !ambiguity || !emotionalNuance || !executionSize ||
+    !factualStakes || !toolNeed ||
+    typeof value["planningRequired"] !== "boolean" ||
+    typeof value["transformationMechanical"] !== "boolean" ||
+    typeof confidence !== "number" || !Number.isFinite(confidence) ||
+    confidence < 0 || confidence > 1
+  ) return null;
+
+  return Object.freeze({
+    complexity,
+    ambiguity,
+    planningRequired: value["planningRequired"],
+    emotionalNuance,
+    executionSize,
+    factualStakes,
+    transformationMechanical: value["transformationMechanical"],
+    toolNeed,
+    confidence,
+  });
+}
+
+function readClosedLabel<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+): T | null {
+  const label = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return allowed.find((candidate) => candidate === label) ?? null;
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const present = Object.keys(value);
+  return present.length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key));
 }
 
 function readAdaptiveActions(value: unknown): AdaptiveActionId[] {

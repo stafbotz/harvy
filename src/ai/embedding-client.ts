@@ -21,12 +21,16 @@ export interface EmbeddingClientOptions {
 export class OpenAiCompatibleEmbeddingProvider
 implements TextEmbeddingProvider {
   readonly modelId: string;
+  readonly modelVersion: string;
   private readonly endpoint: string;
   private readonly timeoutMs: number;
   private readonly fetcher: typeof fetch;
 
   constructor(private readonly options: EmbeddingClientOptions) {
     this.modelId = boundedModel(options.model);
+    // Exact configured model ID is the cache compatibility boundary until a
+    // provider exposes a stronger immutable revision identifier.
+    this.modelVersion = this.modelId;
     this.endpoint = embeddingEndpoint(options.baseUrl);
     this.timeoutMs = Math.max(1_000, Math.min(60_000, options.timeoutMs ?? 15_000));
     this.fetcher = options.fetcher ?? fetch;

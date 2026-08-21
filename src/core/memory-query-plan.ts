@@ -12,6 +12,9 @@ export interface MemoryQueryPlan {
     episodic: boolean;
     semantic: boolean;
     graph: boolean;
+    personalization: boolean;
+    procedural: boolean;
+    errorLessons: boolean;
   };
   temporal: {
     mode: MemoryTemporalMode;
@@ -50,6 +53,12 @@ export function planMemoryQuery(
   const relational = RELATION_PATTERNS.some((pattern) => pattern.test(normalized));
   const memorySeeking = MEMORY_SEEKING_PATTERNS.some((pattern) =>
     pattern.test(normalized));
+  const proceduralSeeking = PROCEDURAL_PATTERNS.some((pattern) =>
+    pattern.test(normalized));
+  const failureSeeking = FAILURE_PATTERNS.some((pattern) =>
+    pattern.test(normalized));
+  const personalizationSeeking = memorySeeking ||
+    PERSONALIZATION_TASK_PATTERNS.some((pattern) => pattern.test(normalized));
   const asOf = parseExplicitDate(normalized, options.now ?? new Date());
   const historical = asOf !== null ||
     PAST_PATTERNS.some((pattern) => pattern.test(normalized));
@@ -58,7 +67,11 @@ export function planMemoryQuery(
   const semantic = allowed &&
     (recall || temporal || relational || memorySeeking);
   const graph = allowed && (relational || temporal);
-  const usesRetrieval = episodic || semantic || graph;
+  const personalization = allowed && personalizationSeeking;
+  const procedural = allowed && (proceduralSeeking || failureSeeking);
+  const errorLessons = allowed && failureSeeking;
+  const usesRetrieval = episodic || semantic || graph || personalization ||
+    procedural || errorLessons;
 
   return Object.freeze({
     version: 1,
@@ -73,6 +86,9 @@ export function planMemoryQuery(
       episodic,
       semantic,
       graph,
+      personalization,
+      procedural,
+      errorLessons,
     }),
     temporal: Object.freeze({
       mode: historical ? "historical" : "current",
@@ -88,7 +104,9 @@ export function planMemoryQuery(
 }
 
 export function memoryPlanUsesRetrieval(plan: MemoryQueryPlan): boolean {
-  return plan.routes.episodic || plan.routes.semantic || plan.routes.graph;
+  return plan.routes.episodic || plan.routes.semantic || plan.routes.graph ||
+    plan.routes.personalization || plan.routes.procedural ||
+    plan.routes.errorLessons;
 }
 
 function boundedRawRequest(value: string): string {
@@ -149,6 +167,16 @@ const RELATION_PATTERNS = [
 const MEMORY_SEEKING_PATTERNS = [
   /\b(tentangku|profilku|preferensi|kesukaanku|favorit|kebiasaanku|biasanya)\b/u,
   /\b(menurut yang kamu tahu|yang kuceritakan|cocok buatku)\b/u,
+];
+const PROCEDURAL_PATTERNS = [
+  /\b(cara|langkah|workflow|prosedur|deploy|deployment|rilis|migrasi|setup|konfigurasi|debug|perbaiki|memperbaiki|implementasi|coding|repository|repo|git|github|test|build)\b/u,
+  /\b(bagaimana|gimana)\b.*\b(melakukan|menjalankan|menyelesaikan|memperbaiki)\b/u,
+];
+const FAILURE_PATTERNS = [
+  /\b(error|gagal|failure|failed|exception|timeout|crash|rusak|bermasalah|tidak jalan|nggak jalan)\b/u,
+];
+const PERSONALIZATION_TASK_PATTERNS = [
+  /\b(review|coding|implementasi|desain|arsitektur|rencana teknis)\b/u,
 ];
 const STOP_WORDS = new Set([
   "aku",

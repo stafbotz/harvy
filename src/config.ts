@@ -4,7 +4,12 @@ import type {
   AiFallbackOptions,
 } from "./ai/client.js";
 import { ApiKeyPool } from "./ai/key-pool.js";
-import type { ModelTier } from "./ai/model-policy.js";
+import {
+  COGNITIVE_MODEL_ROLES,
+  type CognitiveModelBinding,
+  type CognitiveModelRole,
+  type ModelTier,
+} from "./ai/model-policy.js";
 import {
   ModelProfileRegistry,
   type ModelProfile,
@@ -52,6 +57,8 @@ export interface AiConfig {
    */
   testingModels: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
+  /** Binding role kognitif ke tier accounting dan optional exact model. */
+  roleBindings?: Partial<Record<CognitiveModelRole, CognitiveModelBinding>>;
   /** Escalation-only model; null keeps Phase M disabled. */
   toughest: {
     modelId: string;
@@ -90,6 +97,8 @@ export interface AppConfig {
   memoryFolder: string;
   /** Riwayat percakapan yang sudah dipadatkan. Berisi kata-kata pengguna. */
   historyFile: string;
+  /** Cold archive, learned procedures, outbox, dan derived embedding index. */
+  longTermMemoryFile: string;
   /** Status kenalan dan persetujuan per pengguna. */
   profileFile: string;
   /** Satu sesi aktif dan check-in satu kali per pengguna. */
@@ -174,6 +183,9 @@ export function loadConfig(): RuntimeAppConfig {
     memoryFile: resolve(process.env.MEMORY_FILE ?? "./data/memories.json"),
     memoryFolder: resolve(process.env.MEMORY_FOLDER ?? "./data/memori"),
     historyFile: resolve(process.env.HISTORY_FILE ?? "./data/history.json"),
+    longTermMemoryFile: resolve(
+      process.env.LONG_TERM_MEMORY_FILE ?? "./data/long-term-memory.sqlite",
+    ),
     profileFile: resolve(process.env.PROFILE_FILE ?? "./data/profiles.json"),
     sessionFile: resolve(process.env.SESSION_FILE ?? "./data/sessions.json"),
     agentRunFile: resolve(
@@ -456,6 +468,7 @@ export function loadAiConfig(): AiConfig {
       ? { ambitious: process.env.AI_MODEL_TESTING_AMBITIOUS.trim() }
       : {}),
   };
+  const roleBindings = loadCognitiveModelBindings();
   const rollingTokenLimit = readNonNegativeNumber(
     "AI_ROLLING_24H_TOKEN_LIMIT",
     200_000,
@@ -489,6 +502,7 @@ export function loadAiConfig(): AiConfig {
       testingModel,
       testingModels,
       models,
+      roleBindings,
       activeFallback: fallback,
       testingToughestModel,
       productionToughestModel,
@@ -517,6 +531,7 @@ export function loadAiConfig(): AiConfig {
       testingModel,
       testingModels,
       models,
+      roleBindings,
       toughest,
       modelProfiles,
       configuredModels,
@@ -550,6 +565,7 @@ export function loadAiConfig(): AiConfig {
     testingModel,
     testingModels,
     models,
+    roleBindings,
     activeFallback: null,
     testingToughestModel,
     productionToughestModel,
@@ -575,6 +591,7 @@ export function loadAiConfig(): AiConfig {
     testingModel,
     testingModels,
     models,
+    roleBindings,
     toughest,
     modelProfiles,
     configuredModels,
@@ -582,6 +599,101 @@ export function loadAiConfig(): AiConfig {
     rollingTokenLimit,
     prices,
   };
+}
+
+const MAX_AI_MODEL_ROLE_BINDINGS_CHARACTERS = 8_192;
+const MODEL_TIERS = new Set<ModelTier>([
+  "cheap",
+  "efficient",
+  "ambitious",
+]);
+
+/**
+ * Role binding adalah konfigurasi operator, bukan output router/model. Schema
+ * sengaja tertutup agar typo tidak diam-diam memindahkan pekerjaan ke model
+ * yang salah.
+ */
+function loadCognitiveModelBindings(): Partial<
+  Record<CognitiveModelRole, CognitiveModelBinding>
+> {
+  const raw = process.env.AI_MODEL_ROLE_BINDINGS?.trim() ?? "";
+  if (!raw) return Object.freeze({});
+  if (raw.length > MAX_AI_MODEL_ROLE_BINDINGS_CHARACTERS) {
+    throw configurationError(
+      "CONFIG_AI_MODEL_ROLE_BINDINGS_INVALID",
+      "AI_MODEL_ROLE_BINDINGS terlalu besar.",
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw configurationError(
+      "CONFIG_AI_MODEL_ROLE_BINDINGS_INVALID",
+      "AI_MODEL_ROLE_BINDINGS harus berupa object JSON yang sah.",
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw configurationError(
+      "CONFIG_AI_MODEL_ROLE_BINDINGS_INVALID",
+      "AI_MODEL_ROLE_BINDINGS harus berupa object JSON.",
+    );
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const allowedRoles = new Set<string>(COGNITIVE_MODEL_ROLES);
+  if (Object.keys(record).some((role) => !allowedRoles.has(role))) {
+    throw configurationError(
+      "CONFIG_AI_MODEL_ROLE_BINDINGS_INVALID",
+      "AI_MODEL_ROLE_BINDINGS memuat role yang tidak dikenal.",
+    );
+  }
+
+  const bindings: Partial<
+    Record<CognitiveModelRole, CognitiveModelBinding>
+  > = {};
+  try {
+    for (const role of COGNITIVE_MODEL_ROLES) {
+      const value = record[role];
+      if (value === undefined) continue;
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Binding role harus berupa object.");
+      }
+      const binding = value as Record<string, unknown>;
+      const keys = Object.keys(binding);
+      if (
+        !Object.hasOwn(binding, "tier") ||
+        keys.some((key) => key !== "tier" && key !== "modelId")
+      ) {
+        throw new Error("Field binding role tidak sah.");
+      }
+      const tier = binding["tier"];
+      if (typeof tier !== "string" || !MODEL_TIERS.has(tier as ModelTier)) {
+        throw new Error("Tier binding role tidak sah.");
+      }
+      if (!Object.hasOwn(binding, "modelId")) {
+        bindings[role] = Object.freeze({ tier: tier as ModelTier });
+        continue;
+      }
+      if (typeof binding["modelId"] !== "string") {
+        throw new Error("Exact model binding role tidak sah.");
+      }
+      bindings[role] = Object.freeze({
+        tier: tier as ModelTier,
+        modelId: configuredModelId(
+          "AI_MODEL_ROLE_BINDINGS",
+          binding["modelId"],
+        ),
+      });
+    }
+  } catch {
+    throw configurationError(
+      "CONFIG_AI_MODEL_ROLE_BINDINGS_INVALID",
+      "AI_MODEL_ROLE_BINDINGS memuat binding yang tidak sah.",
+    );
+  }
+  return Object.freeze(bindings);
 }
 
 const MAX_AI_MODEL_PROFILES_CHARACTERS = 64_000;
@@ -849,6 +961,7 @@ function configuredModelCatalog(input: {
   testingModel: string;
   testingModels: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
+  roleBindings: Partial<Record<CognitiveModelRole, CognitiveModelBinding>>;
   activeFallback: AiFallbackOptions | null;
   testingToughestModel: string;
   productionToughestModel: string;
@@ -927,6 +1040,21 @@ function configuredModelCatalog(input: {
       origin: "primary",
       tiers: ["toughest"],
       active: input.mode === "production",
+    });
+  }
+
+  const roleProvider = input.mode === "testing"
+    ? "google-ai-studio"
+    : "openrouter";
+  for (const role of COGNITIVE_MODEL_ROLES) {
+    const binding = input.roleBindings[role];
+    if (!binding?.modelId) continue;
+    add(roleProvider, binding.modelId, {
+      environmentVariable: `AI_MODEL_ROLE_BINDINGS.${role}`,
+      mode: input.mode,
+      origin: "primary",
+      tiers: [binding.tier],
+      active: true,
     });
   }
 

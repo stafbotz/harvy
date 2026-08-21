@@ -77,6 +77,15 @@ mendelegasikan lagi. Safety tetap direct `efficient`, tutoring aktif tetap
 mengikuti policy sesi, dan research tetap route khusus ADR-015. Detail boundary
 tool dan paralelisme berada di ADR-017.
 
+**Amandemen 20 Agustus 2026 — disupersesi sebagian oleh ADR-041.** Batas 280
+karakter dan `needsStepByStep` kini hanya fallback untuk payload/checkpoint lama.
+Runtime baru memakai assessment semantik tertutup untuk memilih handler pertama,
+lalu memisahkan cognitive role dari tier accounting. `cheap|efficient|ambitious`
+tetap kompatibel untuk harga, usage, dan fallback model; detail role,
+orchestrator, handoff specialist, adaptive resource primitive, serta progressive
+capability discovery berada di ADR-041. Invariant `toughest` ADR-040 tidak
+berubah.
+
 ### Dua mode dan cadangan testing yang terbatas
 
 | Mode | Primary | Cadangan | Model dan kunci |

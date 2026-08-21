@@ -85,6 +85,95 @@ describe("ExecutionPolicy", () => {
     assert.equal(conciseSynthesis.verbosity, "low");
   });
 
+  it("menaikkan envelope orkestrator sulit tanpa mengubah verbosity", () => {
+    const plan = policy.decide({
+      tier: "ambitious",
+      role: "planner",
+      cognitiveRole: "orchestrator",
+      difficulty: "deep",
+      stakes: "high",
+      uncertainty: "high",
+      workClass: "agent",
+      profile: profile(),
+      deadlineMs: 45_000,
+      allowTools: true,
+      allowDelegation: true,
+    });
+
+    assert.equal(plan.requestedEffort, "high");
+    assert.equal(plan.effectiveEffort, "high");
+    assert.equal(plan.verbosity, "low");
+    assert.equal(plan.cognitiveRole, "orchestrator");
+    assert.equal(plan.difficulty, "deep");
+  });
+
+  it("memberi cognitive job berbeda pada verifier dan challenger", () => {
+    const verifier = policy.decide({
+      tier: "ambitious",
+      role: "critic",
+      cognitiveRole: "verifier",
+      difficulty: "deep",
+      stakes: "high",
+      uncertainty: "medium",
+      workClass: "delegated-worker",
+      profile: profile(),
+      deadlineMs: 30_000,
+    });
+    const challenger = policy.decide({
+      tier: "ambitious",
+      role: "critic",
+      cognitiveRole: "challenger",
+      difficulty: "deep",
+      stakes: "high",
+      uncertainty: "high",
+      workClass: "delegated-worker",
+      profile: profile(),
+      deadlineMs: 30_000,
+    });
+
+    assert.equal(verifier.requestedEffort, "high");
+    assert.equal(challenger.requestedEffort, "high");
+    assert.throws(
+      () => policy.decide({
+        tier: "ambitious",
+        role: "worker",
+        cognitiveRole: "verifier",
+        workClass: "delegated-worker",
+        profile: profile(),
+        deadlineMs: 30_000,
+      }),
+      /Cognitive role/u,
+    );
+  });
+
+  it("hanya menerima reasoning grant yang memperluas envelope", () => {
+    const granted = policy.decide({
+      tier: "ambitious",
+      role: "planner",
+      cognitiveRole: "orchestrator",
+      difficulty: "normal",
+      grantedReasoningEffort: "high",
+      workClass: "agent",
+      profile: profile(),
+      deadlineMs: 30_000,
+    });
+    assert.equal(granted.requestedEffort, "high");
+
+    assert.throws(
+      () => policy.decide({
+        tier: "ambitious",
+        role: "planner",
+        cognitiveRole: "orchestrator",
+        difficulty: "deep",
+        grantedReasoningEffort: "low",
+        workClass: "agent",
+        profile: profile(),
+        deadlineMs: 30_000,
+      }),
+      /tidak boleh menurunkan/u,
+    );
+  });
+
   it("tidak membaca prompt atau saran model sebagai authority", () => {
     const base = {
       tier: "cheap" as const,

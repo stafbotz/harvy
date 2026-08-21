@@ -55,6 +55,7 @@ import { InsightService } from "./core/insight-service.js";
 import { MemoryService } from "./core/memory-service.js";
 import { MemoryKnowledgeService } from "./core/memory-knowledge-service.js";
 import { MemoryContextCompiler } from "./core/memory-context-compiler.js";
+import { LongTermMemoryService } from "./core/long-term-memory-service.js";
 import { ProfileService } from "./core/profile-service.js";
 import { SessionService } from "./core/session-service.js";
 import { shutdownGracefully } from "./core/shutdown-service.js";
@@ -83,6 +84,7 @@ import { FileEntitlementLedgerRepository } from "./storage/file-entitlement-ledg
 import { MarkdownInsightRepository } from "./storage/markdown-insight-repository.js";
 import { MarkdownMemoryRepository } from "./storage/markdown-memory-repository.js";
 import { FileMemoryKnowledgeRepository } from "./storage/file-memory-knowledge-repository.js";
+import { SqliteLongTermMemoryRepository } from "./storage/sqlite-long-term-memory-repository.js";
 import { FileTaskRepository } from "./storage/file-task-repository.js";
 import { BaileysAccountManager } from "./whatsapp/baileys-account-manager.js";
 import { GroupMessageBatcher } from "./whatsapp/group-message-batcher.js";
@@ -198,6 +200,17 @@ const sessions = new SessionService(sessionRepository, sessionRepository);
 const agentRuns = new AgentRunService(
   new FileAgentRunRepository(config.agentRunFile),
 );
+const longTermRepository = new SqliteLongTermMemoryRepository(
+  config.longTermMemoryFile,
+);
+const longTermMemory = new LongTermMemoryService(
+  longTermRepository,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  logger.child("core.long-term-memory"),
+);
 const internalExecutors = createInternalAgentExecutors({
   tasks,
   profiles,
@@ -211,11 +224,15 @@ const agentExecutors = [
 ];
 // Satu registry tepercaya dipakai semua kanal. Capability hanya tersedia bila
 // executor dan dependency yang cocok benar-benar dipasang.
-const agentHarness = new AgentHarness(createHarvyCapabilityCatalog({
-  internalToolsInstalled: true,
-  virtualTerminalInstalled: true,
-  parallelDelegationInstalled: true,
-}));
+const agentHarness = new AgentHarness(
+  createHarvyCapabilityCatalog({
+    internalToolsInstalled: true,
+    virtualTerminalInstalled: true,
+    parallelDelegationInstalled: true,
+  }),
+  undefined,
+  longTermMemory,
+);
 const conversation = new Conversation(
   aiClient,
   config.ai,
@@ -241,12 +258,17 @@ const memoryKnowledge = new MemoryKnowledgeService(
     join(config.memoryFolder, "_knowledge"),
   ),
   memoryEmbedding,
+  undefined,
+  undefined,
+  longTermRepository,
+  logger.child("core.memory-knowledge"),
 );
 const memories = new MemoryService(
   new MarkdownMemoryRepository(config.memoryFolder, config.memoryFile),
   undefined,
   memoryKnowledge,
   logger.child("core.memory"),
+  longTermMemory,
 );
 
 // Peringkasnya memanggil model, tetapi `HistoryService` sendiri tidak tahu
@@ -257,12 +279,14 @@ const history = new HistoryService(
   (turns, ownerId) => conversation.summarizeEpisode(turns, ownerId),
   undefined,
   logger.child("core.history"),
+  longTermMemory,
 );
 const memoryContextCompiler = new MemoryContextCompiler(
   history,
   memoryKnowledge,
   undefined,
   logger.child("core.memory-context"),
+  longTermMemory,
 );
 
 // Catatan tersembunyi tinggal di folder yang sama dengan memori pengguna,
@@ -285,6 +309,7 @@ const dataControls = new DataControlService(
   undefined,
   agentRuns,
   memoryKnowledge,
+  longTermMemory,
 );
 
 // Penghapusan lintas beberapa berkas dilanjutkan sebelum bot menerima update.
@@ -292,6 +317,7 @@ const dataControls = new DataControlService(
 await telemetry.purgeExpired();
 await agentRuns.purgeExpired();
 await dataControls.resumePendingDeletions();
+await longTermMemory.recover();
 logger.info(
   "startup_data_recovery_completed",
   "Retensi telemetry dan pemulihan penghapusan tertunda selesai.",
@@ -944,6 +970,9 @@ const shutdown = (
           ? [groupAgentRunActivationRetry]
           : []),
       );
+      longTermMemory.stop();
+      await longTermMemory.drain();
+      longTermMemory.close();
       await consoleServer?.close();
       logger.info(
         "shutdown_completed",
@@ -1278,7 +1307,7 @@ await main().catch((error: unknown) => {
 
 function modelPriceBootstraps(config: AiConfig): PriceBootstrap[] {
   const tiers = ["cheap", "efficient", "ambitious"] as const;
-  return tiers.map((tier) => ({
+  const bootstraps = tiers.map((tier) => ({
     providerId: config.providerId,
     modelId:
       config.mode === "testing"
@@ -1287,6 +1316,20 @@ function modelPriceBootstraps(config: AiConfig): PriceBootstrap[] {
     inputPerMillionUsd: String(config.prices[tier].inputPerMillionUsd),
     outputPerMillionUsd: String(config.prices[tier].outputPerMillionUsd),
   }));
+  for (const binding of Object.values(config.roleBindings ?? {})) {
+    if (!binding?.modelId) continue;
+    bootstraps.push({
+      providerId: config.providerId,
+      modelId: binding.modelId,
+      inputPerMillionUsd: String(
+        config.prices[binding.tier].inputPerMillionUsd,
+      ),
+      outputPerMillionUsd: String(
+        config.prices[binding.tier].outputPerMillionUsd,
+      ),
+    });
+  }
+  return bootstraps;
 }
 
 function runtimeEnvironment(

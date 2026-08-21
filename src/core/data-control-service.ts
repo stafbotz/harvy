@@ -18,9 +18,11 @@ import type { DurableAgentRunExport } from "../domain/agent-run.js";
 import type { AgentRunService } from "./agent-run-service.js";
 import type { MemoryKnowledgeState } from "../domain/memory-knowledge.js";
 import type { MemoryKnowledgeService } from "./memory-knowledge-service.js";
+import type { LongTermMemorySnapshot } from "../domain/long-term-memory.js";
+import type { LongTermMemoryService } from "./long-term-memory-service.js";
 
 export interface UserDataExport {
-  version: 3;
+  version: 4;
   exportedAt: string;
   ownerId: string;
   profile: UserProfile;
@@ -29,6 +31,10 @@ export interface UserDataExport {
   /** Index semantic/graph turunan beserta provenance dan suppression hashes. */
   derivedMemory: MemoryKnowledgeState | null;
   history: ConversationHistory | null;
+  /** Cold archive terpisah dari hot history; tidak otomatis masuk context. */
+  archivedHistory: import("../domain/history.js").ConversationEpisode[];
+  /** User model, procedures, lessons, candidates, dan metadata outbox. */
+  learnedMemory: LongTermMemorySnapshot | null;
   activeSession: ActiveSession | null;
   /** Record run terbaru yang masih diretensi; null bila tidak ada/expired. */
   activeAgentRun: DurableAgentRunExport | null;
@@ -60,6 +66,7 @@ export class DataControlService {
     private readonly now: () => Date = () => new Date(),
     private readonly agentRuns: AgentRunService | null = null,
     private readonly knowledge: MemoryKnowledgeService | null = null,
+    private readonly longTerm: LongTermMemoryService | null = null,
   ) {}
 
   async export(ownerId: string): Promise<UserDataExport> {
@@ -69,6 +76,8 @@ export class DataControlService {
       memories,
       derivedMemory,
       history,
+      archivedHistory,
+      learnedMemory,
       activeSession,
       activeAgentRun,
       aiUsageLast24Hours,
@@ -79,6 +88,8 @@ export class DataControlService {
       this.memories.list(ownerId),
       this.knowledge?.snapshotPrivateOwner(ownerId) ?? Promise.resolve(null),
       this.history.snapshot(ownerId),
+      this.history.archiveSnapshot(ownerId),
+      this.longTerm?.snapshotPrivateOwner(ownerId) ?? Promise.resolve(null),
       this.sessions.active(ownerId),
       this.agentRuns?.export("telegram", ownerId) ?? Promise.resolve(null),
       this.telemetry.summary(ownerId),
@@ -86,7 +97,7 @@ export class DataControlService {
     ]);
 
     return {
-      version: 3,
+      version: 4,
       exportedAt: this.now().toISOString(),
       ownerId,
       profile,
@@ -94,6 +105,8 @@ export class DataControlService {
       memories,
       derivedMemory,
       history,
+      archivedHistory,
+      learnedMemory,
       activeSession,
       activeAgentRun,
       aiUsageLast24Hours,
@@ -114,6 +127,7 @@ export class DataControlService {
     // menutup completion lokal yang sudah terlanjur berjalan.
     this.memories.suspend(ownerId);
     this.history.suspend(ownerId);
+    this.longTerm?.suspendPrivateOwner(ownerId);
 
     // Urutan ini idempoten. Profil/tombstone sengaja terakhir.
     // Telemetry diblokir lebih dulu karena ia juga menjadi gerbang tepat
@@ -124,6 +138,7 @@ export class DataControlService {
     await this.sessions.forget(ownerId);
     await this.tasks.removeAll(ownerId);
     await this.history.forget(ownerId, true);
+    await this.longTerm?.forgetPrivateOwner(ownerId);
     await this.insights.forget(ownerId);
     await this.memories.forgetAll(ownerId);
     await this.profiles.remove(ownerId);

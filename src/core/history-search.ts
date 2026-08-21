@@ -32,13 +32,11 @@ interface IndexedEpisode {
 }
 
 /**
- * Pencarian full-text leksikal atas episode yang sudah dibatasi penyimpanan.
+ * Pencarian full-text leksikal atas satu candidate set episode yang bounded.
  *
- * Index dibangun ulang dari record sumber setiap pemanggilan. Dengan maksimum
- * 32 episode per owner, bentuk ini cukup kecil dan sengaja menghindari cache
- * persisten kedua yang dapat tertinggal setelah consent ditarik atau history
- * dihapus. Hasil tetap proposal konteks yang tidak tepercaya, bukan fakta atau
- * authority.
+ * Hot store membangun index kecil ini setiap pemanggilan; cold adapter memakai
+ * FTS5 untuk memilih candidate lalu menggunakan scorer yang sama. Hasil tetap
+ * proposal konteks yang tidak tepercaya, bukan fakta atau authority.
  */
 export function searchConversationEpisodes(
   episodes: readonly ConversationEpisode[],

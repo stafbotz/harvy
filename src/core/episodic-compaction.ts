@@ -146,11 +146,9 @@ export function createConversationEpisode(
 }
 
 /**
- * Menambah episode secara monoton dan memangkas yang tertua.
- *
- * Riwayat percakapan bukan memori permanen. Batas ini menahan ukuran berkas;
- * fakta yang perlu bertahan lama tetap harus masuk fitur memori dengan kontrol
- * pengguna, bukan diselundupkan melalui episode tanpa batas.
+ * Menambah episode secara monoton dan memangkas hot corpus. Caller wajib
+ * menulis episode ke cold archive lebih dulu; fungsi ini hanya mengatur working
+ * set JSON yang murah, bukan retention lifetime pengguna.
  */
 export function retainConversationEpisode(
   episodes: readonly ConversationEpisode[],

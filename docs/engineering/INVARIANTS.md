@@ -172,11 +172,23 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   status, dan graph tidak mengubah catatan menjadi authority. Record tanpa
   provenance, owner yang berbeda dari namespace, atau graph yang tidak dapat
   diproyeksikan ulang dari source harus ditolak.
+- **Lifetime storage terpisah dari active context.** Compaction wajib menulis
+  episode ke cold archive owner-scoped sebelum hot corpus boleh memangkasnya.
+  Hot history tetap bounded, archive tidak dimuat saat startup, dan hanya hasil
+  retrieval kecil yang boleh masuk Context Pack. Keluar dari hot tier bukan
+  izin menghapus source; forget/retention eksplisit adalah lifecycle berbeda.
+- **Learning adalah event durable dan evidence-backed.** Candidate terpisah
+  dari canonical user model/procedure/error lesson. Procedure baru dimulai
+  sebagai candidate, promotion/degradation memakai outcome observable dan
+  threshold code-owned, version lama tidak ditimpa, inference tidak boleh
+  menjadi asserted fact, dan chain-of-thought/credential tidak boleh menjadi
+  evidence. Current user instruction selalu mengalahkan learned preference.
 - **Context memory selalu direncanakan, dibatasi, dan dianggap data tidak
   tepercaya.** `MemoryQueryPlan` lokal tidak membawa authority. Compiler hanya
-  memuat episode lama untuk recall/history dan graph untuk query temporal/
-  relasional, lalu menerapkan validity, suppression/privacy, owner, freshness,
-  serta satu budget primary+retrieved sebelum merender Context Pack. Fast path
+  memuat episode lama untuk recall/history, graph untuk query temporal/
+  relasional, dan user model/procedure/lesson hanya pada task match, lalu
+  menerapkan validity, suppression/privacy, owner, freshness, health, serta
+  satu budget primary+retrieved sebelum merender Context Pack. Fast path
   deterministik, immediate danger, dan urgent boundary tidak boleh menunggu
   provider retrieval. Manifest/log hanya boleh membawa counter/route.
 - **Tombstone dan interval menang atas semua route retrieval.** Forget satu
@@ -184,7 +196,10 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   episode yang sama tanpa menekan source aktif lain. Edit menghapus source lama
   dan menulis replacement dalam satu CAS mutation. Read yang menunggu embedding
   wajib memeriksa revision lagi; forget-all/full-delete memblokir primary,
-  history, knowledge, dan snapshot AgentRun sebelum cleanup. Suppression tidak
+  history, knowledge, archive, learning outbox, learned records, embedding, dan
+  snapshot AgentRun sebelum cleanup. Event worker wajib memeriksa generation
+  lagi dalam transaksi commit sehingga delete saat extraction berjalan menang.
+  Suppression tidak
   boleh dipangkas dengan cap yang membuat fakta lama hidup kembali; storage
   penuh harus gagal tertutup.
 
@@ -313,9 +328,10 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 
 ## Ekspor dan penghapusan
 
-- **Ekspor dan penghapusan penuh berbeda dari kontrol memori.** Ekspor memuat
-  data yang dapat dilihat pengguna—termasuk semantic/graph projection serta
-  provenance turunan—dan mengecualikan insight tersembunyi.
+- **Ekspor dan penghapusan penuh berbeda dari kontrol memori.** Ekspor v4 memuat
+  data yang dapat dilihat pengguna—termasuk hot+cold history, semantic/graph,
+  user model, procedure/error lesson, candidate, metadata event, serta
+  provenance turunan—dan mengecualikan insight tersembunyi maupun credential.
   Ekspor AgentRun hanya membawa request, status/revision, progress, observation,
   input, isi mailbox, ChangeSet/work unit, receipt yang sudah membuang effect
   ID, hasil, dan counter usage. Snapshot konteks, capability/scope hash, price
@@ -325,7 +341,8 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   store termasuk insight dan telemetry, lalu menghapus profil terakhir.
   Startup wajib meneruskan tombstone; pekerjaan latar memakai lock/generation
   agar data tidak hidup kembali. Penghapusan menunggu pemadatan riwayat aktif,
-  menyuspensi history, primary memory, dan knowledge sejak awal, memblokir
+  menyuspensi history, primary memory, knowledge, archive, dan learner sejak
+  awal, memblokir
   append/compact/retrieval baru sampai persetujuan berikutnya, dan memblokir
   request telemetry/model sebelum store lain dibersihkan. Hanya penerimaan
   persetujuan baru yang boleh membuka service yang disuspensi.
@@ -957,10 +974,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   dan shutdown mengurasnya. Penarikan persetujuan wajib memanggil `suspend`
   sebelum queued compaction dapat mulai memakai model.
   Seluruh giliran mentah yang belum diringkas ikut prompt dengan hard cap 24;
-  episode padat dibatasi 32 sebagai sumber retrieval lokal, tetapi context
-  otomatis tetap hanya memakai 12 episode terbaru dan hasil render dibatasi
-  3.000 karakter. `HistoryService.search` membangun index ephemeral hanya dari
-  episode owner yang sama, mempertahankan source sequence/range/hash, dan harus
+  episode padat dibatasi 32 di hot JSON, tetapi seluruh episode baru lebih dulu
+  masuk cold SQLite archive; context otomatis tetap hanya memakai 12 episode
+  terbaru dan hasil render dibatasi 3.000 karakter. `HistoryService.search`
+  menggabungkan scorer ephemeral hot dengan candidate FTS5 cold hanya dari
+  owner yang sama, mempertahankan source sequence/range/hash, dan harus
   memeriksa suspension/deletion lagi setelah storage load. Hasil hanya boleh
   masuk prompt melalui `MemoryQueryPlan` dan `MemoryContextCompiler`, setelah
   suppression, temporal validity, privacy/owner, freshness, dan budget filter.

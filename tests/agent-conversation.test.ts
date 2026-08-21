@@ -11,6 +11,7 @@ import {
 import { createModelAgentWorker } from "../src/ai/agent.js";
 import { Conversation, type RoutingConfig } from "../src/ai/conversation.js";
 import { ParallelDelegationExecutor } from "../src/agent/parallel-delegation.js";
+import { SpecialistDelegationExecutor } from "../src/agent/specialist-delegation.js";
 import {
   AgentHarness,
   type AgentCapabilityExecutor,
@@ -32,7 +33,7 @@ const PRODUCTION_ROUTING = {
 };
 
 describe("Conversation agent runtime", () => {
-  it("root sederhana tetap cheap saat memakai tool atomik", async () => {
+  it("root sederhana memakai everyday role saat memakai tool atomik", async () => {
     const requests: ChatRequest[] = [];
     const conversation = fixture(
       requests,
@@ -59,9 +60,10 @@ describe("Conversation agent runtime", () => {
     assert.equal(result.status, "completed");
     if (result.status === "completed") assert.match(result.reply, /12\.00/u);
     assert.deepEqual(requests.map((request) => request.model), [
-      "cheap-model",
-      "cheap-model",
+      "efficient-model",
+      "efficient-model",
     ]);
+    assert.equal(requests[0]?.execution?.cognitiveRole, "everyday_conversation");
     assert.equal(requests.every((request) => request.usage?.purpose === "agent"), true);
     assert.equal(requests.every((request) => request.json === undefined), true);
     assert.deepEqual(requests[0]?.toolChoice, {
@@ -326,7 +328,9 @@ describe("Conversation agent runtime", () => {
       "ambitious-model",
       "ambitious-model",
     ]);
-    assert.match(requests[0]?.messages[1]?.content ?? "", /root ambitious/u);
+    assert.equal(requests[0]?.execution?.cognitiveRole, "orchestrator");
+    assert.equal(requests[0]?.execution?.requestedEffort, "high");
+    assert.match(requests[0]?.messages[1]?.content ?? "", /root orchestrator/u);
     assert.match(requests[0]?.messages[0]?.content ?? "", /agent\.delegate\.parallel/u);
     assert.doesNotMatch(requests[1]?.messages[0]?.content ?? "", /agent\.delegate\.parallel/u);
     assert.doesNotMatch(
@@ -360,6 +364,141 @@ describe("Conversation agent runtime", () => {
       requests[1]?.messages.at(-1)?.content ?? "",
       /CANARY_(?:MEMORI|RIWAYAT|CATATAN)_RAHASIA/u,
     );
+  });
+
+  it("orkestrator dapat meminta challenger langsung tanpa pipeline model wajib", async () => {
+    const requests: ChatRequest[] = [];
+    const called: string[] = [];
+    const specialist = new SpecialistDelegationExecutor(
+      async (request) => {
+        called.push(request.role);
+        return specialistHandoff(
+          request.brief.originalRequestRef,
+          "Ada trade-off reversibilitas yang perlu dibahas.",
+        );
+      },
+      ["challenger"],
+      () => ({ decision: "allow" }),
+    );
+    const conversation = fixture(
+      requests,
+      [
+        {
+          kind: "action",
+          capabilityId: "agent.delegate.specialist",
+          capabilityVersion: "1",
+          input: {
+            role: "challenger",
+            brief: specialistBrief("run-challenger", "Tantang pilihan ini."),
+          },
+        },
+        { kind: "final", reply: "Draft context-free setelah challenger." },
+        { kind: "final", reply: "Ini pertimbanganku setelah melihat trade-off." },
+      ],
+      [specialist],
+    );
+
+    const result = await conversation.agent(
+      "bantu aku menimbang keputusan ini",
+      "orchestrate",
+      {
+        summary: "CANARY_MEMORI_TIDAK_BOLEH_DIDELEGASIKAN",
+        turns: [],
+        memories: [],
+      },
+      {
+        ownerId: "student",
+        channel: "telegram",
+        runId: "run-challenger",
+      },
+    );
+
+    assert.equal(result.status, "completed");
+    assert.deepEqual(called, ["challenger"]);
+    assert.equal(requests.length, 3);
+    assert.ok(requests[0]?.tools?.some(
+      (tool) => tool.function.name === "harvy_agent_delegate_specialist_v1",
+    ));
+    assert.match(
+      requests[0]?.messages.map((message) => message.content).join("\n") ?? "",
+      /"workBriefRef":"run-challenger"/u,
+    );
+    assert.ok(requests[1]?.tools?.some(
+      (tool) => tool.function.name === "harvy_agent_delegate_specialist_v1",
+    ));
+    assert.equal(requests[2]?.tools?.some(
+      (tool) => tool.function.name === "harvy_agent_delegate_specialist_v1",
+    ), false);
+    assert.doesNotMatch(
+      requests[0]?.messages.map((message) => message.content).join("\n") ?? "",
+      /CANARY_MEMORI_TIDAK_BOLEH_DIDELEGASIKAN/u,
+    );
+    assert.match(
+      requests[2]?.messages.at(-1)?.content ?? "",
+      /agent\.delegate\.specialist\.result/u,
+    );
+  });
+
+  it("membatasi graph pada dua delegasi dan tetap menyisakan sintesis final", async () => {
+    const requests: ChatRequest[] = [];
+    const called: string[] = [];
+    const specialist = new SpecialistDelegationExecutor(
+      async (request) => {
+        called.push(request.role);
+        return specialistHandoff(
+          request.brief.originalRequestRef,
+          `${request.role} selesai.`,
+        );
+      },
+      ["heavy_executor", "verifier"],
+      () => ({ decision: "allow" }),
+    );
+    const conversation = fixture(
+      requests,
+      [
+        {
+          kind: "action",
+          capabilityId: "agent.delegate.specialist",
+          capabilityVersion: "1",
+          input: {
+            role: "heavy_executor",
+            brief: specialistBrief("run-bounded", "Kerjakan analisis berat."),
+          },
+        },
+        {
+          kind: "action",
+          capabilityId: "agent.delegate.specialist",
+          capabilityVersion: "1",
+          input: {
+            role: "verifier",
+            brief: specialistBrief("run-bounded", "Verifikasi hasil secara independen."),
+          },
+        },
+        { kind: "final", reply: "Sintesis final berbasis dua handoff." },
+      ],
+      [specialist],
+    );
+
+    const result = await conversation.agent(
+      "selesaikan dan verifikasi pekerjaan sulit ini",
+      "orchestrate",
+      undefined,
+      {
+        ownerId: "student",
+        channel: "telegram",
+        runId: "run-bounded",
+      },
+    );
+
+    assert.equal(result.status, "completed");
+    assert.deepEqual(called, ["heavy_executor", "verifier"]);
+    assert.deepEqual(
+      requests.map((request) => request.execution?.role),
+      ["planner", "planner", "synthesizer"],
+    );
+    assert.equal(requests[2]?.tools?.some(
+      (tool) => tool.function.name === "harvy_agent_delegate_specialist_v1",
+    ), false);
   });
 
   it("mengulang final langsung orkestrator dengan konteks tetapi tanpa delegasi", async () => {
@@ -869,10 +1008,16 @@ describe("Conversation agent runtime", () => {
       undefined,
       new AgentHarness(createHarvyCapabilityCatalog({
         parallelDelegationInstalled: true,
+        specialistDelegationInstalled: true,
       })),
-      [executor("agent.delegate.parallel", {
-        kind: "agent.delegate.parallel.result",
-      })],
+      [
+        executor("agent.delegate.parallel", {
+          kind: "agent.delegate.parallel.result",
+        }),
+        executor("agent.delegate.specialist", {
+          kind: "agent.delegate.specialist.result",
+        }),
+      ],
     );
 
     const result = await conversation.agent(
@@ -902,9 +1047,20 @@ describe("Conversation agent runtime", () => {
         (tool) => tool.function.name === "harvy_agent_delegate_parallel_v1",
       ),
     );
+    assert.ok(
+      requests[0]?.tools?.some(
+        (tool) => tool.function.name === "harvy_agent_delegate_specialist_v1",
+      ),
+    );
     assert.equal(
       requests[1]?.tools?.some(
         (tool) => tool.function.name === "harvy_agent_delegate_parallel_v1",
+      ),
+      false,
+    );
+    assert.equal(
+      requests[1]?.tools?.some(
+        (tool) => tool.function.name === "harvy_agent_delegate_specialist_v1",
       ),
       false,
     );
@@ -1058,7 +1214,7 @@ describe("Conversation agent runtime", () => {
       ...PRODUCTION_ROUTING,
       providerId: "openrouter",
       modelProfiles: new ModelProfileRegistry([{
-        id: "cheap-model",
+        id: "efficient-model",
         provider: "openrouter",
         verification: "explicit",
         reasoning: {
@@ -1335,6 +1491,9 @@ function fixture(
       internalToolsInstalled: true,
       virtualTerminalInstalled: true,
       parallelDelegationInstalled: true,
+      specialistDelegationInstalled: executors.some(
+        (executor) => executor.capabilityId === "agent.delegate.specialist",
+      ),
     })),
     executors,
   );
@@ -1348,6 +1507,7 @@ const NATIVE_CAPABILITY_NAMES: Readonly<Record<string, string>> = {
   "calendar.agenda": "harvy_calendar_agenda_v1",
   "terminal.run": "harvy_terminal_run_v1",
   "agent.delegate.parallel": "harvy_agent_delegate_parallel_v1",
+  "agent.delegate.specialist": "harvy_agent_delegate_specialist_v1",
 };
 
 function nativeDecisionCall(
@@ -1406,4 +1566,37 @@ function testNativeTool(capabilityId: string) {
       additionalProperties: true,
     },
   };
+}
+
+function specialistBrief(originalRequestRef: string, goal: string) {
+  return {
+    version: 1,
+    goal,
+    originalRequestRef,
+    facts: [],
+    constraints: ["Jangan mengarang bukti."],
+    evidence: [],
+    assumptions: [],
+    plan: [],
+    openQuestions: [],
+    acceptanceCriteria: ["Laporkan ketidakpastian."],
+    requestedCapabilities: [],
+  } as const;
+}
+
+function specialistHandoff(workBriefRef: string, workProduct: string) {
+  return {
+    version: 1,
+    status: "completed",
+    workBriefRef,
+    facts: [],
+    evidence: [],
+    assumptions: [],
+    plan: [],
+    workProduct,
+    openQuestions: [],
+    confidence: 0.8,
+    provenance: [{ source: "brief", ref: workBriefRef }],
+    failureCodes: [],
+  } as const;
 }

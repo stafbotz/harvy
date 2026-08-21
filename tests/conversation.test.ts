@@ -261,6 +261,10 @@ describe("pemahaman pesan", () => {
     await conversation.understand("lanjutkan", context);
     const understandingPrompt = requests[0]?.messages.at(-1)?.content ?? "";
     assert.match(understandingPrompt, /Konteks lama yang ditemukan/u);
+    assert.match(
+      understandingPrompt,
+      /Instruksi eksplisit pengguna saat ini selalu mengalahkan preferensi lama/u,
+    );
     assert.match(understandingPrompt, /&lt;\/konteks&gt;/u);
     assert.match(understandingPrompt, /kedaluwarsa\/historis/u);
     assert.match(understandingPrompt, /sampai 2026-08-01/u);
@@ -379,6 +383,67 @@ describe("pemahaman pesan", () => {
 });
 
 describe("balasan percakapan", () => {
+  it("memakai everyday untuk normal dan orkestrator langsung untuk deep", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "jawaban"),
+      {
+        mode: "production",
+        testingModel: "",
+        models: {
+          cheap: "cheap-model",
+          efficient: "efficient-model",
+          ambitious: "ambitious-model",
+        },
+        roleBindings: {
+          everyday_conversation: {
+            tier: "efficient",
+            modelId: "everyday-voice",
+          },
+          orchestrator: {
+            tier: "ambitious",
+            modelId: "deep-voice",
+          },
+        },
+      },
+      "Asia/Jakarta",
+    );
+    const normal = understanding("question");
+    normal.routingAssessment = {
+      complexity: "normal",
+      ambiguity: "low",
+      planningRequired: false,
+      emotionalNuance: "low",
+      executionSize: "small",
+      factualStakes: "low",
+      transformationMechanical: false,
+      toolNeed: "none",
+      confidence: 0.95,
+    };
+    const deep = understanding("question");
+    deep.routingAssessment = {
+      ...normal.routingAssessment,
+      complexity: "deep",
+      ambiguity: "high",
+      factualStakes: "high",
+    };
+
+    await conversation.reply("apa bedanya?", normal);
+    await conversation.reply("aku menghadapi pilihan yang rumit", deep);
+    await conversation.sessionReply(tutorSession(), "lanjutkan latihan");
+
+    assert.deepEqual(requests.map((request) => request.model), [
+      "everyday-voice",
+      "deep-voice",
+      "deep-voice",
+    ]);
+    assert.equal(requests[0]?.execution?.cognitiveRole, "everyday_conversation");
+    assert.equal(requests[1]?.execution?.cognitiveRole, "orchestrator");
+    assert.equal(requests[1]?.execution?.requestedEffort, "high");
+    assert.equal(requests[2]?.execution?.cognitiveRole, "orchestrator");
+    assert.equal(requests[2]?.execution?.requestedEffort, "high");
+  });
+
   it("meneruskan capability snapshot runtime agar model sadar batas alatnya", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(

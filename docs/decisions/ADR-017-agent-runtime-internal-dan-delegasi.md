@@ -42,6 +42,11 @@ diklaim selesai dengan menyamarkan kekurangannya.
 
 ## Keputusan
 
+**Amandemen 20 Agustus 2026.** ADR-041 mempertahankan parallel delegation di
+bawah tetapi mengganti istilah root tier dengan cognitive role dan menambah
+specialist one-hop provider-neutral, authorization default-deny, context-free
+delegation, serta batas dua aksi graph. `toughest` tetap mengikuti ADR-040.
+
 1. **Jalur agent berada setelah pagar yang sudah ada.** Consent, triase
    keselamatan, kontrol data, mutasi tugas/memori/sesi, dan intent research
    tetap memakai route lama. Agent umum hanya menerima intent `question` atau

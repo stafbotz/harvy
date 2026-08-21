@@ -2,6 +2,9 @@ node_modules/
 dist/
 .env
 data/*.json
+# Durable memory SQLite state (including WAL/SHM sidecars) is private runtime
+# data, never source. Tests use isolated temp directories.
+data/*.sqlite*
 # Lock satu proses untuk repository lokal; dapat tertinggal setelah crash.
 *.runtime.lock
 # Memori dan catatan keselamatan per pengguna. Ini data pribadi, bukan cache.
