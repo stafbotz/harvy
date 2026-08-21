@@ -8,6 +8,8 @@ import {
   EconomyService,
   FundingUnavailableError,
 } from "../src/core/economy-service.js";
+import { UserUsageSummaryService } from "../src/core/user-usage-summary-service.js";
+import { renderUsageDashboard } from "../src/core/usage-dashboard-renderer.js";
 import { LocalPaymentGateway } from "../src/core/payment-gateway.js";
 import {
   EncryptedFileSecretStore,
@@ -201,6 +203,77 @@ describe("Harvy Compute economy authority", () => {
       1,
     );
     assert.equal((await economy.usage(first.ownerId)).usedComputeUnits, afterDelivery.usedComputeUnits);
+  });
+
+  it("menurunkan dashboard dari 100% setelah settlement aktual", async () => {
+    const setupState = setup();
+    const request = context({
+      ownerId: "owner-dashboard-settlement",
+      requestId: "dashboard-settlement",
+      turnId: "dashboard-settlement-turn",
+      inputTokenEstimate: 1,
+      maxTokens: 1,
+    });
+    const before = await setupState.economy.usage(request.ownerId);
+    assert.equal(before.usedComputeUnits, "0");
+
+    await setupState.economy.reserve(request);
+    await setupState.economy.completeRequest(request, {
+      inputTokens: 1,
+      outputTokens: 1,
+      totalTokens: 2,
+      estimated: false,
+    }, { succeeded: true });
+    await setupState.economy.settleTurn(request.ownerId, request.turnId);
+
+    const after = await setupState.economy.usage(request.ownerId);
+    assert.ok(BigInt(after.usedComputeUnits) > 0n);
+    assert.ok(
+      BigInt(after.remainingIncludedComputeUnits) <
+        BigInt(after.includedComputeUnits),
+    );
+    const summary = await new UserUsageSummaryService(
+      setupState.economy,
+      { allAttempts: async () => [] },
+    ).summary(request.ownerId);
+    const rendered = renderUsageDashboard(summary, "plain").text;
+    assert.ok(summary.allowance.remainingBasisPoints < 10_000);
+    assert.ok(summary.allowance.usedBasisPoints > 0);
+    assert.doesNotMatch(rendered, /████████████████████ 100%/u);
+    assert.match(rendered, /Terpakai: 0\.[0-9]+%/u);
+  });
+
+  it("menampilkan reservation aktif sebagai allowance yang sudah berkurang sementara", async () => {
+    const setupState = setup();
+    const request = context({
+      ownerId: "owner-dashboard-reservation",
+      requestId: "dashboard-reservation",
+      turnId: "dashboard-reservation-turn",
+      inputTokenEstimate: 1,
+      maxTokens: 1,
+    });
+    await setupState.economy.reserve(request);
+
+    const during = await setupState.economy.usage(request.ownerId);
+    assert.ok(BigInt(during.reservedComputeUnits) > 0n);
+    assert.ok(
+      BigInt(during.remainingIncludedComputeUnits) <
+        BigInt(during.includedComputeUnits),
+    );
+    const summary = await new UserUsageSummaryService(
+      setupState.economy,
+      { allAttempts: async () => [] },
+    ).summary(request.ownerId);
+    const rendered = renderUsageDashboard(summary, "plain").text;
+    assert.ok(summary.allowance.remainingBasisPoints < 10_000);
+    assert.doesNotMatch(rendered, /████████████████████ 100%/u);
+
+    await setupState.economy.completeRequest(request, {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      estimated: false,
+    }, { succeeded: false });
   });
 
   it("memberi settlement idempoten per reservation dalam satu delivery scope", async () => {

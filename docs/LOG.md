@@ -50,10 +50,11 @@ ceiling dipertahankan. Wallet, subscription, Commons, payment interface,
 encrypted BYOK store, operator view, dan `/penggunaan` owner-scoped tanpa model
 ditambahkan; token legacy tetap overlay tanpa rewrite historis. Dashboard
 memisahkan physical cost dari settlement, memakai snapshot cache historis, dan
-menolak disclosure grup.
+menolak disclosure grup. Persentase allowance dashboard kini memakai basis
+points `BigInt`; usage/reservation sekecil apa pun tidak lagi terlihat `100%`.
 
-Verified: targeted economy/dashboard/channel PASS (167/167); `npm run check`
-dan `npm run build` PASS; `npm test` PASS (1.515 test dalam 194 suite, 0
+Verified: targeted economy/dashboard/channel PASS (112/112); `npm run check`
+dan `npm run build` PASS; `npm test` PASS (1.520 test dalam 194 suite, 0
 gagal); `npm run context:check` PASS.
 
 Not verified: payment provider production, signed webhook/reconciliation live,

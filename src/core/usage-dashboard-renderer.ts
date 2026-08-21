@@ -66,19 +66,67 @@ export function renderUsageDashboard(
   };
 }
 
-export function usageProgressBar(percentage: number, cells = 20): string {
+const BASIS_POINTS_FULL = 10_000;
+const SUBCELLS_PER_CELL = 8;
+const PARTIAL_BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"] as const;
+
+/**
+ * Keeps the established 20-cell rounded bar for ordinary values, while the
+ * last cell uses eighth-block precision near full. A non-full allowance can
+ * therefore never look identical to an untouched 100% allowance.
+ */
+export function usageProgressBarFromBasisPoints(
+  basisPoints: number,
+  cells = 20,
+): string {
   const safeCells = Number.isSafeInteger(cells) && cells > 0 && cells <= 100
     ? cells
     : 20;
-  const safe = Number.isFinite(percentage)
-    ? Math.max(0, Math.min(100, Math.round(percentage)))
-    : 0;
-  const filled = safe <= 0
-    ? 0
-    : safe >= 100
-      ? safeCells
-      : Math.max(1, Math.min(safeCells - 1, Math.round(safe * safeCells / 100)));
+  const safe = normalizeBasisPoints(basisPoints);
+  if (safe === 0) return "░".repeat(safeCells);
+  if (safe === BASIS_POINTS_FULL) return "█".repeat(safeCells);
+
+  // Fine-grained rendering is most valuable where a rounded whole-cell bar
+  // previously looked full. Quantize the missing fraction conservatively and
+  // force at least one missing subcell for every value below 100%.
+  if (safe >= 9_500) {
+    const totalSubcells = safeCells * SUBCELLS_PER_CELL;
+    const usedBasisPoints = BASIS_POINTS_FULL - safe;
+    const missingSubcells = Math.max(
+      1,
+      Math.min(
+        totalSubcells,
+        Number(
+          (BigInt(usedBasisPoints) * BigInt(totalSubcells) + 7_500n) /
+            10_000n,
+        ),
+      ),
+    );
+    const filledSubcells = totalSubcells - missingSubcells;
+    const fullCells = Math.floor(filledSubcells / SUBCELLS_PER_CELL);
+    const partial = filledSubcells % SUBCELLS_PER_CELL;
+    const partialBlock = PARTIAL_BLOCKS[partial] ?? "";
+    const emptyCells = safeCells - fullCells - (partial > 0 ? 1 : 0);
+    return `${"█".repeat(fullCells)}${partialBlock}${"░".repeat(emptyCells)}`;
+  }
+
+  const roundedCells = Number(
+    (BigInt(safe) * BigInt(safeCells) + 5_000n) / 10_000n,
+  );
+  const filled = Math.max(1, Math.min(safeCells - 1, roundedCells));
   return `${"█".repeat(filled)}${"░".repeat(safeCells - filled)}`;
+}
+
+export function formatRemainingPercentage(basisPoints: number): string {
+  const safe = normalizeBasisPoints(basisPoints);
+  if (safe === BASIS_POINTS_FULL) return "100%";
+  if (safe === 0) return "0%";
+  if (safe >= 9_900) {
+    const precision = nearFullPrecision(safe);
+    return formatRoundedBasisPoints(safe, precision);
+  }
+  if (safe < 100) return formatExactSubOnePercent(safe);
+  return `${Math.floor(safe / 100)}%`;
 }
 
 export function formatCompactUsage(value: number): string {
@@ -92,11 +140,22 @@ function remainingSection(
   summary: UserUsageSummary,
   format: SemanticFormatter,
 ): string[] {
-  const percentage = Math.max(0, Math.min(100, summary.allowance.remainingPercent));
+  const remainingBasisPoints = normalizeBasisPoints(
+    summary.allowance.remainingBasisPoints,
+  );
   const lines = [
     format.bold("Sisa penggunaan"),
-    format.text(`${usageProgressBar(percentage)} ${percentage}%`),
+    format.text(
+      `${usageProgressBarFromBasisPoints(remainingBasisPoints)} ${
+        formatRemainingPercentage(remainingBasisPoints)
+      }`,
+    ),
   ];
+  if (remainingBasisPoints < 10_000 && remainingBasisPoints >= 9_900) {
+    lines.push(format.text(
+      `Terpakai: ${formatUsedPercentage(summary.allowance.usedBasisPoints)}`,
+    ));
+  }
   if (
     summary.allowance.state === "getting_low" ||
     summary.allowance.state === "low"
@@ -104,6 +163,56 @@ function remainingSection(
     lines.push("", format.text("Penggunaanmu hampir habis untuk periode ini."));
   }
   return lines;
+}
+
+function normalizeBasisPoints(value: number): number {
+  if (!Number.isSafeInteger(value)) return 0;
+  return Math.max(0, Math.min(BASIS_POINTS_FULL, value));
+}
+
+function nearFullPrecision(remainingBasisPoints: number): 1 | 2 {
+  // One decimal is the normal near-full display. Preserve hundredths only
+  // when rounding to one decimal would incorrectly produce 100.0%.
+  return Math.floor((remainingBasisPoints + 5) / 10) >= 1_000 ? 2 : 1;
+}
+
+function formatUsedPercentage(usedBasisPoints: number): string {
+  const safeUsed = normalizeBasisPoints(usedBasisPoints);
+  const remaining = BASIS_POINTS_FULL - safeUsed;
+  const precision = nearFullPrecision(remaining);
+  const basisPointsPerDisplayUnit = precision === 1 ? 10 : 1;
+  const totalDisplayUnits = precision === 1 ? 1_000 : 10_000;
+  const roundedRemainingUnits = Math.floor(
+    (remaining + Math.floor(basisPointsPerDisplayUnit / 2)) /
+      basisPointsPerDisplayUnit,
+  );
+  return formatFixedPercent(
+    totalDisplayUnits - roundedRemainingUnits,
+    precision,
+  );
+}
+
+function formatRoundedBasisPoints(
+  basisPoints: number,
+  precision: 1 | 2,
+): string {
+  const divisor = precision === 1 ? 10 : 1;
+  const rounded = Math.floor(
+    (basisPoints + Math.floor(divisor / 2)) / divisor,
+  );
+  return formatFixedPercent(rounded, precision);
+}
+
+function formatExactSubOnePercent(basisPoints: number): string {
+  const fraction = basisPoints.toString().padStart(2, "0").replace(/0$/u, "");
+  return `0.${fraction}%`;
+}
+
+function formatFixedPercent(value: number, precision: 1 | 2): string {
+  const scale = precision === 1 ? 10 : 100;
+  const whole = Math.floor(value / scale);
+  const fraction = (value % scale).toString().padStart(precision, "0");
+  return `${whole}.${fraction}%`;
 }
 
 function activitySection(

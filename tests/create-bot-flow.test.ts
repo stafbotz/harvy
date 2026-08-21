@@ -3617,7 +3617,11 @@ function usageSummary(): UserUsageSummary {
       endsAt: "2026-09-20T17:00:00.000Z",
       resetsAt: "2026-09-20T17:00:00.000Z",
     },
-    allowance: { remainingPercent: 68, state: "healthy" },
+    allowance: {
+      remainingBasisPoints: 6_800,
+      usedBasisPoints: 3_200,
+      state: "healthy",
+    },
     modelUsage: {
       inputTokens: 184_000,
       cachedInputTokens: 121_000,

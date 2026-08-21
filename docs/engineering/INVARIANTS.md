@@ -423,6 +423,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   tidak menerima target subject/account, tidak membaca transcript, dan tidak
   memanggil model. Telegram/WhatsApp group hanya memberi arahan ke chat pribadi.
   Markup bold dibentuk formatter kanal dari DTO semantik, bukan domain economy.
+- **`100%` berarti allowance periode benar-benar belum tersentuh.** Dashboard
+  menghitung rasio included+sponsored dari integer compute units dengan basis
+  points dan `BigInt`; setiap usage atau reservation yang mengurangi remaining
+  wajib tampil di bawah `100%`. Denominator allowance nol tampil `0%`, bukan
+  `100%`. Precision dashboard tidak mengubah health threshold atau enforcement.
 - **Dashboard membedakan biaya fisik dan biaya pengguna.** Aktivitas/total biaya
   berasal dari provider-attempt ledger periode aktif. Breakdown sumber biaya
   mengikuti delivery settlement; retry atau failure Harvy tetap overhead,

@@ -30,7 +30,10 @@ export interface UserUsageSummary {
     resetsAt: string;
   };
   allowance: {
-    remainingPercent: number;
+    /** Fixed-point percentage where 10_000 means exactly 100.00%. */
+    remainingBasisPoints: number;
+    /** Complement of remainingBasisPoints for the same active allowance. */
+    usedBasisPoints: number;
     state: EconomyUsageView["health"];
   };
   modelUsage: {
@@ -172,12 +175,16 @@ function summarizeUserUsage(
 
   const cacheHitPercent = cachedInputTokens === null || inputTokens === 0
     ? null
-    : roundedPercent(BigInt(cachedInputTokens), BigInt(inputTokens));
+    : roundedWholePercent(BigInt(cachedInputTokens), BigInt(inputTokens));
   const cacheSavingsUsdNanos = cacheSavings(attempts, cachedInputTokens);
   const totalAllowance = BigInt(view.includedComputeUnits) +
     BigInt(view.sponsoredGrantedComputeUnits);
   const remainingAllowance = BigInt(view.remainingIncludedComputeUnits) +
     BigInt(view.sponsoredRemainingComputeUnits);
+  const remainingBasisPoints = allowanceBasisPoints(
+    remainingAllowance,
+    totalAllowance,
+  );
 
   return {
     plan: {
@@ -191,7 +198,8 @@ function summarizeUserUsage(
       resetsAt: view.nextResetAt,
     },
     allowance: {
-      remainingPercent: roundedPercent(remainingAllowance, totalAllowance),
+      remainingBasisPoints,
+      usedBasisPoints: totalAllowance <= 0n ? 0 : 10_000 - remainingBasisPoints,
       state: view.health,
     },
     modelUsage: {
@@ -275,7 +283,20 @@ function cacheSavings(
   return total.toString();
 }
 
-function roundedPercent(numerator: bigint, denominator: bigint): number {
+/**
+ * Computes a bounded allowance ratio without converting compute amounts to a
+ * JavaScript number. Rounding is conservative (toward zero): any non-zero use
+ * is visible below 100%, while any non-zero remainder stays visible above 0%.
+ */
+function allowanceBasisPoints(remaining: bigint, total: bigint): number {
+  if (total <= 0n || remaining <= 0n) return 0;
+  const clamped = remaining > total ? total : remaining;
+  if (clamped === total) return 10_000;
+  const floored = Number((clamped * 10_000n) / total);
+  return Math.max(1, Math.min(9_999, floored));
+}
+
+function roundedWholePercent(numerator: bigint, denominator: bigint): number {
   if (denominator <= 0n || numerator <= 0n) return 0;
   const clamped = numerator > denominator ? denominator : numerator;
   return Number((clamped * 100n + denominator / 2n) / denominator);

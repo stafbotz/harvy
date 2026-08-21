@@ -9,9 +9,10 @@ import {
 } from "../src/core/user-usage-summary-service.js";
 import {
   formatCompactUsage,
+  formatRemainingPercentage,
   parseUsageDashboardCommand,
   renderUsageDashboard,
-  usageProgressBar,
+  usageProgressBarFromBasisPoints,
 } from "../src/core/usage-dashboard-renderer.js";
 
 const PERIOD_START = "2026-08-20T17:00:00.000Z";
@@ -28,6 +29,7 @@ describe("user usage summary query", () => {
         planName: "Toro",
         subscriptionStatus: "active",
         includedComputeUnits: "1000",
+        usedComputeUnits: "320",
         remainingIncludedComputeUnits: "680",
       },
       settledRequests: [
@@ -83,7 +85,11 @@ describe("user usage summary query", () => {
       since: PERIOD_START,
       until: PERIOD_END,
     });
-    assert.equal(summary.allowance.remainingPercent, 68);
+    assert.deepEqual(summary.allowance, {
+      remainingBasisPoints: 6_800,
+      usedBasisPoints: 3_200,
+      state: "healthy",
+    });
     assert.deepEqual(summary.modelUsage, {
       inputTokens: 184_000,
       cachedInputTokens: 121_000,
@@ -98,6 +104,115 @@ describe("user usage summary query", () => {
     assert.equal(summary.funding.byokUsdNanos, "20000000");
     assert.equal(summary.efficiency.cacheHitPercent, 66);
     assert.equal(summary.efficiency.cacheSavingsUsdNanos, "108900000");
+  });
+
+  it("menghitung allowance basis points dengan BigInt dan tidak membulatkan pemakaian ke 100%", async () => {
+    const cases = [
+      { granted: "100000", remaining: "100000", basisPoints: 10_000, label: "100%" },
+      { granted: "100000", remaining: "99999", basisPoints: 9_999, label: "99.99%" },
+      { granted: "10000", remaining: "9980", basisPoints: 9_980, label: "99.8%" },
+      { granted: "10000", remaining: "9900", basisPoints: 9_900, label: "99.0%" },
+      { granted: "10000", remaining: "9800", basisPoints: 9_800, label: "98%" },
+      { granted: "10000", remaining: "6800", basisPoints: 6_800, label: "68%" },
+      { granted: "10000", remaining: "0", basisPoints: 0, label: "0%" },
+    ] as const;
+
+    for (const item of cases) {
+      const base = accounting().usage;
+      const service = new UserUsageSummaryService(
+        {
+          userUsageAccounting: async () => accounting({
+            usage: {
+              ...base,
+              includedComputeUnits: item.granted,
+              usedComputeUnits: (
+                BigInt(item.granted) - BigInt(item.remaining)
+              ).toString(),
+              remainingIncludedComputeUnits: item.remaining,
+            },
+          }),
+        },
+        { allAttempts: async () => [] },
+      );
+      const summary = await service.summary("owner");
+      assert.equal(summary.allowance.remainingBasisPoints, item.basisPoints);
+      assert.equal(
+        summary.allowance.usedBasisPoints,
+        10_000 - item.basisPoints,
+      );
+      assert.equal(
+        formatRemainingPercentage(summary.allowance.remainingBasisPoints),
+        item.label,
+      );
+      if (BigInt(item.remaining) < BigInt(item.granted)) {
+        assert.notEqual(
+          formatRemainingPercentage(summary.allowance.remainingBasisPoints),
+          "100%",
+        );
+      }
+    }
+  });
+
+  it("menggabungkan included dan sponsored serta menangani denominator nol tanpa overflow", async () => {
+    const base = accounting().usage;
+    const mixed = new UserUsageSummaryService(
+      {
+        userUsageAccounting: async () => accounting({
+          usage: {
+            ...base,
+            includedComputeUnits: "10000",
+            usedComputeUnits: "2000",
+            remainingIncludedComputeUnits: "8000",
+            sponsoredGrantedComputeUnits: "10000",
+            sponsoredRemainingComputeUnits: "10000",
+          },
+        }),
+      },
+      { allAttempts: async () => [] },
+    );
+    assert.deepEqual((await mixed.summary("owner")).allowance, {
+      remainingBasisPoints: 9_000,
+      usedBasisPoints: 1_000,
+      state: "healthy",
+    });
+
+    const huge = 10n ** 40n;
+    const hugeRatio = new UserUsageSummaryService(
+      {
+        userUsageAccounting: async () => accounting({
+          usage: {
+            ...base,
+            includedComputeUnits: huge.toString(),
+            usedComputeUnits: (huge * 32n / 100n).toString(),
+            remainingIncludedComputeUnits: (huge * 68n / 100n).toString(),
+          },
+        }),
+      },
+      { allAttempts: async () => [] },
+    );
+    assert.equal(
+      (await hugeRatio.summary("owner")).allowance.remainingBasisPoints,
+      6_800,
+    );
+
+    const none = new UserUsageSummaryService(
+      {
+        userUsageAccounting: async () => accounting({
+          usage: {
+            ...base,
+            includedComputeUnits: "0",
+            usedComputeUnits: "0",
+            remainingIncludedComputeUnits: "0",
+          },
+        }),
+      },
+      { allAttempts: async () => [] },
+    );
+    assert.deepEqual((await none.summary("owner")).allowance, {
+      remainingBasisPoints: 0,
+      usedBasisPoints: 0,
+      state: "healthy",
+    });
   });
 
   it("degrade gracefully ketika cache, reasoning, atau biaya tidak lengkap", async () => {
@@ -265,13 +380,91 @@ describe("usage dashboard formatting", () => {
     assert.doesNotMatch(plain, /<b>|\*Penggunaan Harvy\*/u);
   });
 
-  it("menjaga progress bar stabil pada seluruh boundary", () => {
-    const filled = (percentage: number) =>
-      [...usageProgressBar(percentage)].filter((cell) => cell === "█").length;
+  it("merender basis points dan partial block tanpa menyamakan penggunaan kecil dengan 100%", () => {
     assert.deepEqual(
-      [0, 1, 49, 50, 68, 99, 100].map((value) => filled(value)),
-      [0, 1, 10, 10, 14, 19, 20],
+      [10_000, 9_998, 9_980, 9_910, 9_800, 6_800, 900, 0].map(
+        (value) => formatRemainingPercentage(value),
+      ),
+      ["100%", "99.98%", "99.8%", "99.1%", "98%", "68%", "9%", "0%"],
     );
+    assert.equal(usageProgressBarFromBasisPoints(10_000), "████████████████████");
+    assert.equal(usageProgressBarFromBasisPoints(9_980), "███████████████████▉");
+    assert.equal(usageProgressBarFromBasisPoints(9_940), "███████████████████▉");
+    assert.equal(usageProgressBarFromBasisPoints(9_910), "███████████████████▊");
+    assert.equal(usageProgressBarFromBasisPoints(9_800), "███████████████████▋");
+    assert.equal(usageProgressBarFromBasisPoints(6_800), "██████████████░░░░░░");
+    assert.equal(usageProgressBarFromBasisPoints(900), "██░░░░░░░░░░░░░░░░░░");
+    assert.equal(usageProgressBarFromBasisPoints(0), "░░░░░░░░░░░░░░░░░░░░");
+    assert.notEqual(
+      usageProgressBarFromBasisPoints(9_999),
+      usageProgressBarFromBasisPoints(10_000),
+    );
+    for (const value of [0, 100, 4_900, 5_000, 6_800, 9_900, 10_000]) {
+      assert.equal([...usageProgressBarFromBasisPoints(value)].length, 20);
+    }
+  });
+
+  it("menampilkan Terpakai dari basis points yang sama hanya di dekat 100%", () => {
+    const untouched = renderUsageDashboard(acceptanceSummary({
+      allowance: {
+        remainingBasisPoints: 10_000,
+        usedBasisPoints: 0,
+        state: "healthy",
+      },
+    }), "plain").text;
+    const slightlyUsed = renderUsageDashboard(acceptanceSummary({
+      allowance: {
+        remainingBasisPoints: 9_980,
+        usedBasisPoints: 20,
+        state: "healthy",
+      },
+    }), "plain").text;
+    const belowThreshold = renderUsageDashboard(acceptanceSummary({
+      allowance: {
+        remainingBasisPoints: 9_800,
+        usedBasisPoints: 200,
+        state: "healthy",
+      },
+    }), "plain").text;
+
+    assert.match(untouched, /████████████████████ 100%/u);
+    assert.doesNotMatch(untouched, /Terpakai:/u);
+    assert.match(slightlyUsed, /███████████████████▉ 99\.8%\nTerpakai: 0\.2%/u);
+    assert.doesNotMatch(belowThreshold, /Terpakai:/u);
+
+    const nearFull = acceptanceSummary({
+      allowance: {
+        remainingBasisPoints: 9_980,
+        usedBasisPoints: 20,
+        state: "healthy",
+      },
+    });
+    const telegram = renderUsageDashboard(nearFull, "telegram").text;
+    const whatsapp = renderUsageDashboard(nearFull, "whatsapp").text;
+    assert.match(
+      telegram,
+      /<b>Sisa penggunaan<\/b>\n███████████████████▉ 99\.8%\nTerpakai: 0\.2%/u,
+    );
+    assert.match(
+      whatsapp,
+      /\*Sisa penggunaan\*\n███████████████████▉ 99\.8%\nTerpakai: 0\.2%/u,
+    );
+
+    for (const [remaining, used, expected] of [
+      [9_999, 1, "99.99%\nTerpakai: 0.01%"],
+      [9_990, 10, "99.9%\nTerpakai: 0.1%"],
+      [9_940, 60, "99.4%\nTerpakai: 0.6%"],
+      [9_900, 100, "99.0%\nTerpakai: 1.0%"],
+    ] as const) {
+      const rendered = renderUsageDashboard(acceptanceSummary({
+        allowance: {
+          remainingBasisPoints: remaining,
+          usedBasisPoints: used,
+          state: "healthy",
+        },
+      }), "plain").text;
+      assert.ok(rendered.includes(expected));
+    }
   });
 
   it("menambahkan tahun pada reset lintas tahun", () => {
@@ -289,7 +482,11 @@ describe("usage dashboard formatting", () => {
   it("memakai copy Free, PAYG, BYOK, dan exhausted tanpa enum internal", () => {
     const free = renderUsageDashboard(acceptanceSummary({
       plan: { id: "personal_perkenalan", publicName: "Perkenalan", isFree: true },
-      allowance: { remainingPercent: 0, state: "exhausted" },
+      allowance: {
+        remainingBasisPoints: 0,
+        usedBasisPoints: 10_000,
+        state: "exhausted",
+      },
       funding: {
         ...acceptanceSummary().funding,
         includedUsdNanos: "180000000",
@@ -331,7 +528,11 @@ describe("usage dashboard formatting", () => {
   it("memberi peringatan ringan untuk seluruh state hampir habis", () => {
     for (const state of ["getting_low", "low"] as const) {
       const rendered = renderUsageDashboard(acceptanceSummary({
-        allowance: { remainingPercent: 9, state },
+        allowance: {
+          remainingBasisPoints: 900,
+          usedBasisPoints: 9_100,
+          state,
+        },
       }), "plain").text;
       assert.match(rendered, /Penggunaanmu hampir habis untuk periode ini/u);
     }
@@ -472,7 +673,11 @@ function acceptanceSummary(overrides: Partial<UserUsageSummary> = {}): UserUsage
   return {
     plan: { id: "personal_toro", publicName: "Toro", isFree: false },
     period: { startsAt: PERIOD_START, endsAt: PERIOD_END, resetsAt: PERIOD_END },
-    allowance: { remainingPercent: 68, state: "healthy" },
+    allowance: {
+      remainingBasisPoints: 6_800,
+      usedBasisPoints: 3_200,
+      state: "healthy",
+    },
     modelUsage: {
       inputTokens: 184_000,
       cachedInputTokens: 121_000,

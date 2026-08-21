@@ -92,11 +92,14 @@ test/development dan bukan penerimaan uang production.
 
 `/penggunaan` tersedia sebagai dashboard deterministik di chat pribadi
 Telegram dan WhatsApp. Tampilan memakai nama publik plan dan periode persisted,
-sisa allowance dalam persen, aktivitas token provider, total physical AI cost,
+sisa allowance berbasis fixed-point basis points (termasuk reservation aktif),
+aktivitas token provider, total physical AI cost,
 sumber biaya dengan bahasa pengguna, serta efisiensi cache bila snapshot harga
 historis cukup. Total biaya bukan otomatis tagihan pengguna. Query selalu
 terikat ke akun pengirim, tidak membaca isi chat, tidak memanggil model, dan
-tidak membuka detail paket/saldo/API pribadi di grup.
+tidak membuka detail paket/saldo/API pribadi di grup. Angka `100%` hanya tampil
+bila allowance periode belum dipakai atau direservasi sama sekali; pemakaian
+kecil tetap terlihat melalui precision adaptif dan partial progress block.
 
 ## Persetujuan evaluasi
 
