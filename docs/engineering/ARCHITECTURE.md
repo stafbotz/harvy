@@ -268,6 +268,53 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   `github.*`; semuanya unavailable kecuali executor serta surface konkret
   dipasang. Workspace surface belum dipasang.
 
+## Economy dan funding runtime
+
+`ControlPlaneService` tetap menjadi authority plan/version dan model price,
+sedangkan `EconomyService` (`src/domain/economy.ts` dan
+`src/core/economy-service.ts`) menjadi authority entitlement/funding. Jalur
+logical request sekarang ialah:
+
+```text
+plan version → billing period/allowance → funding resolver
+→ atomic compute reservation → AiClient/provider attempts
+→ usage quote/physical ledger → delivery settlement atau release
+```
+
+`RunBudget` tidak digantikan: ia tetap membatasi satu AgentRun. Economy ledger
+menyimpan fixed-point compute, reservation, settlement, wallet/payment,
+sponsored grant, subscription, contribution, dan credential metadata secara
+terpisah. `FileEconomyRepository` menulis state atomik/idempoten dalam satu
+proses lokal; projection period/wallet/rolling dipakai pada hot path sehingga
+resolver tidak menghitung ulang seluruh usage ledger. Backend ini belum
+merupakan transaction store multi-node. Provider ledger tetap mencatat
+physical cost dan tidak membawa isi transcript. Wallet reservation/debit,
+release, dan refund ditulis sebagai record lifecycle immutable; refund yang
+beradu dengan reservation aktif membatalkan funding itu agar saldo yang sudah
+direfund tidak muncul kembali.
+
+BYOK memakai `SecretStore` terenkripsi terpisah. Resolver hanya memberikan raw
+secret ke provider invocation yang sudah di-reserve, dan fallback provider
+Harvy dinonaktifkan untuk request BYOK kecuali policy eksplisit masa depan.
+Secure setup/revoke tersedia pada API Harvy Console loopback yang
+terautentikasi, ber-CSRF, dan audited; response hanya mengandung metadata
+non-secret serta bentuk key tersamarkan. Subscription checkout membekukan plan-version dan action
+activation/renewal, sementara active period—bukan callback order—menentukan
+plan yang sedang berlaku.
+Payment gateway adalah interface dengan `UnavailablePaymentGateway` default;
+`LocalPaymentGateway` hanya fake test/development sampai signature webhook,
+reconciliation, refund, dan secret operations production tersedia.
+
+Dashboard percakapan `/penggunaan` memakai read model
+`UserUsageSummaryService`: owner kanal diubah menjadi subject oleh economy
+authority, lalu provider-attempt ledger dibaca hanya untuk period aktif dan
+subject tersebut. Total biaya tetap mewakili physical provider cost, sedangkan
+breakdown sumber biaya memakai delivery settlement; retry/failure internal
+masuk overhead Harvy. Cache hit memakai cache-read/input yang ternormalisasi,
+dan cache saving hanya dihitung dari price snapshot historis attempt. DTO
+semantik kemudian dirender oleh formatter Telegram HTML, WhatsApp, atau plain;
+jalur ini tidak membaca transcript dan tidak memanggil model.
+
 ## Agent
 
 - `src/agent/` — executor Agent Runtime privat sekaligus pemilik definisi
@@ -313,7 +360,8 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
 ## Bot (Telegram)
 
 - `src/bot/` — adapter grammY: `create-bot.ts` memasang guard chat pribadi,
-  gerbang perkenalan, kontrol data/waktu, alur sesi, dan tombol;
+  gerbang perkenalan, kontrol data/waktu, alur sesi, tombol, serta fast path
+  `/penggunaan`; command usage di grup hanya mengarahkan ke chat pribadi;
   `message-batcher.ts` menggabungkan bubble serta menyediakan antrean idle bagi
   worker; `onboarding.ts` memuat naskah kenalan, arahan keselamatan
   pra-persetujuan, dan `HeldMessageStore`; `action-offers.ts` menyimpan tawaran
@@ -377,13 +425,17 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
 
 ## WhatsApp
 
-- `src/whatsapp/` — adapter grup WhatsApp beta berbasis `baileys@7.0.0-rc14`.
+- `src/whatsapp/` — adapter grup WhatsApp beta berbasis `baileys@7.0.0-rc14`
+  serta jalur private command deterministik untuk `/penggunaan`.
   `baileys-account-manager.ts` menjalankan satu auth namespace/socket/reconnect
   supervisor per `accountId`; `baileys-message-normalizer.ts` mempertahankan
   participant PN/LID, tag, quote, dan timestamp;
   `group-message-batcher.ts` menggabungkan burst satu anggota tanpa membuang ID
-  bubble; `config.ts` memvalidasi registry banyak nomor. Auth multi-file hanya
-  untuk pengembangan lokal, bukan penyimpanan produksi.
+  bubble; `config.ts` memvalidasi registry banyak nomor. Ingress private hanya
+  menghasilkan respons untuk command yang dikenali, dideduplikasi dengan ID
+  content-free, dan tidak mengaktifkan percakapan private umum. Detail billing
+  tidak pernah dikirim ke grup. Auth multi-file hanya untuk pengembangan lokal,
+  bukan penyimpanan produksi.
 
 ## Observability
 

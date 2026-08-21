@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { WAMessage } from "baileys";
-import { normalizeBaileysGroupMessage } from "../src/whatsapp/baileys-message-normalizer.js";
+import {
+  normalizeBaileysGroupMessage,
+  normalizeBaileysPrivateMessage,
+  whatsappPrivateOwnerId,
+} from "../src/whatsapp/baileys-message-normalizer.js";
 
 describe("normalisasi pesan Baileys", () => {
   it("membaca teks, participant LID/PN, mention metadata, dan admin", () => {
@@ -127,6 +131,45 @@ describe("normalisasi pesan Baileys", () => {
       normalizeBaileysGroupMessage(
         message({ message: { reactionMessage: { text: "👍" } } }),
         context,
+      ),
+      null,
+    );
+  });
+
+  it("menormalisasi private command tanpa mencampurnya dengan scope grup", () => {
+    const normalized = normalizeBaileysPrivateMessage(
+      message({
+        key: {
+          id: "private-1",
+          remoteJid: "628777777777@s.whatsapp.net",
+          fromMe: false,
+        },
+        message: { conversation: "/penggunaan" },
+      }),
+      { accountId: "utama", selfJids: ["628123456789@s.whatsapp.net"] },
+    );
+
+    assert.deepEqual(normalized, {
+      accountId: "utama",
+      userId: "628777777777@s.whatsapp.net",
+      messageId: "private-1",
+      text: "/penggunaan",
+      at: "2026-03-31T23:33:20.000Z",
+    });
+    assert.equal(
+      whatsappPrivateOwnerId(normalized?.userId ?? ""),
+      "whatsapp-user:628777777777@s.whatsapp.net",
+    );
+    assert.equal(
+      normalizeBaileysPrivateMessage(
+        message({
+          key: {
+            id: "echo-private",
+            remoteJid: "628777777777@s.whatsapp.net",
+            fromMe: true,
+          },
+        }),
+        { accountId: "utama", selfJids: [] },
       ),
       null,
     );

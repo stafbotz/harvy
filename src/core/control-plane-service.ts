@@ -22,8 +22,17 @@ import type {
   SubjectKind,
 } from "../domain/control-plane.js";
 import { usdDecimalToNanos, validUsdRate } from "./money.js";
+import type { PlanComputePolicy } from "../domain/economy.js";
 
 const MAX_AUDIT_RECORDS = 10_000;
+const LEGACY_COMPUTE_UNITS_PER_TOKEN = 1_000n;
+const DEFAULT_BILLING_PERIOD_DAYS = 30;
+// A legacy deployment may have set the old rolling-token limit to zero to
+// mean "unlimited".  The compute economy must never turn that setting into an
+// unlimited Free subsidy, so its forward-looking period gets a finite,
+// quality-preserving baseline instead.  The old token ledger/limit semantics
+// remain unchanged when the economy is not enabled.
+const DEFAULT_FINITE_LEGACY_TOKEN_ALLOWANCE = 200_000;
 
 const PERSONAL_PLAN_SPECS = [
   {
@@ -90,6 +99,7 @@ export interface NewPlanVersion {
   audience: PlanAudience;
   monthlyPriceIdr: number;
   rolling24hTokenLimit: number;
+  computePolicy?: PlanComputePolicy;
   activeMemberLimit: number | null;
   groupMode: PlanVersion["groupMode"];
   status: PlanVersion["status"];
@@ -184,6 +194,16 @@ export class ControlPlaneService {
 
   async enrollments(): Promise<Enrollment[]> {
     return (await this.dashboardState()).enrollments;
+  }
+
+  /** Internal billing/webhook lookup; the subject reference is already
+   * pseudonymous and must not be reinterpreted as a platform owner ID. */
+  async enrollmentForSubjectRef(subjectRef: string): Promise<Enrollment> {
+    await this.initialize();
+    const state = await this.repository.snapshot();
+    const enrollment = state.enrollments.find((item) => item.subjectRef === subjectRef);
+    if (!enrollment) throw new ControlPlaneValidationError("Enrollment tidak ditemukan.");
+    return structuredClone(enrollment);
   }
 
   async audits(limit = 250): Promise<ConsoleAuditRecord[]> {
@@ -357,10 +377,74 @@ export class ControlPlaneService {
     };
   }
 
+  /** Katalog plan adalah authority kapasitas; routing model tidak memakai ini. */
+  async effectivePlanVersion(ownerId: string): Promise<PlanVersion> {
+    const enrollment = await this.enrollmentForOwner(ownerId);
+    return this.planVersionForEnrollment(enrollment);
+  }
+
+  async planVersionForEnrollment(enrollment: Enrollment): Promise<PlanVersion> {
+    await this.initialize();
+    const state = await this.repository.snapshot();
+    const at = this.now().toISOString();
+    const plan = activePlan(state.plans, enrollment.planId, at);
+    if (!plan) {
+      throw new ControlPlaneValidationError("Versi paket aktif tidak tersedia.");
+    }
+    return structuredClone(plan);
+  }
+
+  async effectiveComputePolicy(ownerId: string): Promise<PlanComputePolicy> {
+    const effective = await this.effectiveEnrollment(ownerId);
+    return this.computePolicyForEnrollment(effective.enrollment, effective.effectiveCohort);
+  }
+
+  async computePolicyForEnrollment(
+    enrollment: Enrollment,
+    effectiveCohort?: Cohort,
+    resolvedPlan?: PlanVersion,
+  ): Promise<PlanComputePolicy> {
+    await this.initialize();
+    const at = this.now().toISOString();
+    const state = resolvedPlan ? null : await this.repository.snapshot();
+    const plan = resolvedPlan ?? activePlan(state!.plans, enrollment.planId, at);
+    if (!plan) throw new ControlPlaneValidationError("Versi paket aktif tidak tersedia.");
+    const cohort = effectiveCohort ?? (
+      enrollment.cohort === "beta" &&
+      (enrollment.betaExpiresAt === null || enrollment.betaExpiresAt > at)
+        ? "beta"
+        : "standard"
+    );
+    let policy = enrollment.quotaOverride !== null
+      ? legacyComputePolicy(enrollment.quotaOverride)
+      : await this.computePolicyForPlan(plan, cohort);
+    if (enrollment.quotaOverride !== null && cohort === "beta") {
+      policy = multiplyComputePolicy(policy, this.options.betaQuotaMultiplier);
+    }
+    return structuredClone(policy);
+  }
+
+  /**
+   * Resolves a catalog policy for a plan that is not yet the enrollment's
+   * current plan.  Billing activation/renewal uses this method so a paid
+   * period is never accidentally granted the Free policy during the small
+   * window where enrollment and subscription state are being updated.
+   */
+  async computePolicyForPlan(
+    plan: PlanVersion,
+    cohort: Cohort = "standard",
+  ): Promise<PlanComputePolicy> {
+    let policy = plan.computePolicy ?? legacyComputePolicy(plan.rolling24hTokenLimit);
+    if (cohort === "beta") policy = multiplyComputePolicy(policy, this.options.betaQuotaMultiplier);
+    return structuredClone(policy);
+  }
+
   async createPlanVersion(input: NewPlanVersion): Promise<PlanVersion> {
     const normalizedInput = {
       ...input,
       planId: canonicalPlanId(input.planId),
+      computePolicy:
+        input.computePolicy ?? legacyComputePolicy(input.rolling24hTokenLimit),
     };
     validatePlanInput(normalizedInput);
     await this.initialize();
@@ -662,6 +746,7 @@ export class ControlPlaneService {
         state.plans.push(...defaultPlans(this.options.fallbackRollingTokenLimit, at));
       }
       migrateLegacyPlanIds(state);
+      ensureComputePolicies(state.plans);
       migrateLegacyPersonalPlanNames(state.plans, at);
       if (state.prices.length === 0) {
         state.prices.push(
@@ -704,6 +789,9 @@ function normalizeConfiguredModels(
 }
 
 export function describeOwner(ownerId: string): SubjectDescriptor {
+  if (ownerId.startsWith("whatsapp-user:")) {
+    return { kind: "private", channel: "whatsapp" };
+  }
   if (ownerId.startsWith("whatsapp:")) {
     return { kind: "group", channel: "whatsapp" };
   }
@@ -761,13 +849,16 @@ function defaultPlans(base: number, at: string): PlanVersion[] {
       audience: "personal" as const,
       monthlyPriceIdr: spec.monthlyPriceIdr,
       rolling24hTokenLimit: safeMultiply(base, spec.capacityMultiplier),
+      computePolicy: legacyComputePolicy(
+        computeTokenAllowance(base, spec.capacityMultiplier),
+      ),
       activeMemberLimit: null,
       groupMode: "none" as const,
       status: "pilot" as const,
     })),
-    { planId: "group_direct", publicName: "Sapa", audience: "group", monthlyPriceIdr: 99_000, rolling24hTokenLimit: safeMultiply(base, 5), activeMemberLimit: 50, groupMode: "direct_only", status: "pilot" },
-    { planId: "group_ambient", publicName: "Nimbrung", audience: "group", monthlyPriceIdr: 249_000, rolling24hTokenLimit: safeMultiply(base, 15), activeMemberLimit: 50, groupMode: "ambient", status: "pilot" },
-    { planId: "workspace", publicName: "Ruang", audience: "workspace", monthlyPriceIdr: 599_000, rolling24hTokenLimit: safeMultiply(base, 30), activeMemberLimit: 150, groupMode: "workspace", status: "pilot" },
+    groupPlan("group_direct", "Sapa", "group", 99_000, safeMultiply(base, 5), computeTokenAllowance(base, 5), 50, "direct_only"),
+    groupPlan("group_ambient", "Nimbrung", "group", 249_000, safeMultiply(base, 15), computeTokenAllowance(base, 15), 50, "ambient"),
+    groupPlan("workspace", "Ruang", "workspace", 599_000, safeMultiply(base, 30), computeTokenAllowance(base, 30), 150, "workspace"),
   ];
   return specs.map((spec) => ({
     ...spec,
@@ -1002,6 +1093,7 @@ function validatePlanInput(input: NewPlanVersion): void {
     input.monthlyPriceIdr < 0 ||
     !Number.isSafeInteger(input.rolling24hTokenLimit) ||
     input.rolling24hTokenLimit < 0 ||
+    (input.computePolicy !== undefined && !validComputePolicy(input.computePolicy)) ||
     (input.activeMemberLimit !== null &&
       (!Number.isSafeInteger(input.activeMemberLimit) || input.activeMemberLimit < 1)) ||
     !isIso(input.effectiveFrom) ||
@@ -1076,6 +1168,110 @@ function cleanReason(value: string): string {
 
 function safeMultiply(value: number, multiplier: number): number {
   return Math.min(Number.MAX_SAFE_INTEGER, value * multiplier);
+}
+
+function groupPlan(
+  planId: string,
+  publicName: string,
+  audience: "group" | "workspace",
+  monthlyPriceIdr: number,
+  rolling24hTokenLimit: number,
+  computeTokenLimit: number,
+  activeMemberLimit: number,
+  groupMode: "direct_only" | "ambient" | "workspace",
+): Omit<PlanVersion, "id" | "version" | "effectiveFrom" | "effectiveTo" | "createdAt"> {
+  return {
+    planId,
+    publicName,
+    audience,
+    monthlyPriceIdr,
+    rolling24hTokenLimit,
+    computePolicy: legacyComputePolicy(computeTokenLimit),
+    activeMemberLimit,
+    groupMode,
+    status: "pilot",
+  };
+}
+
+function computeTokenAllowance(base: number, multiplier: number): number {
+  return safeMultiply(
+    base > 0 ? base : DEFAULT_FINITE_LEGACY_TOKEN_ALLOWANCE,
+    multiplier,
+  );
+}
+
+function legacyComputePolicy(rollingTokenLimit: number): PlanComputePolicy {
+  const effectiveTokenAllowance = rollingTokenLimit > 0
+    ? Math.floor(rollingTokenLimit)
+    : DEFAULT_FINITE_LEGACY_TOKEN_ALLOWANCE;
+  const rolling = BigInt(effectiveTokenAllowance) *
+    LEGACY_COMPUTE_UNITS_PER_TOKEN;
+  return {
+    unitVersion: 1,
+    includedComputeUnits: (rolling * BigInt(DEFAULT_BILLING_PERIOD_DAYS)).toString(),
+    billingPeriodDays: DEFAULT_BILLING_PERIOD_DAYS,
+    rollingWindowHours: 24,
+    rollingComputeLimit: rolling.toString(),
+    legacyTokenOverlay: {
+      schemaVersion: 1,
+      computeUnitsPerToken: LEGACY_COMPUTE_UNITS_PER_TOKEN.toString(),
+    },
+  };
+}
+
+function ensureComputePolicies(plans: PlanVersion[]): void {
+  for (const plan of plans) {
+    if (plan.computePolicy === undefined) {
+      plan.computePolicy = legacyComputePolicy(computeTokenAllowanceForLegacyPlan(plan));
+    } else if (!validComputePolicy(plan.computePolicy)) {
+      throw new Error("Policy compute pada katalog plan tidak sah.");
+    }
+  }
+}
+
+function computeTokenAllowanceForLegacyPlan(plan: PlanVersion): number {
+  if (plan.rolling24hTokenLimit > 0) return plan.rolling24hTokenLimit;
+  const personalMultiplier = PERSONAL_PLAN_SPECS.find(
+    (spec) => spec.planId === plan.planId,
+  )?.capacityMultiplier;
+  if (personalMultiplier !== undefined) {
+    return computeTokenAllowance(0, personalMultiplier);
+  }
+  const fixedMultipliers: Record<string, number> = {
+    group_direct: 5,
+    group_ambient: 15,
+    workspace: 30,
+  };
+  return computeTokenAllowance(0, fixedMultipliers[plan.planId] ?? 1);
+}
+
+function multiplyComputePolicy(
+  policy: PlanComputePolicy,
+  multiplier: number,
+): PlanComputePolicy {
+  const factor = BigInt(multiplier);
+  return {
+    ...policy,
+    includedComputeUnits: (BigInt(policy.includedComputeUnits) * factor).toString(),
+    rollingComputeLimit: (BigInt(policy.rollingComputeLimit) * factor).toString(),
+    legacyTokenOverlay: { ...policy.legacyTokenOverlay },
+  };
+}
+
+function validComputePolicy(policy: PlanComputePolicy): boolean {
+  return policy.unitVersion === 1 &&
+    validComputeAmount(policy.includedComputeUnits) &&
+    Number.isSafeInteger(policy.billingPeriodDays) &&
+    policy.billingPeriodDays >= 1 && policy.billingPeriodDays <= 366 &&
+    Number.isSafeInteger(policy.rollingWindowHours) &&
+    policy.rollingWindowHours >= 1 && policy.rollingWindowHours <= 744 &&
+    validComputeAmount(policy.rollingComputeLimit) &&
+    policy.legacyTokenOverlay.schemaVersion === 1 &&
+    validComputeAmount(policy.legacyTokenOverlay.computeUnitsPerToken);
+}
+
+function validComputeAmount(value: string): boolean {
+  return /^\d+$/u.test(value) && BigInt(value) <= BigInt(Number.MAX_SAFE_INTEGER) * 1_000_000n;
 }
 
 function shortId(): string {

@@ -109,7 +109,26 @@ pengembangan hanya pada terminal interaktif dan tidak pernah ditampilkan saat
 `APP_ENV=production`; mode pairing code hanya opsi karena masih mempunyai
 kegagalan upstream Baileys. Log operasional memakai `APP_ENV`, `RELEASE_SHA`, `LOG_LEVEL`,
 `LOG_FOLDER`, retensi, batas segmen/total/antrean, format console, dan
-`LOG_FILE_REQUIRED`. `HISTORY_FILE` berisi kata-kata pengguna apa adanya;
+`LOG_FILE_REQUIRED`.
+
+Economy/funding memakai `HARVY_ECONOMY_FILE`,
+`HARVY_BYOK_SECRET_FILE`, dan optional `HARVY_BYOK_MASTER_KEY_B64` (32 byte;
+tanpa key BYOK fail-closed). `HARVY_PAYMENT_GATEWAY_MODE` default `disabled`;
+`local` hanya fake development/test dan ditolak pada production. Threshold
+usage, cooldown notification, support milestone, dan fixed-point PAYG unit
+factor dapat dikonfigurasi lewat `HARVY_USAGE_*`, `HARVY_SUPPORT_MILESTONE`,
+dan `HARVY_PAYG_COMPUTE_UNITS_PER_IDR`. Payment production belum aktif sampai
+gateway menyediakan signature verification, idempotent webhook, refund, dan
+reconciliation operasional.
+
+Jika master key tersedia, operator memasang atau mencabut BYOK melalui endpoint
+Harvy Console loopback `/api/v1/economy/credentials` dengan session, Origin,
+CSRF, schema tertutup, dan audit yang sama dengan mutasi Console lain. Jangan
+memasukkan raw key lewat chat atau endpoint economy read-only. File secret
+terenkripsi tetap merupakan backend satu proses; deployment production masih
+memerlukan KMS/rotation/backup policy yang diuji.
+
+`HISTORY_FILE` berisi kata-kata pengguna apa adanya;
 perlakukan sebagai data pribadi, bukan cache. `PROFILE_FILE` menyimpan catatan
 persetujuan, preferensi waktu, dan tombstone penghapusan; menghapusnya membuat
 semua pengguna diminta menyetujui ketentuannya lagi. `AGENT_RUN_FILE` memuat

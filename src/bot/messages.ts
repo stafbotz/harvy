@@ -3,6 +3,7 @@ import type { ActionOffer } from "./action-offers.js";
 import type { AdaptiveActionId } from "../core/action-policy.js";
 import { formatClockMinute } from "../core/time-policy.js";
 import type { UsageSummary } from "../core/telemetry-service.js";
+import type { EconomyUsageView } from "../core/economy-service.js";
 import type { MemoryItem, MemoryKind } from "../domain/memory.js";
 import type { QuietHours, UserProfile } from "../domain/profile.js";
 import type { ActiveSession, SessionKind } from "../domain/session.js";
@@ -49,6 +50,8 @@ export const HELP_MESSAGE = [
   "Aku juga nyimpen beberapa hal biar kamu nggak perlu ngulang cerita: kelasmu, cara belajar yang cocok, apa yang lagi kamu hadapi. Buat hal pribadi aku selalu nanya dulu. Tanya aja “apa yang kamu ingat tentang aku”, dan kamu bisa nyuruh aku lupain apa pun kapan aja.",
   "",
   "/tugas — lihat semua tugasmu",
+  "/penggunaan — lihat kapasitas dan waktu pembaruan Harvy",
+  "/dukung — informasi kontribusi sukarela Harvy Commons",
   "/bantuan — tampilkan pesan ini",
 ].join("\n");
 
@@ -434,7 +437,7 @@ export function dataControlActions(): InlineKeyboard {
     .text("Langsung saran", "style:advice")
     .row()
     .text("Ekspor dataku", "control:export")
-    .text("Pemakaian AI", "control:usage")
+    .text("Penggunaan Harvy", "control:usage")
     .row()
     .text("Atur zona waktu", "control:timezone")
     .text("Atur jam tenang", "control:quiet-hours")
@@ -522,6 +525,35 @@ export function formatUsage(summary: UsageSummary): string {
     cost,
     "",
     "Angka ini tidak menyimpan isi pesanmu.",
+  ].join("\n");
+}
+
+/** Ringkasan pemakaian yang tidak memaksa pengguna memahami token/provider. */
+export function formatEconomyUsage(view: EconomyUsageView): string {
+  const health = view.health === "healthy"
+    ? "Banyak tersisa"
+    : view.health === "getting_low"
+      ? "Cukup"
+      : view.health === "low"
+        ? "Hampir habis"
+        : "Sudah terpakai";
+  const reset = new Intl.DateTimeFormat("id-ID", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date(view.nextResetAt));
+  const funding = view.byokAvailable
+    ? "BYOK tersedia"
+    : view.autoUseWallet
+      ? "Saldo tambah compute dapat digunakan otomatis"
+      : "Saldo tambah compute tidak digunakan otomatis";
+  return [
+    "Penggunaan Harvy",
+    health,
+    `Paket: ${view.planName}`,
+    `Diperbarui ${reset}`,
+    funding,
+    "Memory, percakapan, dan pekerjaanmu tetap tersimpan.",
   ].join("\n");
 }
 

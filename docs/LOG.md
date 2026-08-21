@@ -38,6 +38,27 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-21 — Fondasi Harvy Compute dan funding resolver
+
+Scope: plan policy, economy/runtime funding, billing/usage UX, Telegram,
+WhatsApp, Console, config, tests, dan dokumentasi paket.
+
+Changed: allowance fixed-point dipisahkan dari RunBudget dan physical-cost
+ledger. Request memakai reservation dan delivery settlement dengan funding
+included/sponsored/PAYG-consent/BYOK/safety-exempt. Stable plan IDs dan quality
+ceiling dipertahankan. Wallet, subscription, Commons, payment interface,
+encrypted BYOK store, operator view, dan `/penggunaan` owner-scoped tanpa model
+ditambahkan; token legacy tetap overlay tanpa rewrite historis. Dashboard
+memisahkan physical cost dari settlement, memakai snapshot cache historis, dan
+menolak disclosure grup.
+
+Verified: targeted economy/dashboard/channel PASS (167/167); `npm run check`
+dan `npm run build` PASS; `npm test` PASS (1.515 test dalam 194 suite, 0
+gagal); `npm run context:check` PASS.
+
+Not verified: payment provider production, signed webhook/reconciliation live,
+secret rotation/KMS, dan `/penggunaan` pada akun Telegram/WhatsApp live.
+
 ## 2026-08-21 — Long-term memory dan evidence-backed learning
 
 Scope: history/memory core, SQLite cold storage, embedding index, learning

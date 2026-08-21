@@ -8,6 +8,7 @@ import type {
   TokenUsage,
   UsageTier,
 } from "./telemetry.js";
+import type { FundingSource } from "./economy.js";
 import type {
   ModelRole,
   ReasoningEffort,
@@ -72,6 +73,8 @@ export interface ProviderAttemptStart {
   maxOutputTokens: number;
   inputTokenEstimate: number;
   safetyCritical: boolean;
+  /** Content-free attribution from the funding reservation, if enabled. */
+  fundingSource?: FundingSource;
   startedAt: string;
   modelRole?: ModelRole;
   requestedEffort?: ReasoningEffort;
@@ -133,6 +136,8 @@ export interface ProviderAttemptRecord {
   maxOutputTokens: number;
   inputTokenEstimate: number;
   safetyCritical: boolean;
+  /** Optional so historical schema-v1 records remain readable. */
+  fundingSource?: FundingSource;
   /** Optional agar record schema v1 lama tetap dapat dibaca tanpa migrasi isi. */
   modelRole?: ModelRole;
   requestedEffort?: ReasoningEffort;

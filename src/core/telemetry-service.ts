@@ -11,6 +11,8 @@ import type {
   UsageObserver,
   UsageTier,
 } from "../domain/telemetry.js";
+import type { EconomyFundingAuthority, EconomyUsageView, UsageNotice } from "./economy-service.js";
+import { FundingUnavailableError } from "./economy-service.js";
 
 import {
   NOOP_OPERATIONAL_LOGGER,
@@ -30,6 +32,7 @@ export interface TelemetryOptions {
   prices: Record<UsageTier, TierPrice>;
   /** Paket/cohort boleh memberi limit dinamis; fallback tetap nilai di atas. */
   limitForOwner?: (ownerId: string) => Promise<number>;
+  fundingAuthority?: EconomyFundingAuthority;
 }
 
 export interface UsageSummary {
@@ -41,6 +44,7 @@ export interface UsageSummary {
   capacityUsedTokens: number;
   estimatedCostUsd: number;
   limit: number;
+  compute?: EconomyUsageView;
 }
 
 export interface TelemetryExport {
@@ -138,8 +142,16 @@ export interface RelatedUsageLedger {
 }
 
 export class UsageLimitError extends Error {
-  constructor() {
-    super("Batas pemakaian AI 24 jam tercapai.");
+  constructor(readonly reason = "allowance_exhausted") {
+    super(
+      reason === "wallet_disabled"
+        ? "Saldo PAYG tersedia, tetapi penggunaan otomatis belum diizinkan."
+        : reason === "byok_unavailable"
+          ? "Credential BYOK tersedia, tetapi belum cocok untuk pekerjaan ini."
+        : reason === "anti_abuse"
+          ? "Batas pemakaian singkat Harvy tercapai."
+          : "Kapasitas Harvy-funded untuk periode ini sudah terpakai.",
+    );
     this.name = "UsageLimitError";
   }
 }
@@ -193,14 +205,31 @@ export class TelemetryService implements UsageObserver {
     validateOptions(options);
   }
 
-  async beforeRequest(context: AiUsageContext): Promise<void> {
-    await this.exclusive(context.ownerId, async () => {
+  async beforeRequest(context: AiUsageContext) {
+    return this.exclusive(context.ownerId, async () => {
       if (this.forgottenOwners.has(context.ownerId)) {
         throw new TelemetryOwnerBlockedError();
       }
       const generation = this.generations.get(context.ownerId) ?? 0;
-      const limit = await this.limitForOwner(context.ownerId);
-      if (!context.safetyCritical && limit > 0) {
+      let funding;
+      if (this.options.fundingAuthority) {
+        try {
+          funding = await this.options.fundingAuthority.reserve(context);
+        } catch (error) {
+          if (error instanceof FundingUnavailableError) {
+            throw new UsageLimitError(error.reason);
+          }
+          throw error;
+        }
+      }
+      // The economy authority has already reserved the logical request. Do
+      // not perform the legacy limit lookup afterward: a concurrent delete or
+      // control-plane error must not strand that reservation. The old token
+      // limit path remains active only for deployments without the economy.
+      const limit = this.options.fundingAuthority
+        ? 0
+        : await this.limitForOwner(context.ownerId);
+      if (!this.options.fundingAuthority && !context.safetyCritical && limit > 0) {
         const summary = await this.summary(context.ownerId);
         const since = new Date(this.now().getTime() - DAY_MS);
         const pendingDebit = this.relatedUsageLedger?.pendingDebitTokens
@@ -224,6 +253,7 @@ export class TelemetryService implements UsageObserver {
         generation,
       });
       this.accumulateTurnRequest(context);
+      return funding;
     });
   }
 
@@ -288,6 +318,34 @@ export class TelemetryService implements UsageObserver {
         this.releaseReservation(context.ownerId, requested, context.safetyCritical);
       }
     });
+    if (shouldSettle && this.options.fundingAuthority) {
+      try {
+        await this.options.fundingAuthority.completeRequest(
+          context,
+          usage,
+          { succeeded: outcome.succeeded },
+        );
+      } catch (error) {
+        this.logger.warn(
+          "economy_completion_failed",
+          "Penyelesaian reservation ekonomi gagal; recovery akan melepasnya secara aman.",
+          { error, purpose: context.purpose, tier: context.tier },
+        );
+        // A failed completion must never leave a reservation permanently
+        // spendable. Releasing the turn is conservative and replay-safe; a
+        // later delivery callback cannot charge an unknown usage amount.
+        await this.options.fundingAuthority.discardTurn(
+          context.ownerId,
+          context.turnId,
+        ).catch((releaseError) => {
+          this.logger.warn(
+            "economy_completion_release_failed",
+            "Reservation ekonomi belum dapat dilepas setelah completion gagal.",
+            { error: releaseError },
+          );
+        });
+      }
+    }
     if (shouldSettle && this.relatedUsageLedger) {
       const settlement = this.relatedUsageLedger.settleEntitlement(
         context,
@@ -493,10 +551,16 @@ export class TelemetryService implements UsageObserver {
       ? await this.relatedUsageLedger.debitedTokens(ownerId, since)
       : null;
     const capacityUsedTokens = deliveredDebit ?? technical.totalTokens;
+    const compute = this.options.fundingAuthority
+      ? await this.options.fundingAuthority.usage(ownerId)
+      : undefined;
     return {
       ...technical,
       capacityUsedTokens,
+      // `limit` remains the legacy token field for API compatibility. The
+      // human-facing economy view is carried separately in `compute`.
       limit,
+      ...(compute ? { compute } : {}),
     };
   }
 
@@ -566,6 +630,7 @@ export class TelemetryService implements UsageObserver {
         await this.waitForFlush(ownerId);
         await this.repository.removeAll(ownerId);
         await this.relatedUsageLedger?.forgetOwner(ownerId);
+        await this.options.fundingAuthority?.forgetOwner(ownerId);
         this.deletionFailures.delete(ownerId);
       } catch (error) {
         this.deletionFailures.set(ownerId, error);
@@ -583,6 +648,7 @@ export class TelemetryService implements UsageObserver {
         );
       }
       await this.relatedUsageLedger?.allowOwner?.(ownerId);
+      await this.options.fundingAuthority?.allowOwner(ownerId);
       await this.exclusive(ownerId, async () => {
         this.forgottenOwners.delete(ownerId);
       });
@@ -597,7 +663,8 @@ export class TelemetryService implements UsageObserver {
     return this.relatedUsageLedger?.forgetActor?.(ownerId, actorAliases) ?? false;
   }
 
-  async markDelivered(ownerId: string, turnId: string | null): Promise<void> {
+  async markDelivered(ownerId: string, turnId: string | null): Promise<UsageNotice | null> {
+    let notice: UsageNotice | null = null;
     try {
       await this.relatedUsageLedger?.markDelivered?.(ownerId, turnId);
     } catch (error) {
@@ -607,6 +674,16 @@ export class TelemetryService implements UsageObserver {
         { error },
       );
     }
+    try {
+      notice = await this.options.fundingAuthority?.settleTurn(ownerId, turnId) ?? null;
+    } catch (error) {
+      this.logger.warn(
+        "economy_delivery_settlement_failed",
+        "Settlement delivery ekonomi gagal; reservation tetap dapat direkonsiliasi.",
+        { error },
+      );
+    }
+    return notice;
   }
 
   async discardUndelivered(
@@ -619,6 +696,15 @@ export class TelemetryService implements UsageObserver {
       this.logger.warn(
         "entitlement_delivery_discard_failed",
         "Kandidat entitlement gagal dibatalkan setelah delivery gagal.",
+        { error },
+      );
+    }
+    try {
+      await this.options.fundingAuthority?.discardTurn(ownerId, turnId);
+    } catch (error) {
+      this.logger.warn(
+        "economy_delivery_discard_failed",
+        "Reservation ekonomi gagal dilepas setelah delivery gagal.",
         { error },
       );
     }
@@ -669,6 +755,7 @@ export class TelemetryService implements UsageObserver {
         this.pendingTurns.size === 0
       ) {
         await this.relatedUsageLedger?.drain();
+        await this.options.fundingAuthority?.drain();
         return;
       }
     }
@@ -1108,6 +1195,7 @@ function uniqueById<T extends { id: string }>(items: T[]): T[] {
 }
 
 function inferSubjectKind(ownerId: string): "private" | "group" {
+  if (ownerId.startsWith("whatsapp-user:")) return "private";
   return ownerId.startsWith("whatsapp:") || ownerId.startsWith("telegram:")
     ? "group"
     : "private";
@@ -1116,7 +1204,9 @@ function inferSubjectKind(ownerId: string): "private" | "group" {
 function inferChannel(
   ownerId: string,
 ): "telegram" | "whatsapp" | "system" {
-  return ownerId.startsWith("whatsapp:") ? "whatsapp" : "telegram";
+  return ownerId.startsWith("whatsapp:") || ownerId.startsWith("whatsapp-user:")
+    ? "whatsapp"
+    : "telegram";
 }
 
 function isBillable(context: AiUsageContext, succeeded: boolean): boolean {

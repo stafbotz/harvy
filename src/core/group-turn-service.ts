@@ -63,6 +63,10 @@ import {
   type GroupAuthorityResolver,
   type GroupAuthoritySnapshot,
 } from "./group-authority-policy.js";
+import {
+  parseUsageDashboardCommand,
+  USAGE_GROUP_PRIVACY_MESSAGE,
+} from "./usage-dashboard-renderer.js";
 
 const MAX_CONTEXT_TURNS = 24;
 const CONTEXT_RETENTION_MS = 2 * 60 * 60 * 1_000;
@@ -181,7 +185,11 @@ export interface GroupUsageControlPort {
     ownerId: string,
     actorAliases: readonly string[],
   ): Promise<boolean>;
-  markDelivered?(ownerId: string): Promise<void>;
+  // Implementations may return an optional user-facing usage notice. Group
+  // orchestration deliberately ignores that value, but keeping the return
+  // type open lets the private-chat economy authority surface threshold
+  // transitions without coupling this subsystem to billing domain types.
+  markDelivered?(ownerId: string): Promise<unknown>;
   discardUndelivered?(ownerId: string): Promise<void>;
 }
 
@@ -975,6 +983,18 @@ export class GroupTurnService {
     if (recorded.status === "duplicate") return "duplicate";
     if (recorded.status === "inactive") return "inactive";
     message = messageWithParts(message, recorded.parts);
+    if (parseUsageDashboardCommand(message.text) !== null) {
+      // Billing pribadi tidak pernah dibaca dari audience grup. Jalur ini juga
+      // berhenti sebelum context/memory retrieval maupun model invocation.
+      return this.deliver(
+        scopeKey,
+        generation,
+        message,
+        USAGE_GROUP_PRIVACY_MESSAGE,
+        false,
+        "control",
+      );
+    }
     if (
       !(await this.isCurrentTurn(
         scopeKey,

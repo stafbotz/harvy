@@ -278,6 +278,55 @@ describe("armada akun Baileys", () => {
     await manager.stop();
   });
 
+  it("menjawab private command secara deterministik dan mendeduplikasi upsert", async () => {
+    const privateMessages: string[] = [];
+    const groupMessages: string[] = [];
+    const sockets: FakeSocket[] = [];
+    const manager = new BaileysAccountManager(
+      { ...config(), accounts: [config().accounts[0]!] },
+      {
+        ...noOpEvents(),
+        onMessage: async (incoming) => {
+          groupMessages.push(incoming.messageId);
+        },
+        onPrivateMessage: async (incoming) => {
+          privateMessages.push(incoming.text);
+          return "*Penggunaan Harvy*\nSisa penggunaan: 68%";
+        },
+      },
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.ev.emit("connection.update", { connection: "open" });
+    const incoming: WAMessage = {
+      key: {
+        id: "private-command-1",
+        remoteJid: "628777777777@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: 1_775_000_000,
+      message: { conversation: "/penggunaan" },
+    };
+    socket.ev.emit("messages.upsert", { type: "notify", messages: [incoming] });
+    socket.ev.emit("messages.upsert", { type: "notify", messages: [incoming] });
+    await manager.drainEvents();
+
+    assert.deepEqual(privateMessages, ["/penggunaan"]);
+    assert.deepEqual(groupMessages, []);
+    assert.equal(socket.sentMessages.length, 1);
+    assert.equal(socket.sentMessages[0]?.jid, "628777777777@s.whatsapp.net");
+    assert.match(socket.sentMessages[0]?.text ?? "", /^\*Penggunaan Harvy\*/u);
+    await manager.stop();
+  });
+
   it("mengklasifikasikan reconnect dan membatasi backoff berjitter", () => {
     assert.equal(
       reconnectDecision(DisconnectReason.restartRequired),

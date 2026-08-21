@@ -380,6 +380,61 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   provider tetap milik provider-attempt ledger. Observer turn tidak boleh
   mengubah delivery, authority, mutasi, atau safety bila pencatatannya gagal.
 
+## Economy, entitlement, dan funding
+
+- **Plan membeli kapasitas, bukan kecerdasan.** Untuk task dan konteks identik,
+  Free dan paid mempertahankan quality ceiling, role/model eligibility,
+  escalation, tool, dan memory capability yang sama. Plan/cohort hanya memberi
+  allowance, anti-abuse ceiling, atau resource operasional; router tidak boleh
+  membaca `planId` sebagai proxy model tier.
+- **Run budget bukan quota subscription.** `RunBudget` membatasi satu
+  AgentRun (call/tool/token/deadline/concurrency). `ComputeAllowance` dan
+  `BillingPeriod` adalah entitlement subject; `FundingSource` menentukan pihak
+  yang membayar request. Ketiganya tidak boleh digabung menjadi satu mutable
+  balance.
+- **Funding resolver adalah authority tunggal.** Urutan default yang persisted
+  dan deterministic ialah included → sponsored → PAYG yang sudah diberi consent
+  → BYOK → blocked. Provider adapter menerima funding context hasil resolver,
+  bukan cabang `free/pro/wallet` yang tersebar.
+- **Reservation mendahului inference.** Preflight membuat reservation atomic
+  dengan request/logical-run idempotency key; usage actual menyelesaikan setelah
+  delivery atau melepaskan surplus. Retry, restart, webhook/event ganda,
+  out-of-order event, dan request paralel tidak boleh overspend atau menggandakan
+  debit. Physical provider cost tetap dicatat walau logical user charge
+  dilepas sebagai overhead Harvy.
+- **Delivery adalah boundary charge.** Output yang gagal, malformed, retry
+  internal, atau tidak terkirim tidak menjadi debit user secara sembrono.
+  `safety_exempt` tetap dapat menjawab kebutuhan keselamatan dasar tanpa menjadi
+  unlimited general-purpose bypass.
+- **Financial state fixed-point dan auditable.** Compute memakai integer
+  versioned units; IDR memakai integer minor units; ledger append-only menjadi
+  authority, projection/cache boleh direbuild. Semua top-up, subscription,
+  contribution, grant, refund, dan settlement wajib idempoten.
+- **BYOK secret terisolasi.** Raw key hanya boleh berada di SecretStore
+  terenkripsi dan memory invocation provider; metadata credential tidak boleh
+  direfleksikan ke prompt, transcript, telemetry, error, ledger, Console, atau
+  Git. Revoke harus memutus funding berikutnya.
+- **Billing tidak memakai isi percakapan.** Usage/recommendation hanya boleh
+  memakai compute, delivery, period, funding, dan billing history pseudonymous.
+  Contribution Harvy Commons selalu optional, non-manipulatif, dan tidak
+  meningkatkan intelligence atau menjadi syarat Free.
+- **`/penggunaan` adalah query akun sendiri, bukan turn AI.** Adapter hanya
+  boleh memberikan owner authenticated kanal kepada query service; command
+  tidak menerima target subject/account, tidak membaca transcript, dan tidak
+  memanggil model. Telegram/WhatsApp group hanya memberi arahan ke chat pribadi.
+  Markup bold dibentuk formatter kanal dari DTO semantik, bukan domain economy.
+- **Dashboard membedakan biaya fisik dan biaya pengguna.** Aktivitas/total biaya
+  berasal dari provider-attempt ledger periode aktif. Breakdown sumber biaya
+  mengikuti delivery settlement; retry atau failure Harvy tetap overhead,
+  sedangkan BYOK tetap merefleksikan biaya fisik akun provider pengguna. Cache
+  saving hanya boleh memakai price snapshot attempt; data unpriced/legacy wajib
+  tampil parsial atau unavailable, bukan dihitung ulang dengan katalog terbaru.
+- **Revenue tidak menjadi hidden recommendation weight.** Service fee,
+  marketplace fee, referral, enterprise, sponsor, atau hubungan komersial
+  wajib diungkapkan bila relevan; ranking tetap berdasarkan user fit. Margin
+  dari sumber tersebut boleh mendanai Harvy-funded compute/Commons tanpa
+  mengubah intelligence routing.
+
 ## AI dan model
 
 - **Harvy tidak punya cadangan berbasis aturan.** Provider AI cadangan mode uji

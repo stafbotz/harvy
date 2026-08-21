@@ -286,7 +286,9 @@ function normalizeUsageRecord(value: unknown, index: number): AiUsageRecord {
     channel: oneOf(
       record.channel,
       ["telegram", "whatsapp", "system"] as const,
-      ownerId.startsWith("whatsapp:") ? "whatsapp" : "telegram",
+      ownerId.startsWith("whatsapp:") || ownerId.startsWith("whatsapp-user:")
+        ? "whatsapp"
+        : "telegram",
     ),
     tier: oneOf(record.tier, ["cheap", "efficient", "ambitious"] as const, "cheap"),
     purpose,

@@ -111,6 +111,21 @@ describe("ControlPlaneService", () => {
     assert.equal(invited.evaluationConsent.grantedAt, null);
   });
 
+  it("memetakan owner WhatsApp private ke subject personal pseudonymous", async () => {
+    const { control } = service();
+    const enrollment = await control.enrollmentForOwner(
+      "whatsapp-user:628777777777@s.whatsapp.net",
+    );
+
+    assert.equal(enrollment.kind, "private");
+    assert.equal(enrollment.channel, "whatsapp");
+    assert.equal(enrollment.planId, PERSONAL_PLAN_IDS.free);
+    assert.equal(
+      enrollment.subjectRef.includes("628777777777"),
+      false,
+    );
+  });
+
   it("memberi nama paket pilot yang disahkan tanpa mengaktifkan checkout", async () => {
     const { control } = service();
     const latest = latestPlans(await control.plans());

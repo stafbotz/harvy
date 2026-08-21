@@ -7,6 +7,7 @@ import {
 import { randomUUID } from "node:crypto";
 import type { HarvyContext } from "../ai/context.js";
 import type { Conversation, ConversationRuntime } from "../ai/conversation.js";
+import { ByokProviderError } from "../ai/client.js";
 import {
   currentUsageAttribution,
   withUsageAttribution,
@@ -33,6 +34,15 @@ import type { AppConfig } from "../config.js";
 import type { CodingRun } from "../domain/coding-run.js";
 import { renderCodingRunAnchor } from "../coding/coding-run-anchor.js";
 import type { CodingRuntimeComposition } from "../core/coding-runtime-composition.js";
+import type { EconomyService } from "../core/economy-service.js";
+import { EconomyCommandService } from "../core/economy-command-service.js";
+import type { UserUsageSummaryService } from "../core/user-usage-summary-service.js";
+import {
+  parseUsageDashboardCommand,
+  renderUsageDashboard,
+  USAGE_COMMAND_TARGET_REJECTED,
+  USAGE_GROUP_PRIVACY_MESSAGE,
+} from "../core/usage-dashboard-renderer.js";
 import type { PrivateCodingRunHandle } from "../core/private-coding-application.js";
 import type { PrivateGitHubPublishOffer } from "../core/private-github-application.js";
 import {
@@ -113,6 +123,7 @@ import {
   dataControlActions,
   deleteAllConfirmActions,
   formatMemories,
+  formatEconomyUsage,
   formatSession,
   formatTask,
   formatTimeSettings,
@@ -192,9 +203,30 @@ const REMINDER_LEAD_MS = 60 * 60 * 1000;
 
 const AI_FAILURE_MESSAGE =
   "Maaf, aku lagi nggak bisa mikir sekarang — sambungan ke otakku lagi bermasalah. Coba kirim lagi sebentar lagi, ya.";
-const AI_USAGE_LIMIT_MESSAGE =
-  "Pemakaian AI-mu untuk 24 jam terakhir sudah mencapai batas yang dipasang. Aku tetap memeriksa pesan yang menyangkut keselamatan, tapi percakapan biasa perlu menunggu sampai pemakaian lama keluar dari jendela 24 jam.";
-
+function usageLimitMessage(error: UsageLimitError): string {
+  if (error.reason === "wallet_disabled") {
+    return "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Kamu bisa mengaktifkannya dari pengaturan funding, memakai provider sendiri, atau menunggu pembaruan kapasitas.";
+  }
+  if (error.reason === "anti_abuse") {
+    return "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; kapasitas dan pekerjaanmu tetap tersimpan.";
+  }
+  if (error.reason === "byok_unavailable") {
+    return "Provider BYOK-mu belum cocok untuk tingkat pekerjaan ini. Kamu dapat memilih model BYOK yang lebih kuat, menambah provider lain, memakai compute Harvy/PAYG dengan izin, atau menunggu pembaruan kapasitas.";
+  }
+  return [
+    "Penggunaan Harvy-funded untuk periode ini sudah terpakai.",
+    "Harvy membutuhkan compute berbayar untuk melanjutkan pekerjaan baru.",
+    "Kamu dapat menggunakan paket Harvy, menambah compute, memakai akun API/provider milikmu, atau menunggu penggunaan gratis diperbarui.",
+    "Memory, percakapan, dan pekerjaanmu tetap tersimpan.",
+  ].join("\n\n");
+}
+function aiFailureMessage(error: unknown, fallback = AI_FAILURE_MESSAGE): string {
+  if (error instanceof UsageLimitError) return usageLimitMessage(error);
+  if (error instanceof ByokProviderError) {
+    return "Provider BYOK-mu belum dapat menyelesaikan pekerjaan ini. Kamu bisa memilih model BYOK yang lebih kuat, memasang provider lain, atau memakai compute Harvy secara eksplisit. Harvy tidak mengalihkan biaya diam-diam.";
+  }
+  return fallback;
+}
 const SESSION_KIND_OF: Partial<Record<string, SessionKind>> = {
   clarify: "clarify",
   prioritize: "prioritize",
@@ -215,7 +247,6 @@ interface SentMessageRef {
   chatId: number;
   messageId: number;
 }
-
 class PartialReplyDeliveryError extends Error {
   constructor(
     readonly deliveredText: string,
@@ -225,7 +256,6 @@ class PartialReplyDeliveryError extends Error {
     this.name = "PartialReplyDeliveryError";
   }
 }
-
 export interface TypingContext {
   replyWithChatAction: (action: "typing") => Promise<unknown>;
 }
@@ -266,9 +296,66 @@ export function createBot(
     CodingRuntimeComposition,
     "application" | "privateGitHub" | "issuePrivateActor"
   > | null = null,
+  economy: EconomyService | null = null,
+  usageDashboard: Pick<UserUsageSummaryService, "summary"> | null = null,
 ): HarvyBot {
+  const economyCommands = economy
+    ? new EconomyCommandService(economy, usageDashboard)
+    : null;
+  const replyUsageDashboard = async (
+    ctx: Context,
+    ownerId: string,
+  ): Promise<void> => {
+    if (usageDashboard) {
+      const rendered = renderUsageDashboard(
+        await usageDashboard.summary(ownerId),
+        "telegram",
+      );
+      await ctx.reply(rendered.text, { parse_mode: "HTML" });
+      return;
+    }
+    await ctx.reply(
+      economy
+        ? formatEconomyUsage(await economy.usage(ownerId))
+        : formatUsage(await telemetry.summary(ownerId)),
+    );
+  };
   const currentTurnId = (): string | null =>
     currentUsageAttribution()?.turnId ?? null;
+  const markDeliveredForOwner = async (
+    ownerId: string,
+    turnId: string | null,
+    ctx?: Context,
+  ): Promise<void> => {
+    const notice = await telemetry.markDelivered?.(ownerId, turnId);
+    if (!ctx) return;
+    if (notice) {
+      try {
+        await ctx.reply(notice.message);
+      } catch (error) {
+        logger.warn(
+          "usage_notice_delivery_failed",
+          "Pemberitahuan kapasitas tidak terkirim; tidak mengubah settlement.",
+          { error },
+        );
+      }
+      return;
+    }
+    if (economy) {
+      const support = await economy.supportPrompt(ownerId);
+      if (support) {
+        try {
+          await ctx.reply(support);
+        } catch (error) {
+          logger.warn(
+            "support_prompt_delivery_failed",
+            "Pemberitahuan dukungan sukarela tidak terkirim.",
+            { error },
+          );
+        }
+      }
+    }
+  };
   const noteTurnSignal = async (
     ownerId: string,
     signal: TurnTelemetrySignal,
@@ -621,6 +708,11 @@ export function createBot(
       return;
     }
 
+    const usageCommand = parseUsageDashboardCommand(ctx.message?.text ?? "");
+    if (usageCommand !== null) {
+      await ctx.reply(USAGE_GROUP_PRIVACY_MESSAGE);
+      return;
+    }
     if (ctx.message?.text?.startsWith("/")) {
       await ctx.reply(
         "Harvy versi ini khusus chat pribadi. Kirim pesan langsung ke akun bot, ya.",
@@ -664,6 +756,48 @@ export function createBot(
         await clearPending(ownerId);
         actionOffers.clear(ownerId);
         await ctx.reply(HELP_MESSAGE, { reply_markup: helpActions() });
+      },
+    );
+  });
+
+  const handleUsageDashboardCommand = (ctx: Context): void => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "cancel",
+      "Perintah /penggunaan gagal:",
+      async () => {
+        await clearPending(ownerId);
+        const match = parseUsageDashboardCommand(ctx.message?.text ?? "");
+        if (match === "invalid") {
+          await ctx.reply(USAGE_COMMAND_TARGET_REJECTED);
+          return;
+        }
+        await replyUsageDashboard(ctx, ownerId);
+      },
+    );
+  };
+  bot.command("penggunaan", handleUsageDashboardCommand);
+  bot.command("usage", handleUsageDashboardCommand);
+
+  bot.command("dukung", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "cancel",
+      "Perintah /dukung gagal:",
+      async () => {
+        await clearPending(ownerId);
+        const reply = economy
+          ? await economyCommands!.handle(
+              ownerId,
+              ctx.message?.text ?? "/dukung",
+              currentTurnId() ?? `telegram:${ctx.update.update_id}`,
+            )
+          : "Harvy bisa digunakan gratis. Kontribusi sukarela belum tersedia pada instalasi ini.";
+        await ctx.reply(reply ?? "Kontribusi sukarela tetap opsional dan tidak memengaruhi kualitas Harvy.");
       },
     );
   });
@@ -1422,6 +1556,26 @@ export function createBot(
     ) {
       return;
     }
+    if (
+      economyCommands &&
+      !explicitImmediateDanger &&
+      !urgentBoundary &&
+      !hasExplicitImmediateDangerSignal(text)
+    ) {
+      const accountReply = await economyCommands.handle(
+        ownerId,
+        text,
+        currentTurnId() ?? `telegram:${firstIngressUpdateId}`,
+      );
+      if (accountReply) {
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await ctx.reply(accountReply);
+        // Account/billing controls are deterministic control-plane actions.
+        // Keeping them out of conversation history prevents billing state and
+        // accidentally pasted credentials from becoming future prompt input.
+        return;
+      }
+    }
     // Indikator muncul ketika Harvy benar-benar mulai menangani satu giliran,
     // bukan pada setiap bubble saat ia masih menyimak.
     actionOffers.clear(ownerId);
@@ -1665,10 +1819,7 @@ export function createBot(
         if (!userAlreadyAppended) {
           await history.append(ownerId, "user", text);
         }
-        const response =
-          readResult.error instanceof UsageLimitError
-            ? AI_USAGE_LIMIT_MESSAGE
-            : AI_FAILURE_MESSAGE;
+        const response = aiFailureMessage(readResult.error);
         if (!(await runtimeIsCurrent(runtime))) {
           await telemetry.discardUndelivered?.(ownerId, currentTurnId());
           return;
@@ -1706,7 +1857,7 @@ export function createBot(
         effectPermissions.generalState &&
         await handleActiveRunMailboxAfterSafety(ctx, ownerId, text)
       ) {
-        await telemetry.markDelivered?.(ownerId, currentTurnId());
+        await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
         return;
       }
 
@@ -2001,8 +2152,9 @@ export function createBot(
           await noteTurnSignal(ownerId, "safety-fallback");
           reply = safeFallbackReply(triage.level);
         } else if (route.kind !== "save-task") {
-          await ctx.reply(AI_FAILURE_MESSAGE);
-          await history.append(ownerId, "harvy", AI_FAILURE_MESSAGE);
+          const failure = aiFailureMessage(error);
+          await ctx.reply(failure);
+          await history.append(ownerId, "harvy", failure);
           return;
         }
         // Untuk tugas, pencatatannya tetap diteruskan. Kehilangan kalimat
@@ -2082,7 +2234,7 @@ export function createBot(
                 replyDelivered = true;
                 memoryNoticeDelivered = true;
                 if (debitDeliveredReply) {
-                  await telemetry.markDelivered?.(ownerId, currentTurnId());
+                  await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
                 }
               },
             );
@@ -2135,7 +2287,7 @@ export function createBot(
               }
             }
             if (debitDeliveredReply) {
-              await telemetry.markDelivered?.(ownerId, currentTurnId());
+              await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
             }
           }
         } catch (error) {
@@ -2170,7 +2322,7 @@ export function createBot(
               await rollbackOrdinaryMemories(ownerId, remembered.saved);
             }
             if (debitDeliveredReply) {
-              await telemetry.markDelivered?.(ownerId, currentTurnId());
+              await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
             }
             await history.append(ownerId, "harvy", error.deliveredText);
             if (warning) await history.append(ownerId, "harvy", warning);
@@ -2653,7 +2805,7 @@ export function createBot(
           );
           await updateActiveRunAnchor(completed);
           await history.append(ownerId, "harvy", result.reply);
-          await telemetry.markDelivered?.(ownerId, attempt.run.turnId);
+          await markDeliveredForOwner(ownerId, attempt.run.turnId);
           return;
         } catch (error) {
           if (error instanceof ActiveAgentRunStaleError) {
@@ -2689,7 +2841,7 @@ export function createBot(
           );
           await updateActiveRunAnchor(waiting);
           await history.append(ownerId, "harvy", result.prompt);
-          await telemetry.markDelivered?.(ownerId, attempt.run.turnId);
+          await markDeliveredForOwner(ownerId, attempt.run.turnId);
           return;
         } catch (error) {
           if (error instanceof ActiveAgentRunStaleError) {
@@ -3219,8 +3371,9 @@ export function createBot(
       );
       if (!(await runtimeIsCurrent(runtime))) return;
       logger.error("agent_resume_failed", "Run agent gagal dilanjutkan.", error);
-      await ctx.reply(AI_FAILURE_MESSAGE);
-      await history.append(ownerId, "harvy", AI_FAILURE_MESSAGE);
+      const failure = aiFailureMessage(error);
+      await ctx.reply(failure);
+      await history.append(ownerId, "harvy", failure);
       return;
     }
 
@@ -3285,7 +3438,7 @@ export function createBot(
           error.cause,
         );
         if (debitDeliveredReply) {
-          await telemetry.markDelivered?.(ownerId, currentTurnId());
+          await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
         }
         await history.append(ownerId, "harvy", error.deliveredText);
         if (warning) await history.append(ownerId, "harvy", warning);
@@ -3315,7 +3468,7 @@ export function createBot(
       );
     }
     if (debitDeliveredReply) {
-      await telemetry.markDelivered?.(ownerId, currentTurnId());
+      await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
     }
     await history.append(ownerId, "harvy", response);
     if (checkpointWarning) {
@@ -3491,11 +3644,7 @@ export function createBot(
         "Pembacaan waktu pilihan gagal.",
         error,
       );
-      await ctx.reply(
-        error instanceof UsageLimitError
-          ? AI_USAGE_LIMIT_MESSAGE
-          : AI_FAILURE_MESSAGE,
-      );
+      await ctx.reply(aiFailureMessage(error));
       return null;
     }
 
@@ -3949,11 +4098,7 @@ export function createBot(
         "Pembacaan tenggat baru gagal.",
         error,
       );
-      await ctx.reply(
-        error instanceof UsageLimitError
-          ? AI_USAGE_LIMIT_MESSAGE
-          : AI_FAILURE_MESSAGE,
-      );
+      await ctx.reply(aiFailureMessage(error));
       return;
     }
 
@@ -4610,7 +4755,7 @@ export function createBot(
     try {
       const sent = await sendReply(ctx, response, [], sessionActions(session));
       delivered = true;
-      await telemetry.markDelivered?.(ownerId, currentTurnId());
+      await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
       await history.append(ownerId, "harvy", response);
       return sent;
     } catch (error) {
@@ -4680,7 +4825,7 @@ export function createBot(
         await showMemories(ctx, ownerId);
         return;
       case "usage":
-        await ctx.reply(formatUsage(await telemetry.summary(ownerId)));
+        await replyUsageDashboard(ctx, ownerId);
         return;
       case "data":
       case "timezone":
@@ -5194,9 +5339,7 @@ export function createBot(
       );
       try {
         await ctx.reply(
-          error instanceof UsageLimitError
-            ? AI_USAGE_LIMIT_MESSAGE
-            : "Ada yang gagal diproses. Coba lagi sebentar, ya.",
+          aiFailureMessage(error, "Ada yang gagal diproses. Coba lagi sebentar, ya."),
         );
       } catch (replyError) {
         logger.error(

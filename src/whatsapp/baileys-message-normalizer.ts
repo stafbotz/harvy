@@ -17,6 +17,14 @@ export interface BaileysMessageContext {
   authorityEpoch?: number;
 }
 
+export interface WhatsAppPrivateMessage {
+  accountId: string;
+  userId: string;
+  messageId: string;
+  text: string;
+  at: string;
+}
+
 /**
  * Memperkecil event Baileys menjadi kontrak domain grup.
  *
@@ -89,6 +97,45 @@ export function normalizeBaileysGroupMessage(
     isAdmin: context.isAdmin(participantJids),
     authorityEpoch: context.authorityEpoch ?? 0,
   };
+}
+
+/** Command-only private ingress; ordinary private chat remains unsupported. */
+export function normalizeBaileysPrivateMessage(
+  raw: WAMessage,
+  context: Pick<BaileysMessageContext, "accountId" | "selfJids">,
+): WhatsAppPrivateMessage | null {
+  const key = raw.key as typeof raw.key & { remoteJidAlt?: string | null };
+  const remoteJid = key.remoteJid ?? undefined;
+  const remoteJidAlt = key.remoteJidAlt ?? undefined;
+  if (
+    !remoteJid ||
+    isJidGroup(remoteJid) ||
+    raw.key.fromMe === true ||
+    !raw.key.id
+  ) {
+    return null;
+  }
+  const userId = stablePrivateId(remoteJid, remoteJidAlt);
+  if (!userId || context.selfJids.some((jid) => normalizedJid(jid) === userId)) {
+    return null;
+  }
+  const text = messageText(extractMessageContent(raw.message));
+  if (!text) return null;
+  return {
+    accountId: context.accountId,
+    userId,
+    messageId: raw.key.id,
+    text,
+    at: timestampIso(raw.messageTimestamp),
+  };
+}
+
+export function whatsappPrivateOwnerId(userId: string): string {
+  const normalized = normalizedJid(userId);
+  if (!isPrivateUserJid(normalized)) {
+    throw new Error("Identitas private WhatsApp tidak sah.");
+  }
+  return `whatsapp-user:${normalized}`;
 }
 
 function messageText(
@@ -166,4 +213,18 @@ function stableParticipantId(
     ),
   );
   return values.find((value) => value.endsWith("@lid")) ?? values[0] ?? null;
+}
+
+function stablePrivateId(
+  remoteJid: string,
+  remoteJidAlt: string | undefined,
+): string | null {
+  const values = uniqueJids([remoteJid, remoteJidAlt].filter(
+    (value): value is string => Boolean(value),
+  )).filter(isPrivateUserJid);
+  return values.find((value) => value.endsWith("@lid")) ?? values[0] ?? null;
+}
+
+function isPrivateUserJid(value: string): boolean {
+  return value.endsWith("@s.whatsapp.net") || value.endsWith("@lid");
 }

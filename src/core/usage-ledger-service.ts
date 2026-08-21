@@ -25,6 +25,7 @@ import type {
   EntitlementLedgerRepository,
   EntitlementScopeSettlementResult,
 } from "../domain/entitlement.js";
+import type { EconomyFundingAuthority } from "./economy-service.js";
 import type {
   AiUsageContext,
   TokenUsage,
@@ -85,6 +86,7 @@ export interface UsageLedgerBreakdown {
 export interface UsageLedgerOptions {
   retentionDays: number;
   entitlementRepository?: EntitlementLedgerRepository;
+  economicFunding?: EconomyFundingAuthority;
 }
 
 export interface OwnerUsageDeliveryScope extends UsageDeliveryScope {
@@ -194,6 +196,9 @@ export class UsageLedgerService implements ProviderAttemptObserver {
       maxOutputTokens: nonNegativeInteger(context.maxOutputTokens),
       inputTokenEstimate: nonNegativeInteger(context.inputTokenEstimate),
       safetyCritical: context.safetyCritical,
+      ...(context.fundingSource
+        ? { fundingSource: context.fundingSource }
+        : {}),
       ...providerExecutionMetadata(context),
       ...providerRouteMetadata(context),
       status: "started",
@@ -427,17 +432,22 @@ export class UsageLedgerService implements ProviderAttemptObserver {
    * dicatat terpisah, tetapi hanya debit yang sudah melewati konfirmasi
    * delivery yang boleh ikut ke gerbang kuota.
    */
-  async debitedTokens(ownerId: string, since: Date): Promise<number | null> {
+  async debitedTokens(
+    ownerId: string,
+    since: Date,
+    until: Date | undefined = undefined,
+  ): Promise<number | null> {
     const queued = this.ownerQueues.get(ownerId);
     if (queued) await queued;
     await this.flushEntitlements();
     const repository = this.options.entitlementRepository;
     if (!repository) return null;
     const threshold = since.getTime();
+    const ceiling = until?.getTime() ?? Number.POSITIVE_INFINITY;
     const subjectRef = await this.controlPlane.subjectRef(ownerId);
     const entries = await repository.list(subjectRef);
     return entries
-      .filter((entry) => Date.parse(entry.at) >= threshold)
+      .filter((entry) => Date.parse(entry.at) >= threshold && Date.parse(entry.at) < ceiling)
       .reduce((sum, entry) => sum + nonNegativeInteger(entry.debitedTokens), 0);
   }
 
@@ -560,12 +570,18 @@ export class UsageLedgerService implements ProviderAttemptObserver {
       );
     }
     if ("subjectRef" in scope) {
-      return repository.settleScope(scope, {
+      const result = await repository.settleScope(scope, {
         ...settlement,
         settledAt: this.now().toISOString(),
       });
+      await this.options.economicFunding?.settleDeliveryScope(
+        scope,
+        settlement.outcome,
+        settlement.effectId,
+      );
+      return result;
     }
-    return this.exclusiveOwner(scope.ownerId, async () => {
+    const result = await this.exclusiveOwner(scope.ownerId, async () => {
       if (this.blockedOwners.has(scope.ownerId)) {
         throw new Error("Owner diblokir dari settlement entitlement.");
       }
@@ -583,6 +599,13 @@ export class UsageLedgerService implements ProviderAttemptObserver {
         },
       );
     });
+    const subjectRef = await this.controlPlane.subjectRef(scope.ownerId);
+    await this.options.economicFunding?.settleDeliveryScope(
+      { ...scope, subjectRef },
+      settlement.outcome,
+      settlement.effectId,
+    );
+    return result;
   }
 
   /** Daftar scope durable yang perlu direkonsiliasi dengan receipt GroupAgentRun. */

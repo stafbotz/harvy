@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
   AiClient,
+  ByokProviderError,
   AiResponseError,
   type ChatFunctionTool,
   type ChatToolCall,
@@ -384,6 +385,66 @@ describe("AiClient", () => {
     assert.equal(budget.checkpoint().modelCalls, 2);
     assert.equal(budget.checkpoint().consumedTokens, 107);
     assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
+  });
+
+  it("tidak diam-diam fallback ke Harvy saat provider BYOK gagal", async () => {
+    let primaryCalls = 0;
+    let fallbackCalls = 0;
+    globalThis.fetch = async (input) => {
+      if (String(input).startsWith("https://owned.invalid/")) {
+        primaryCalls += 1;
+        return new Response("{}", { status: 503 });
+      }
+      fallbackCalls += 1;
+      return chatResponse("fallback tidak boleh dipakai");
+    };
+    const usage: AiUsageContext = {
+      requestId: "request-byok-client",
+      turnId: "turn-byok-client",
+      ownerId: "owner-uji",
+      tier: "ambitious",
+      purpose: "reply",
+      model: "model-harvy",
+      maxTokens: 80,
+      inputTokenEstimate: 10,
+      safetyCritical: false,
+    };
+    const observer: UsageObserver = {
+      beforeRequest: async () => ({
+        reservationId: "reservation-byok-client",
+        source: "byok",
+        providerCredentialRef: "credential-byok-client",
+      }),
+      afterRequest: async () => undefined,
+    };
+    const client = new AiClient({
+      baseUrl: "https://harvy.invalid/v1",
+      keys: new ApiKeyPool(["harvy-key"]),
+      fallback: {
+        baseUrl: "https://fallback.invalid/v1",
+        keys: new ApiKeyPool(["fallback-key"]),
+        model: "fallback-model",
+      },
+      usageObserver: observer,
+      fundingCredentialResolver: async () => ({
+        credentialRef: "credential-byok-client",
+        providerId: "owned-provider",
+        baseUrl: "https://owned.invalid/v1",
+        modelId: "owned-model",
+        apiKey: "owned-key",
+      }),
+    });
+    await assert.rejects(
+      () => client.complete({
+        model: "model-harvy",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 80,
+        usage,
+      }),
+      (error: unknown) => error instanceof ByokProviderError,
+    );
+    assert.equal(primaryCalls, 1);
+    assert.equal(fallbackCalls, 0);
   });
 
   it("penolakan budget lokal tidak memutar API key", async () => {

@@ -18,6 +18,7 @@ import {
   loadConfig,
   loadOperationalLogConfig,
   type AiConfig,
+  type EconomyConfig,
 } from "./config.js";
 import {
   createCodingRuntimeComposition,
@@ -66,6 +67,18 @@ import {
   type PriceBootstrap,
 } from "./core/control-plane-service.js";
 import { UsageLedgerService } from "./core/usage-ledger-service.js";
+import { EconomyService } from "./core/economy-service.js";
+import { UserUsageSummaryService } from "./core/user-usage-summary-service.js";
+import {
+  parseUsageDashboardCommand,
+  renderUsageDashboard,
+  USAGE_COMMAND_TARGET_REJECTED,
+} from "./core/usage-dashboard-renderer.js";
+import {
+  LocalPaymentGateway,
+  UnavailablePaymentGateway,
+} from "./core/payment-gateway.js";
+import { EncryptedFileSecretStore } from "./core/secret-store.js";
 import { groupRuntimeAdmission } from "./core/group-runtime-policy.js";
 import { ConsoleServer } from "./console/console-server.js";
 import { startCheckInWorker } from "./reminders/checkin-worker.js";
@@ -81,12 +94,14 @@ import { FileTelemetryRepository } from "./storage/file-telemetry-repository.js"
 import { FileControlPlaneRepository } from "./storage/file-control-plane-repository.js";
 import { FileUsageLedgerRepository } from "./storage/file-usage-ledger-repository.js";
 import { FileEntitlementLedgerRepository } from "./storage/file-entitlement-ledger-repository.js";
+import { FileEconomyRepository } from "./storage/file-economy-repository.js";
 import { MarkdownInsightRepository } from "./storage/markdown-insight-repository.js";
 import { MarkdownMemoryRepository } from "./storage/markdown-memory-repository.js";
 import { FileMemoryKnowledgeRepository } from "./storage/file-memory-knowledge-repository.js";
 import { SqliteLongTermMemoryRepository } from "./storage/sqlite-long-term-memory-repository.js";
 import { FileTaskRepository } from "./storage/file-task-repository.js";
 import { BaileysAccountManager } from "./whatsapp/baileys-account-manager.js";
+import { whatsappPrivateOwnerId } from "./whatsapp/baileys-message-normalizer.js";
 import { GroupMessageBatcher } from "./whatsapp/group-message-batcher.js";
 import qrCodeTerminal from "qrcode-terminal";
 import {
@@ -129,6 +144,17 @@ let removeDevShutdownControl: () => void = () => undefined;
 
 try {
 const config = loadConfig();
+const economyConfig: EconomyConfig = config.controlPlane.economy ?? {
+  file: join("data", "economy.json"),
+  byokSecretFile: join("data", "byok-secrets.json"),
+  byokMasterKey: null,
+  paymentGatewayMode: "disabled",
+  paygComputeUnitsPerIdr: "1000000",
+  gettingLowThresholdBps: 5_000,
+  lowThresholdBps: 2_000,
+  notificationCooldownMs: 24 * 60 * 60 * 1_000,
+  supportMilestone: 8,
+};
 const codingDeployment = loadCodingRuntimeDeploymentConfig();
 runtimeLock = await acquireLocalRuntimeLock(
   localRuntimeLockPath(config.controlPlane.file),
@@ -146,6 +172,35 @@ const controlPlane = new ControlPlaneService(
   },
 );
 await controlPlane.initialize();
+const economySecretStore = economyConfig.byokMasterKey
+  ? new EncryptedFileSecretStore(
+      economyConfig.byokSecretFile,
+      economyConfig.byokMasterKey,
+    )
+  : null;
+const paymentGateway = economyConfig.paymentGatewayMode === "local"
+  ? new LocalPaymentGateway()
+  : new UnavailablePaymentGateway();
+const economy = new EconomyService(
+  new FileEconomyRepository(economyConfig.file),
+  controlPlane,
+  {
+    providerId: config.ai.providerId,
+    paygComputeUnitsPerIdr: economyConfig.paygComputeUnitsPerIdr,
+    gettingLowThresholdBps: economyConfig.gettingLowThresholdBps,
+    lowThresholdBps: economyConfig.lowThresholdBps,
+    notificationCooldownMs:
+      economyConfig.notificationCooldownMs,
+    supportMilestone: economyConfig.supportMilestone,
+    paymentGateway,
+  },
+  undefined,
+  economySecretStore,
+);
+if (economySecretStore) {
+  economy.setCredentialAvailabilityProvider((credentialRef) =>
+    economy.credentialAvailable(credentialRef));
+}
 const usageLedger = new UsageLedgerService(
   new FileUsageLedgerRepository(config.controlPlane.usageLedgerFile),
   controlPlane,
@@ -154,8 +209,12 @@ const usageLedger = new UsageLedgerService(
     entitlementRepository: new FileEntitlementLedgerRepository(
       config.controlPlane.entitlementLedgerFile,
     ),
+    economicFunding: economy,
   },
 );
+const usageDashboard = new UserUsageSummaryService(economy, usageLedger);
+economy.setLegacyTokenUsageProvider((ownerId, since, until) =>
+  usageLedger.debitedTokens(ownerId, since, until).then((value) => value ?? 0));
 const telemetry = new TelemetryService(
   new FileTelemetryRepository(config.telemetryFile),
   {
@@ -163,6 +222,7 @@ const telemetry = new TelemetryService(
     retentionDays: config.telemetryRetentionDays,
     prices: config.ai.prices,
     limitForOwner: (ownerId) => controlPlane.effectiveLimit(ownerId),
+    fundingAuthority: economy,
   },
   undefined,
   logger.child("core.telemetry"),
@@ -177,6 +237,8 @@ const aiClient = new AiClient({
   environment: runtimeEnvironment(config.operationalLog.environment),
   costCenter: "runtime",
   logger: logger.child("ai.client"),
+  fundingCredentialResolver: (funding, ownerId) =>
+    economy.credentialForReservation(funding.reservationId, ownerId),
 });
 const groupMemories = config.whatsapp.enabled
   ? new GroupMemoryService(
@@ -338,6 +400,8 @@ const bot = createBot(
   agentRuns,
   memoryContextCompiler,
   codingRuntime,
+  economy,
+  usageDashboard,
 );
 
 let groupTurns: GroupTurnService | null = null;
@@ -371,6 +435,15 @@ const whatsapp = config.whatsapp.enabled
         else if (groupTurns) {
           await runManagedGroupTurn(controlPlane, groupTurns, message);
         }
+      },
+      onPrivateMessage: async (message) => {
+        const command = parseUsageDashboardCommand(message.text);
+        if (command === null) return null;
+        if (command === "invalid") return USAGE_COMMAND_TARGET_REJECTED;
+        const summary = await usageDashboard.summary(
+          whatsappPrivateOwnerId(message.userId),
+        );
+        return renderUsageDashboard(summary, "whatsapp").text;
       },
       onGroupActive: async (message, authorityFence) => {
         const scopeKey = groupScopeKey(message.scope);
@@ -865,6 +938,8 @@ const consoleServer = config.controlPlane.console.enabled
       usageLedger,
       config.controlPlane.console,
       logger.child("console.server"),
+      undefined,
+      economy,
     )
   : null;
 

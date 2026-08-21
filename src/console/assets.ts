@@ -84,6 +84,11 @@ export const CONSOLE_HTML = `<!doctype html>
         <div class="period-label">24 JAM TERAKHIR</div>
         <div id="summary-cards" class="summary-grid" aria-live="polite"></div>
         <div id="cost-banner" class="cost-banner hidden"></div>
+        <article class="panel economy-panel" aria-labelledby="economy-title">
+          <div class="panel-head"><div><p class="kicker">HARVY COMPUTE</p><h2 id="economy-title">Entitlement dan funding</h2><p>Ringkasan content-free untuk rekonsiliasi operator; raw credential dan transcript tidak pernah ditampilkan.</p></div></div>
+          <div id="economy-summary" class="usage-summary" aria-live="polite"></div>
+          <p id="economy-detail" class="economy-note"></p>
+        </article>
         <div class="content-grid two">
           <article class="panel">
             <div class="panel-head"><div><p class="kicker">AKSES</p><h2>Beta dan standar</h2></div></div>
@@ -247,7 +252,7 @@ th,td{text-align:left;border-bottom:1px solid var(--line-soft);padding:12px 9px;
 .model-price{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:14px}.model-price div{padding:9px;border-radius:9px;background:#091710}.model-price span,.model-price strong{display:block}.model-price span{color:var(--faint);font-size:.65rem}.model-price strong{margin-top:3px;font-size:.83rem}
 .price-editor{margin-bottom:16px}.group-list{display:grid;gap:13px}.group-card{border:1px solid var(--line);border-radius:17px;background:var(--panel);overflow:hidden}
 .group-card-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:17px 19px;border-bottom:1px solid var(--line-soft)}.group-card-head h3{margin:0}.group-meta{display:flex;gap:6px;flex-wrap:wrap}.group-body{padding:6px 15px 12px}
-.usage-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}.usage-chip{padding:13px 15px;border:1px solid var(--line);border-radius:13px;background:var(--bg-soft)}.usage-chip span,.usage-chip strong{display:block}.usage-chip span{font-size:.69rem;color:var(--faint)}.usage-chip strong{margin-top:5px}
+.usage-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}.usage-chip{padding:13px 15px;border:1px solid var(--line);border-radius:13px;background:var(--bg-soft)}.usage-chip span,.usage-chip strong{display:block}.usage-chip span{font-size:.69rem;color:var(--faint)}.usage-chip strong{margin-top:5px}.economy-note{margin:0;font-size:.78rem;color:var(--faint)}
 @media(max-width:1100px){.summary-grid{grid-template-columns:repeat(2,1fr)}.diagnostic-grid{grid-template-columns:repeat(3,1fr)}.form-grid,.price-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.app-shell{display:block}.sidebar{position:sticky;height:auto;padding:12px 16px 10px;border-right:0;border-bottom:1px solid var(--line-soft)}.sidebar-brand{padding:0 0 10px}.sidebar-brand .brand-mark{width:33px;height:33px}.nav-tabs{display:flex;overflow:auto;gap:6px;padding-bottom:2px}.nav-tabs button{white-space:nowrap;min-height:38px;padding:7px 10px}.sidebar-foot{display:none}.workspace{padding:24px 20px 60px}.loading-bar{left:0}.login-shell{grid-template-columns:1fr;gap:30px;max-width:660px}.login-brand h1{font-size:clamp(2.2rem,9vw,3.6rem)}}
 @media(max-width:720px){body{font-size:14px}.workspace{padding:20px 12px 50px}.topbar{display:grid;gap:14px}.top-actions{width:100%}.sync-state{margin-right:auto;text-align:left;justify-items:start}.summary-grid,.content-grid.two,.usage-summary{grid-template-columns:1fr}.summary-card{min-height:122px}.summary-value{margin:12px 0 7px}.cost-banner,.section-intro,.panel-head,.group-card-head{align-items:flex-start;flex-direction:column}.diagnostic-grid{grid-template-columns:repeat(2,1fr)}.form-grid,.price-form,.filter-grid{grid-template-columns:1fr}.panel,.login-card{padding:16px;border-radius:15px}.login-shell{width:min(100% - 24px,660px);padding:30px 0}.login-brand{padding:8px}.table-scroll{overflow:visible}table.responsive thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}table.responsive,table.responsive tbody,table.responsive tr,table.responsive td{display:block;width:100%}table.responsive tr{padding:10px 0;border-bottom:1px solid var(--line-soft)}table.responsive tr:last-child{border-bottom:0}table.responsive td{display:grid;grid-template-columns:minmax(105px,38%) minmax(0,1fr);gap:10px;border:0;padding:6px 3px;overflow-wrap:anywhere}table.responsive td:before{content:attr(data-label);color:var(--faint);font-size:.7rem;font-weight:700}table.responsive td:empty{display:none}.actions{flex-wrap:wrap}.group-body{padding:4px 14px 10px}}
@@ -256,7 +261,7 @@ th,td{text-align:left;border-bottom:1px solid var(--line-soft);padding:12px 9px;
 
 export const CONSOLE_JS = `"use strict";
 let csrf=null;
-let state={dashboard:null,plans:[],prices:[],configuredModels:[],enrollments:[],attempts:[],usageSummary:null,audit:[],groupDetails:null};
+let state={dashboard:null,economy:null,plans:[],prices:[],configuredModels:[],enrollments:[],attempts:[],usageSummary:null,audit:[],groupDetails:null};
 let activeTab="overview",busy=false,groupLoading=false,activeLoad=null;
 const byId=(id)=>document.getElementById(id);
 const el=(tag,text,klass)=>{const node=document.createElement(tag);if(text!==undefined&&text!==null)node.textContent=String(text);if(klass)node.className=klass;return node};
@@ -268,7 +273,7 @@ const labels={
   origin:{primary:"Utama",fallback:"Cadangan"},tier:{cheap:"Ringan",efficient:"Efisien",ambitious:"Mendalam",toughest:"Eskalasi"},
   purpose:{"turn-boundary":"Batas giliran",understanding:"Pemahaman","due-date":"Membaca waktu","risk-triage":"Triase keselamatan","memory-privacy":"Privasi memori","group-ingress":"Ingress grup",reply:"Balasan","reply-review":"Review balasan",summary:"Ringkasan",agent:"Agent",research:"Research web","insight":"Catatan keselamatan",session:"Sesi","group-participation":"Rencana partisipasi grup","group-reply":"Balasan grup"},
   attemptStatus:{started:"Sedang berjalan",completed:"Selesai",http_error:"Gangguan HTTP",network_error:"Gangguan jaringan",timeout:"Waktu habis",cancelled:"Dibatalkan",response_rejected:"Respons ditolak",unknown:"Status belum dipastikan"},
-  auditAction:{session_login:"Masuk Console",session_logout:"Keluar Console",enrollment_create:"Tambah akses",enrollment_update:"Ubah akses",evaluation_invite:"Undang evaluasi",evaluation_revoke:"Cabut evaluasi",plan_version_create:"Buat versi paket",price_version_create:"Buat versi harga",runtime_mode_update:"Ubah mode runtime",unknown_mutation:"Perubahan tidak dikenal"},
+  auditAction:{session_login:"Masuk Console",session_logout:"Keluar Console",enrollment_create:"Tambah akses",enrollment_update:"Ubah akses",evaluation_invite:"Undang evaluasi",evaluation_revoke:"Cabut evaluasi",plan_version_create:"Buat versi paket",price_version_create:"Buat versi harga",economy_credential_create:"Pasang BYOK",economy_credential_revoke:"Cabut BYOK",runtime_mode_update:"Ubah mode runtime",unknown_mutation:"Perubahan tidak dikenal"},
   outcome:{succeeded:"Berhasil",rejected:"Ditolak",failed:"Gagal"},
   source:{provider:"Dilaporkan provider",catalog:"Katalog saat request","current_catalog_estimate":"Estimasi tarif sekarang",unavailable:"Belum dapat dihitung",unpriced:"Belum bertarif"}
 };
@@ -357,9 +362,29 @@ function renderSummary(){
   const diagnosticBox=byId("diagnostic-metrics");diagnosticBox.replaceChildren();
   diagnostics.forEach(([label,value])=>{const item=el("div",null,"diagnostic-item");item.append(el("span",label),el("strong",value));diagnosticBox.append(item)});
 }
+function computeAmount(value){try{return new Intl.NumberFormat("id-ID").format(BigInt(value||"0"))}catch{return "—"}}
+function renderEconomy(){
+  const box=byId("economy-summary"),detail=byId("economy-detail"),economy=state.economy;
+  box.replaceChildren();
+  if(!economy){box.append(emptyState("Data economy belum tersedia","Runtime lama atau endpoint economy belum aktif.",true));detail.textContent="";return}
+  const latest=new Map(),now=Date.now();economy.periods.forEach((period)=>{if(Date.parse(period.startsAt)>now||Date.parse(period.endsAt)<=now)return;const current=latest.get(period.subjectRef);if(!current||period.startsAt>current.startsAt)latest.set(period.subjectRef,period)});
+  const includedRemaining=[...latest.values()].reduce((sum,period)=>sum+BigInt(period.includedGranted||"0")-BigInt(period.includedUsed||"0")-BigInt(period.includedReserved||"0"),0n);
+  const reserved=[...latest.values()].reduce((sum,period)=>sum+BigInt(period.includedReserved||"0"),0n);
+  const wallet=economy.walletAccounts.reduce((sum,item)=>sum+BigInt(item.availableComputeUnits||"0"),0n);
+  const sponsored=economy.sponsoredGrants.filter((item)=>Date.parse(item.effectiveFrom)<=now&&(item.expiresAt===null||Date.parse(item.expiresAt)>now)).reduce((sum,item)=>sum+BigInt(item.amount||"0")-BigInt(item.used||"0")-BigInt(item.reserved||"0"),0n);
+  const activeSubscriptions=economy.subscriptions.filter((item)=>["trial","active","past_due","cancel_at_period_end"].includes(item.status)).length;
+  const activeCredentials=economy.credentials.filter((item)=>item.status==="active").length;
+  [["Subject dengan periode",number(latest.size)], ["Included tersisa",computeAmount(includedRemaining.toString())], ["Reserved",computeAmount(reserved.toString())], ["Wallet PAYG",computeAmount(wallet.toString())], ["Sponsored tersisa",computeAmount(sponsored.toString())], ["BYOK aktif",number(activeCredentials)], ["Subscription aktif",number(activeSubscriptions)], ["Settlement logical",number(economy.settlements.length)]].forEach(([label,value])=>{const chip=el("div",null,"usage-chip");chip.append(el("span",label),el("strong",value));box.append(chip)});
+  const costByFunding=state.dashboard?.economy?.physicalCostByFundingSource||{};
+  const costText=Object.keys(costByFunding).length
+    ? " Biaya provider 24 jam per funding: "+Object.entries(costByFunding).map(([source,value])=>source+"="+computeAmount(value)+" nanos USD").join(", ")+"."
+    : "";
+  const byokSetup=economy.secureByokSetupAvailable?" Secure setup BYOK lokal tersedia melalui API Console terautentikasi.":" Secure setup BYOK belum dikonfigurasi; raw key tidak dapat diterima.";
+  detail.textContent="Projection allowance dibaca dari periode terbaru tiap subject; ledger reservation, payment, dan provider cost tetap dapat direkonsiliasi tanpa membuka isi percakapan."+byokSetup+costText;
+}
 function breakdownRows(items,key){return items.map((item)=>{const cost=costPresentation(item.summary);return [key==="cohort"?translated("cohort",item[key]):item[key],number(item.summary.logicalRequests),number(item.summary.totalTokens),stack(cost.value,cost.detail),costBadge(item.summary)]})}
 function renderBreakdowns(){const breakdown=state.dashboard?.breakdown||{byCohort:[],byPlan:[]};byId("cohort-breakdown").replaceChildren(table(["Akses","Request","Token","Biaya indikatif","Cakupan"],breakdownRows(breakdown.byCohort,"cohort"),"Penggunaan per akses"));byId("plan-breakdown").replaceChildren(table(["Paket","Request","Token","Biaya indikatif","Cakupan"],breakdownRows(breakdown.byPlan,"planId"),"Penggunaan per paket"))}
-function renderPlans(){const rows=latestPlans().map((plan)=>[stack(plan.publicName,plan.planId),translated("audience",plan.audience),rupiah(plan.monthlyPriceIdr),number(plan.rolling24hTokenLimit),plan.activeMemberLimit===null?"—":number(plan.activeMemberLimit),translated("mode",plan.groupMode),badge(translated("planStatus",plan.status),plan.status==="active"?"good":plan.status==="retired"?"bad":"warn")]);byId("plans").replaceChildren(table(["Paket","Audiens","Harga / bulan","Token / 24 jam","Anggota aktif","Mode","Status"],rows,"Katalog paket"))}
+function renderPlans(){const rows=latestPlans().map((plan)=>[stack(plan.publicName,plan.planId),translated("audience",plan.audience),rupiah(plan.monthlyPriceIdr),stack(computeAmount(plan.computePolicy?.includedComputeUnits||"0"),"periode "+(plan.computePolicy?.billingPeriodDays||"—")+" hari"),stack(computeAmount(plan.computePolicy?.rollingComputeLimit||"0"),"rolling anti-abuse"),plan.activeMemberLimit===null?"—":number(plan.activeMemberLimit),translated("mode",plan.groupMode),badge(translated("planStatus",plan.status),plan.status==="active"?"good":plan.status==="retired"?"bad":"warn")]);byId("plans").replaceChildren(table(["Paket","Audiens","Harga / bulan","Compute termasuk","Ceiling rolling","Anggota aktif","Mode","Status"],rows,"Katalog paket"))}
 function selectedConfiguredModel(){const index=Number(byId("price-model").value);return Number.isSafeInteger(index)?state.configuredModels[index]||null:null}
 function normalizeDecimal(value){return value.trim().replace(",",".")}
 function validPrice(value){return /^(?:0|[1-9]\\d*)(?:\\.\\d{1,12})?$/.test(normalizeDecimal(value))}
@@ -456,7 +481,7 @@ function renderAttempts(){
 function renderAudit(){const rows=state.audit.map((item)=>[dateTime(item.at),translated("auditAction",item.action),item.targetRef?shortRef(item.targetRef,20):"—",badge(translated("outcome",item.outcome),item.outcome==="succeeded"?"good":item.outcome==="rejected"?"warn":"bad"),item.reasonCode?readable(item.reasonCode):"—"]);byId("audits").replaceChildren(table(["Waktu","Aksi","Target pseudonim","Hasil","Kode"],rows,"Audit operator"))}
 function renderUsagePlans(){const select=byId("usage-plan"),selected=select.value;select.replaceChildren();const all=el("option","Semua paket");all.value="";select.append(all);latestPlans().forEach((plan)=>{const option=el("option",plan.publicName);option.value=plan.planId;option.selected=selected===plan.planId;select.append(option)})}
 function renderAll(options={}){
-  renderSummary();renderBreakdowns();renderPlans();
+  renderSummary();renderEconomy();renderBreakdowns();renderPlans();
   if(!options.preserveForms){renderPrices();renderEnrollments()}
   renderUsagePlans();renderAttempts();renderAudit();if(state.groupDetails!==null)renderGroups();
   const status=state.dashboard?.status||"starting";byId("health").textContent=status==="ready"?"Siap":status==="draining"?"Sedang ditutup":"Menyiapkan";byId("health").className="status-badge "+(status==="ready"?"ready":status==="draining"?"warning":"neutral");
@@ -476,10 +501,10 @@ function load(options={}){
 async function performLoad(options={}){
   const quiet=options.quiet===true;setBusy(true,quiet);clearGlobalError();
   try{
-    const results=await Promise.allSettled([api("/api/v1/dashboard"),api("/api/v1/control-plane"),api(usagePath()),api("/api/v1/audit")]);
+    const results=await Promise.allSettled([api("/api/v1/dashboard"),api("/api/v1/control-plane"),api(usagePath()),api("/api/v1/audit"),api("/api/v1/economy")]);
     if(results[0].status==="rejected")throw results[0].reason;if(results[1].status==="rejected")throw results[1].reason;
-    const dashboard=results[0].value,control=results[1].value,usage=results[2].status==="fulfilled"?results[2].value:{summary:null,attempts:[]},audit=results[3].status==="fulfilled"?results[3].value:{records:[]};
-    state={...state,...control,dashboard,attempts:usage.attempts,usageSummary:usage.summary,audit:audit.records,groupDetails:null};renderAll({preserveForms:options.preserveForms===true});
+    const dashboard=results[0].value,control=results[1].value,usage=results[2].status==="fulfilled"?results[2].value:{summary:null,attempts:[]},audit=results[3].status==="fulfilled"?results[3].value:{records:[]},economy=results[4].status==="fulfilled"?results[4].value:null;
+    state={...state,...control,dashboard,economy,attempts:usage.attempts,usageSummary:usage.summary,audit:audit.records,groupDetails:null};renderAll({preserveForms:options.preserveForms===true});
     byId("last-updated").textContent="Diperbarui "+new Intl.DateTimeFormat("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"}).format(new Date());
     if(results[2].status==="rejected")showGlobalError(new Error("Ringkasan tersedia, tetapi detail penggunaan gagal dimuat: "+results[2].reason.message));
     else if(results[3].status==="rejected")showGlobalError(new Error("Data utama tersedia, tetapi audit gagal dimuat: "+results[3].reason.message));

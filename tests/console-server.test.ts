@@ -5,8 +5,11 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { ConsoleServer } from "../src/console/console-server.js";
 import { ControlPlaneService } from "../src/core/control-plane-service.js";
+import { EconomyService } from "../src/core/economy-service.js";
+import { MemorySecretStore } from "../src/core/secret-store.js";
 import { UsageLedgerService } from "../src/core/usage-ledger-service.js";
 import { FileControlPlaneRepository } from "../src/storage/file-control-plane-repository.js";
+import { FileEconomyRepository } from "../src/storage/file-economy-repository.js";
 import { FileUsageLedgerRepository } from "../src/storage/file-usage-ledger-repository.js";
 
 describe("Harvy Console", () => {
@@ -29,12 +32,15 @@ describe("Harvy Console", () => {
 
   it("menjaga auth, Origin, CSRF, CSP, schema tertutup, dan audit", async () => {
     const directory = await mkdtemp(join(tmpdir(), "harvy-console-http-"));
-    const { control, ledger } = runtime(directory);
+    const { control, ledger, economy } = runtime(directory);
     const token = "token-operator-uji-yang-panjangnya-lebih-dari-32";
     const server = new ConsoleServer(
       control,
       ledger,
       { host: "127.0.0.1", port: 0, operatorToken: token },
+      undefined,
+      undefined,
+      economy,
     );
     const started = await server.start();
     try {
@@ -116,6 +122,45 @@ describe("Harvy Console", () => {
           active: true,
         }],
       }]);
+
+      const computePlan = await fetch(`${started.origin}/api/v1/plans/versions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: started.origin,
+          cookie,
+          "x-csrf-token": loginBody.csrfToken,
+        },
+        body: JSON.stringify({
+          planId: "personal_compute_test",
+          publicName: "Compute Test",
+          audience: "personal",
+          monthlyPriceIdr: 12_000,
+          rolling24hTokenLimit: 100,
+          activeMemberLimit: null,
+          groupMode: "none",
+          status: "pilot",
+          effectiveFrom: "2099-01-01T00:00:00.000Z",
+          computePolicy: {
+            unitVersion: 1,
+            includedComputeUnits: "123456",
+            billingPeriodDays: 30,
+            rollingWindowHours: 24,
+            rollingComputeLimit: "4567",
+            legacyTokenOverlay: {
+              schemaVersion: 1,
+              computeUnitsPerToken: "1000",
+            },
+          },
+        }),
+      });
+      assert.equal(computePlan.status, 201);
+      assert.equal(
+        (await computePlan.json() as {
+          computePolicy: { includedComputeUnits: string };
+        }).computePolicy.includedComputeUnits,
+        "123456",
+      );
 
       const group = await control.createEnrollmentFromExternal(
         "kelas-a@g.us",
@@ -234,6 +279,64 @@ describe("Harvy Console", () => {
       };
       assert.match(enrollment.subjectRef, /^subject_/u);
       assert.equal(enrollment.evaluationConsent.status, "not_invited");
+
+      const rawByokSecret = "sk-test-console-secret-123456789";
+      const credentialCreated = await fetch(
+        `${started.origin}/api/v1/economy/credentials`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: started.origin,
+            cookie,
+            "x-csrf-token": loginBody.csrfToken,
+          },
+          body: JSON.stringify({
+            subjectRef: enrollment.subjectRef,
+            providerId: "openai",
+            baseUrl: "https://api.openai.com/v1",
+            modelId: "gpt-test",
+            eligibleTiers: ["cheap", "efficient", "ambitious"],
+            apiKey: rawByokSecret,
+          }),
+        },
+      );
+      assert.equal(credentialCreated.status, 201);
+      const credential = await credentialCreated.json() as {
+        credentialRef: string;
+        subjectRef: string;
+        maskedMetadata: string;
+        status: string;
+      };
+      assert.equal(credential.subjectRef, enrollment.subjectRef);
+      assert.equal(credential.status, "active");
+      assert.doesNotMatch(JSON.stringify(credential), new RegExp(rawByokSecret, "u"));
+
+      const economyState = await fetch(`${started.origin}/api/v1/economy`, {
+        headers: { cookie },
+      });
+      const economyBody = await economyState.text();
+      assert.doesNotMatch(economyBody, new RegExp(rawByokSecret, "u"));
+      assert.match(economyBody, /secureByokSetupAvailable/u);
+
+      const credentialRevoked = await fetch(
+        `${started.origin}/api/v1/economy/credentials/${credential.credentialRef}`,
+        {
+          method: "DELETE",
+          headers: {
+            "content-type": "application/json",
+            origin: started.origin,
+            cookie,
+            "x-csrf-token": loginBody.csrfToken,
+          },
+          body: JSON.stringify({ subjectRef: enrollment.subjectRef }),
+        },
+      );
+      assert.equal(credentialRevoked.status, 200);
+      assert.equal(
+        (await economy.operatorSnapshot()).credentials[0]?.status,
+        "revoked",
+      );
 
       const stale = await fetch(
         `${started.origin}/api/v1/enrollments/${enrollment.subjectRef}`,
@@ -470,6 +573,21 @@ describe("Harvy Console", () => {
       ));
       assert.ok(records.some(
         (record) =>
+          record.action === "plan_version_create" &&
+          record.outcome === "succeeded",
+      ));
+      assert.ok(records.some(
+        (record) =>
+          record.action === "economy_credential_create" &&
+          record.outcome === "succeeded",
+      ));
+      assert.ok(records.some(
+        (record) =>
+          record.action === "economy_credential_revoke" &&
+          record.outcome === "succeeded",
+      ));
+      assert.ok(records.some(
+        (record) =>
           record.action === "price_version_create" &&
           record.outcome === "rejected" &&
           record.reasonCode === "validation_rejected",
@@ -507,5 +625,14 @@ function runtime(directory: string) {
     control,
     { retentionDays: 90 },
   );
-  return { control, ledger };
+  const economy = new EconomyService(
+    new FileEconomyRepository(join(directory, "economy.json")),
+    control,
+    { providerId: "provider-tanpa-harga" },
+    undefined,
+    new MemorySecretStore(),
+  );
+  economy.setCredentialAvailabilityProvider((credentialRef) =>
+    economy.credentialAvailable(credentialRef));
+  return { control, ledger, economy };
 }

@@ -15,6 +15,7 @@ import {
 } from "../src/core/group-authority-policy.js";
 import { NO_RISK_HINT } from "../src/core/safety-policy.js";
 import { groupRuntimeAdmission } from "../src/core/group-runtime-policy.js";
+import { USAGE_GROUP_PRIVACY_MESSAGE } from "../src/core/usage-dashboard-renderer.js";
 import {
   GROUP_NOTICE_VERSION,
   GroupTurnService,
@@ -97,6 +98,38 @@ describe("giliran grup", () => {
     assert.equal(await runtime.turns.handle(incoming), "replied");
     assert.equal(await runtime.turns.handle(incoming), "duplicate");
     assert.deepEqual(events, ["notice", "reply:halo juga"]);
+  });
+
+  it("menahan /penggunaan di grup tanpa membaca billing atau memanggil model", async () => {
+    let modelCalls = 0;
+    const runtime = createRuntime({
+      assessAmbient: async () => {
+        modelCalls += 1;
+        throw new Error("model tidak boleh dipanggil");
+      },
+      assessGroupIngress: async () => {
+        modelCalls += 1;
+        throw new Error("model tidak boleh dipanggil");
+      },
+      reply: async () => {
+        modelCalls += 1;
+        throw new Error("model tidak boleh dipanggil");
+      },
+      triageRisk: async () => {
+        modelCalls += 1;
+        throw new Error("model tidak boleh dipanggil");
+      },
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "penggunaan-grup",
+        text: "/penggunaan",
+      })),
+      "replied",
+    );
+    assert.deepEqual(runtime.replies, [USAGE_GROUP_PRIVACY_MESSAGE]);
+    assert.equal(modelCalls, 0);
   });
 
   it("menampilkan indikator mengetik sebelum memproses panggilan direct", async () => {

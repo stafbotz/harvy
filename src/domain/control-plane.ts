@@ -66,6 +66,11 @@ export interface PlanVersion {
   audience: PlanAudience;
   monthlyPriceIdr: number;
   rolling24hTokenLimit: number;
+  /**
+   * Policy ekonomi forward-only. Record lama tanpa field ini tetap sah dan
+   * dimigrasikan deterministik tanpa mengubah entitlement token historis.
+   */
+  computePolicy?: import("./economy.js").PlanComputePolicy;
   activeMemberLimit: number | null;
   groupMode: "none" | "direct_only" | "ambient" | "workspace";
   status: PlanStatus;
@@ -139,6 +144,8 @@ export type ConsoleAuditAction =
   | "evaluation_revoke"
   | "plan_version_create"
   | "price_version_create"
+  | "economy_credential_create"
+  | "economy_credential_revoke"
   | "runtime_mode_update"
   | "unknown_mutation";
 

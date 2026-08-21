@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { ApiKeyPool } from "./key-pool.js";
+import { ApiKeyPool } from "./key-pool.js";
+import type { ResolvedFundingContext } from "../domain/economy.js";
 import type {
   AiUsageContext,
   TokenUsage,
@@ -199,6 +200,19 @@ export interface AiClientOptions {
   /** Registry capability provider+model yang diverifikasi composition root. */
   modelProfiles?: ModelProfileRegistry;
   now?: () => number;
+  /** Resolver BYOK mengembalikan secret hanya untuk invocation provider aktif. */
+  fundingCredentialResolver?: (
+    funding: ResolvedFundingContext,
+    ownerId: string,
+  ) => Promise<FundingCredential | null>;
+}
+
+export interface FundingCredential {
+  credentialRef: string;
+  providerId: string;
+  baseUrl: string;
+  modelId: string;
+  apiKey: string;
 }
 
 export interface AiFallbackOptions {
@@ -224,6 +238,7 @@ interface LogicalRequestState {
   requestId: string;
   nextAttemptNo: number;
   startedAt: number;
+  funding: ResolvedFundingContext | null;
 }
 
 interface CompletionResult {
@@ -258,6 +273,16 @@ export class AiResponseError extends AiError {
   ) {
     super(message);
     this.name = "AiResponseError";
+  }
+}
+
+/** Terminal BYOK failure never authorizes a silent Harvy-funded fallback. */
+export class ByokProviderError extends AiError {
+  constructor() {
+    super(
+      "Provider BYOK tidak dapat menyelesaikan pekerjaan ini. Pilih model/provider BYOK lain atau izinkan sumber compute Harvy secara eksplisit.",
+    );
+    this.name = "ByokProviderError";
   }
 }
 
@@ -369,10 +394,12 @@ export class AiClient {
       requestId: randomUUID(),
       nextAttemptNo: 1,
       startedAt: Date.now(),
+      funding: null,
     };
     const usageContext = this.logicalUsageContext(request, state.requestId);
     if (usageContext) {
-      await this.options.usageObserver?.beforeRequest(usageContext);
+      const funding = await this.options.usageObserver?.beforeRequest(usageContext);
+      state.funding = funding && "reservationId" in funding ? funding : null;
     }
 
     try {
@@ -417,16 +444,48 @@ export class AiClient {
     ) {
       throw new AiError("Kebijakan fallback request tidak sah.");
     }
-    const primary: AiProviderTarget = {
+    let effectiveRequest = request;
+    let primary: AiProviderTarget = {
       origin: "primary",
       providerId: this.options.providerId ?? "primary",
       baseUrl: this.options.baseUrl,
       keys: this.options.keys,
       modelInQuery: false,
     };
+    if (state.funding?.source === "byok") {
+      const credential = await this.options.fundingCredentialResolver?.(
+        state.funding,
+        request.usage?.ownerId ?? "",
+      );
+      if (!credential || credential.credentialRef !== state.funding.providerCredentialRef) {
+        throw new AiError("Credential BYOK tidak tersedia atau sudah dicabut.");
+      }
+      effectiveRequest = {
+        ...request,
+        model: credential.modelId,
+        // A user-owned provider may expose a model absent from Harvy's
+        // catalog. Keep the trusted budget/role shape, but do not claim a
+        // provider-specific reasoning wire capability we have not verified.
+        ...(request.execution
+          ? {
+              execution: {
+                ...request.execution,
+                effectiveEffort: null,
+              },
+            }
+          : {}),
+      };
+      primary = {
+        origin: "primary",
+        providerId: credential.providerId,
+        baseUrl: credential.baseUrl,
+        keys: new ApiKeyPool([credential.apiKey]),
+        modelInQuery: false,
+      };
+    }
     // Native tool support belum dibuktikan pada provider cadangan. Jangan
     // mengubah wire contract diam-diam saat circuit fallback terbuka.
-    const fallback = request.tools || request.fallbackPolicy === "disabled"
+    const fallback = state.funding?.source === "byok" || request.tools || request.fallbackPolicy === "disabled"
       ? undefined
       : this.options.fallback;
     if (
@@ -435,7 +494,7 @@ export class AiClient {
       this.primaryUnavailableUntil > this.now()
     ) {
       return this.completeWithFallback(
-        request,
+        effectiveRequest,
         fallback,
         "circuit_open",
         state,
@@ -445,7 +504,7 @@ export class AiClient {
     try {
       const result = await this.completeWithProvider(
         primary,
-        request,
+        effectiveRequest,
         Boolean(fallback),
         state,
       );
@@ -458,13 +517,16 @@ export class AiClient {
         !isRetryable(primaryError)
       ) {
         this.logTerminalFailure(primary, request, primaryError);
+        if (state.funding?.source === "byok" && !request.signal?.aborted) {
+          throw new ByokProviderError();
+        }
         throw primaryError;
       }
 
       if (
         shouldOpenPrimaryCircuit(
           primaryError,
-          request,
+          effectiveRequest,
           primary.keys.size,
         )
       ) {
@@ -472,7 +534,7 @@ export class AiClient {
           this.now() + (fallback.cooldownMs ?? 30_000);
       }
       return this.completeWithFallback(
-        request,
+        effectiveRequest,
         fallback,
         retryReason(primaryError),
         state,
@@ -651,7 +713,9 @@ export class AiClient {
       provider.providerId,
       request.model,
     ) ?? null;
-    if (registry && !profile) {
+    const allowUnprofiledByok =
+      state.funding?.source === "byok" && provider.origin === "primary";
+    if (registry && !profile && !allowUnprofiledByok) {
       throw new AiError(
         `Profile model tidak terdaftar: ${provider.providerId}/${request.model}.`,
       );
@@ -923,6 +987,9 @@ export class AiClient {
       maxOutputTokens: request.maxTokens ?? 800,
       inputTokenEstimate: estimateChatRequestInputTokens(request),
       safetyCritical: request.usage.safetyCritical,
+      ...(state.funding
+        ? { fundingSource: state.funding.source }
+        : {}),
       startedAt: new Date(startedAt).toISOString(),
       ...(request.execution
         ? {
@@ -1492,6 +1559,7 @@ function attemptFailure(
 }
 
 function inferSubjectKind(ownerId: string): "private" | "group" {
+  if (ownerId.startsWith("whatsapp-user:")) return "private";
   return ownerId.startsWith("whatsapp:") || ownerId.startsWith("telegram:")
     ? "group"
     : "private";
@@ -1500,7 +1568,9 @@ function inferSubjectKind(ownerId: string): "private" | "group" {
 function inferChannel(
   ownerId: string,
 ): "telegram" | "whatsapp" | "system" {
-  return ownerId.startsWith("whatsapp:") ? "whatsapp" : "telegram";
+  return ownerId.startsWith("whatsapp:") || ownerId.startsWith("whatsapp-user:")
+    ? "whatsapp"
+    : "telegram";
 }
 
 function readCompletion(

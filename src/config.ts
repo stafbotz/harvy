@@ -74,12 +74,27 @@ export interface AiConfig {
   prices: Record<ModelTier, TierPrice>;
 }
 
+export interface EconomyConfig {
+  file: string;
+  byokSecretFile: string;
+  byokMasterKey: Uint8Array | null;
+  paymentGatewayMode: "disabled" | "local";
+  paygComputeUnitsPerIdr: string;
+  gettingLowThresholdBps: number;
+  lowThresholdBps: number;
+  notificationCooldownMs: number;
+  supportMilestone: number;
+}
+
 export interface ControlPlaneConfig {
   file: string;
   usageLedgerFile: string;
   entitlementLedgerFile: string;
   usageLedgerRetentionDays: number;
   betaQuotaMultiplier: number;
+  /** Durable compute/funding state; separate from provider and entitlement ledgers. */
+  /** Optional for backwards-compatible programmatic/test configs. */
+  economy?: EconomyConfig;
   console: {
     enabled: boolean;
     host: "127.0.0.1";
@@ -301,6 +316,22 @@ function loadControlPlaneConfig(environment: string): ControlPlaneConfig {
       "HARVY_CONSOLE_TOKEN wajib diisi ketika Console aktif di production.",
     );
   }
+  const paymentGatewayMode = readLabel(
+    "HARVY_PAYMENT_GATEWAY_MODE",
+    "disabled",
+  );
+  if (paymentGatewayMode !== "disabled" && paymentGatewayMode !== "local") {
+    throw configurationError(
+      "CONFIG_PAYMENT_GATEWAY_MODE_INVALID",
+      "HARVY_PAYMENT_GATEWAY_MODE hanya boleh disabled atau local.",
+    );
+  }
+  if (paymentGatewayMode === "local" && environment === "production") {
+    throw configurationError(
+      "CONFIG_PAYMENT_GATEWAY_LOCAL_PRODUCTION",
+      "Gateway pembayaran lokal tidak boleh diaktifkan di production.",
+    );
+  }
   return {
     file: resolve(
       process.env.CONTROL_PLANE_FILE ?? "./data/control-plane.json",
@@ -319,6 +350,33 @@ function loadControlPlaneConfig(environment: string): ControlPlaneConfig {
       "BETA_QUOTA_MULTIPLIER",
       4,
     ),
+    economy: {
+      file: resolve(
+        process.env.HARVY_ECONOMY_FILE ?? "./data/economy.json",
+      ),
+      byokSecretFile: resolve(
+        process.env.HARVY_BYOK_SECRET_FILE ?? "./data/byok-secrets.json",
+      ),
+      byokMasterKey: parseByokMasterKey(process.env.HARVY_BYOK_MASTER_KEY_B64),
+      paymentGatewayMode,
+      paygComputeUnitsPerIdr: readPositiveIntegerString(
+        "HARVY_PAYG_COMPUTE_UNITS_PER_IDR",
+        "1000000",
+      ),
+      gettingLowThresholdBps: readBps(
+        "HARVY_USAGE_GETTING_LOW_BPS",
+        5_000,
+      ),
+      lowThresholdBps: readBps("HARVY_USAGE_LOW_BPS", 2_000),
+      notificationCooldownMs: readPositiveInteger(
+        "HARVY_USAGE_NOTIFICATION_COOLDOWN_MS",
+        24 * 60 * 60 * 1_000,
+      ),
+      supportMilestone: readPositiveInteger(
+        "HARVY_SUPPORT_MILESTONE",
+        8,
+      ),
+    },
     console: {
       enabled,
       host,
@@ -1230,6 +1288,46 @@ function readPositiveInteger(name: string, fallback: number): number {
     );
   }
   return value;
+}
+
+function readPositiveIntegerString(name: string, fallback: string): string {
+  const value = process.env[name]?.trim() || fallback;
+  if (!/^\d+$/u.test(value) || BigInt(value) <= 0n || value.length > 40) {
+    throw configurationError(
+      `CONFIG_${name}_INVALID`,
+      `${name} harus berupa bilangan bulat positif yang terbatas.`,
+    );
+  }
+  return BigInt(value).toString();
+}
+
+function readBps(name: string, fallback: number): number {
+  const value = readNonNegativeInteger(name, fallback, 10_000);
+  return value;
+}
+
+function parseByokMasterKey(value: string | undefined): Uint8Array | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  let decoded: Buffer;
+  try {
+    const urlSafe = /^[A-Za-z0-9_-]+={0,2}$/u.test(raw);
+    const ordinary = /^[A-Za-z0-9+/]+={0,2}$/u.test(raw);
+    if (!urlSafe && !ordinary) throw new Error("invalid base64");
+    decoded = Buffer.from(raw, urlSafe ? "base64url" : "base64");
+  } catch {
+    throw configurationError(
+      "CONFIG_BYOK_MASTER_KEY_INVALID",
+      "HARVY_BYOK_MASTER_KEY_B64 harus berupa kunci base64 32 byte.",
+    );
+  }
+  if (decoded.length !== 32) {
+    throw configurationError(
+      "CONFIG_BYOK_MASTER_KEY_INVALID",
+      "HARVY_BYOK_MASTER_KEY_B64 harus berupa kunci base64 32 byte.",
+    );
+  }
+  return new Uint8Array(decoded);
 }
 
 function readNonNegativeInteger(

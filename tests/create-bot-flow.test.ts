@@ -28,6 +28,10 @@ import {
 import type { SessionService } from "../src/core/session-service.js";
 import type { TaskService } from "../src/core/task-service.js";
 import type { TelemetryService } from "../src/core/telemetry-service.js";
+import type {
+  UserUsageSummary,
+  UserUsageSummaryService,
+} from "../src/core/user-usage-summary-service.js";
 import type { ConversationTurn } from "../src/domain/history.js";
 import type {
   AgentRunRepository,
@@ -2692,6 +2696,61 @@ describe("alur adapter Telegram", () => {
       false,
     );
   });
+
+  it("/penggunaan deterministik, owner-scoped, dan privat di Telegram", async () => {
+    let modelCalls = 0;
+    let summaryCalls = 0;
+    const forbiddenModelCall = (): never => {
+      modelCalls += 1;
+      throw new Error("model tidak boleh dipanggil oleh /penggunaan");
+    };
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => forbiddenModelCall(),
+      understand: async () => forbiddenModelCall(),
+      triageRisk: async () => forbiddenModelCall(),
+      reply: async () => forbiddenModelCall(),
+    } as unknown as Conversation, {} as TaskService, {
+      usageDashboard: {
+        summary: async (ownerId) => {
+          summaryCalls += 1;
+          assert.equal(ownerId, "123");
+          return usageSummary();
+        },
+      },
+    });
+
+    await harness.bot.handleUpdate(commandUpdate("/penggunaan", 1));
+    await harness.bot.drainPending();
+    const dashboardCall = harness.telegramCalls.find((call) =>
+      call.method === "sendMessage" &&
+      (call.payload as { text?: string }).text?.includes("Penggunaan Harvy")
+    );
+    assert.ok(dashboardCall);
+    assert.equal(
+      (dashboardCall.payload as { parse_mode?: string }).parse_mode,
+      "HTML",
+    );
+    assert.match(
+      (dashboardCall.payload as { text: string }).text,
+      /^<b>Penggunaan Harvy<\/b>/u,
+    );
+
+    await harness.bot.handleUpdate(commandWithArgumentsUpdate(
+      "/penggunaan user-lain",
+      2,
+    ));
+    await harness.bot.drainPending();
+    assert.match(
+      harness.sent.at(-1) ?? "",
+      /tidak menerima nama atau ID pengguna lain/iu,
+    );
+
+    await harness.bot.handleUpdate(groupCommandUpdate("/penggunaan", 3));
+    await harness.bot.drainPending();
+    assert.match(harness.sent.at(-1) ?? "", /chat pribadi/iu);
+    assert.equal(summaryCalls, 1);
+    assert.equal(modelCalls, 0);
+  });
 });
 
 describe("work lane active AgentRun Telegram", () => {
@@ -3367,6 +3426,30 @@ function commandUpdate(text: string, updateId: number): Update {
   return update;
 }
 
+function commandWithArgumentsUpdate(text: string, updateId: number): Update {
+  const update = messageUpdate(text, updateId);
+  if (update.message) {
+    update.message.entities = [{
+      offset: 0,
+      length: text.indexOf(" ") < 0 ? text.length : text.indexOf(" "),
+      type: "bot_command",
+    }];
+  }
+  return update;
+}
+
+function groupCommandUpdate(text: string, updateId: number): Update {
+  const update = commandUpdate(text, updateId);
+  if (update.message) {
+    update.message.chat = {
+      id: -123,
+      type: "group",
+      title: "Grup uji",
+    };
+  }
+  return update;
+}
+
 async function waitFor(
   predicate: () => boolean,
   timeoutMs = 2_000,
@@ -3472,6 +3555,7 @@ function basicHarness(
     histories?: HistoryService;
     telegramCalls?: TelegramCall[];
     failSend?: (text: string) => boolean;
+    usageDashboard?: Pick<UserUsageSummaryService, "summary">;
   } = {},
 ): {
   bot: ReturnType<typeof createBot>;
@@ -3517,9 +3601,52 @@ function basicHarness(
     undefined,
     overrides.agentRuns,
     overrides.memoryContextCompiler,
+    undefined,
+    undefined,
+    overrides.usageDashboard,
   );
   installFakeTelegram(bot, sent, telegramCalls, overrides.failSend);
   return { bot, sent, turns, telegramCalls };
+}
+
+function usageSummary(): UserUsageSummary {
+  return {
+    plan: { id: "personal_toro", publicName: "Toro", isFree: false },
+    period: {
+      startsAt: "2026-08-20T17:00:00.000Z",
+      endsAt: "2026-09-20T17:00:00.000Z",
+      resetsAt: "2026-09-20T17:00:00.000Z",
+    },
+    allowance: { remainingPercent: 68, state: "healthy" },
+    modelUsage: {
+      inputTokens: 184_000,
+      cachedInputTokens: 121_000,
+      outputTokens: 31_000,
+      reasoningTokens: 18_000,
+      hasEstimatedUsage: false,
+    },
+    cost: {
+      totalProviderCostUsdNanos: "180000000",
+      completeness: "complete",
+      providerReportedUsdNanos: "180000000",
+      catalogCalculatedUsdNanos: "0",
+    },
+    funding: {
+      includedUsdNanos: "160000000",
+      sponsoredUsdNanos: "0",
+      byokUsdNanos: "20000000",
+      harvyOverheadUsdNanos: "0",
+      walletProviderCostUsdNanos: "0",
+      paygIdr: "0",
+      paygUsed: false,
+      paygRelevant: true,
+      current: { type: "plan", publicName: "Toro" },
+    },
+    efficiency: {
+      cacheHitPercent: 66,
+      cacheSavingsUsdNanos: "108900000",
+    },
+  };
 }
 
 function understanding(

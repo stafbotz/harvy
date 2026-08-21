@@ -33,7 +33,11 @@ import type {
   WhatsAppAccountConfig,
   WhatsAppConfig,
 } from "./config.js";
-import { normalizeBaileysGroupMessage } from "./baileys-message-normalizer.js";
+import {
+  normalizeBaileysGroupMessage,
+  normalizeBaileysPrivateMessage,
+  type WhatsAppPrivateMessage,
+} from "./baileys-message-normalizer.js";
 import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
@@ -57,6 +61,8 @@ export type WhatsAppAccountStatus =
 
 export interface BaileysAccountEvents {
   onMessage(message: GroupMessage): Promise<void>;
+  /** Mengembalikan response hanya untuk private command yang dikenali. */
+  onPrivateMessage?(message: WhatsAppPrivateMessage): Promise<string | null>;
   onGroupActive(
     message: Pick<GroupMessage, "scope" | "accountId" | "groupName" | "at">,
     authorityFence: () => boolean,
@@ -145,6 +151,8 @@ interface AccountRuntime {
    * dipanggil berulang-ulang pada setiap read authority. */
   selfMissingNotified: Set<string>;
   metadataRefreshes: Map<string, MetadataRefreshToken>;
+  /** Deduplikasi ingress private yang hanya menyimpan ID teknis, tanpa body. */
+  privateMessageIds: Map<string, number>;
   incoming: Map<string, CachedMessage>;
   outbound: Map<string, CachedMessage>;
 }
@@ -201,6 +209,7 @@ export class BaileysAccountManager
         groupEpochs: new Map(),
         selfMissingNotified: new Set(),
         metadataRefreshes: new Map(),
+        privateMessageIds: new Map(),
         incoming: new Map(),
         outbound: new Map(),
       });
@@ -396,6 +405,7 @@ export class BaileysAccountManager
 
         const socket = runtime.socket;
         runtime.socket = null;
+        runtime.privateMessageIds.clear();
         this.clearMessageCache(runtime.incoming);
         if (socket) {
           try {
@@ -1209,7 +1219,28 @@ export class BaileysAccountManager
     for (const raw of upsert.messages) {
       if (!this.isCurrent(runtime, generation)) return;
       const groupId = raw.key.remoteJid ?? undefined;
-      if (!groupId || !isJidGroup(groupId)) continue;
+      if (!groupId) continue;
+      if (!isJidGroup(groupId)) {
+        const normalized = normalizeBaileysPrivateMessage(raw, {
+          accountId: runtime.config.id,
+          selfJids: selfJids(socket),
+        });
+        if (!normalized || !this.events.onPrivateMessage) continue;
+        const duplicateKey = messageCacheKey(
+          normalized.userId,
+          normalized.messageId,
+        );
+        this.prunePrivateMessageIds(runtime);
+        if (runtime.privateMessageIds.has(duplicateKey)) continue;
+        this.rememberPrivateMessageId(runtime, duplicateKey);
+        processing.push(this.handlePrivateMessage(
+          runtime,
+          socket,
+          generation,
+          normalized,
+        ));
+        continue;
+      }
       processing.push(
         this.enqueueGroupOperation(runtime, groupId, async () => {
           try {
@@ -1310,6 +1341,32 @@ export class BaileysAccountManager
       );
     }
     await Promise.all(processing);
+  }
+
+  private async handlePrivateMessage(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    message: WhatsAppPrivateMessage,
+  ): Promise<void> {
+    try {
+      const response = await this.events.onPrivateMessage?.(message);
+      const text = response?.trim() ?? "";
+      if (!text) return;
+      if (
+        !this.acceptingEvents ||
+        runtime.status !== "open" ||
+        !this.isCurrent(runtime, generation) ||
+        runtime.socket !== socket
+      ) {
+        return;
+      }
+      await socket.sendMessage(message.userId, { text: text.slice(0, 12_000) });
+    } catch (error) {
+      // Error boundary tetap content-free; callback tidak boleh membuat raw
+      // private message masuk operational log.
+      this.reportError(runtime.config.id, error);
+    }
   }
 
   private async sendText(
@@ -1594,6 +1651,30 @@ export class BaileysAccountManager
         this.deleteCachedMessage(runtime.outbound, id);
       }
     }
+  }
+
+  private prunePrivateMessageIds(runtime: AccountRuntime): void {
+    const now = this.now().getTime();
+    for (const [key, expiresAt] of runtime.privateMessageIds) {
+      if (expiresAt <= now) runtime.privateMessageIds.delete(key);
+    }
+  }
+
+  private rememberPrivateMessageId(
+    runtime: AccountRuntime,
+    key: string,
+  ): void {
+    while (runtime.privateMessageIds.size >= MAX_OUTBOUND_MESSAGES) {
+      const oldest = runtime.privateMessageIds.keys().next().value as
+        | string
+        | undefined;
+      if (oldest === undefined) break;
+      runtime.privateMessageIds.delete(oldest);
+    }
+    runtime.privateMessageIds.set(
+      key,
+      this.now().getTime() + GROUP_INCOMING_QUOTE_CACHE_MS,
+    );
   }
 
   private cacheMessage(

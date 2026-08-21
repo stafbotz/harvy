@@ -11,6 +11,7 @@ import type {
   Enrollment,
   GroupRuntimeMode,
 } from "../domain/control-plane.js";
+import type { PlanComputePolicy } from "../domain/economy.js";
 import type {
   RuntimeEnvironment,
   UsageCostCenter,
@@ -22,6 +23,7 @@ import {
   ControlPlaneValidationError,
 } from "../core/control-plane-service.js";
 import type { UsageLedgerService } from "../core/usage-ledger-service.js";
+import type { EconomyService } from "../core/economy-service.js";
 import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
@@ -32,6 +34,8 @@ const SESSION_COOKIE = "harvy_console_session";
 const BODY_LIMIT_BYTES = 64 * 1024;
 const SESSION_IDLE_MS = 30 * 60 * 1_000;
 const SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1_000;
+
+type ConsoleProviderAttempt = Awaited<ReturnType<UsageLedgerService["allAttempts"]>>[number];
 
 export interface ConsoleServerOptions {
   host: string;
@@ -84,6 +88,7 @@ export class ConsoleServer {
     logger: OperationalLogger =
       NOOP_OPERATIONAL_LOGGER.child("console.server"),
     private readonly now: () => number = () => Date.now(),
+    private readonly economy: EconomyService | null = null,
   ) {
     if (options.host !== "127.0.0.1") {
       throw new Error("Harvy Console local-first hanya boleh bind ke 127.0.0.1.");
@@ -339,12 +344,14 @@ export class ConsoleServer {
   private async handleRead(url: URL, response: ServerResponse): Promise<void> {
     if (url.pathname === "/api/v1/dashboard") {
       const since = new Date(this.now() - 24 * 60 * 60 * 1_000).toISOString();
-      const [usage, entitlement, breakdown] = await Promise.all([
+      const [usage, entitlement, breakdown, attempts] = await Promise.all([
         this.usageLedger.summary({ since }),
         this.usageLedger.entitlementSummary(since),
         this.usageLedger.breakdown({ since }),
+        this.usageLedger.allAttempts({ since }),
       ]);
       const control = await this.controlPlane.dashboardState();
+      const economy = this.economy ? await this.economy.operatorSnapshot() : null;
       sendJson(response, 200, {
         status: this.lifecycle,
         usage,
@@ -354,6 +361,32 @@ export class ConsoleServer {
         betaSubjects: control.enrollments.filter((item) => item.cohort === "beta").length,
         planVersions: control.plans.length,
         priceVersions: control.prices.length,
+        economy: economy
+          ? {
+              version: economy.version,
+              reservations: economy.reservations.length,
+              settlements: economy.settlements.length,
+              walletAccounts: economy.walletAccounts.length,
+              walletTransactions: economy.walletTransactions.length,
+              payments: economy.payments.length,
+              contributions: economy.contributions.length,
+              activeCredentials: economy.credentials.filter(
+                (item) => item.status === "active",
+              ).length,
+              ledgerEntries: economy.ledger.length,
+              logicalBillableComputeUnits: economy.settlements
+                .filter((item) => item.outcome === "charged")
+                .reduce((sum, item) => sum + BigInt(item.billableComputeUnits), 0n)
+                .toString(),
+              releasedComputeUnits: economy.settlements
+                .filter((item) => item.outcome === "released")
+                .reduce((sum, item) => sum + BigInt(item.measuredComputeUnits), 0n)
+                .toString(),
+              physicalProviderCostUsdNanos: usage.providerReportedUsdNanos,
+              localCalculatedProviderCostUsdNanos: usage.localCalculatedUsdNanos,
+              physicalCostByFundingSource: fundingCostBreakdown(attempts),
+            }
+          : null,
       });
       return;
     }
@@ -396,6 +429,14 @@ export class ConsoleServer {
           costView: costViews.get(attempt.attemptId),
         })),
       });
+      return;
+    }
+    if (url.pathname === "/api/v1/economy") {
+      if (!this.economy) {
+        sendJson(response, 503, apiError("economy_unavailable", "Economy belum tersedia."));
+        return;
+      }
+      sendJson(response, 200, await this.economy.operatorSnapshot());
       return;
     }
     if (url.pathname === "/api/v1/groups") {
@@ -628,6 +669,65 @@ export class ConsoleServer {
         return;
       }
 
+      if (url.pathname === "/api/v1/economy/credentials" && request.method === "POST") {
+        const created = await this.runMutation(
+          session,
+          "economy_credential_create",
+          null,
+          async () => {
+            if (!this.economy?.secureByokSetupAvailable) {
+              throw new HttpError(
+                503,
+                "byok_setup_unavailable",
+                "Secure BYOK secret store belum dikonfigurasi.",
+              );
+            }
+            const body = await readJsonObject(request);
+            assertExactKeys(body, [
+              "subjectRef",
+              "providerId",
+              "baseUrl",
+              "modelId",
+              "eligibleTiers",
+              "apiKey",
+            ]);
+            return this.economy.registerCredentialForSubject({
+              subjectRef: readString(body.subjectRef, "subjectRef", 256),
+              providerId: readString(body.providerId, "providerId", 160),
+              baseUrl: readString(body.baseUrl, "baseUrl", 2_048),
+              modelId: readString(body.modelId, "modelId", 160),
+              eligibleTiers: readUsageTiers(body.eligibleTiers),
+              apiKey: readString(body.apiKey, "apiKey", 4_096),
+            });
+          },
+        );
+        sendJson(response, 201, created);
+        return;
+      }
+
+      const credentialMatch = /^\/api\/v1\/economy\/credentials\/([^/]+)$/u.exec(url.pathname);
+      if (credentialMatch?.[1] && request.method === "DELETE") {
+        const credentialRef = decodeSafeRef(credentialMatch[1]);
+        await this.runMutation(
+          session,
+          "economy_credential_revoke",
+          credentialRef,
+          async () => {
+            if (!this.economy) {
+              throw new HttpError(503, "economy_unavailable", "Economy belum tersedia.");
+            }
+            const body = await readJsonObject(request);
+            assertExactKeys(body, ["subjectRef"]);
+            await this.economy.revokeCredentialForSubject(
+              readString(body.subjectRef, "subjectRef", 256),
+              credentialRef,
+            );
+          },
+        );
+        sendJson(response, 200, { revoked: true });
+        return;
+      }
+
       if (url.pathname === "/api/v1/plans/versions" && request.method === "POST") {
         const created = await this.runMutation(
           session,
@@ -635,11 +735,14 @@ export class ConsoleServer {
           null,
           async () => {
             const body = await readJsonObject(request);
-            assertExactKeys(body, [
+            const required = [
               "planId", "publicName", "audience", "monthlyPriceIdr",
               "rolling24hTokenLimit", "activeMemberLimit", "groupMode",
               "status", "effectiveFrom",
-            ]);
+            ] as const;
+            assertExactKeys(body, [...required, "computePolicy"], true);
+            assertRequiredKeys(body, required);
+            const computePolicy = readPlanComputePolicy(body.computePolicy);
             return this.controlPlane.createPlanVersion({
               planId: readString(body.planId, "planId", 160),
               publicName: readString(body.publicName, "publicName", 40),
@@ -650,6 +753,7 @@ export class ConsoleServer {
               groupMode: readEnum(body.groupMode, ["none", "direct_only", "ambient", "workspace"] as const),
               status: readEnum(body.status, ["pilot", "active", "retired"] as const),
               effectiveFrom: readString(body.effectiveFrom, "effectiveFrom", 40),
+              ...(computePolicy ? { computePolicy } : {}),
             });
           },
         );
@@ -895,6 +999,82 @@ function assertExactKeys(
   }
 }
 
+function assertRequiredKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+): void {
+  if (required.some((key) => !(key in value))) {
+    throw new HttpError(400, "missing_field", "Body belum lengkap.");
+  }
+}
+
+function readPlanComputePolicy(value: unknown): PlanComputePolicy | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "invalid_field", "Field computePolicy harus berupa object.");
+  }
+  const policy = value as Record<string, unknown>;
+  assertExactKeys(policy, [
+    "unitVersion",
+    "includedComputeUnits",
+    "billingPeriodDays",
+    "rollingWindowHours",
+    "rollingComputeLimit",
+    "legacyTokenOverlay",
+  ]);
+  const overlayValue = policy.legacyTokenOverlay;
+  if (!overlayValue || typeof overlayValue !== "object" || Array.isArray(overlayValue)) {
+    throw new HttpError(400, "invalid_field", "Field legacyTokenOverlay harus berupa object.");
+  }
+  const overlay = overlayValue as Record<string, unknown>;
+  assertExactKeys(overlay, ["schemaVersion", "computeUnitsPerToken"]);
+  if (policy.unitVersion !== 1 || overlay.schemaVersion !== 1) {
+    throw new HttpError(400, "invalid_field", "Versi unit compute tidak didukung.");
+  }
+  return {
+    unitVersion: 1,
+    includedComputeUnits: readComputeAmount(
+      policy.includedComputeUnits,
+      "includedComputeUnits",
+    ),
+    billingPeriodDays: readInteger(policy.billingPeriodDays),
+    rollingWindowHours: readInteger(policy.rollingWindowHours),
+    rollingComputeLimit: readComputeAmount(
+      policy.rollingComputeLimit,
+      "rollingComputeLimit",
+    ),
+    legacyTokenOverlay: {
+      schemaVersion: 1,
+      computeUnitsPerToken: readComputeAmount(
+        overlay.computeUnitsPerToken,
+        "computeUnitsPerToken",
+      ),
+    },
+  };
+}
+
+function readComputeAmount(value: unknown, field: string): string {
+  if (typeof value !== "string" || !/^\d{1,80}$/u.test(value)) {
+    throw new HttpError(400, "invalid_field", `Field ${field} harus integer fixed-point.`);
+  }
+  return BigInt(value).toString();
+}
+
+function readUsageTiers(
+  value: unknown,
+): ("cheap" | "efficient" | "ambitious")[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 3) {
+    throw new HttpError(400, "invalid_field", "eligibleTiers tidak sah.");
+  }
+  const tiers = value.map((item) =>
+    readEnum(item, ["cheap", "efficient", "ambitious"] as const)
+  );
+  if (new Set(tiers).size !== tiers.length) {
+    throw new HttpError(400, "invalid_field", "eligibleTiers tidak boleh duplikat.");
+  }
+  return tiers;
+}
+
 function readString(value: unknown, field: string, maximum: number): string {
   if (typeof value !== "string") {
     throw new HttpError(400, "invalid_field", `Field ${field} harus berupa teks.`);
@@ -1062,6 +1242,18 @@ function describeMutation(
   if (method === "POST" && url.pathname === "/api/v1/plans/versions") {
     return { action: "plan_version_create", targetRef: null };
   }
+  if (method === "POST" && url.pathname === "/api/v1/economy/credentials") {
+    return { action: "economy_credential_create", targetRef: null };
+  }
+  const credential = /^\/api\/v1\/economy\/credentials\/([^/]+)$/u.exec(
+    url.pathname,
+  );
+  if (method === "DELETE" && credential?.[1]) {
+    return {
+      action: "economy_credential_revoke",
+      targetRef: safeAuditTarget(credential[1]),
+    };
+  }
   if (method === "POST" && url.pathname === "/api/v1/prices/versions") {
     return { action: "price_version_create", targetRef: null };
   }
@@ -1087,4 +1279,19 @@ function errorCode(error: unknown): string {
   if (error instanceof ControlPlaneConflictError) return "version_conflict";
   if (error instanceof ControlPlaneValidationError) return "validation_rejected";
   return "internal_error";
+}
+
+function fundingCostBreakdown(
+  attempts: readonly ConsoleProviderAttempt[],
+): Record<string, string> {
+  const totals = new Map<string, bigint>();
+  for (const attempt of attempts) {
+    if (attempt.cost.effectiveUsdNanos === null) continue;
+    const source = attempt.fundingSource ?? "unattributed_legacy";
+    totals.set(source, (totals.get(source) ?? 0n) + BigInt(attempt.cost.effectiveUsdNanos));
+  }
+  return Object.fromEntries(
+    [...totals.entries()].sort(([left], [right]) => left.localeCompare(right, "en"))
+      .map(([source, value]) => [source, value.toString()]),
+  );
 }

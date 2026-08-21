@@ -1,3 +1,5 @@
+import type { ResolvedFundingContext } from "./economy.js";
+
 /**
  * Observabilitas tanpa isi percakapan.
  *
@@ -64,6 +66,11 @@ export interface TokenUsage {
   totalTokens: number;
   /** `true` bila penyedia tidak mengirim usage dan angka dihitung dari panjang. */
   estimated: boolean;
+  /** Optional provider detail used by versioned compute estimators. */
+  reasoningTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  providerCostUsd?: string | null;
 }
 
 export interface AiUsageRecord extends TokenUsage {
@@ -161,7 +168,7 @@ export interface TelemetryRepository {
 }
 
 export interface UsageObserver {
-  beforeRequest(context: AiUsageContext): Promise<void>;
+  beforeRequest(context: AiUsageContext): Promise<void | ResolvedFundingContext>;
   afterRequest(
     context: AiUsageContext,
     usage: TokenUsage,

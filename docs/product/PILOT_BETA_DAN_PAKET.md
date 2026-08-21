@@ -6,9 +6,16 @@ sendiri. Tidak satu pun menjadi izin otomatis untuk membaca isi percakapan.
 
 ## Status pilot
 
-Katalog berikut sudah menjadi default control plane untuk eksperimen, tetapi
-belum dijual dan belum memiliki checkout. Angka kapasitas adalah kelipatan
-`AI_ROLLING_24H_TOKEN_LIMIT` dalam jendela bergulir 24 jam.
+Katalog berikut tetap menjadi default control plane untuk eksperimen. ID dan
+harga adalah `PlanVersion` yang dapat berubah melalui katalog versioned; harga
+di tabel adalah hipotesis pilot, bukan konstanta routing atau janji checkout.
+Runtime memberi setiap subject periode billing eksplisit dengan allowance
+**Harvy Compute** fixed-point (logical compute units) dan ceiling rolling
+anti-abuse. State lama yang hanya memiliki rolling token limit dibaca melalui
+overlay kompatibilitas tanpa mengubah arti ledger historis.
+Jika instalasi lama memakai nilai rolling `0` untuk arti “tanpa batas”, policy
+compute forward-only tetap memakai baseline Free yang finite; tidak ada akun
+Free yang berubah menjadi subsidi inference unlimited.
 
 | ID stabil | Tier | Nama publik | Sasaran | Harga hipotesis/bulan | Kapasitas | Perilaku grup |
 |---|---|---|---|---:|---:|---|
@@ -34,8 +41,9 @@ ambient, jumlah logical request, dan attempt provider lebih menentukan.
 
 Angka kapasitas bukan tagihan provider. Provider ledger tetap menghitung semua
 attempt fisik, termasuk retry, fallback, planner yang memilih diam, kegagalan,
-dan keselamatan. Kapasitas paket hanya berkurang untuk `reply`, `session`, atau
-`group-reply` yang benar-benar berhasil dikirim. Pembacaan tenggat, boundary,
+dan keselamatan. Kapasitas paket hanya berkurang untuk `reply`, `agent`,
+`research`, atau `group-reply` yang benar-benar berhasil dikirim. Pembacaan
+tenggat, boundary,
 understanding, triase, review, ringkasan, insight, planner/revalidasi grup,
 keluaran schema rusak, dan balasan gagal kirim menjadi biaya Harvy—bukan debit
 peserta. Aturan konservatif ini diuji lebih dulu agar pilot tidak menagih
@@ -51,6 +59,44 @@ enrollment dapat memiliki override/masa berakhir sendiri.
 Ketika beta berakhir, cohort kembali `standard`; paket dan data tidak otomatis
 berubah. Beta tidak menentukan model yang dipakai. Routing tetap menurut
 kesulitan pekerjaan dan aturan keselamatan.
+
+Plan tidak pernah menjadi proxy kecerdasan: task dan konteks yang identik
+mempertahankan role, model eligibility, tool, memory, dan escalation ceiling
+yang sama di Free maupun paket berbayar. Perbedaan plan hanya allowance dan
+kapasitas operasional. Bila allowance habis, funding resolver memilih secara
+deterministik `included → sponsored → PAYG (hanya bila consent) → BYOK`, atau
+memberi jalur tunggu/limit; sistem tidak diam-diam mengganti ke model lebih
+buruk.
+
+## Sumber funding dan jalur control-plane
+
+`EconomyService` melakukan preflight, reservation atomic, execution, lalu
+settlement setelah delivery. Reservation memakai request/logical-run ID dan
+ledger idempoten sehingga retry, crash, webhook ganda, refund, dan request
+paralel tidak menggandakan debit. `RunBudget` tetap merupakan batas teknis
+satu agent run dan bukan quota subscription.
+
+Free, subscription, sponsored grant, dan PAYG disimpan sebagai entitlement
+terpisah. Wallet PAYG prepaid tidak digunakan otomatis kecuali preference
+subject mengizinkannya. BYOK menyimpan metadata credential di economy state dan
+raw key hanya di secret store terenkripsi yang terpisah; key tidak pernah masuk
+memory, prompt, telemetry, ledger, atau Console. Instalasi tanpa master key
+menonaktifkan setup BYOK secara fail-closed, sementara Free/subscription tetap
+berfungsi.
+
+Control-plane/account commands (penggunaan, reset, paket, funding preference,
+cancel, BYOK setup, dan bantuan billing) tetap dapat dijalankan ketika
+inference berbayar diblokir. Jika payment gateway belum dikonfigurasi, UX
+menyatakan hal itu secara eksplisit; `LocalPaymentGateway` hanya fake untuk
+test/development dan bukan penerimaan uang production.
+
+`/penggunaan` tersedia sebagai dashboard deterministik di chat pribadi
+Telegram dan WhatsApp. Tampilan memakai nama publik plan dan periode persisted,
+sisa allowance dalam persen, aktivitas token provider, total physical AI cost,
+sumber biaya dengan bahasa pengguna, serta efisiensi cache bila snapshot harga
+historis cukup. Total biaya bukan otomatis tagihan pengguna. Query selalu
+terikat ke akun pengirim, tidak membaca isi chat, tidak memanggil model, dan
+tidak membuka detail paket/saldo/API pribadi di grup.
 
 ## Persetujuan evaluasi
 
@@ -82,9 +128,12 @@ Tangga harga memakai prinsip pilihan yang mudah dipahami, bukan manipulasi:
 
 Harvy boleh merekomendasikan paket dari pola usage dan batas yang benar-benar
 tercapai. Harvy juga harus menyarankan turun paket bila kapasitas terus tidak
-terpakai. Emosi, risiko keselamatan, kerentanan, atau isi pribadi tidak boleh
-dipakai untuk upsell. Tidak ada countdown palsu, dark pattern auto-renew,
-penyembunyian kuota, atau penurunan bantuan keselamatan.
+terpakai; implementasi menunggu setidaknya setengah periode aktif sebelum
+memberi saran downgrade agar periode yang baru dimulai tidak dianggap bukti
+penggunaan rendah. Rekomendasi memilih plan aktif termurah yang cukup dari
+settlement delivery content-free. Emosi, risiko keselamatan, kerentanan, atau
+isi pribadi tidak boleh dipakai untuk upsell. Tidak ada countdown palsu, dark
+pattern auto-renew, penyembunyian kuota, atau penurunan bantuan keselamatan.
 
 ## Kriteria sebelum menerima uang
 
@@ -100,5 +149,16 @@ penyembunyian kuota, atau penurunan bantuan keselamatan.
 - Margin dihitung dari data cohort tanpa membaca transcript: pendapatan bersih
   dikurangi biaya model, pembayaran, infrastruktur, dukungan, refund, dan pajak.
 
-Sebelum kriteria ini lulus, seluruh harga adalah hipotesis pilot dan Console
-tidak boleh menampilkan tombol beli.
+Sebelum kriteria ini lulus, seluruh harga adalah hipotesis pilot. Console dapat
+menampilkan katalog, allowance, reservation, wallet, payment state, provider
+cost, settlement, dan metadata BYOK tanpa secret, tetapi tidak boleh berpura-
+pura telah mengaktifkan checkout production. Kontribusi **Dukung Harvy / Harvy
+Commons** adalah voluntary contribution terpisah dari subscription dan tidak
+meningkatkan intelligence atau menjadi syarat Free.
+
+Ledger revenue membedakan subscription, PAYG, contribution, sponsor,
+enterprise, service fee, dan marketplace fee sebagai extension point—bukan
+implementasi marketplace sekarang. Margin sumber-sumber itu kelak boleh
+dialokasikan ke Free/Commons tanpa mengubah routing kecerdasan. Jika layanan
+yang direkomendasikan menghasilkan fee, hubungan komersial wajib diungkapkan
+dan fee tidak boleh menjadi bobot ranking tersembunyi.
