@@ -11,9 +11,8 @@ import {
 
 describe("kebijakan pemilihan model", () => {
   it("memakai tingkatan menengah untuk percakapan keselamatan", () => {
-    // Keputusan pemilik produk, 27 Juli 2026: di produksi tingkatan ini adalah
-    // GPT 5.6 Luna, dan itu dinilai cukup untuk percakapan yang berat.
-    // Sebelumnya keselamatan selalu naik ke tingkatan tertinggi.
+    // Default tetap kompatibel; intelligence role dapat dipilih terpisah tanpa
+    // memberi tool atau delegation pada work class safety.
     assert.equal(
       selectTier({ intent: "feeling", messageLength: 12, safetySensitive: true }),
       "efficient",
@@ -31,6 +30,31 @@ describe("kebijakan pemilihan model", () => {
       selectTier({ intent: "smalltalk", messageLength: 8, risk: "biasa" }),
       "cheap",
     );
+  });
+
+  it("memisahkan intelligence safety dari operational authority", () => {
+    const input = {
+      intent: "feeling" as const,
+      messageLength: 32,
+      risk: "bahaya" as const,
+      safetySensitive: true,
+    };
+    assert.equal(selectGlobalRoute(input), "conversation");
+    assert.equal(
+      selectConversationModelRole(input),
+      "everyday_conversation",
+    );
+    assert.equal(
+      selectConversationModelRole({
+        ...input,
+        safetyCognitiveRole: "orchestrator",
+      }),
+      "orchestrator",
+    );
+    assert.equal(selectGlobalRoute({
+      ...input,
+      safetyCognitiveRole: "orchestrator",
+    }), "conversation");
   });
 
   it("memakai model termurah untuk mengurai tugas", () => {
@@ -195,6 +219,23 @@ describe("kebijakan pemilihan model", () => {
       modelId: "model-verifier",
     });
     assert.equal(resolveModelRoute("heavy_executor", routing).modelId, "model-default-dalam");
+  });
+
+  it("membuat fallback tier untuk role tanpa exact binding terlihat eksplisit", () => {
+    const route = resolveModelRoute("challenger", {
+      mode: "production",
+      testingModel: "",
+      models: {
+        cheap: "model-mechanical",
+        efficient: "model-everyday",
+        ambitious: "model-compatibility-deep",
+      },
+    });
+    assert.deepEqual(route, {
+      role: "challenger",
+      tier: "ambitious",
+      modelId: "model-compatibility-deep",
+    });
   });
 });
 

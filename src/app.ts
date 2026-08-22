@@ -7,6 +7,7 @@ import type { HarvyContext } from "./ai/context.js";
 import { GroupConversation } from "./ai/group-conversation.js";
 import { GroupAgentRunExecutor } from "./ai/group-agent-run-executor.js";
 import { createModelAgentWorker } from "./ai/agent.js";
+import { createConfiguredSpecialistExecutor } from "./ai/specialist-runtime.js";
 import {
   currentUsageAttribution,
   withUsageAttribution,
@@ -276,10 +277,21 @@ const internalExecutors = createInternalAgentExecutors({
   sessions,
   defaultTimeZone: config.defaultTimezone,
 });
+const specialistExecutor = createConfiguredSpecialistExecutor(
+  aiClient,
+  config.ai,
+  config.ai.specialistDelegationEnabled,
+);
 const agentExecutors = [
   ...internalExecutors,
   new VirtualTerminalExecutor(),
-  new ParallelDelegationExecutor(createModelAgentWorker(aiClient, config.ai)),
+  ...(specialistExecutor
+    ? [specialistExecutor]
+    : [
+        new ParallelDelegationExecutor(
+          createModelAgentWorker(aiClient, config.ai),
+        ),
+      ]),
 ];
 // Satu registry tepercaya dipakai semua kanal. Capability hanya tersedia bila
 // executor dan dependency yang cocok benar-benar dipasang.
@@ -287,7 +299,8 @@ const agentHarness = new AgentHarness(
   createHarvyCapabilityCatalog({
     internalToolsInstalled: true,
     virtualTerminalInstalled: true,
-    parallelDelegationInstalled: true,
+    parallelDelegationInstalled: specialistExecutor === null,
+    specialistDelegationInstalled: specialistExecutor !== null,
   }),
   undefined,
   longTermMemory,

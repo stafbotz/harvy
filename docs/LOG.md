@@ -11,6 +11,7 @@ material lama berada di:
 - [`log/2026-08-08.md`](log/2026-08-08.md)
 - [`log/2026-08-09.md`](log/2026-08-09.md)
 - [`log/2026-08-13.md`](log/2026-08-13.md)
+- [`log/2026-08-14.md`](log/2026-08-14.md)
 - [`log/2026-08-07.md`](log/2026-08-07.md)
 - [`log/2026-08-02-sampai-2026-08-06.md`](log/2026-08-02-sampai-2026-08-06.md)
 - [`log/2026-07-25-sampai-2026-08-02.md`](log/2026-07-25-sampai-2026-08-02.md)
@@ -38,6 +39,37 @@ Next: hanya bila ada tindak lanjut material.
 Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
+
+## 2026-08-22 — Specialist production opt-in dan role-aware cleanup
+
+Scope: model policy/config/profile, Conversation Agent Runtime, specialist
+delegation/composition, RunBudget handoff, safety role contract, tes, ADR, status,
+dan source instruksi repository.
+
+Changed: consolidated implementation spec lama dihapus agar mapping model
+historis tidak lagi terbaca sebagai desain aktif. Composition production kini
+mempunyai specialist graph opt-in yang default-off dan gagal tertutup tanpa
+exact model berbeda serta profile explicit untuk role kritis. Saat aktif,
+specialist menggantikan parallel legacy; root orchestrator mempertahankan
+konteks relevan, sedangkan worker hanya menerima WorkBrief minimum-necessary
+tanpa credential, capability, raw context verbatim, tool, recursion, atau
+continuation root. Specialist memakai RunBudget root yang sama, actual task
+signals mengalahkan default role, dan invocation exact tidak memakai provider
+fallback. Intelligence safety dapat dipilih code-owned tanpa menaikkan
+authority; default safety belum berubah.
+
+Verified: suite terarah luas PASS 155/155 dalam 18 suite dan recheck specialist
+final PASS 37/37 dalam 5 suite; `npm run check` PASS; `npm test` PASS
+1.626/1.626 dalam 204 suite termasuk build. Pencarian
+source tidak menemukan Terra sebagai runtime hardcode dan tidak menemukan
+reference ke spec yang dihapus.
+
+Not verified: model/provider live, kualitas atau diversity model deployment,
+Telegram production, harga/latency, dan konfigurasi gate aktif nyata.
+
+Next: jalankan provider smoke dengan exact role bindings/profile yang disetujui
+sebelum mengaktifkan gate. Integrasi ResourceRequest scheduler dan planner tool
+discovery tetap pekerjaan terpisah.
 
 ## 2026-08-22 — Percakapan semantic-first dan interruptible lintas kanal
 
@@ -332,21 +364,3 @@ Verified: `npm run context:check` PASS; tes kontrak agent PASS 11/11; pencarian
 sumber aktif tidak menemukan mandat lama.
 
 Not verified: kolaborasi live beberapa penulis pada perubahan yang overlap.
-
-## 2026-08-14 — Fondasi lifecycle, work, dan final Group AgentRun Phase K
-
-Scope: GroupAgentRun core/delivery/lifecycle WhatsApp.
-
-Changed: Notice v9, activation lease/quote cache, cleanup durable, ledger work,
-dan final commit barrier kini tersedia. Migrasi work/result dan cap event tetap
-konservatif; state nonterminal selalu menyisakan slot penutupan dan hasil yang
-tidak committed tidak diakui. Exact parser/controller dan
-`GroupAgentRunWorker` ada tetapi belum composed; checkpoint/executor model belum
-ada dan authority-on-claim tetap prasyarat sebelum composition.
-
-Verified: tes terarah GroupAgentRun/WhatsApp 275/275 dalam 24 suite; `npm run
-check` PASS; `npm test` PASS 1.270/1.270 dalam 158 suite termasuk build;
-`npm run context:check` PASS (6.070 byte, estimasi 1.518 token); diff-check PASS.
-
-Not verified: WhatsApp/reconnect/model/work live, restart proses nyata,
-reconciliation `unknown`, dan multi-process.

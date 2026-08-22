@@ -90,6 +90,13 @@ export interface AgentPlannerInput {
   budget: RunBudgetView;
 }
 
+/** Sinyal pekerjaan code-owned; bukan field proposal planner atau tool. */
+export interface AgentWorkSignals {
+  difficulty: "mechanical" | "normal" | "deep";
+  stakes: "low" | "medium" | "high";
+  uncertainty: "low" | "medium" | "high";
+}
+
 export interface AgentUserInput {
   step: number;
   /** Pertanyaan yang dijawab; optional hanya untuk kompatibilitas checkpoint lama. */
@@ -129,6 +136,8 @@ export interface AgentExecutionContext {
   signal: AbortSignal;
   /** Akun yang sama dengan root planner dan seluruh worker run ini. */
   runBudget: RunBudgetAccount;
+  /** Diturunkan composition dari assessment turn, tidak dapat diubah model. */
+  workSignals?: AgentWorkSignals;
 }
 
 export interface AgentExecutorResult {
@@ -269,6 +278,8 @@ export interface AgentRunInput {
   limits?: Partial<AgentRunLimits>;
   /** Policy code-owned; model dan tool output tidak dapat mengubahnya. */
   runBudget?: RunBudgetPolicy;
+  /** Metadata task code-owned untuk executor; tidak masuk schema planner. */
+  workSignals?: AgentWorkSignals;
   signal?: AbortSignal;
   checkpoint?: AgentRunCheckpoint;
   /**
@@ -929,6 +940,7 @@ async function executeAction(
           idempotencyKey: digest,
           signal,
           runBudget,
+          ...(input.workSignals ? { workSignals: input.workSignals } : {}),
         }),
       input.signal,
       deadlineAt,

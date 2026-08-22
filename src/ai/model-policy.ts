@@ -107,6 +107,14 @@ export interface RoutingInput {
   safetySensitive?: boolean;
   /** Hasil triase risiko, bila pemeriksaannya sempat berjalan. */
   risk?: RiskLevel;
+  /**
+   * Pilihan intelligence code-owned untuk jalur safety. Operational authority
+   * tetap ditentukan work class/policy dan tidak ikut naik bersama model.
+   */
+  safetyCognitiveRole?: Extract<
+    CognitiveModelRole,
+    "everyday_conversation" | "orchestrator"
+  >;
 }
 
 export type GlobalWorkRoute =
@@ -193,6 +201,12 @@ export function selectAgentMode(input: RoutingInput): AgentRoutingMode {
 export function selectConversationModelRole(
   input: RoutingInput,
 ): Extract<CognitiveModelRole, "everyday_conversation" | "orchestrator"> {
+  if (
+    input.risk === "dukungan" || input.risk === "bahaya" ||
+    input.safetySensitive
+  ) {
+    return input.safetyCognitiveRole ?? "everyday_conversation";
+  }
   return selectGlobalRoute(input) === "orchestrate"
     ? "orchestrator"
     : "everyday_conversation";

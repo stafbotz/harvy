@@ -53,6 +53,11 @@ capability seragam.
 Rencana saat keputusan ini dibuat: DeepSeek V4 Flash sebagai `cheap`,
 GPT 5.6 Luna sebagai `efficient`, dan GPT 5.6 Terra sebagai `ambitious`.
 
+Mapping model konkret pada paragraf ini adalah histori keputusan Juli 2026,
+bukan desain orkestrasi aktif. Untuk runtime role-aware terbaru, ikuti ADR-041,
+`AI_MODEL_ROLE_BINDINGS`, kode+tes, dan status Agent Runtime; Terra bukan role
+orkestrator yang di-hardcode.
+
 ### Routing berdasarkan kesulitan, bukan paket pengguna
 
 `docs/PROJECT.md` sudah menetapkan ini sejak awal dan Konstitusi menguatkannya.

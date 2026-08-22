@@ -46,14 +46,24 @@ challenger tidak dapat dikonfigurasi secara independen.
    langsung. Bila specialist dipakai, orkestrator menerima observation lalu
    menyintesis jawaban final sendiri sebagai Harvy.
 5. **Delegasi specialist adalah graph optional, bukan pipeline.** Capability
-   `agent.delegate.specialist` default-off dan memerlukan executor, role
-   allowlist, serta authorization policy code-owned. Orkestrator dapat meminta
-   strong worker, heavy executor, verifier, atau challenger secara langsung.
-   Satu run sinkron dibatasi maksimal dua aksi delegasi; delegasi paralel tetap
-   hanya pada langkah awal. Selama authority delegasi masih hadir, summary,
-   history, dan memory tidak dimasukkan. Recovery dan synthesis kontekstual
-   menghapus seluruh schema delegasi. Specialist tidak menerima tool, memory,
-   credential, registry, continuation provider root, atau API delegasi.
+   `agent.delegate.specialist` default-off lewat
+   `AI_SPECIALIST_DELEGATION_ENABLED`. Composition production hanya memasangnya
+   bila role everyday, orchestrator, heavy executor, verifier, dan challenger
+   mempunyai binding model exact yang saling berbeda serta profile explicit;
+   strong worker boleh memakai fallback tier yang profile-nya tetap explicit.
+   Orchestrator profile wajib mendukung native tool/named tool choice dan semua
+   route specialist wajib mendukung structured output. Invocation specialist
+   menonaktifkan provider fallback agar exact role tidak berubah diam-diam.
+   Ketidaklengkapan apa pun menggagalkan startup saat gate aktif. Orkestrator
+   dapat meminta strong worker, heavy executor, verifier, atau challenger secara
+   langsung; bila executor specialist terpasang, ia menggantikan edge parallel
+   legacy pada run itu.
+   Satu run sinkron dibatasi maksimal dua aksi delegasi. Parallel delegation
+   tetap context-free dan hanya langkah awal. Untuk specialist, orkestrator
+   melihat konteks Harvy relevan yang sudah dibatasi, lalu membentuk WorkBrief
+   minimum-necessary; hanya WorkBrief itu yang menyeberang ke worker. Specialist
+   tidak menerima tool, raw history/memory, credential, registry, continuation
+   provider root, atau API delegasi. Recovery selalu menghapus delegasi.
 6. **Handoff lintas model provider-neutral.** `WorkBrief` dan `AgentHandoff`
    memakai schema versioned, exact, bounded untuk goal, facts, constraints,
    evidence, assumptions, plan, work product, pertanyaan terbuka, confidence,
@@ -61,7 +71,10 @@ challenger tidak dapat dikonfigurasi secara independen.
    Orkestrator hanya melihat `workBriefRef` opaque yang harus diputar persis
    untuk mengikat handoff ke run; referensi ini bukan user ID atau isi request.
    `chainOfThought`, `privateReasoning`, `scratchpad`, credential, serta field
-   authority tidak ada dan ditolak sebagai field tambahan. `plan_conflict`
+   authority tidak ada dan ditolak sebagai field tambahan. Boundary executor
+   juga menolak credential-like content dan `requestedCapabilities` nonkosong;
+   Conversation membatalkan edge specialist bila brief menyalin verbatim
+   fragmen privat panjang dari summary/turn/memory/retrieval. `plan_conflict`
    adalah outcome terstruktur, bukan izin worker memperluas scope.
 7. **Execution envelope dapat adaptif tetapi tetap code-owned.** Difficulty,
    stakes, uncertainty, dan cognitive role dapat menaikkan requested reasoning
@@ -70,6 +83,8 @@ challenger tidak dapat dikonfigurasi secara independen.
    grant dari adaptive reserve yang sudah dikonfigurasi dan dibatasi hard
    remainder; progress marker tidak memuat reasoning. Primitive ini belum
    mengubah checkpoint atau default RunBudget hingga scheduler mengintegrasikannya.
+   Bila RoutingAssessment aktual tersedia, difficulty, factual stakes, dan
+   ambiguity itu diteruskan ke specialist; default role hanya fallback.
 8. **Capability availability bukan context presence.** Discovery metadata
    leksikal dapat membuat shortlist atau high-recall fallback ter-page tanpa
    memuat schema/executor/credential. Cursor content-free mencegah registry di
@@ -82,6 +97,10 @@ challenger tidak dapat dikonfigurasi secara independen.
    live-state forced tool tetap menang, provider failure bukan intelligence
    signal, `toughest` ADR-040 tidak berubah, raw reasoning tetap ephemeral dan
    provider+model-bound, serta checkpoint/memory/log tetap provider-neutral.
+   Intelligence role safety dapat dipilih code-owned secara terpisah dari
+   authority operasional; default tetap everyday dan work class safety tetap
+   tanpa tool/delegasi sampai eval serta konfigurasi deployment membuktikan
+   pilihan lain.
 
 ## Konsekuensi
 
@@ -92,20 +111,22 @@ specialist berbeda dapat dipilih tanpa urutan wajib. Exact role binding,
 specialist, adaptive reserve, dan discovery tetap fail-closed serta dapat
 diaktifkan bertahap.
 
-Capability specialist belum dipasang di composition production, resource
-request belum mengubah RunBudget aktif, dan capability discovery belum menjadi
-native tool. Tidak ada klaim perilaku provider/model live, kualitas routing
-corpus nyata, harga, latency produksi, atau integrasi eksternal dari keputusan
-ini.
+Capability specialist kini terpasang di composition production sebagai opt-in
+fail-closed dengan exact/diverse role binding dan profile explicit. Default
+deployment tetap off. Resource request belum mengubah RunBudget aktif dan
+capability discovery belum menjadi native tool. Tidak ada klaim perilaku
+provider/model live, kualitas routing corpus nyata, harga, latency produksi,
+atau integrasi eksternal dari keputusan ini.
 
 ## Bukti
 
 Tes routing mengunci ordinary/smalltalk, deterministic/live-state, request
 pendek bernuansa, transformasi mekanis panjang, planning kompleks, confidence
 fallback, dan exact role binding. Tes Agent Runtime mengunci challenger
-langsung, graph dua delegasi, context-free delegation, final synthesis, serta
-recovery tanpa schema delegasi. Tes execution/resource/handoff/discovery/config
-mengunci adaptive effort, reserve/hard ceiling, provider-failure denial,
-structured progress, field reasoning privat, PLAN_CONFLICT, authority
-intersection, specialist default-off, authorization default-deny, dan profile
-exact.
+langsung, graph dua delegasi, context-free parallel delegation, context-aware
+root specialist dengan WorkBrief terisolasi, final synthesis, serta recovery
+tanpa schema delegasi. Tes execution/resource/handoff/discovery/config dan
+composition mengunci adaptive effort, sinyal task aktual, shared RunBudget,
+reserve/hard ceiling, provider-failure denial, structured progress, field
+reasoning privat, PLAN_CONFLICT, authority intersection, specialist default-off,
+readiness exact/diverse, authorization default-deny, dan profile exact.

@@ -105,6 +105,7 @@ function isolatedRuntimeEnvironment(
     GOOGLE_AI_STUDIO_API_KEYS: "test-key",
     AI_MODEL_TESTING: "test-model",
     AI_MODEL_ROLE_BINDINGS: "",
+    AI_SPECIALIST_DELEGATION_ENABLED: "false",
     AI_MODEL_PROFILES: "",
     AI_TESTING_FALLBACK_BASE_URL: "",
     AI_TESTING_FALLBACK_API_KEY: "",

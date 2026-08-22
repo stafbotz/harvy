@@ -135,6 +135,7 @@ function routing(privacyDomain = "workspace.private"): AiConfig {
       efficient: "model-efficient",
       ambitious: "model-ambitious",
     },
+    specialistDelegationEnabled: false,
     toughest: { modelId: target.id, privacyDomain },
     modelProfiles: new ModelProfileRegistry([target]),
     configuredModels: [],

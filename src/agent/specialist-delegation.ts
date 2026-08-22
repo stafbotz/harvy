@@ -11,6 +11,7 @@ import type {
   AgentExecutorResult,
   AgentNativeToolDefinition,
 } from "../harness/agent-harness.js";
+import { containsSecretLikeValue } from "../security/credential-like.js";
 
 export type SpecialistRole = Extract<
   CognitiveModelRole,
@@ -28,6 +29,7 @@ export interface SpecialistWorkerContext {
   role: SpecialistRole;
   signal: AbortSignal;
   runBudget: AgentExecutionContext["runBudget"];
+  workSignals?: AgentExecutionContext["workSignals"];
 }
 
 export type SpecialistWorker = (
@@ -53,12 +55,12 @@ export type SpecialistDenialCode =
   | "budget_unavailable"
   | "objective_validation_sufficient";
 
-const SPECIALIST_ROLES: readonly SpecialistRole[] = [
+export const SPECIALIST_ROLES: readonly SpecialistRole[] = Object.freeze([
   "strong_worker",
   "heavy_executor",
   "verifier",
   "challenger",
-];
+]);
 const MAX_SUMMARY_CHARACTERS = 3_600;
 
 const SPECIALIST_NATIVE_TOOL = {
@@ -70,6 +72,8 @@ const SPECIALIST_NATIVE_TOOL = {
     "challenger untuk perspektif/trade-off yang mungkin terlewat, atau strong_worker",
     "untuk satu pekerjaan menengah. Jangan gunakan sebagai ritual bila hasil tool",
     "deterministik sudah cukup atau orkestrator dapat menyelesaikan sendiri.",
+    "Brief harus berisi ringkasan minimum yang diperlukan; jangan menyalin raw",
+    "history, memory, identifier pengguna, credential, atau transcript provider.",
   ].join(" "),
   inputSchema: {
     type: "object",
@@ -185,6 +189,12 @@ implements AgentCapabilityExecutor<SpecialistRequest> {
     if (input.brief.originalRequestRef !== context.runId) {
       return failure(input.role, "WorkBrief tidak terikat ke run aktif.");
     }
+    if (!specialistBriefIsSanitized(input.brief)) {
+      return failure(
+        input.role,
+        "WorkBrief ditolak karena tidak memenuhi boundary minimum-necessary.",
+      );
+    }
     try {
       const authorization = await this.authorize({ request: input, context });
       if (authorization.decision === "deny") {
@@ -199,6 +209,9 @@ implements AgentCapabilityExecutor<SpecialistRequest> {
         role: input.role,
         signal: context.signal,
         runBudget: context.runBudget,
+        ...(context.workSignals
+          ? { workSignals: context.workSignals }
+          : {}),
       }));
       if (!result || result.workBriefRef !== input.brief.originalRequestRef) {
         return failure(input.role, "Specialist mengembalikan handoff yang tidak sah.");
@@ -211,6 +224,12 @@ implements AgentCapabilityExecutor<SpecialistRequest> {
       return failure(input.role, "Specialist gagal sebelum handoff sah.");
     }
   }
+}
+
+/** Boundary deterministik terakhir sebelum WorkBrief menyeberangi model. */
+export function specialistBriefIsSanitized(brief: WorkBrief): boolean {
+  if (brief.requestedCapabilities.length > 0) return false;
+  return !containsSecretLikeValue(JSON.stringify(brief));
 }
 
 function boundedSummary(role: SpecialistRole, handoff: AgentHandoff): string {

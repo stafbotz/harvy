@@ -140,6 +140,7 @@ import {
   type ExecutionWorkClass,
 } from "../core/execution-policy.js";
 import type { ModelRole } from "../domain/model-execution.js";
+import { parseWorkBrief, type WorkBrief } from "../domain/agent-handoff.js";
 import {
   resolveModelProfileById,
   resolveModelProfile,
@@ -182,6 +183,14 @@ export interface ConversationRuntime {
   intent?: ConversationIntent;
   /** Assessment advisory dari turn awal; checkpoint mode tetap authority. */
   routingAssessment?: RoutingAssessment | null;
+  /**
+   * Intelligence role code-owned untuk safety; tidak memberikan tool,
+   * delegation, atau authority operasional tambahan.
+   */
+  safetyCognitiveRole?: Extract<
+    CognitiveModelRole,
+    "everyday_conversation" | "orchestrator"
+  >;
   /** ID durable code-owned; model/provider tidak boleh memilihnya. */
   runId?: string;
   /** RunMailbox yang tiba sebelum checkpoint pertama, sudah dibatasi core. */
@@ -821,15 +830,18 @@ export class Conversation {
     const cognitiveRole =
       runtime.session?.kind === "tutor" && triage.level === "biasa"
         ? "orchestrator"
-        : triage.level === "biasa"
-          ? selectConversationModelRole({
-              intent: understanding.intent,
-              messageLength: message.length,
-              needsStepByStep: understanding.needsStepByStep,
-              assessment: routingAssessment,
-              risk: triage.level,
-            })
-          : "everyday_conversation";
+        : selectConversationModelRole({
+            intent: understanding.intent,
+            messageLength: message.length,
+            needsStepByStep: understanding.needsStepByStep,
+            assessment: routingAssessment,
+            safetySensitive:
+              understanding.safetySensitive || triage.level !== "biasa",
+            risk: triage.level,
+            ...(runtime.safetyCognitiveRole
+              ? { safetyCognitiveRole: runtime.safetyCognitiveRole }
+              : {}),
+          });
     const modelRoute = resolveModelRoute(cognitiveRole, this.routing);
     const tier = modelRoute.tier;
     const timeZone = runtime.timeZone ?? this.defaultTimeZone;
@@ -970,6 +982,12 @@ export class Conversation {
     // Transcript provider hanya hidup selama invocation sinkron ini. Checkpoint
     // tetap provider-neutral; resume baru memulai transcript dari state kernel.
     const nativeThread: AgentNativeThread = { messages: [], pending: null };
+    const specialistInstalled = this.agentExecutors.some(
+      (executor) => executor.capabilityId === "agent.delegate.specialist",
+    );
+    const delegationCapability = specialistInstalled
+      ? "agent.delegate.specialist"
+      : "agent.delegate.parallel";
     const allowed = new Set([
       "task.list_active",
       "task.get",
@@ -978,7 +996,7 @@ export class Conversation {
       "calendar.agenda",
       "terminal.run",
       ...(mode === "orchestrate"
-        ? ["agent.delegate.parallel", "agent.delegate.specialist"]
+        ? [delegationCapability]
         : []),
     ]);
     const executors = this.agentExecutors.filter((executor) =>
@@ -996,6 +1014,15 @@ export class Conversation {
         maxObservationCharacters: 4_000,
       },
       runBudget: this.routing.prices ? { prices: this.routing.prices } : {},
+      ...(runtime.routingAssessment
+        ? {
+            workSignals: {
+              difficulty: runtime.routingAssessment.complexity,
+              stakes: runtime.routingAssessment.factualStakes,
+              uncertainty: runtime.routingAssessment.ambiguity,
+            },
+          }
+        : {}),
       planner: (input, signal, runBudget) =>
         this.planAgent(
           input,
@@ -1101,13 +1128,13 @@ export class Conversation {
           function: { name: requiredCapability.nativeTool!.name },
         }
       : undefined;
-    // Selama model masih dapat mendelegasikan, jangan hadirkan summary, recent
-    // turns, atau memory. Original request dan observation bounded tetap ada;
-    // konteks pribadi baru kembali setelah authority delegasi dihapus.
+    // Legacy parallel delegation membawa instruksi bebas ke worker, sehingga
+    // fase itu tetap context-free. Specialist menerima WorkBrief terstruktur
+    // yang disanitasi executor; orkestratornya boleh melihat konteks relevan.
     const isContextFreeDelegation =
       mode === "orchestrate" && !mustReadLiveState &&
       plannerInput.callableCapabilities.some((capability) =>
-        isDelegationCapability(capability.id)
+        capability.id === "agent.delegate.parallel"
       );
     const plannerContext = isContextFreeDelegation ? EMPTY_CONTEXT : context;
     const plannerSourceContext = isContextFreeDelegation
@@ -1141,6 +1168,32 @@ export class Conversation {
       (decision.kind !== "action" ||
         !isDelegationCapability(decision.capabilityId))
     ) {
+      plannerInput = {
+        ...input,
+        callableCapabilities: input.callableCapabilities.filter(
+          (capability) => !isDelegationCapability(capability.id),
+        ),
+      };
+      planned = await this.requestAgentDecision(
+        plannerInput,
+        context,
+        contextManifest,
+        sourceContext,
+        mode,
+        runtime,
+        signal,
+        false,
+        false,
+        nativeThread,
+        runBudget,
+        "synthesizer",
+      );
+      decision = planned.decision;
+    }
+    // Root specialist boleh melihat konteks relevan, tetapi raw summary/turn/
+    // memory tidak boleh disalin verbatim ke WorkBrief. Bila boundary ini
+    // terpukul, jawab dengan root pada pass baru tanpa capability delegasi.
+    if (specialistDecisionCopiesPrivateContext(decision, sourceContext)) {
       plannerInput = {
         ...input,
         callableCapabilities: input.callableCapabilities.filter(
@@ -1621,6 +1674,61 @@ function withDelegationDisclosure(result: AgentRunResult): AgentRunResult {
 
 function isDelegationCapability(capabilityId: string): boolean {
   return DELEGATION_CAPABILITY_IDS.has(capabilityId);
+}
+
+function specialistDecisionCopiesPrivateContext(
+  decision: AgentPlannerDecision,
+  context: HarvyContext,
+): boolean {
+  if (
+    decision.kind !== "action" ||
+    decision.capabilityId !== "agent.delegate.specialist" ||
+    !decision.input || typeof decision.input !== "object" ||
+    Array.isArray(decision.input)
+  ) return false;
+  const brief = parseWorkBrief(
+    (decision.input as Record<string, unknown>)["brief"],
+  );
+  if (!brief) return false;
+  const briefText = workBriefText(brief).map(normalizePrivacyText);
+  return privateContextText(context)
+    .flatMap(privateContextSegments)
+    .map(normalizePrivacyText)
+    .filter((text) => text.length >= 24)
+    .some((privateText) =>
+      briefText.some((candidate) => candidate.includes(privateText))
+    );
+}
+
+function workBriefText(brief: WorkBrief): string[] {
+  return [
+    brief.goal,
+    ...brief.facts,
+    ...brief.constraints,
+    ...brief.evidence.map((entry) => entry.summary),
+    ...brief.assumptions,
+    ...brief.plan,
+    ...brief.openQuestions,
+    ...brief.acceptanceCriteria,
+  ];
+}
+
+function privateContextText(context: HarvyContext): string[] {
+  return [
+    ...(context.summary ? [context.summary] : []),
+    ...context.turns.map((turn) => turn.text),
+    ...context.memories.map((memory) => memory.content),
+    ...(context.retrieved ?? []).map((evidence) => evidence.text),
+  ];
+}
+
+function privateContextSegments(value: string): string[] {
+  return [value, ...value.split(/[.!?\r\n]+/u)];
+}
+
+function normalizePrivacyText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("id-ID")
+    .replace(/\s+/gu, " ").trim();
 }
 
 function sessionIntent(session: ActiveSession): ConversationIntent {

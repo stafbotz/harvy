@@ -56,7 +56,7 @@ export function createModelSpecialistWorker(
 ): SpecialistWorker {
   return async (request, context) => {
     const route = resolveModelRoute(request.role, routing);
-    const signals = executionSignals(request.role);
+    const signals = executionSignals(request.role, context.workSignals);
     const execution = executionPolicy.decide({
       tier: route.tier,
       role: request.role === "verifier" || request.role === "challenger"
@@ -75,6 +75,7 @@ export function createModelSpecialistWorker(
     const attribution = currentUsageAttribution();
     const raw = await client.complete({
       model: route.modelId,
+      fallbackPolicy: "disabled",
       temperature: 0.1,
       maxTokens: execution.maxOutputTokens,
       execution,
@@ -116,11 +117,13 @@ export function createModelSpecialistWorker(
   };
 }
 
-function executionSignals(role: SpecialistRole): {
-  difficulty: WorkComplexity;
-  stakes: RoutingDegree;
-  uncertainty: RoutingDegree;
-} {
+function executionSignals(
+  role: SpecialistRole,
+  actual: SpecialistWorkerParameters | undefined,
+): SpecialistWorkerParameters {
+  if (actual) return actual;
+  // Role hanya fallback ketika assessment task code-owned tidak tersedia.
+  // Ia tidak menjadi klaim bahwa semua pekerjaan role tersebut high-stakes.
   switch (role) {
     case "strong_worker":
       return { difficulty: "normal", stakes: "medium", uncertainty: "medium" };
@@ -132,3 +135,9 @@ function executionSignals(role: SpecialistRole): {
       return { difficulty: "deep", stakes: "high", uncertainty: "high" };
   }
 }
+
+type SpecialistWorkerParameters = {
+  difficulty: WorkComplexity;
+  stakes: RoutingDegree;
+  uncertainty: RoutingDegree;
+};

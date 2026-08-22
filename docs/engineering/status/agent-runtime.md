@@ -1,8 +1,8 @@
 # Status — Agent Runtime
 
-Refreshed: 20 Agustus 2026 pada routing role-aware, bounded specialist graph,
-provider-neutral handoff, dan adaptive resource primitive. Bukti gerbang
-terbaru dicatat di
+Refreshed: 22 Agustus 2026 pada production specialist opt-in, exact/diverse
+role readiness, context-aware orchestration, provider-neutral handoff, dan
+adaptive resource status. Bukti gerbang terbaru dicatat di
 `docs/LOG.md`.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
@@ -39,10 +39,10 @@ agent, scope/authority, atau executor internal.
   tetap dalam RunBudget yang sama; incomplete/content filter lain tidak
   di-retry.
 - Tool callable composition saat ini read-only: daftar/detail tugas, status
-  sesi, waktu, agenda internal Harvy, terminal virtual in-memory, dan delegasi
-  paralel read-only. Metadata discovery dapat membuat shortlist/high-recall
-  ter-page tanpa schema atau authority baru, tetapi belum dirangkai ke planner
-  karena callable subset masih kecil.
+  sesi, waktu, agenda internal Harvy, terminal virtual in-memory, delegasi
+  paralel, serta specialist opt-in. Metadata discovery dapat membuat
+  shortlist/high-recall ter-page tanpa schema atau authority baru, tetapi belum
+  dirangkai ke planner karena callable subset masih kecil.
 - Pertanyaan waktu sempit tetap dijawab dari clock deterministik. Ia melewati
   boundary/understanding/triage hanya bila tidak ada episode hangat dalam 30
   menit; episode hangat tetap menjalani pipeline keselamatan dan pemahaman.
@@ -50,9 +50,17 @@ agent, scope/authority, atau executor internal.
   dan berbicara langsung tanpa rewrite model lain. Delegasi paralel tetap pada
   langkah awal. Kontrak specialist one-hop dapat meminta strong worker, heavy
   executor, verifier, atau challenger secara langsung, maksimal dua aksi
-  delegasi per run, tanpa memory/history/tool/credential atau continuation root.
-  Specialist catalog/executor default-off dan authorization default-deny;
-  composition production belum memasangnya.
+  delegasi per run. Composition production kini memasang executor hanya ketika
+  `AI_SPECIALIST_DELEGATION_ENABLED=true`; default tetap off. Aktivasi
+  memerlukan exact model berbeda untuk everyday/orchestrator/heavy/verifier/
+  challenger, profile explicit, native tool support pada orchestrator, dan
+  structured output pada semua route specialist. Specialist call primary-only;
+  setup parsial gagal startup.
+  Saat aktif, edge specialist menggantikan parallel legacy: orkestrator melihat
+  konteks relevan, sedangkan worker hanya menerima WorkBrief minimum-necessary
+  tanpa tool, raw memory/history, credential, continuation root, atau recursion.
+  Boundary menolak credential-like brief, capability request nonkosong, serta
+  salinan verbatim fragmen privat panjang dari konteks root.
 - Satu `RunBudgetAccount` code-owned mengikat root, physical retry/fallback,
   tool, dan seluruh worker. Default: 96.000 token, USD 1, 6 langkah, 5 tool,
   12 model attempt, 45 detik aktif, dan 3 worker konkuren. Reservation dibuat
@@ -65,6 +73,10 @@ agent, scope/authority, atau executor internal.
   adaptive reserve dan hard remainder code-owned; step tambahan memerlukan
   progress marker terstruktur. Primitive ini belum mengubah default RunBudget,
   checkpoint, atau scheduler aktif.
+- Intelligence safety kini mempunyai hook role code-owned yang orthogonal
+  terhadap authority operasional. Default masih everyday; bahkan bila role
+  lebih kuat dipilih oleh composition, work class safety tetap tanpa tool dan
+  delegasi. Belum ada safety eval/live config yang mengubah default tersebut.
 - Ceiling general kini dimiliki execution policy: conversationalist/worker
   8.192 token, planner/synthesizer/recovery 32.768, critic 4.096, lalu di-clamp
   profile exact. Classifier/extractor dan call product-bounded tetap memakai
@@ -152,8 +164,10 @@ agent, scope/authority, atau executor internal.
   reservation, lalu work non-final berikutnya dihentikan.
 - Kualitas `RoutingAssessment` belum diuji pada provider/corpus percakapan
   nyata. Role binding exact baru terbukti melalui config/unit test; tidak ada
-  klaim model role production aktif. Specialist, runtime resource grant, dan
-  capability discovery planner masih foundation default-off/tidak terangkai.
+  klaim model role production aktif. Wiring specialist sudah ada tetapi gate
+  production default-off dan belum dibuktikan lewat provider smoke; runtime
+  resource grant dan capability discovery planner masih foundation yang belum
+  terangkai.
 - Active store/receipt/recovery di atas baru file lokal satu proses dan hanya
   untuk mode `orchestrate` privat Telegram. Belum ada RunStore produksi,
   lease/CAS multi-instance, dispatcher/outbox exactly-once, reconciler eksternal,
@@ -177,7 +191,8 @@ agent, scope/authority, atau executor internal.
 - Kode: `src/agent/`, `src/agent/time-fast-path.ts`, `src/harness/`,
   `src/harness/observation-compaction.ts`, `src/ai/agent.ts`,
   `src/ai/agent-context-pressure.ts`, `src/ai/model-policy.ts`,
-  `src/ai/specialist.ts`, `src/agent/specialist-delegation.ts`,
+  `src/ai/specialist.ts`, `src/ai/specialist-runtime.ts`,
+  `src/agent/specialist-delegation.ts`,
   `src/domain/agent-handoff.ts`, `src/core/resource-request-policy.ts`,
   `src/harness/capability-discovery.ts`, `src/core/run-budget.ts`,
   `src/core/agent-run-service.ts`, `src/core/run-mailbox-policy.ts`,
@@ -186,7 +201,8 @@ agent, scope/authority, atau executor internal.
   `tests/create-bot-flow.test.ts`, `tests/harness-context-budget.test.ts`,
   `tests/harness-scope-capabilities.test.ts`, `tests/model-profile.test.ts`,
   `tests/model-policy.test.ts`, `tests/capability-discovery.test.ts`,
-  `tests/specialist-delegation.test.ts`,
+  `tests/specialist-delegation.test.ts`, `tests/specialist-runtime.test.ts`,
+  `tests/model-architecture-contract.test.ts`,
   `tests/resource-request-policy.test.ts`, `tests/execution-policy.test.ts`,
   `tests/provider-adapter.test.ts`,
   `tests/run-budget.test.ts`, `tests/active-agent-run-service.test.ts`,

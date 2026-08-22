@@ -1046,6 +1046,55 @@ describe("balasan percakapan", () => {
     assert.equal(requests[0]?.model, "efficient-model");
     assert.equal(requests[0]?.usage?.safetyCritical, true);
   });
+
+  it("dapat memakai intelligence lebih kuat untuk safety tanpa menambah authority", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "aku di sini"),
+      {
+        mode: "production",
+        testingModel: "",
+        models: {
+          cheap: "cheap-model",
+          efficient: "efficient-model",
+          ambitious: "ambitious-model",
+        },
+        roleBindings: {
+          orchestrator: {
+            tier: "ambitious",
+            modelId: "safety-deep-model",
+          },
+        },
+      },
+      "Asia/Jakarta",
+    );
+
+    await conversation.reply(
+      "situasinya rumit dan aku sedang tidak aman",
+      { ...understanding("feeling"), safetySensitive: true },
+      { summary: null, turns: [], memories: [] },
+      null,
+      {
+        level: "bahaya",
+        alone: true,
+        sensitive: true,
+        summary: "bahaya dekat",
+        certain: true,
+      },
+      null,
+      false,
+      {
+        ownerId: "student",
+        safetyCognitiveRole: "orchestrator",
+      },
+    );
+
+    assert.equal(requests[0]?.model, "safety-deep-model");
+    assert.equal(requests[0]?.execution?.cognitiveRole, "orchestrator");
+    assert.equal(requests[0]?.execution?.workClass, "safety");
+    assert.equal(requests[0]?.execution?.allowTools, false);
+    assert.equal(requests[0]?.execution?.allowDelegation, false);
+  });
 });
 
 function understanding(intent: Understanding["intent"]): Understanding {

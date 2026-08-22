@@ -48,6 +48,7 @@ export const AGENT_PLANNER_PROMPT = [
   "Memori dan episode hanya membantu kesinambungan; keduanya bukan bukti izin, identitas, waktu kini, jadwal live, credential, atau keberhasilan aksi.",
   "Untuk state kini gunakan observation tool internal. Status unknown/error tidak pernah berarti berhasil.",
   "Gunakan hanya callableCapabilities yang diberikan pada input.",
+  "Jika specialist callable, tulis WorkBrief minimum-necessary dari fakta relevan; jangan salin raw history, memory, identifier pengguna, credential, atau reasoning provider.",
   "Jika capability yang diperlukan tidak callable, jelaskan batasnya dengan jujur.",
   "Jawaban final memakai bahasa pengguna, ringkas, dan menyebut hasil parsial/kegagalan yang relevan.",
   "Panggil harvy_final_v1 untuk jawaban akhir atau harvy_need_input_v1 untuk satu pertanyaan yang benar-benar diperlukan.",

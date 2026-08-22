@@ -20,7 +20,13 @@ describe("AgentHandoff provider-neutral", () => {
     assert.ok(parseWorkBrief(brief()));
     assert.ok(parseAgentHandoff(handoff()));
 
-    for (const forbidden of ["chainOfThought", "privateReasoning", "scratchpad"]) {
+    for (const forbidden of [
+      "chainOfThought",
+      "chain_of_thought",
+      "privateReasoning",
+      "private_reasoning",
+      "scratchpad",
+    ]) {
       assert.equal(parseWorkBrief({ ...brief(), [forbidden]: "rahasia" }), null);
       assert.equal(parseAgentHandoff({ ...handoff(), [forbidden]: "rahasia" }), null);
     }
@@ -84,6 +90,36 @@ describe("SpecialistDelegationExecutor", () => {
     if (!validated.ok) return;
     const result = await executor.execute(validated.value, context());
     assert.equal(result.status, "error");
+    assert.equal(calls, 0);
+  });
+
+  it("menolak credential dan permintaan capability sebelum worker", async () => {
+    let calls = 0;
+    const executor = new SpecialistDelegationExecutor(
+      async () => {
+        calls += 1;
+        return handoff();
+      },
+      ["challenger"],
+      () => ({ decision: "allow" }),
+    );
+    for (const unsafeBrief of [
+      {
+        ...brief(),
+        facts: ["Authorization: Bearer secret-value-that-must-not-cross"],
+      },
+      { ...brief(), requestedCapabilities: ["terminal.run"] },
+    ]) {
+      const validated = executor.validate({
+        role: "challenger",
+        brief: unsafeBrief,
+      });
+      assert.equal(validated.ok, true);
+      if (!validated.ok) continue;
+      const result = await executor.execute(validated.value, context());
+      assert.equal(result.status, "error");
+      assert.match(result.summary, /minimum-necessary/u);
+    }
     assert.equal(calls, 0);
   });
 
@@ -164,6 +200,7 @@ describe("SpecialistDelegationExecutor", () => {
       },
     });
 
+    const runBudget = new RunBudgetAccount();
     await worker(
       { role: "challenger", brief: parsedBrief() },
       {
@@ -171,7 +208,12 @@ describe("SpecialistDelegationExecutor", () => {
         ownerId: "student",
         role: "challenger",
         signal: new AbortController().signal,
-        runBudget: new RunBudgetAccount(),
+        runBudget,
+        workSignals: {
+          difficulty: "mechanical",
+          stakes: "low",
+          uncertainty: "low",
+        },
       },
     );
 
@@ -179,11 +221,20 @@ describe("SpecialistDelegationExecutor", () => {
     assert.equal(requests[0]?.model, "wisdom-model");
     assert.equal(requests[0]?.execution?.tier, "efficient");
     assert.equal(requests[0]?.execution?.cognitiveRole, "challenger");
+    assert.equal(requests[0]?.execution?.difficulty, "mechanical");
+    assert.equal(requests[0]?.execution?.stakes, "low");
+    assert.equal(requests[0]?.execution?.uncertainty, "low");
+    assert.equal(requests[0]?.execution?.allowTools, false);
+    assert.equal(requests[0]?.execution?.allowDelegation, false);
+    assert.equal(requests[0]?.tools, undefined);
+    assert.equal(requests[0]?.runBudget, runBudget);
+    assert.equal(requests[0]?.fallbackPolicy, "disabled");
     assert.match(requests[0]?.messages[0]?.content ?? "", /trade-off/u);
     assert.doesNotMatch(
       JSON.stringify(requests[0]?.messages[1]),
       /chainOfThought|privateReasoning|scratchpad/u,
     );
+    assert.doesNotMatch(JSON.stringify(requests[0]?.messages), /student/u);
   });
 });
 

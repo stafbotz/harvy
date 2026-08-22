@@ -26,6 +26,7 @@ const AI_ENV_KEYS = [
   "AI_MODEL_TOUGHEST",
   "AI_TOUGHEST_PRIVACY_DOMAIN",
   "AI_MODEL_ROLE_BINDINGS",
+  "AI_SPECIALIST_DELEGATION_ENABLED",
   "AI_MODEL_PROFILES",
   "MEMORY_EMBEDDING_MODEL",
 ] as const;
@@ -195,6 +196,25 @@ describe("konfigurasi fallback AI testing", () => {
           "model-orchestrator",
         ).verification,
         "explicit",
+      );
+    });
+  });
+
+  it("menjaga specialist delegation default-off dan membaca opt-in eksplisit", () => {
+    withAiEnvironment(validTestingEnvironment(), () => {
+      assert.equal(loadAiConfig().specialistDelegationEnabled, false);
+    });
+    withAiEnvironment(validTestingEnvironment({
+      AI_SPECIALIST_DELEGATION_ENABLED: "true",
+    }), () => {
+      assert.equal(loadAiConfig().specialistDelegationEnabled, true);
+    });
+    withAiEnvironment(validTestingEnvironment({
+      AI_SPECIALIST_DELEGATION_ENABLED: "maybe",
+    }), () => {
+      assert.throws(
+        () => loadAiConfig(),
+        hasCode("CONFIG_AI_SPECIALIST_DELEGATION_ENABLED_INVALID"),
       );
     });
   });

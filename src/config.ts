@@ -60,6 +60,8 @@ export interface AiConfig {
   models: Record<ModelTier, string>;
   /** Binding role kognitif ke tier accounting dan optional exact model. */
   roleBindings?: Partial<Record<CognitiveModelRole, CognitiveModelBinding>>;
+  /** Opt-in specialist graph; readiness exact/diverse diverifikasi composition. */
+  specialistDelegationEnabled: boolean;
   /** Escalation-only model; null keeps Phase M disabled. */
   toughest: {
     modelId: string;
@@ -531,6 +533,10 @@ export function loadAiConfig(): AiConfig {
       : {}),
   };
   const roleBindings = loadCognitiveModelBindings();
+  const specialistDelegationEnabled = readBoolean(
+    "AI_SPECIALIST_DELEGATION_ENABLED",
+    false,
+  );
   const rollingTokenLimit = readNonNegativeNumber(
     "AI_ROLLING_24H_TOKEN_LIMIT",
     200_000,
@@ -594,6 +600,7 @@ export function loadAiConfig(): AiConfig {
       testingModels,
       models,
       roleBindings,
+      specialistDelegationEnabled,
       toughest,
       modelProfiles,
       configuredModels,
@@ -654,6 +661,7 @@ export function loadAiConfig(): AiConfig {
     testingModels,
     models,
     roleBindings,
+    specialistDelegationEnabled,
     toughest,
     modelProfiles,
     configuredModels,

@@ -225,6 +225,23 @@ pasangan exact tersebut juga dideklarasikan melalui `AI_MODEL_PROFILES` atau
 memiliki bukti code-owned. Binding role tidak mengaktifkan specialist capability
 atau membuktikan provider behavior dengan sendirinya.
 
+Production specialist orchestration adalah opt-in terpisah:
+`AI_SPECIALIST_DELEGATION_ENABLED=true`. Startup hanya menerima gate ini bila
+`everyday_conversation`, `orchestrator`, `heavy_executor`, `verifier`, dan
+`challenger` masing-masing mempunyai `modelId` exact yang berbeda dan profile
+`explicit`. Profile orchestrator harus mendukung tools, tool choice, serta named
+tool choice; route `strong_worker|heavy_executor|verifier|challenger` harus
+mempunyai profile explicit dengan structured output. Strong worker boleh memakai
+fallback tier, tetapi tidak boleh memakai profile compatibility. Bila syarat
+tersebut tidak lengkap, startup gagal tertutup—jangan mengaktifkan flag untuk
+sekadar menguji bahwa config dapat dibaca.
+
+Saat gate aktif, Conversation memilih edge specialist alih-alih parallel legacy.
+Root orchestrator tetap menerima konteks Harvy relevan; worker hanya menerima
+WorkBrief terstruktur minimum-necessary dan memakai RunBudget logical run yang
+sama. Ini belum membuktikan kualitas atau diversity provider nyata; lakukan
+provider smoke terpisah sebelum mengklaim orchestration production aktif.
+
 ### Profile capability model
 
 `AI_MODEL_PROFILES` adalah array JSON opsional untuk capability yang telah
@@ -279,6 +296,8 @@ profile asing, duplikat, rusak, atau kontradiktif.
 Provider fallback testing belum menerima profile explicit; runtime menolaknya
 agar mandatory reasoning/effort tidak diturunkan diam-diam saat failover.
 
-Percakapan yang menyentuh keselamatan memakai tingkatan `efficient`, bukan
-`ambitious`. Keputusan pemilik produk 27 Juli 2026: di produksi tingkatan itu
-adalah GPT 5.6 Luna dan dinilai cukup.
+Default percakapan yang menyentuh keselamatan tetap memakai role
+`everyday_conversation`. Composition dapat memilih `orchestrator` melalui hook
+code-owned tanpa memberi tool/delegasi, tetapi belum ada config deployment atau
+safety eval yang mengubah default itu. Batasi authority operasional, bukan
+intelligence, dan jangan menyimpulkan model konkret dari tier.

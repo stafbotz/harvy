@@ -550,6 +550,10 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   kontradiktif, atau limit/enum rusak menggagalkan startup. Tier, model role,
   reasoning effort, dan visible verbosity adalah keputusan berbeda; prompt,
   model, serta tool output tidak dapat menaikkan authority atau effort.
+- **Role intelligence dan authority operasional adalah orthogonal.** Safety
+  boleh memilih everyday atau orchestrator melalui keputusan code-owned, tetapi
+  work class safety tetap tidak memperoleh tool/delegasi. Tier/role yang lebih
+  kuat bukan permission baru.
 - **Respons provider harus terminal dan cocok bentuknya.** Teks hanya sah pada
   `finish_reason=stop`; native calls hanya sah pada
   `finish_reason=tool_calls`. Length, content filter, reason asing/hilang, dan
@@ -640,6 +644,14 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   policy/tool non-final berikutnya wajib berhenti fail-closed. Harga tier nol
   berarti cost preflight belum mempunyai coverage; jangan menyebutnya model
   gratis atau ceiling biaya universal.
+- **Specialist adalah edge optional satu-hop, bukan pipeline.** Composition
+  default-off dan hanya boleh aktif dengan binding exact berbeda serta profile
+  explicit untuk role kritis. Root orchestrator boleh melihat konteks relevan;
+  worker hanya menerima WorkBrief provider-neutral minimum-necessary, tanpa raw
+  history/memory, credential, tool, recursion, continuation root, atau authority.
+  WorkBrief credential-like, capability request nonkosong, atau salinan
+  verbatim fragmen privat panjang wajib ditolak. Setiap specialist memakai akun
+  RunBudget root yang sama dan tidak dapat menambah hard limit.
 - **Output ceiling general berasal dari ExecutionPolicy.** Caller mekanis boleh
   memasang ceiling sempit, tetapi reply/planner/worker/synthesizer general tidak
   boleh kembali ke fallback tersebar 800/1.536/4.096. Default role wajib
