@@ -1,8 +1,13 @@
 import { setTimeout as delay } from "node:timers/promises";
+import {
+  BoundedResponseBodyError,
+  readBoundedResponseBody,
+} from "../transport/bounded-response-body.js";
 
 const DEFAULT_API_VERSION = "2026-03-10";
 const DEFAULT_MAX_JSON_BYTES = 4 * 1024 * 1024;
 const DEFAULT_RETRIES = 2;
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface GitHubApiResponse {
   status: number;
@@ -19,6 +24,7 @@ export interface GitHubApiClientOptions {
   fetchImplementation?: typeof fetch;
   maxJsonBytes?: number;
   retryCount?: number;
+  timeoutMs?: number;
   /** Tests may opt into loopback HTTP. Production origins remain HTTPS-only. */
   allowInsecureLoopback?: boolean;
 }
@@ -37,6 +43,7 @@ export class GitHubApiClient {
   readonly #fetch: typeof fetch;
   readonly #maxJsonBytes: number;
   readonly #retryCount: number;
+  readonly #timeoutMs: number;
 
   constructor(options: GitHubApiClientOptions = {}) {
     const insecure = options.allowInsecureLoopback === true;
@@ -69,6 +76,12 @@ export class GitHubApiClient {
       32 * 1024 * 1024,
     );
     this.#retryCount = boundedInteger(options.retryCount ?? DEFAULT_RETRIES, "retry count", 0, 4);
+    this.#timeoutMs = boundedInteger(
+      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      "timeout",
+      10,
+      120_000,
+    );
   }
 
   async apiJson(input: {
@@ -128,32 +141,44 @@ export class GitHubApiClient {
   }): Promise<Buffer> {
     const maximum = boundedInteger(input.maximumBytes, "archive maximum", 1, 128 * 1024 * 1024);
     const firstUrl = apiUrl(this.#apiOrigin, input.path);
-    const first = await this.#fetch(firstUrl, {
-      method: "GET",
-      redirect: "manual",
-      headers: this.#headers(input.authorization),
-      ...(input.signal ? { signal: input.signal } : {}),
-    });
+    const first = await this.#requestWithRetry(
+      firstUrl,
+      {
+        method: "GET",
+        redirect: "manual",
+        headers: this.#headers(input.authorization),
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
+      false,
+    );
     let response = first;
     if (redirectStatus(first.status)) {
       const location = first.headers.get("location");
+      await first.body?.cancel().catch(() => undefined);
       if (!location) throw apiError("GITHUB_ARCHIVE_REDIRECT_INVALID", first.status);
       const target = new URL(location, firstUrl);
       if (!this.#archiveOrigins.has(target.origin) || target.username || target.password || target.hash) {
         throw apiError("GITHUB_ARCHIVE_REDIRECT_REJECTED", first.status);
       }
       // Deliberately omit Authorization on the codeload hop.
-      response = await this.#fetch(target, {
-        method: "GET",
-        redirect: "error",
-        headers: { "user-agent": this.#userAgent, accept: "application/zip" },
-        ...(input.signal ? { signal: input.signal } : {}),
-      });
+      response = await this.#requestWithRetry(
+        target,
+        {
+          method: "GET",
+          redirect: "error",
+          headers: { "user-agent": this.#userAgent, accept: "application/zip" },
+          ...(input.signal ? { signal: input.signal } : {}),
+        },
+        false,
+      );
     }
-    if (response.status !== 200) throw apiError("GITHUB_ARCHIVE_FETCH_FAILED", response.status);
+    if (response.status !== 200) {
+      await response.body?.cancel().catch(() => undefined);
+      throw apiError("GITHUB_ARCHIVE_FETCH_FAILED", response.status);
+    }
     const contentLength = response.headers.get("content-length");
     if (contentLength !== null && (!/^\d+$/u.test(contentLength) || Number(contentLength) > maximum)) {
-      await response.body?.cancel();
+      await response.body?.cancel().catch(() => undefined);
       throw apiError("GITHUB_ARCHIVE_TOO_LARGE", response.status);
     }
     if (!response.body) throw apiError("GITHUB_ARCHIVE_BODY_MISSING", response.status);
@@ -170,14 +195,16 @@ export class GitHubApiClient {
         if (size > maximum) throw apiError("GITHUB_ARCHIVE_TOO_LARGE", response.status);
         chunks.push(chunk);
       }
+      if (size < 1 || (contentLength !== null && size !== Number(contentLength))) {
+        throw apiError("GITHUB_ARCHIVE_TRUNCATED", response.status);
+      }
+      return Buffer.concat(chunks, size);
     } catch (error) {
       await reader.cancel().catch(() => undefined);
       throw error;
+    } finally {
+      reader.releaseLock();
     }
-    if (size < 1 || (contentLength !== null && size !== Number(contentLength))) {
-      throw apiError("GITHUB_ARCHIVE_TRUNCATED", response.status);
-    }
-    return Buffer.concat(chunks, size);
   }
 
   async #json(input: {
@@ -230,38 +257,62 @@ export class GitHubApiClient {
     init: RequestInit,
     retrySafe: boolean,
   ): Promise<Response> {
+    const timeout = AbortSignal.timeout(this.#timeoutMs);
+    const requestSignal = init.signal
+      ? AbortSignal.any([init.signal, timeout])
+      : timeout;
+    const boundedInit: RequestInit = { ...init, signal: requestSignal };
     let last: unknown = null;
     const attempts = retrySafe ? this.#retryCount + 1 : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
-        const response = await this.#fetch(url, init);
+        const response = await this.#fetch(url, boundedInit);
         if (!retrySafe || ![502, 503, 504].includes(response.status) || attempt + 1 >= attempts) {
           return response;
         }
         await response.body?.cancel();
       } catch (error) {
-        if (isAbort(error) || attempt + 1 >= attempts) throw error;
+        if (requestSignal.aborted || isAbort(error) || attempt + 1 >= attempts) {
+          throw error;
+        }
         last = error;
       }
       await delay(Math.min(250 * 2 ** attempt, 1_000), undefined, {
-        ...(init.signal ? { signal: init.signal } : {}),
+        signal: requestSignal,
       });
     }
     throw last ?? apiError("GITHUB_REQUEST_FAILED", 0);
   }
 
   async #parseJsonResponse(response: Response, accepted: readonly number[]): Promise<GitHubApiResponse> {
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.byteLength > this.#maxJsonBytes) throw apiError("GITHUB_RESPONSE_TOO_LARGE", response.status);
+    if (!accepted.includes(response.status)) {
+      await response.body?.cancel().catch(() => undefined);
+      throw apiError("GITHUB_API_REJECTED", response.status);
+    }
+    let bytes: Buffer;
+    try {
+      bytes = await readBoundedResponseBody(response, this.#maxJsonBytes);
+    } catch (error) {
+      if (error instanceof BoundedResponseBodyError) {
+        throw apiError(
+          error.reason === "too_large"
+            ? "GITHUB_RESPONSE_TOO_LARGE"
+            : "GITHUB_RESPONSE_MALFORMED",
+          response.status,
+        );
+      }
+      throw error;
+    }
     let value: unknown = null;
     if (bytes.byteLength > 0) {
       try {
-        value = JSON.parse(bytes.toString("utf8")) as unknown;
+        value = JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        ) as unknown;
       } catch {
         throw apiError("GITHUB_RESPONSE_MALFORMED", response.status);
       }
     }
-    if (!accepted.includes(response.status)) throw apiError("GITHUB_API_REJECTED", response.status);
     return { status: response.status, value, headers: response.headers };
   }
 }
@@ -323,7 +374,8 @@ function redirectStatus(status: number): boolean {
 }
 
 function isAbort(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
+  return error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
 function abortError(): Error {

@@ -63,9 +63,12 @@ learning, storage, atau kontrol data yang bukan policy safety.
 - `MEMORY_EMBEDDING_MODEL` mengaktifkan adapter embeddings kompatibel OpenAI.
   Document vector kini dicache durable berdasarkan scope, source ID,
   normalized content hash, exact model ID, dan model version/config; query
-  vector tetap ephemeral. Update/delete source menginvalidasi projection yang
-  terkait, perubahan model tidak mencampur vector, dan tanpa provider FTS,
-  temporal, suppression, graph, procedure, serta lessons tetap bekerja.
+  vector tetap ephemeral. Respons provider embedding dibaca streaming dengan
+  hard cap 32 MiB sebelum decode/JSON, dan status gagal, UTF-8 rusak, payload
+  oversized, atau vector invalid gagal tertutup tanpa menonaktifkan fallback
+  lexical. Update/delete source menginvalidasi projection yang terkait,
+  perubahan model tidak mencampur vector, dan tanpa provider FTS, temporal,
+  suppression, graph, procedure, serta lessons tetap bekerja.
 - `_long-term` SQLite memisahkan canonical user-model fact, versioned procedure,
   error lesson, candidate, observable evidence reference, durable learning
   event, dan derived embedding. Event didedupe dengan idempotency key, diretry
@@ -163,9 +166,11 @@ learning, storage, atau kontrol data yang bukan policy safety.
   `tests/memory-natural-control.test.ts`, `tests/group-memory-service.test.ts`,
   `tests/group-turn-service.test.ts`, `tests/project-memory-service.test.ts`,
   `tests/memory-query-plan.test.ts`, dan `tests/create-bot-flow.test.ts`.
+  Boundary provider embedding juga dikunci oleh
+  `tests/embedding-client.test.ts`.
 - Gerbang terakhir 22 Agustus 2026: suite terarah perubahan 339/339 dan recheck
   hardening final 52/52 lulus; `npm run check` PASS; `npm test` PASS,
-  1.646/1.646 test dalam 206 suite; `npm run context:check` PASS; dan
+  1.663/1.663 test dalam 208 suite; `npm run context:check` PASS; dan
   `git diff --check` PASS selain peringatan line-ending Windows.
 - Keputusan: ADR-006, ADR-014, ADR-030, ADR-031, ADR-032, ADR-042, ADR-043,
   ADR-044.

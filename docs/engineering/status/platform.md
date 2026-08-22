@@ -1,6 +1,6 @@
 # Status — Platform dan Operasi Runtime
 
-Refreshed: 20 Agustus 2026 pada profile provider exact dan live smoke.
+Refreshed: 22 Agustus 2026 pada provider-response boundary hardening.
 Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 
 ## Keadaan saat ini
@@ -11,6 +11,16 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 - Timeout/network/5xx dapat failover; 429 mengikuti key-rotation policy lalu
   circuit sementara. Lifecycle cancellation, 4xx lain, invalid output, dan
   local limit tidak diam-diam dialihkan.
+- `AI_BASE_URL` primary divalidasi sebagai HTTPS atau HTTP loopback tanpa
+  credential/query/fragment/path completion penuh sebelum key dapat dikirim.
+  Respons chat sukses mempunyai hard cap 64 MiB sebelum buffering, memakai
+  decoder UTF-8 fatal dan JSON strict; body error dibatalkan. Oversize atau
+  malformed 2xx tetap menahan reservation RunBudget sebagai usage unknown,
+  sehingga hardening transport tidak memberi retry budget optimistis.
+- SecretStore BYOK mempublikasikan snapshot cache immutable hanya setelah
+  replacement atomik-durable berhasil. Initial read dikoaleskan tanpa
+  menyerialisasi semua cache hit; mutation tetap berurutan, write gagal tidak
+  mengekspos secret baru, dan record/ref lokal yang rusak gagal tertutup.
 - Operational log NDJSON memakai allowlist metadata, redaksi, size/UTC rotation,
   retention, bounded queue, tail repair, health, dan flush shutdown. Isi,
   identity, credential, dan object mentah tidak boleh masuk.
@@ -64,10 +74,13 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 
 ## Bukti dan pointer
 
-- Kode: `src/ai/client.ts`, `src/ai/key-pool.ts`, `src/core/local-runtime-lock.ts`,
+- Kode: `src/ai/client.ts`, `src/ai/key-pool.ts`, `src/config.ts`,
+  `src/transport/bounded-response-body.ts`, `src/core/secret-store.ts`,
+  `src/core/local-runtime-lock.ts`,
   `src/core/telemetry-service.ts`, `src/core/coding-runtime-composition.ts`,
   `src/observability/`, `scripts/dev-runner.ts`.
-- Tes: `tests/client.test.ts`, `tests/key-pool.test.ts`,
+- Tes: `tests/client.test.ts`, `tests/ai-config.test.ts`,
+  `tests/secret-store.test.ts`, `tests/key-pool.test.ts`,
   `tests/local-runtime-lock.test.ts`, `tests/operational-logger.test.ts`,
   `tests/dev-runner.test.ts`, `tests/app-startup-shutdown.test.ts`.
 - Keputusan: ADR-003, ADR-010, ADR-025. Setup:

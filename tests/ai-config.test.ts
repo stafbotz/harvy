@@ -385,6 +385,32 @@ describe("konfigurasi fallback AI testing", () => {
     }
   });
 
+  it("memvalidasi base URL primary sebelum API key dapat dikirim", () => {
+    const invalid = [
+      "http://provider.example/v1",
+      "https://user:secret@provider.example/v1",
+      "https://provider.example/v1?apikey=secret",
+      "https://provider.example/v1#bagian",
+      "https://provider.example/v1/chat/completions",
+      "bukan-url",
+    ];
+    for (const baseUrl of invalid) {
+      withAiEnvironment(validTestingEnvironment({ AI_BASE_URL: baseUrl }), () => {
+        assert.throws(
+          () => loadAiConfig(),
+          hasCode("CONFIG_AI_BASE_URL_INVALID"),
+          baseUrl,
+        );
+      });
+    }
+
+    withAiEnvironment(validTestingEnvironment({
+      AI_BASE_URL: "http://127.0.0.1:43123/v1/",
+    }), () => {
+      assert.equal(loadAiConfig().baseUrl, "http://127.0.0.1:43123/v1");
+    });
+  });
+
   it("menolak cooldown nol", () => {
     withAiEnvironment(validTestingEnvironment({
       AI_TESTING_FALLBACK_BASE_URL:

@@ -536,7 +536,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 - **BYOK secret terisolasi.** Raw key hanya boleh berada di SecretStore
   terenkripsi dan memory invocation provider; metadata credential tidak boleh
   direfleksikan ke prompt, transcript, telemetry, error, ledger, Console, atau
-  Git. Revoke harus memutus funding berikutnya.
+  Git. Revoke harus memutus funding berikutnya. Snapshot cache secret hanya
+  boleh dipublikasikan setelah replacement durable berhasil; write yang gagal
+  tidak boleh membuat key baru terbaca. Mutasi harus terserialisasi, reference
+  dan ciphertext lokal divalidasi tertutup, serta key prototype tidak boleh
+  menjadi record.
 - **Billing tidak memakai isi percakapan.** Usage/recommendation hanya boleh
   memakai compute, delivery, period, funding, dan billing history pseudonymous.
   Contribution Harvy Commons selalu optional, non-manipulatif, dan tidak
@@ -596,6 +600,13 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   `finish_reason=stop`; native calls hanya sah pada
   `finish_reason=tool_calls`. Length, content filter, reason asing/hilang, dan
   pasangan bentuk/reason yang tidak cocok tidak boleh menjadi final sukses.
+- **Boundary provider dibatasi sebelum buffering.** Base URL primary harus
+  HTTPS atau HTTP loopback tanpa credential/query/fragment maupun path endpoint
+  completion penuh. Body sukses chat dan embedding dibaca sebagai stream dengan
+  hard byte cap sebelum JSON parse; UTF-8/JSON malformed dan body oversized
+  gagal tertutup. Respons 2xx yang tidak dapat diterima tetap menyelesaikan
+  reservation RunBudget sebagai usage unknown, bukan membebaskannya secara
+  optimistis.
 
 ## Log operasional
 
@@ -924,7 +935,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   remote default-base freshness tetap diperiksa terpisah.
 - **Credential GitHub hanya berada di broker trust domain.** Harvy, sandbox,
   project metadata, approval, receipt, prompt, dan log tidak boleh membawa App
-  key, installation token, atau PAT.
+  key, installation token, atau PAT. Klien provider di dalam broker hanya boleh
+  memakai origin tepercaya, watchdog internal, body JSON/archive bounded, dan
+  tidak boleh meneruskan Authorization pada redirect archive. Ledger session,
+  effect, dan descriptor archive harus diganti atomik-durable sebelum state
+  baru dianggap tersimpan.
 - **Publish adalah irisan authority dan exact remote state.** ACL terkini,
   installation repository access, project/run/instruction revision, base
   commit, target ref head, capability policy, dan approval exact yang belum

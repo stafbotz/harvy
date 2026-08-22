@@ -12,6 +12,7 @@ material lama berada di:
 - [`log/2026-08-09.md`](log/2026-08-09.md)
 - [`log/2026-08-13.md`](log/2026-08-13.md)
 - [`log/2026-08-14.md`](log/2026-08-14.md)
+- [`log/2026-08-15.md`](log/2026-08-15.md)
 - [`log/2026-08-07.md`](log/2026-08-07.md)
 - [`log/2026-08-02-sampai-2026-08-06.md`](log/2026-08-02-sampai-2026-08-06.md)
 - [`log/2026-07-25-sampai-2026-08-02.md`](log/2026-07-25-sampai-2026-08-02.md)
@@ -39,6 +40,35 @@ Next: hanya bila ada tindak lanjut material.
 Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
+
+## 2026-08-22 — Hardening boundary provider, BYOK, dan GitHub broker
+
+Scope: HTTP response boundary chat/embedding/GitHub, konfigurasi origin AI,
+SecretStore BYOK, ledger file credential broker, downloader Telegram, tes, dan
+kontrak subsystem terkait.
+
+Changed: respons sukses provider chat dan embedding serta JSON GitHub kini
+diputus pada hard byte cap sebelum buffering dan di-decode sebagai UTF-8/JSON
+strict; body error/redirect yang tidak dipakai dibatalkan. Klien GitHub
+credential-domain mempunyai watchdog internal dan selalu melepas archive
+reader. `AI_BASE_URL` primary gagal startup bila bukan HTTPS/loopback aman atau
+membawa credential/query/fragment/path completion penuh. SecretStore tidak lagi
+mempublikasikan cache sebelum replacement durable berhasil, mengoaleskan initial
+read tanpa menyerialisasi cache hit, dan menolak ref/ciphertext rusak serta key
+prototype. Ledger broker memakai primitive atomik-durable bersama dengan
+cleanup temporary/directory sync. Downloader ZIP Telegram juga selalu melepas
+reader lock. Model role, reasoning budget, context, tool eligibility, dan
+quality ceiling tidak diturunkan.
+
+Verified: suite boundary/economy/GitHub terarah PASS 114/114; `npm run check`
+PASS; `npm test` PASS 1.663/1.663 dalam 208 suite termasuk build; `npm audit`
+melaporkan 0 advisory pada 155 dependency; `npm run context:check` PASS dengan
+freshness warning nonfatal untuk `CURRENT.md`; `git diff --check` PASS selain
+peringatan line-ending Windows.
+
+Not verified: provider, Telegram/WhatsApp, GitHub repository, atau sandbox Linux
+live; hostile-network penetration test; crash/power-loss fisik; deployment
+multi-instance; dan advisory dependency yang belum dipublikasikan.
 
 ## 2026-08-22 — Semantic operation, transient context, dan menu terpadu
 
@@ -355,37 +385,3 @@ local-git, atau GitHub App broker nyata. Coding/GitHub tetap fail-closed.
 
 Next: lakukan acceptance WhatsApp dengan akun/grup uji nonkritis; provision
 backend isolated-linux dan GitHub App terpisah sebelum membuka surface coding.
-
-## 2026-08-15 — Fondasi arsitektur agent mencapai Phase M
-
-Scope: completion GroupAgentRun Phase K, group-coding Phase L, escalation
-`toughest`/privacy observability/eval routing Phase M, config, ledger, ADR, dan
-tes.
-
-Changed: GroupAgentRun kini mempunyai authority-on-claim, executor one-decision
-group-safe tanpa private context/capability, checkpoint RunBudget content-free,
-work processor yang mengurutkan checkpoint→delivery receipt→usage settlement,
-serta startup reconciliation kandidat usage. Phase L menambah link grup ke
-Workspace melalui irisan admin grup + membership/permission Workspace,
-CodingRun admission/reference idempoten, proyeksi grup tanpa source/diff/path,
-dan offer GitHub yang tetap memerlukan confirmation privat. Phase M menambah
-slot `toughest` default-off dengan profile exact dan privacy domain, closed
-validator reasons, one-shot/no-tool durable reservation, no-retry outcome
-ambigu, sensitive cross-domain gate, metadata route/material content-free, dan
-harness routing A–E dengan variant E hanya untuk selected hard tasks. Capability
-kanal/coding tidak dibuka dan seluruh core baru belum composed ke runtime
-produksi.
-
-Verified: `npm run check` PASS; `npm test` PASS 1.345/1.345 dalam 167 suite
-termasuk build; `npm run context:check` PASS (6.070 byte, estimasi 1.518 token);
-`git diff --check` PASS. Suite mencakup Phase K executor/processor/barrier,
-Phase L audience/authority/replay, Phase M policy/repository/config/ledger, dan
-corpus routing.
-
-Not verified: WhatsApp/group-coding/provider/toughest/evaluator live, runner
-Linux, GitHub broker/App nyata, restart proses atau multi-process nyata, harga
-model toughest, serta privacy behavior provider eksternal.
-
-Next: implementasikan resolver+lease authority dan composition produksi secara
-terpisah, lalu jalankan conformance/live test sintetis sebelum capability
-diaktifkan.

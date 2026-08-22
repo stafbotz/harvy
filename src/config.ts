@@ -564,7 +564,9 @@ export function loadAiConfig(): AiConfig {
     }
 
     const fallback = loadTestingFallback();
-    const baseUrl = process.env.AI_BASE_URL?.trim() || GOOGLE_BASE_URL;
+    const baseUrl = validatedAiBaseUrl(
+      process.env.AI_BASE_URL?.trim() || GOOGLE_BASE_URL,
+    );
     const configuredModels = configuredModelCatalog({
       mode,
       testingModel,
@@ -628,7 +630,9 @@ export function loadAiConfig(): AiConfig {
     );
   }
 
-  const baseUrl = process.env.AI_BASE_URL?.trim() || OPENROUTER_BASE_URL;
+  const baseUrl = validatedAiBaseUrl(
+    process.env.AI_BASE_URL?.trim() || OPENROUTER_BASE_URL,
+  );
   const configuredModels = configuredModelCatalog({
     mode,
     testingModel,
@@ -1250,6 +1254,36 @@ function validatedFallbackBaseUrl(value: string): string {
     throw configurationError(
       "CONFIG_TESTING_FALLBACK_URL_INVALID",
       "AI_TESTING_FALLBACK_BASE_URL harus berupa base URL HTTPS tanpa " +
+        "kredensial, query, fragment, atau akhiran /chat/completions.",
+    );
+  }
+  return url.toString().replace(/\/+$/u, "");
+}
+
+function validatedAiBaseUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw configurationError(
+      "CONFIG_AI_BASE_URL_INVALID",
+      "AI_BASE_URL harus berupa base URL HTTPS yang sah.",
+    );
+  }
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/gu, "");
+  const loopback = hostname === "localhost" || hostname === "127.0.0.1" ||
+    hostname === "::1";
+  if (
+    (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    /\/chat\/completions\/?$/iu.test(url.pathname)
+  ) {
+    throw configurationError(
+      "CONFIG_AI_BASE_URL_INVALID",
+      "AI_BASE_URL harus berupa base URL HTTPS (atau HTTP loopback) tanpa " +
         "kredensial, query, fragment, atau akhiran /chat/completions.",
     );
   }

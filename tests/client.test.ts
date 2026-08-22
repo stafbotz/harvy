@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
   AiClient,
+  AiError,
   ByokProviderError,
   AiResponseError,
   type ChatFunctionTool,
@@ -237,6 +238,42 @@ describe("AiClient", () => {
       /Balasan model kosong/u,
     );
     assert.equal(budget.checkpoint().consumedTokens, 101);
+    assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
+  });
+
+  it("memutus body provider yang melewati hard cap sebelum dibuffer penuh", async () => {
+    let cancelled = false;
+    globalThis.fetch = async () => new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(700).fill(65));
+          controller.enqueue(new Uint8Array(700).fill(66));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    const budget = clientRunBudget();
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      maxResponseBytes: 1_024,
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100),
+        runBudget: budget,
+      }),
+      (error: unknown) => error instanceof AiError &&
+        /melewati batas ukuran aman/u.test(error.message),
+    );
+    assert.equal(cancelled, true);
     assert.equal(budget.checkpoint().unknownUsageAttempts, 1);
   });
 

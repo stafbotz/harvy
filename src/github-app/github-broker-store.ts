@@ -1,10 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   mkdir,
-  open,
   readFile,
   readdir,
-  rename,
   stat,
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -12,6 +10,7 @@ import type {
   GitHubExactEffect,
   GitHubRepositoryArchiveReference,
 } from "../domain/github.js";
+import { writeDurableBytesAtomic } from "../storage/durable-file.js";
 
 export type BrokerInstallationSessionStatus = "pending" | "ready" | "expired" | "revoked";
 
@@ -182,15 +181,7 @@ async function atomicJson(path: string, value: unknown): Promise<void> {
 }
 
 async function atomicBytes(path: string, bytes: Buffer): Promise<void> {
-  const temporary = `${path}.tmp-${randomUUID()}`;
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(bytes);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  await rename(temporary, path);
+  await writeDurableBytesAtomic(path, bytes);
 }
 
 function parseSession(value: unknown): BrokerInstallationSessionRecord {

@@ -60,4 +60,27 @@ describe("OpenAiCompatibleEmbeddingProvider", () => {
     });
     await assert.rejects(malformed.embed(["query"]), /Item embedding/u);
   });
+
+  it("menghentikan stream embedding ketika byte response melewati hard cap", async () => {
+    let cancelled = false;
+    const provider = new OpenAiCompatibleEmbeddingProvider({
+      baseUrl: "https://example.test/v1",
+      keys: new ApiKeyPool(["secret-test"]),
+      model: "embedding-test",
+      providerId: "google-ai-studio",
+      maxResponseBytes: 1_024,
+      fetcher: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(700).fill(65));
+          controller.enqueue(new Uint8Array(700).fill(66));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      })),
+    });
+
+    await assert.rejects(provider.embed(["query"]), /melewati batas/u);
+    assert.equal(cancelled, true);
+  });
 });

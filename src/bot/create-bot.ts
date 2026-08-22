@@ -6300,6 +6300,8 @@ async function downloadTelegramZip(
   } catch {
     await reader.cancel().catch(() => undefined);
     throw new Error("Download ZIP Telegram gagal atau melewati batas.");
+  } finally {
+    reader.releaseLock();
   }
   if (total < 1 || (declaredSize !== undefined && total !== declaredSize)) {
     throw new Error("Ukuran ZIP Telegram tidak cocok descriptor.");

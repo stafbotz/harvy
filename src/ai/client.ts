@@ -30,6 +30,10 @@ import {
   serializeProviderMessages,
   serializeProviderOptions,
 } from "./provider-adapter.js";
+import {
+  BoundedResponseBodyError,
+  readBoundedResponseBody,
+} from "../transport/bounded-response-body.js";
 
 /**
  * Klien chat completion yang netral penyedia.
@@ -200,6 +204,8 @@ export interface AiClientOptions {
   /** Registry capability provider+model yang diverifikasi composition root. */
   modelProfiles?: ModelProfileRegistry;
   now?: () => number;
+  /** Hard byte cap sebelum response provider dibuffer/di-parse. */
+  maxResponseBytes?: number;
   /** Resolver BYOK mengembalikan secret hanya untuk invocation provider aktif. */
   fundingCredentialResolver?: (
     funding: ResolvedFundingContext,
@@ -300,14 +306,19 @@ const MAX_REASONING_CONTINUATION_CHARACTERS = 256_000;
 const MAX_REASONING_DETAILS_CHARACTERS = 512_000;
 const MAX_REASONING_DETAILS_DEPTH = 32;
 const MAX_REASONING_DETAILS_NODES = 8_192;
+const MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 export class AiClient {
   private readonly logger: OperationalLogger;
+  private readonly maxResponseBytes: number;
   private primaryUnavailableUntil = 0;
 
   constructor(private readonly options: AiClientOptions) {
     this.logger =
       options.logger ?? NOOP_OPERATIONAL_LOGGER.child("ai.client");
+    this.maxResponseBytes = providerResponseBytes(
+      options.maxResponseBytes ?? MAX_PROVIDER_RESPONSE_BYTES,
+    );
   }
 
   /**
@@ -809,6 +820,7 @@ export class AiClient {
       );
 
       if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
         // 429/4xx lain adalah penolakan request yang teramati. Timeout HTTP
         // dan 5xx dapat terjadi setelah provider mulai bekerja, jadi usage-nya
         // tetap dianggap unknown secara konservatif.
@@ -824,7 +836,30 @@ export class AiClient {
         );
       }
 
-      const payload: unknown = await response.json();
+      let responseBytes: Buffer;
+      try {
+        responseBytes = await readBoundedResponseBody(
+          response,
+          this.maxResponseBytes,
+        );
+      } catch (error) {
+        if (error instanceof BoundedResponseBodyError) {
+          throw new AiError(
+            error.reason === "too_large"
+              ? "Respons model melewati batas ukuran aman."
+              : "Content-Length respons model tidak sah.",
+          );
+        }
+        throw error;
+      }
+      let payload: unknown;
+      try {
+        payload = JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(responseBytes),
+        ) as unknown;
+      } catch {
+        throw new AiError("Respons model bukan JSON UTF-8 yang sah.");
+      }
       const finishReason = readFinishReason(payload);
       observedProviderCostUsd = readProviderCost(payload);
       const tokenUsage = readTokenUsage(payload, request);
@@ -1112,6 +1147,17 @@ function completionUrl(
     url.searchParams.set("model", model);
   }
   return url.toString();
+}
+
+function providerResponseBytes(value: number): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 1_024 ||
+    value > MAX_PROVIDER_RESPONSE_BYTES
+  ) {
+    throw new AiError("Batas byte respons model tidak sah.");
+  }
+  return value;
 }
 
 async function bestEffortUsage(

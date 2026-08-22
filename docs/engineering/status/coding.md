@@ -66,6 +66,12 @@ otomatis.
   OAuth callback, repository listing/access refresh, archive exact, create
   `harvy/*`, non-force exact push dari object bundle, draft PR, dan
   reconciliation fail-closed.
+- Klien GitHub credential-domain memiliki watchdog internal 30 detik walau
+  caller lupa membawa signal, membatasi JSON sebelum buffering, membatalkan
+  body status/redirect yang tidak dipakai, dan tidak membawa Authorization ke
+  origin archive. Reader archive selalu dilepas dan tetap hard-capped. Record
+  session/effect/archive broker memakai replacement atomik-durable dengan
+  cleanup temporary serta directory sync ketika platform mendukungnya.
 - Approval publish mengikat repository, branch, commit, base commit, expected
   target head, effect ID, actor, audience `workspace-private`, membership, ACL
   epoch, authority revision, dan interaction. Perubahan commit/authority
@@ -138,6 +144,6 @@ otomatis.
   `deploy/github-broker/`, `deploy/whatsapp/`, serta `.env.example`.
 - Test utama: `sandbox-live-conformance`, `oci-sandbox-backend`,
   `private-coding-application-e2e`, `local-git-service-integration`,
-  `github-app-broker-integration`, private publish pada `github-broker`,
-  `group-coding-*`, dan lifecycle/supervisor
-  suites. Angka gerbang terakhir dicatat di `docs/LOG.md` sesudah suite penuh.
+  `github-api-client`, `github-app-broker-integration`, private publish pada
+  `github-broker`, `group-coding-*`, dan lifecycle/supervisor suites. Angka
+  gerbang terakhir dicatat di `docs/LOG.md` sesudah suite penuh.

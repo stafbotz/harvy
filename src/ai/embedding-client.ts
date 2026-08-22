@@ -1,8 +1,12 @@
 import type { ApiKeyPool } from "./key-pool.js";
 import type { TextEmbeddingProvider } from "../domain/memory-knowledge.js";
+import {
+  BoundedResponseBodyError,
+  readBoundedResponseBody,
+} from "../transport/bounded-response-body.js";
 
 const MAX_BATCH = 161;
-const MAX_RESPONSE_CHARACTERS = 32 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 export interface EmbeddingClientOptions {
   baseUrl: string;
@@ -11,6 +15,8 @@ export interface EmbeddingClientOptions {
   providerId: string;
   timeoutMs?: number;
   fetcher?: typeof fetch;
+  /** Hard cap sebelum payload embedding dibuffer. */
+  maxResponseBytes?: number;
 }
 
 /**
@@ -25,6 +31,7 @@ implements TextEmbeddingProvider {
   private readonly endpoint: string;
   private readonly timeoutMs: number;
   private readonly fetcher: typeof fetch;
+  private readonly maxResponseBytes: number;
 
   constructor(private readonly options: EmbeddingClientOptions) {
     this.modelId = boundedModel(options.model);
@@ -34,6 +41,9 @@ implements TextEmbeddingProvider {
     this.endpoint = embeddingEndpoint(options.baseUrl);
     this.timeoutMs = Math.max(1_000, Math.min(60_000, options.timeoutMs ?? 15_000));
     this.fetcher = options.fetcher ?? fetch;
+    this.maxResponseBytes = boundedResponseBytes(
+      options.maxResponseBytes ?? MAX_RESPONSE_BYTES,
+    );
   }
 
   async embed(
@@ -75,11 +85,27 @@ implements TextEmbeddingProvider {
       signal: requestSignal,
     });
     if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
       throw new Error(`Provider embedding gagal dengan status ${response.status}.`);
     }
-    const raw = await response.text();
-    if (raw.length > MAX_RESPONSE_CHARACTERS) {
-      throw new Error("Respons embedding melewati batas.");
+    let bytes: Buffer;
+    try {
+      bytes = await readBoundedResponseBody(response, this.maxResponseBytes);
+    } catch (error) {
+      if (error instanceof BoundedResponseBodyError) {
+        throw new Error(
+          error.reason === "too_large"
+            ? "Respons embedding melewati batas."
+            : "Content-Length respons embedding tidak sah.",
+        );
+      }
+      throw error;
+    }
+    let raw: string;
+    try {
+      raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new Error("Respons embedding bukan UTF-8 sah.");
     }
     return parseResponse(raw, input.length);
   }
@@ -144,4 +170,15 @@ function boundedModel(model: string): string {
     throw new Error("Model embedding tidak sah.");
   }
   return clean;
+}
+
+function boundedResponseBytes(value: number): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 1_024 ||
+    value > MAX_RESPONSE_BYTES
+  ) {
+    throw new Error("Batas byte respons embedding tidak sah.");
+  }
+  return value;
 }
