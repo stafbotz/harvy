@@ -1869,6 +1869,7 @@ describe("alur adapter Telegram", () => {
   it("mendahulukan keselamatan atas kontrol dan konteks sesi", async () => {
     let reviewed = 0;
     let replySession: unknown = "belum diperiksa";
+    let replyFocus: unknown = "belum diperiksa";
     let controlCalls = 0;
     const signals: string[] = [];
     const harness = basicHarness(
@@ -1882,6 +1883,12 @@ describe("alur adapter Telegram", () => {
             level: "strong",
             category: "acute_distress",
             confidence: 0.95,
+          },
+          publicFocus: {
+            kind: "inspect",
+            subject: "detail pribadi dari pesan berisiko",
+            contrast: null,
+            purpose: null,
           },
           semanticOperation: semanticOperation(
             "data",
@@ -1897,9 +1904,9 @@ describe("alur adapter Telegram", () => {
           certain: true,
         }),
         reply: async (...args: unknown[]) => {
-          replySession = (
-            args[7] as { session?: unknown } | undefined
-          )?.session;
+          const replyRuntime = args[7] as ConversationRuntime | undefined;
+          replySession = replyRuntime?.session;
+          replyFocus = replyRuntime?.publicProgressFocus;
           return "Aku tetap di sini dan membaca pesanmu.";
         },
         reviewReply: async () => {
@@ -1949,6 +1956,7 @@ describe("alur adapter Telegram", () => {
     assert.equal(controlCalls, 0);
     assert.equal(reviewed, 1);
     assert.equal(replySession, null);
+    assert.equal(replyFocus, null);
     assert.ok(signals.includes("safe-action-blocked"));
     assert.ok(harness.sent.some((text) => text.includes("Aku tetap di sini")));
   });
@@ -2627,13 +2635,29 @@ describe("alur adapter Telegram", () => {
     let agentCalls = 0;
     let replyCalls = 0;
     let deliveredTurn: string | null | undefined;
+    let agentRuntime: ConversationRuntime | null = null;
+    const publicFocus = {
+      kind: "inspect" as const,
+      subject: "cara kerja fotosintesis",
+      contrast: null,
+      purpose: "memahami perubahan cahaya menjadi energi",
+    };
     const harness = basicHarness(
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
-        agent: async (_message: string, mode: string) => {
+        understand: async () => understanding({
+          intent: "question",
+          publicFocus,
+        }),
+        agent: async (
+          _message: string,
+          mode: string,
+          _context: HarvyContext,
+          runtime: ConversationRuntime,
+        ) => {
           agentCalls += 1;
+          agentRuntime = runtime;
           assert.equal(mode, "tools");
           return { status: "completed", reply: "Fotosintesis mengubah cahaya menjadi energi kimia." };
         },
@@ -2666,24 +2690,37 @@ describe("alur adapter Telegram", () => {
     assert.ok(harness.sent.some((text) => text.includes("energi kimia")));
     assert.equal(typeof deliveredTurn, "string");
     assert.ok((deliveredTurn?.length ?? 0) > 10);
+    assert.deepEqual(
+      (agentRuntime as ConversationRuntime | null)?.publicProgressFocus,
+      publicFocus,
+    );
   });
 
   it("assessment normal memakai everyday reply tanpa menyalakan agent graph", async () => {
     let agentCalls = 0;
     let replyCalls = 0;
+    let runtimeSeen: ConversationRuntime | null = null;
+    const publicFocus = {
+      kind: "compare" as const,
+      subject: "laptop A",
+      contrast: "laptop B",
+      purpose: "kebutuhan kuliahmu",
+    };
     const harness = basicHarness({
       classifyTurnBoundary: async () => "complete",
       triageRisk: async () => CALM_TRIAGE,
       understand: async () => understanding({
         intent: "question",
         routingAssessment: routingAssessment(),
+        publicFocus,
       }),
       agent: async () => {
         agentCalls += 1;
         return { status: "completed", reply: "jalur agent" };
       },
-      reply: async () => {
+      reply: async (...args: unknown[]) => {
         replyCalls += 1;
+        runtimeSeen = args[7] as ConversationRuntime;
         return "Fotosintesis mengubah cahaya menjadi energi kimia.";
       },
     } as unknown as Conversation);
@@ -2693,6 +2730,10 @@ describe("alur adapter Telegram", () => {
 
     assert.equal(agentCalls, 0);
     assert.equal(replyCalls, 1);
+    assert.deepEqual(
+      (runtimeSeen as ConversationRuntime | null)?.publicProgressFocus,
+      publicFocus,
+    );
   });
 
   it("request pendek bernuansa masuk orkestrator meski di bawah 280 karakter", async () => {

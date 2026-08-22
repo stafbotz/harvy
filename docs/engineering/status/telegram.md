@@ -46,8 +46,11 @@ Telegram live belum diperbarui.
 - Work yang melewati grace period memakai satu transient progress message.
   Surface yang sama diedit hanya dari activity event backend nyata, dihapus
   sebelum jawaban pertama, dan gagal secara kosmetik. Jawaban cepat serta fase
-  listening tidak menampilkan status; copy tidak membawa model, effort,
-  chain-of-thought, raw input, atau istilah internal.
+  listening tidak menampilkan status. Note utamanya kini direalisasikan dari
+  `publicFocus` semantic yang dibentuk oleh understanding pass yang sudah ada,
+  tetapi baru dibawa ke surface setelah triase final biasa. Nilainya
+  tervalidasi/bounded dan phrase generik hanya fallback; copy tidak membawa
+  model, effort, chain-of-thought, raw input, credential, atau istilah internal.
 - Route privat mencakup percakapan, action offer, task, session, data control,
   memory, safety, serta Agent Runtime. Waktu berdiri sendiri tanpa episode
   hangat memakai fast path tanpa boundary/understanding/triage model.

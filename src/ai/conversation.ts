@@ -154,6 +154,7 @@ import {
   capabilityProgressEvent,
   executionProgressEvent,
   type ConversationProgressReporter,
+  type SafePublicProgressFocus,
 } from "../core/conversation-progress.js";
 
 export interface RoutingConfig {
@@ -203,6 +204,8 @@ export interface ConversationRuntime {
   /** Adapter menandai pesan user sudah durable agar restart tidak menduplikasi. */
   markUserCommitted?: () => void;
   interruptionRelation?: TurnInterruptionRelation | null;
+  /** Fokus transient tervalidasi; tidak disimpan dan bukan reasoning provider. */
+  publicProgressFocus?: SafePublicProgressFocus | null;
   progress?: ConversationProgressReporter;
 }
 
@@ -254,7 +257,10 @@ const MEMORY_PRIVACY_TIMEOUT_MS = 8_000;
 const GROUP_INGRESS_MAX_TOKENS = 192;
 const GROUP_INGRESS_TIMEOUT_MS = 8_000;
 const INSIGHT_MAX_TOKENS = 512;
-const MEMORY_PORTRAIT_MAX_TOKENS = 768;
+// Model reasoning memakai jatah output yang sama dengan JSON terlihat. Batas
+// 768 pernah habis seluruhnya pada reasoning `medium` sehingga provider
+// mengembalikan finish_reason=length sebelum objek portrait selesai.
+const MEMORY_PORTRAIT_MAX_TOKENS = 2_048;
 
 /**
  * Ringkasan sengaja diberi jatah kecil.
@@ -358,6 +364,7 @@ export class Conversation {
             message,
             boundedContext,
             runtime.session,
+            runtime.interruptionRelation,
           ),
         },
       ],
@@ -903,7 +910,10 @@ export class Conversation {
           : {}),
       },
     );
-    runtime.progress?.report(executionProgressEvent(execution));
+    const publicFocus = triage.level === "biasa"
+      ? runtime.publicProgressFocus ?? understanding.publicFocus ?? null
+      : null;
+    runtime.progress?.report(executionProgressEvent(execution, publicFocus));
 
     const reply = await this.client.complete({
       model: modelRoute.modelId,
@@ -1048,8 +1058,17 @@ export class Conversation {
             }) => {
               runtime.progress!.report(
                 event.phase === "planning" || !event.capabilityId
-                  ? { phase: "thinking", detail: "general" }
-                  : capabilityProgressEvent(event.capabilityId),
+                  ? {
+                      phase: "thinking",
+                      detail: "general",
+                      ...(runtime.publicProgressFocus
+                        ? { publicFocus: runtime.publicProgressFocus }
+                        : {}),
+                    }
+                  : capabilityProgressEvent(
+                      event.capabilityId,
+                      runtime.publicProgressFocus,
+                    ),
               );
             },
           }
@@ -1502,7 +1521,9 @@ export class Conversation {
         difficulty: session.kind === "tutor" ? "deep" : "normal",
       },
     );
-    runtime.progress?.report(executionProgressEvent(execution));
+    runtime.progress?.report(
+      executionProgressEvent(execution, runtime.publicProgressFocus),
+    );
 
     return this.client.complete({
       model: modelRoute.modelId,

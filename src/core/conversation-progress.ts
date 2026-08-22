@@ -1,4 +1,6 @@
 import type { ExecutionPlan } from "./execution-policy.js";
+import type { TurnInterruptionRelation } from "./turn-taking-policy.js";
+import { containsSecretLikeValue } from "../security/credential-like.js";
 
 export type ConversationProgressPhase =
   | "listening"
@@ -21,10 +23,37 @@ export type ConversationProgressDetail =
   | "new-context"
   | "new-direction";
 
+export const PUBLIC_PROGRESS_FOCUS_KINDS = [
+  "inspect",
+  "distinguish",
+  "compare",
+  "current-information",
+  "calculate",
+  "verify",
+  "adjust",
+  "switch",
+] as const;
+
+export type PublicProgressFocusKind =
+  typeof PUBLIC_PROGRESS_FOCUS_KINDS[number];
+
+/**
+ * Ringkasan pekerjaan yang aman ditampilkan. Ini bukan reasoning, hasil, atau
+ * salinan pesan: hanya subject/contrast/purpose pendek untuk surface transient.
+ */
+export interface SafePublicProgressFocus {
+  readonly kind: PublicProgressFocusKind;
+  readonly subject: string;
+  readonly contrast: string | null;
+  readonly purpose: string | null;
+}
+
 export interface ConversationProgressEvent {
   phase: ConversationProgressPhase;
   /** Closed-set agar adapter tidak pernah meneruskan hidden reasoning. */
   detail?: ConversationProgressDetail;
+  /** Bounded public work focus; tidak pernah provider reasoning atau authority. */
+  publicFocus?: SafePublicProgressFocus;
 }
 
 export interface ConversationProgressReporter {
@@ -90,8 +119,9 @@ export class TransientConversationProgress<Reference>
       void this.responding();
       return;
     }
-    if (sameEvent(this.latest, event)) return;
-    this.latest = Object.freeze({ ...event });
+    const normalized = normalizeProgressEvent(event);
+    if (sameEvent(this.latest, normalized)) return;
+    this.latest = normalized;
     if (this.reference === null && this.graceTimer === null) {
       this.graceTimer = setTimeout(() => {
         this.graceTimer = null;
@@ -179,31 +209,64 @@ export class TransientConversationProgress<Reference>
 
 export function executionProgressEvent(
   execution: ExecutionPlan,
+  publicFocus?: SafePublicProgressFocus | null,
 ): ConversationProgressEvent {
   const effort = execution.effectiveEffort;
   if (effort !== null && effort !== "none") {
-    return { phase: "thinking", detail: "general" };
+    return progressEvent("thinking", "general", publicFocus);
   }
-  return { phase: "composing", detail: "general" };
+  return progressEvent("composing", "general", publicFocus);
 }
 
 export function capabilityProgressEvent(
   capabilityId: string,
+  publicFocus?: SafePublicProgressFocus | null,
 ): ConversationProgressEvent {
   const normalized = capabilityId.toLocaleLowerCase("en-US");
   if (/(?:search|browse|web|lookup)/u.test(normalized)) {
-    return { phase: "searching", detail: "latest-information" };
+    return progressEvent(
+      "searching",
+      "latest-information",
+      publicFocus,
+    );
   }
   if (/(?:compare|parallel|delegate)/u.test(normalized)) {
-    return { phase: "comparing", detail: "personal-fit" };
+    return progressEvent("comparing", "personal-fit", publicFocus);
   }
   if (/(?:calculate|math|compute)/u.test(normalized)) {
-    return { phase: "calculating", detail: "general" };
+    return progressEvent("calculating", "general", publicFocus);
   }
   if (/(?:read|list|get|agenda|status)/u.test(normalized)) {
-    return { phase: "reading", detail: "general" };
+    return progressEvent("reading", "general", publicFocus);
   }
-  return { phase: "checking", detail: "consistency" };
+  return progressEvent("checking", "consistency", publicFocus);
+}
+
+export function interruptionProgressEvent(
+  relation: TurnInterruptionRelation | null | undefined,
+  publicFocus?: SafePublicProgressFocus | null,
+): ConversationProgressEvent | null {
+  if (relation === "addition" || relation === "correction") {
+    return progressEvent("adjusting", "new-context", publicFocus);
+  }
+  if (relation === "redirect") {
+    return progressEvent("switching", "new-direction", publicFocus);
+  }
+  return null;
+}
+
+/**
+ * Baru dipanggil adapter setelah triase final. Dengan begitu focus hasil
+ * understanding tidak sempat tampil pada turn yang kemudian masuk lane safety.
+ */
+export function publicFocusProgressEvent(
+  relation: TurnInterruptionRelation | null | undefined,
+  publicFocus: SafePublicProgressFocus | null | undefined,
+): ConversationProgressEvent | null {
+  const normalized = parsePublicProgressFocus(publicFocus);
+  if (!normalized) return null;
+  return interruptionProgressEvent(relation, normalized) ??
+    progressEvent("checking", "consistency", normalized);
 }
 
 export function renderConversationProgress(
@@ -212,11 +275,48 @@ export function renderConversationProgress(
 ): string {
   const status = STATUS[event.phase];
   if (!status) return "";
-  const notes = NOTES[event.phase]?.[event.detail ?? "general"] ??
-    NOTES[event.phase]?.general ?? [];
-  const note = notes[stableIndex(seed, event.phase, notes.length)] ??
+  const publicFocus = parsePublicProgressFocus(event.publicFocus);
+  const focusedNote = publicFocus
+    ? realizePublicProgressNote(event.phase, publicFocus)
+    : null;
+  const notes = FALLBACK_NOTES[event.phase]?.[event.detail ?? "general"] ??
+    FALLBACK_NOTES[event.phase]?.general ?? [];
+  const note = focusedNote ?? notes[stableIndex(seed, event.phase, notes.length)] ??
     "Aku cek dulu bagian yang paling penting.";
   return `${status}...\n💭 ${note}`;
+}
+
+/**
+ * Memvalidasi output model sebagai frasa semantic kecil. Field yang rusak
+ * dibuang seluruhnya agar renderer jatuh ke fallback, bukan merangkai separuh
+ * input tak tepercaya menjadi copy publik.
+ */
+export function parsePublicProgressFocus(
+  value: unknown,
+): SafePublicProgressFocus | null {
+  if (!isRecord(value)) return null;
+  const keys = ["kind", "subject", "contrast", "purpose"] as const;
+  if (
+    Object.keys(value).length !== keys.length ||
+    !keys.every((key) => Object.hasOwn(value, key))
+  ) return null;
+
+  const kind = typeof value["kind"] === "string"
+    ? PUBLIC_PROGRESS_FOCUS_KINDS.find((entry) => entry === value["kind"])
+    : undefined;
+  const subject = readFocusPart(value["subject"], false);
+  const contrast = readFocusPart(value["contrast"], true);
+  const purpose = readFocusPart(value["purpose"], true);
+  if (!kind || !subject || contrast === undefined || purpose === undefined) {
+    return null;
+  }
+  if (
+    [subject, contrast, purpose]
+      .filter((part): part is string => part !== null)
+      .join(" ").length > MAX_PUBLIC_FOCUS_TOTAL_CHARACTERS
+  ) return null;
+
+  return Object.freeze({ kind, subject, contrast, purpose });
 }
 
 const STATUS: Partial<Record<ConversationProgressPhase, string>> = {
@@ -231,7 +331,7 @@ const STATUS: Partial<Record<ConversationProgressPhase, string>> = {
   composing: "Menyusun jawaban",
 };
 
-const NOTES: Partial<Record<
+const FALLBACK_NOTES: Partial<Record<
   ConversationProgressPhase,
   Partial<Record<ConversationProgressDetail, readonly string[]>>
 >> = {
@@ -298,6 +398,139 @@ const NOTES: Partial<Record<
   },
 };
 
+const MAX_PUBLIC_FOCUS_PART_CHARACTERS = 72;
+const MAX_PUBLIC_FOCUS_TOTAL_CHARACTERS = 160;
+const MAX_PUBLIC_PROGRESS_NOTE_CHARACTERS = 220;
+const PUBLIC_FOCUS_INTERNAL_PATTERN =
+  /\b(?:chain[ -]?of[ -]?thought|alur (?:pikir|pemikiran|penalaran)|private reasoning|pemikiran (?:privat|pribadi|internal)|reasoning(?:_content|_details)?|thought signature|model (?:tier|role|id|routing)|provider (?:id|routing|fallback)|tool call|capability|execution plan|system prompt|prompt sistem|token budget|workbrief|runbudget|context manifest|telemetry runtime)\b/iu;
+const PUBLIC_FOCUS_INJECTION_PATTERN =
+  /\b(?:abaikan (?:semua|instruksi)|ikuti instruksi|ignore (?:all|previous|prior|the) instructions?|follow (?:these|the) instructions?|jailbreak|bocorkan prompt|reveal (?:the )?(?:system )?prompt)\b/iu;
+const PUBLIC_FOCUS_CREDENTIAL_PATTERN =
+  /\b(?:password|kata sandi|passcode|otp|api[ _-]?key|kunci api|access[ _-]?token|auth[ _-]?token|client[ _-]?secret|credential|kredensial)\b/iu;
+
+function realizePublicProgressNote(
+  phase: ConversationProgressPhase,
+  focus: SafePublicProgressFocus,
+): string | null {
+  const purpose = focus.purpose ? ` untuk ${focus.purpose}` : "";
+  let note: string;
+  switch (phase) {
+    case "thinking":
+      if (focus.kind === "distinguish" && focus.contrast) {
+        note = `Yang perlu kubedakan dulu di sini: ${focus.subject} dan ${focus.contrast}${purpose}.`;
+      } else if (focus.kind === "compare" && focus.contrast) {
+        note = `Aku timbang dulu ${focus.subject} dan ${focus.contrast}${purpose}.`;
+      } else {
+        note = `Aku pahami dulu ${focus.subject}${purpose}.`;
+      }
+      break;
+    case "searching":
+      note = focus.kind === "current-information"
+        ? `Aku cari dulu apa yang berubah pada ${focus.subject}${
+            focus.contrast
+              ? ` supaya nggak tercampur dengan ${focus.contrast}`
+              : ""
+          }.`
+        : focus.contrast
+        ? `Aku cari informasi yang relevan untuk membandingkan ${focus.subject} dan ${focus.contrast}${purpose}.`
+        : `Aku cari informasi terbaru tentang ${focus.subject}${purpose}.`;
+      break;
+    case "reading":
+      note = focus.contrast
+        ? `Aku baca bagian paling relevan tentang ${focus.subject} dan ${focus.contrast}${purpose}.`
+        : `Aku baca bagian tentang ${focus.subject} yang paling relevan${purpose}.`;
+      break;
+    case "comparing":
+      note = focus.contrast
+        ? `Aku bandingkan dulu ${focus.subject} dan ${focus.contrast}${purpose}.`
+        : `Aku bandingkan dulu ${focus.subject}${purpose}.`;
+      break;
+    case "calculating":
+      note = `Aku hitung dulu ${focus.subject}${purpose}.`;
+      break;
+    case "checking":
+      note = focus.kind === "current-information"
+        ? `Aku cek dulu apakah informasi tentang ${focus.subject} masih terbaru.`
+        : focus.contrast
+        ? `Aku periksa dulu perbandingan ${focus.subject} dan ${focus.contrast}${purpose}.`
+        : `Aku periksa dulu ${focus.subject}${purpose}.`;
+      break;
+    case "adjusting": {
+      const change = focus.purpose ?? focus.contrast;
+      note = change
+        ? `Oke, ${change} cukup mengubah ${focus.subject}.`
+        : `Oke, aku sesuaikan ${focus.subject}.`;
+      break;
+    }
+    case "switching":
+      note = focus.contrast
+        ? `Oke, aku tinggalkan ${focus.subject} dan beralih ke ${focus.contrast}.`
+        : `Oke, aku beralih ke ${focus.subject}.`;
+      break;
+    case "composing":
+      note = focus.contrast
+        ? `Aku susun dulu perbandingan ${focus.subject} dan ${focus.contrast}${purpose}.`
+        : `Aku susun jawaban tentang ${focus.subject}${purpose} supaya tetap enak diikuti.`;
+      break;
+    case "listening":
+    case "responding":
+      return null;
+  }
+  return note.length <= MAX_PUBLIC_PROGRESS_NOTE_CHARACTERS ? note : null;
+}
+
+function readFocusPart(
+  value: unknown,
+  nullable: boolean,
+): string | null | undefined {
+  if (value === null && nullable) return null;
+  if (typeof value !== "string" || /[\r\n\u2028\u2029]/u.test(value)) {
+    return undefined;
+  }
+  const clean = value
+    .normalize("NFKC")
+    .trim()
+    .replaceAll(/\s+/gu, " ")
+    .replace(/[.!?]+$/u, "")
+    .trim();
+  if (
+    !clean ||
+    clean.length > MAX_PUBLIC_FOCUS_PART_CHARACTERS ||
+    /^(?:aku|saya|kami)\b/iu.test(clean) ||
+    /[\u0000-\u001F\u007F]/u.test(clean) ||
+    /https?:\/\/|www\.|[`*_#<>\[\]]/iu.test(clean) ||
+    /\b[a-z][a-z0-9-]*\.[a-z0-9][a-z0-9.-]*\b/iu.test(clean) ||
+    PUBLIC_FOCUS_INTERNAL_PATTERN.test(clean) ||
+    PUBLIC_FOCUS_INJECTION_PATTERN.test(clean) ||
+    PUBLIC_FOCUS_CREDENTIAL_PATTERN.test(clean) ||
+    containsSecretLikeValue(clean)
+  ) return undefined;
+  return clean;
+}
+
+function progressEvent(
+  phase: ConversationProgressPhase,
+  detail: ConversationProgressDetail,
+  publicFocus?: SafePublicProgressFocus | null,
+): ConversationProgressEvent {
+  return publicFocus ? { phase, detail, publicFocus } : { phase, detail };
+}
+
+function normalizeProgressEvent(
+  event: ConversationProgressEvent,
+): ConversationProgressEvent {
+  const publicFocus = parsePublicProgressFocus(event.publicFocus);
+  return Object.freeze({
+    phase: event.phase,
+    ...(event.detail ? { detail: event.detail } : {}),
+    ...(publicFocus ? { publicFocus } : {}),
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function stableIndex(seed: string, phase: string, length: number): number {
   if (length <= 1) return 0;
   let hash = 2166136261;
@@ -313,7 +546,18 @@ function sameEvent(
   right: ConversationProgressEvent,
 ): boolean {
   return left?.phase === right.phase &&
-    (left.detail ?? "general") === (right.detail ?? "general");
+    (left.detail ?? "general") === (right.detail ?? "general") &&
+    samePublicFocus(left.publicFocus, right.publicFocus);
+}
+
+function samePublicFocus(
+  left: SafePublicProgressFocus | undefined,
+  right: SafePublicProgressFocus | undefined,
+): boolean {
+  return left?.kind === right?.kind &&
+    left?.subject === right?.subject &&
+    left?.contrast === right?.contrast &&
+    left?.purpose === right?.purpose;
 }
 
 function nonNegativeInteger(value: number | undefined, fallback: number): number {

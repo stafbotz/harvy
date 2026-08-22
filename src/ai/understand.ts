@@ -21,6 +21,10 @@ import type {
   RoutingToolNeed,
   WorkComplexity,
 } from "./model-policy.js";
+import {
+  parsePublicProgressFocus,
+  type SafePublicProgressFocus,
+} from "../core/conversation-progress.js";
 
 /**
  * Membaca balasan model menjadi data yang dapat dipercaya.
@@ -85,6 +89,8 @@ export interface Understanding {
    * payload lama; parser runtime selalu mengisi object sah atau null.
    */
   routingAssessment?: RoutingAssessment | null;
+  /** Public-safe semantic work focus; transient only and never reasoning. */
+  publicFocus?: SafePublicProgressFocus | null;
   task: ExtractedTask | null;
   memories: ExtractedMemory[];
   suggestedActions?: AdaptiveActionId[];
@@ -237,6 +243,7 @@ export function parseUnderstanding(raw: string): Understanding | null {
     safetySensitive: riskHint.level !== "none",
     needsStepByStep: payload["needsStepByStep"] === true,
     routingAssessment: readRoutingAssessment(payload["routingAssessment"]),
+    publicFocus: parsePublicProgressFocus(payload["publicFocus"]),
     task,
     memories,
     suggestedActions,

@@ -42,9 +42,10 @@ memiliki perubahan pengguna yang belum diselesaikan.
 
 ## 2026-08-22 — Semantic operation, transient context, dan menu terpadu
 
-Scope: Understanding, operasi usage/task/memory/session, adapter percakapan
-pribadi Telegram dan WhatsApp, context compiler, command catalog,
-observability, tes, ADR, dan status subsystem.
+Scope: Understanding, semantic conversation progress, operasi
+usage/task/memory/session, adapter percakapan pribadi Telegram dan WhatsApp,
+context compiler, command catalog, observability, tes, ADR, dan status
+subsystem.
 
 Changed: natural free text kini dipetakan satu kali ke `SemanticOperation`
 tertutup, lalu code tetap memegang authority dengan evidence dari turn aktif,
@@ -58,14 +59,25 @@ subset callable. `/menu` Telegram dan menu teks WhatsApp kini berasal dari satu
 katalog user-facing; help tetap surface terpisah. Routing role-aware,
 specialist orchestration, serta batas authority tidak diubah.
 
-Verified: suite terarah perubahan PASS 339/339 dalam 23 suite dan recheck
-hardening final PASS 52/52 dalam 4 suite; `npm run check` PASS; `npm test` PASS
-1.646/1.646 dalam 206 suite termasuk build; `npm run context:check` PASS.
+Progress note privat kini memakai `publicFocus` semantic yang dihasilkan di
+understanding call yang sama, melalui schema exact, panjang terbatas, serta
+validasi ulang terhadap reasoning privat, jargon internal, markup, injection,
+dan credential. Phase tetap code-owned dari execution/capability/interruption
+yang benar-benar aktif; Telegram dan WhatsApp baru membawa focus transient
+setelah triase final biasa ke renderer core yang sama, tanpa history, memory,
+checkpoint, log isi, atau call model kosmetik. Jalur safety menahan focus,
+sedangkan focus yang hilang/tidak sah memakai copy generik sebagai fallback
+terakhir.
+
+Verified: suite terarah perubahan lama PASS 339/339 dalam 23 suite dan recheck
+hardening final lama PASS 52/52 dalam 4 suite; progress terarah PASS 186/186
+dalam 9 suite; `npm run check` PASS; `npm test` PASS 1.656/1.656 dalam 206 suite
+termasuk build; `npm run context:check` PASS.
 
 Not verified: perilaku multilingual model/provider live, akun Telegram atau
 WhatsApp nyata, UX setelah process restart (transient context sengaja hilang),
-dan latency provider live. Evaluasi yang dijalankan bersifat unit/sintetis,
-bukan bukti live provider.
+dan latency/kualitas `publicFocus` provider live. Evaluasi yang dijalankan
+bersifat unit/sintetis, bukan bukti live provider.
 
 ## 2026-08-22 — Specialist production opt-in dan role-aware cleanup
 

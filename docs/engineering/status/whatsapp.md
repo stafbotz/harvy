@@ -45,7 +45,9 @@ terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
   sama dengan Telegram; hard splitter 12.000 karakter baru berjalan sesudah
   rencana semantik dan tidak membuang code point. Setiap send dipagari socket
   generation/current turn. Satu transient progress message dapat dikirim,
-  diedit, lalu dihapus dari event kerja backend nyata; respons cepat dan fase
+  diedit, lalu dihapus dari event kerja backend nyata. Note memakai semantic
+  `publicFocus` tervalidasi dari core yang sama dengan Telegram, tanpa call AI
+  tambahan dan hanya setelah triase final biasa; respons cepat dan fase
   listening tetap tanpa status.
 - Metadata membership pengirim dan Harvy harus segar sebelum ingress diterima;
   core melakukan revalidation sebelum binding atau mutasi. Observation authority

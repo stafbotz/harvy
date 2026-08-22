@@ -167,12 +167,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 - **Progress tidak boleh mengarang kerja.** Paling banyak satu transient
   surface per active turn: tampil setelah grace period, diedit dari event
   capability/execution yang benar-benar dimulai, dan dihapus sebelum jawaban
-  pertama. Requested effort bukan effective effort. Copy/status/log dilarang
-  membawa raw input, prompt, tool output, model/effort internal, confidence,
-  atau chain-of-thought. Typing/edit/delete best-effort tidak boleh mengubah
-  delivery, safety, atau mutasi. Pada grup, surface baru boleh dibuat setelah
-  authority serta notice terbukti dan hanya untuk direct turn; ambient planner
-  yang mungkin memilih diam tidak boleh memancarkan progress.
+  pertama. Requested effort bukan effective effort. Note boleh membawa hanya
+  `publicFocus` terstruktur yang dibentuk dalam understanding aktif, lalu hanya
+  dibawa sesudah triase final biasa ke execution/capability event. Nilainya
+  dibatasi, divalidasi ulang core, dan bersifat transient; phrase statis hanya
+  fallback. Copy/status/log dilarang membawa raw input, prompt, tool output,
+  model/effort internal, confidence, credential, atau chain-of-thought.
+  Typing/edit/delete best-effort tidak boleh mengubah delivery, safety, atau
+  mutasi. Pada grup, surface baru boleh dibuat setelah authority serta notice
+  terbukti dan hanya untuk direct turn; ambient planner yang mungkin memilih
+  diam tidak boleh memancarkan progress.
 
 ## Memori
 

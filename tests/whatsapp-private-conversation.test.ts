@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { HarvyContext } from "../src/ai/context.js";
 import type { ConversationRuntime } from "../src/ai/conversation.js";
+import type { RiskTriage } from "../src/ai/safety.js";
 import type { Understanding } from "../src/ai/understand.js";
 import { NO_RISK_HINT } from "../src/core/safety-policy.js";
 import type { UserProfile } from "../src/domain/profile.js";
@@ -52,6 +53,104 @@ describe("WhatsAppPrivateConversation", () => {
     assert.equal(harness.delivered, 1);
     assert.equal(harness.discarded, 0);
     assert.deepEqual(harness.turnOutcomes, ["completed"]);
+  });
+
+  it("meneruskan semantic public focus melalui runtime core yang sama", async () => {
+    let runtimeSeen: ConversationRuntime | null = null;
+    const publicFocus = {
+      kind: "compare" as const,
+      subject: "laptop A",
+      contrast: "laptop B",
+      purpose: "kebutuhan kuliahmu",
+    };
+    const harness = createHarness(true, {
+      understand: async () => ({
+        intent: "question",
+        taskAction: null,
+        memoryAction: null,
+        riskHint: NO_RISK_HINT,
+        safetySensitive: false,
+        needsStepByStep: false,
+        routingAssessment: null,
+        publicFocus,
+        task: null,
+        memories: [],
+        suggestedActions: [],
+        actionGoal: null,
+        controlAction: null,
+        sessionSignal: null,
+        semanticOperation: null,
+      }),
+      reply: async (_text, runtime) => {
+        runtimeSeen = runtime;
+        return "Laptopnya sedang dibandingkan.";
+      },
+    });
+
+    const result = await harness.service.handle(message(
+      "laptop A atau B buat kuliah?",
+      "progress-focus",
+    ));
+
+    assert.equal(typeof result, "object");
+    assert.deepEqual(
+      (runtimeSeen as ConversationRuntime | null)?.publicProgressFocus,
+      publicFocus,
+    );
+  });
+
+  it("menahan public focus ketika triase final masuk lane safety", async () => {
+    let runtimeSeen: ConversationRuntime | null = null;
+    const harness = createHarness(true, {
+      understand: async () => ({
+        intent: "feeling",
+        taskAction: null,
+        memoryAction: null,
+        riskHint: {
+          level: "possible",
+          category: "acute_distress",
+          confidence: 0.8,
+        },
+        safetySensitive: true,
+        needsStepByStep: false,
+        routingAssessment: null,
+        publicFocus: {
+          kind: "inspect",
+          subject: "detail pribadi dari pesan berisiko",
+          contrast: null,
+          purpose: null,
+        },
+        task: null,
+        memories: [],
+        suggestedActions: [],
+        actionGoal: null,
+        controlAction: null,
+        sessionSignal: null,
+        semanticOperation: null,
+      }),
+      triageRisk: async () => ({
+        level: "bahaya",
+        alone: true,
+        sensitive: true,
+        summary: "sedang tidak aman",
+        certain: true,
+      }),
+      reply: async (_text, runtime) => {
+        runtimeSeen = runtime;
+        return "Aku tetap di sini.";
+      },
+    });
+
+    const result = await harness.service.handle(message(
+      "situasinya rumit dan aku belum aman",
+      "progress-safety",
+    ));
+
+    assert.equal(typeof result, "object");
+    assert.equal(
+      (runtimeSeen as ConversationRuntime | null)?.publicProgressFocus,
+      null,
+    );
   });
 
   it("hanya menerima SETUJU sebagai authority consent teks", async () => {
@@ -372,6 +471,7 @@ function createHarness(
       text: string,
       context: HarvyContext,
     ) => Promise<Understanding | null>;
+    triageRisk?: () => Promise<RiskTriage>;
     economyHandle?: (
       ownerId: string,
       input: {
@@ -463,13 +563,15 @@ function createHarness(
           ? options.understand(text, context)
           : understanding;
       },
-      triageRisk: async () => ({
-        level: "biasa" as const,
-        alone: false,
-        sensitive: false,
-        summary: "",
-        certain: true,
-      }),
+      triageRisk: async () => options.triageRisk
+        ? options.triageRisk()
+        : ({
+            level: "biasa" as const,
+            alone: false,
+            sensitive: false,
+            summary: "",
+            certain: true,
+          }),
       reply: async (
         _message: string,
         _understanding: Understanding,

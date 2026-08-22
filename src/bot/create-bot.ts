@@ -233,6 +233,8 @@ import {
   type OperationalLogger,
 } from "../observability/operational-logger.js";
 import {
+  interruptionProgressEvent,
+  publicFocusProgressEvent,
   TransientConversationProgress,
   type ConversationProgressReporter,
 } from "../core/conversation-progress.js";
@@ -1773,14 +1775,10 @@ export function createBot(
       ? { ...runtime, progress }
       : runtime;
     if (progress) activeProgress.set(ownerId, progress);
-    if (
-      runtime.interruptionRelation === "addition" ||
-      runtime.interruptionRelation === "correction"
-    ) {
-      progress?.report({ phase: "adjusting", detail: "new-context" });
-    } else if (runtime.interruptionRelation === "redirect") {
-      progress?.report({ phase: "switching", detail: "new-direction" });
-    }
+    const interruptionEvent = interruptionProgressEvent(
+      runtime.interruptionRelation,
+    );
+    if (interruptionEvent) progress?.report(interruptionEvent);
 
     try {
       await handleFreeTextTurn(
@@ -2083,6 +2081,16 @@ export function createBot(
     } else if (!understanding && triage.level !== "biasa") {
       understanding = safetyOnlyUnderstanding();
     }
+
+    const publicProgressFocus = triage.level === "biasa"
+      ? understanding?.publicFocus ?? null
+      : null;
+    runtime = { ...runtime, publicProgressFocus };
+    const focusEvent = publicFocusProgressEvent(
+      runtime.interruptionRelation,
+      publicProgressFocus,
+    );
+    if (focusEvent) runtime.progress?.report(focusEvent);
 
     if (understanding && activeSession) {
       engagedSession = sessionAppliesToMessage(

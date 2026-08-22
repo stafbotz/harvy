@@ -59,6 +59,8 @@ import {
 } from "../core/telemetry-service.js";
 import type { UserUsageSummaryService } from "../core/user-usage-summary-service.js";
 import {
+  interruptionProgressEvent,
+  publicFocusProgressEvent,
   TransientConversationProgress,
 } from "../core/conversation-progress.js";
 import {
@@ -373,13 +375,11 @@ export class WhatsAppPrivateConversation {
       interruptionRelation: batch.interruptionRelation,
       progress,
     };
-    if (
-      batch.interruptionRelation === "addition" ||
-      batch.interruptionRelation === "correction"
-    ) {
-      progress.report({ phase: "adjusting", detail: "new-context" });
-    } else if (batch.interruptionRelation === "redirect") {
-      progress.report({ phase: "switching", detail: "new-direction" });
+    const interruptionEvent = interruptionProgressEvent(
+      batch.interruptionRelation,
+    );
+    if (interruptionEvent) {
+      progress.report(interruptionEvent);
     } else {
       progress.report({ phase: "reading", detail: "general" });
     }
@@ -935,6 +935,16 @@ export class WhatsAppPrivateConversation {
     if (!understanding && assessment.level !== "biasa") {
       understanding = safetyOnlyUnderstanding();
     }
+
+    const publicProgressFocus = assessment.level === "biasa"
+      ? understanding?.publicFocus ?? null
+      : null;
+    runtime = { ...runtime, publicProgressFocus };
+    const focusEvent = publicFocusProgressEvent(
+      runtime.interruptionRelation,
+      publicProgressFocus,
+    );
+    if (focusEvent) runtime.progress?.report(focusEvent);
 
     if (understanding && assessment.level === "biasa") {
       const semantic = understanding.semanticOperation;

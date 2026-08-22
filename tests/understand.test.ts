@@ -435,6 +435,37 @@ describe("pembacaan balasan model", () => {
     });
   });
 
+  it("membaca public focus exact dan membuang focus tidak aman tanpa menjatuhkan intent", () => {
+    const valid = {
+      kind: "distinguish",
+      subject: "kemampuan matematika kamu sekarang",
+      contrast: "kecocokan Informatika",
+      purpose: null,
+    };
+    const parsed = parseUnderstanding(JSON.stringify({
+      intent: "question",
+      publicFocus: valid,
+    }));
+
+    assert.deepEqual(parsed?.publicFocus, valid);
+    assert.equal(Object.isFrozen(parsed?.publicFocus), true);
+
+    for (const publicFocus of [
+      { ...valid, reasoning: "langkah privat" },
+      { ...valid, subject: "reasoning high, lalu tool call search" },
+      { ...valid, subject: "**Informatika**" },
+      { ...valid, subject: "Informatika\nmatematika" },
+      { ...valid, subject: "x".repeat(73) },
+    ]) {
+      const understanding = parseUnderstanding(JSON.stringify({
+        intent: "question",
+        publicFocus,
+      }));
+      assert.equal(understanding?.intent, "question");
+      assert.equal(understanding?.publicFocus, null);
+    }
+  });
+
   it("mengabaikan assessment asing atau berlebih secara fail-closed", () => {
     const base = {
       complexity: "normal",

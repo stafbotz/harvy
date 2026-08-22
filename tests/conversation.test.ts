@@ -12,6 +12,8 @@ import { CALM_TRIAGE } from "../src/ai/safety.js";
 import type { Understanding } from "../src/ai/understand.js";
 import type { MemoryItem } from "../src/domain/memory.js";
 import type { ActiveSession } from "../src/domain/session.js";
+import type { ConversationProgressEvent } from
+  "../src/core/conversation-progress.js";
 import { AgentHarness } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 
@@ -83,6 +85,11 @@ describe("pemahaman pesan", () => {
     assert.equal(request?.json, true);
     assert.equal(request?.temperature, 0);
     assert.equal(request?.model, "model-uji");
+    assert.match(request?.messages[0]?.content ?? "", /"publicFocus"/u);
+    assert.match(
+      request?.messages[0]?.content ?? "",
+      /publicFocus[\s\S]*bukan jawaban[\s\S]*chain-of-thought/iu,
+    );
   });
 
   it("memberi jatah token yang cukup untuk model penalaran", async () => {
@@ -102,6 +109,44 @@ describe("pemahaman pesan", () => {
       (requests[0]?.maxTokens ?? 0) >= 1024,
       "jatah token untuk pemahaman terlalu sempit",
     );
+  });
+
+  it("menghasilkan focus dalam understanding pass tanpa menayangkannya sebelum triase", async () => {
+    const requests: ChatRequest[] = [];
+    const events: ConversationProgressEvent[] = [];
+    const publicFocus = {
+      kind: "adjust",
+      subject: "pilihan laptop yang masuk akal",
+      contrast: null,
+      purpose: "budget baru 7 juta",
+    } as const;
+    const conversation = new Conversation(
+      recorder(requests, JSON.stringify({
+        intent: "question",
+        riskHint: { level: "none", category: null, confidence: 1 },
+        publicFocus,
+      })),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const parsed = await conversation.understand(
+      "eh maksudku budgetku 7 juta, bukan 10",
+      undefined,
+      {
+        interruptionRelation: "correction",
+        progress: { report: (event) => events.push(event) },
+      },
+    );
+
+    assert.deepEqual(parsed?.publicFocus, publicFocus);
+    assert.equal(requests.length, 1);
+    assert.match(
+      requests[0]?.messages.at(-1)?.content ?? "",
+      /hubungan-giliran-code-owned>[\s\S]*correction/u,
+    );
+    assert.ok(events.length > 0);
+    assert.equal(events.some((event) => event.publicFocus !== undefined), false);
   });
 
   it("membawa konteks ke langkah pemahaman, bukan hanya ke balasan", async () => {
@@ -491,6 +536,8 @@ describe("sintesis potret memori", () => {
     assert.match(portrait, /belum terlalu yakin/iu);
     assert.equal(requests.length, 1);
     assert.equal(requests[0]?.json, true);
+    assert.equal(requests[0]?.maxTokens, 2_048);
+    assert.equal(requests[0]?.execution?.maxOutputTokens, 2_048);
     assert.equal(requests[0]?.usage?.purpose, "summary");
     assert.match(requests[0]?.messages[0]?.content ?? "", /potret singkat/iu);
     assert.match(requests[0]?.messages.at(-1)?.content ?? "", /uncertain/u);
@@ -559,6 +606,39 @@ describe("balasan percakapan", () => {
     assert.equal(requests[1]?.execution?.requestedEffort, "high");
     assert.equal(requests[2]?.execution?.cognitiveRole, "orchestrator");
     assert.equal(requests[2]?.execution?.requestedEffort, "high");
+  });
+
+  it("meneruskan focus understanding ke event execution tanpa call tambahan", async () => {
+    const requests: ChatRequest[] = [];
+    const events: ConversationProgressEvent[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "jawaban"),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+    const parsed = understanding("question");
+    parsed.publicFocus = {
+      kind: "distinguish",
+      subject: "kemampuan matematika kamu sekarang",
+      contrast: "kecocokan Informatika",
+      purpose: null,
+    };
+
+    await conversation.reply(
+      "aku bingung mau Informatika tapi matematikaku biasa saja",
+      parsed,
+      undefined,
+      null,
+      CALM_TRIAGE,
+      null,
+      false,
+      { progress: { report: (event) => events.push(event) } },
+    );
+
+    assert.equal(requests.length, 1);
+    // Mode uji tanpa profile tidak mengaku memakai reasoning efektif.
+    assert.equal(events.at(-1)?.phase, "composing");
+    assert.deepEqual(events.at(-1)?.publicFocus, parsed.publicFocus);
   });
 
   it("menjaga percakapan biasa bersih dari capability catalog", async () => {
@@ -1007,8 +1087,9 @@ describe("balasan percakapan", () => {
     );
   });
 
-  it("tetap memakai tier keselamatan pada tutor yang sedang berisiko", async () => {
+  it("tetap memakai tier keselamatan dan menahan focus publik yang berisiko", async () => {
     const requests: ChatRequest[] = [];
+    const events: ConversationProgressEvent[] = [];
     const conversation = new Conversation(
       recorder(requests, "aku di sini"),
       {
@@ -1025,7 +1106,16 @@ describe("balasan percakapan", () => {
 
     await conversation.reply(
       "aku mau nyakitin diri",
-      { ...understanding("feeling"), safetySensitive: true },
+      {
+        ...understanding("feeling"),
+        safetySensitive: true,
+        publicFocus: {
+          kind: "inspect",
+          subject: "detail pribadi dari konteks sensitif",
+          contrast: null,
+          purpose: null,
+        },
+      },
       { summary: null, turns: [], memories: [] },
       null,
       {
@@ -1037,11 +1127,16 @@ describe("balasan percakapan", () => {
       },
       null,
       false,
-      { ownerId: "student", session: tutorSession() },
+      {
+        ownerId: "student",
+        session: tutorSession(),
+        progress: { report: (event) => events.push(event) },
+      },
     );
 
     assert.equal(requests[0]?.model, "efficient-model");
     assert.equal(requests[0]?.usage?.safetyCritical, true);
+    assert.equal(events.at(-1)?.publicFocus, undefined);
   });
 
   it("dapat memakai intelligence lebih kuat untuk safety tanpa menambah authority", async () => {
