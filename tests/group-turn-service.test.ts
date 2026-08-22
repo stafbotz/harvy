@@ -167,7 +167,11 @@ describe("giliran grup", () => {
     });
 
     assert.equal(await runtime.turns.handle(incoming), "replied");
-    assert.match(runtime.replies[0] ?? "", /📎 Untuk grup ini, kuingat/iu);
+    assert.match(
+      runtime.replies[0] ?? "",
+      /Yang ini juga aku ingat untuk percakapan di grup ini 📍/iu,
+    );
+    assert.doesNotMatch(runtime.replies[0] ?? "", /warna favoritku biru/iu);
     assert.equal(
       (await runtime.memories.memberMemories(
         "whatsapp:grup@g.us",
@@ -226,6 +230,72 @@ describe("giliran grup", () => {
     );
     assert.equal(stored[0]?.content, "Sedang menghadapi masalah keluarga");
     assert.equal(stored[0]?.consent, "explicit");
+  });
+
+  it("menganggap perintah ingat sebagai consent item-spesifik di grup", async () => {
+    const runtime = createRuntime({
+      reply: async () => "Aku bakal inget yang ini.",
+      memoryExtractor: {
+        understand: async () => understanding({
+          kind: "personal",
+          content: "Sedang menghadapi masalah keluarga",
+        }, "remember"),
+      },
+    });
+
+    await runtime.turns.handle(
+      message({
+        messageId: "pesan-explicit-memory",
+        participantId: "anggota-a",
+        participantAliases: ["anggota-a"],
+        mentionsHarvy: true,
+        text: "Harvy, inget ya aku sedang menghadapi masalah keluarga",
+      }),
+    );
+
+    const stored = await runtime.memories.memberMemories(
+      "whatsapp:grup@g.us",
+      ["anggota-a"],
+    );
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0]?.consent, "explicit");
+    assert.equal(stored[0]?.source, "explicit");
+    assert.doesNotMatch(runtime.replies[0] ?? "", /ya, simpan memori ini/iu);
+    assert.equal(
+      (runtime.replies[0] ?? "").match(/(?:ingat|inget)/giu)?.length,
+      1,
+    );
+  });
+
+  it("menolak credential dari durable member memory meski diminta eksplisit", async () => {
+    const runtime = createRuntime({
+      memoryExtractor: {
+        understand: async () => understanding({
+          kind: "personal",
+          content: "PIN kartu adalah 4321",
+        }, "remember"),
+      },
+    });
+
+    await runtime.turns.handle(
+      message({
+        messageId: "pesan-secret-memory",
+        participantId: "anggota-a",
+        participantAliases: ["anggota-a"],
+        mentionsHarvy: true,
+        text: "Harvy, ingat PIN kartu aku 4321",
+      }),
+    );
+
+    assert.deepEqual(
+      await runtime.memories.memberMemories(
+        "whatsapp:grup@g.us",
+        ["anggota-a"],
+      ),
+      [],
+    );
+    assert.match(runtime.replies[0] ?? "", /nggak akan menyimpan password/iu);
+    assert.doesNotMatch(runtime.replies[0] ?? "", /ya, simpan memori ini/iu);
   });
 
   it("merollback memori sensitif bila balasan konfirmasinya gagal", async () => {
@@ -3442,11 +3512,12 @@ function createRuntime(options: RuntimeOptions = {}): {
 
 function understanding(
   memory: Understanding["memories"][number],
+  memoryAction: Understanding["memoryAction"] = null,
 ): Understanding {
   return {
     intent: "smalltalk",
     taskAction: null,
-    memoryAction: "remember",
+    memoryAction,
     riskHint: { level: "none", confidence: 1 },
     safetySensitive: false,
     needsStepByStep: false,

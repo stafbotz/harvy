@@ -830,6 +830,68 @@ describe("balasan percakapan", () => {
     );
   });
 
+  it("memberi model receipt commit untuk acknowledgement kontekstual", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(
+        requests,
+        "Iya, aku inget betapa pentingnya Sohit buat kamu.",
+      ),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+    const explicit = understanding("smalltalk");
+    explicit.memoryAction = "remember";
+    explicit.memories = [{ kind: "personal", content: "Sangat mencintai Sohit" }];
+
+    const reply = await conversation.reply(
+      "harvy inget aku cinta banget sama Sohit",
+      explicit,
+      undefined,
+      null,
+      CALM_TRIAGE,
+      null,
+      false,
+      {
+        memoryAcknowledgements: [{
+          operation: "saved",
+          content: "Sangat mencintai Sohit",
+          explicit: true,
+        }],
+      },
+    );
+
+    const system = requests[0]?.messages.find((message) =>
+      message.role === "system")?.content ?? "";
+    assert.match(system, /Kode tepercaya sudah menyelesaikan tindakan ingatan/iu);
+    assert.match(system, /Sangat mencintai Sohit/iu);
+    assert.match(system, /balasan utama/iu);
+    assert.match(system, /📍 boleh dipakai secara opsional/iu);
+    assert.match(system, /Jangan pakai 💭 sebagai\s+tanda write/iu);
+    assert.match(system, /Emoji tidak wajib/iu);
+    assert.equal(reply, "Iya, aku inget betapa pentingnya Sohit buat kamu.");
+  });
+
+  it("membatasi 💭 pada recall dan melarang klaim write tanpa receipt", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "💭 Aku masih inget kamu pernah mempertimbangkan UI."),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const reply = await conversation.reply(
+      "aku bingung pilih kampus lagi",
+      understanding("smalltalk"),
+    );
+
+    const system = requests[0]?.messages.find((message) =>
+      message.role === "system")?.content ?? "";
+    assert.match(system, /💭 hanya boleh dipakai secara opsional/iu);
+    assert.match(system, /Jangan memakai 📍 atau mengaku baru menyimpan/iu);
+    assert.equal(reply, "💭 Aku masih inget kamu pernah mempertimbangkan UI.");
+  });
+
   it("menjaga tutor aktif pada tier besar dan membawa state ke prompt", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(

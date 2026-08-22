@@ -54,8 +54,16 @@ import { HISTORY_WINDOW } from "../core/history-policy.js";
 import type { HistoryService } from "../core/history-service.js";
 import type { MemoryContextCompiler } from "../core/memory-context-compiler.js";
 import type { InsightService } from "../core/insight-service.js";
-import { isSensitiveMemory } from "../core/memory-policy.js";
+import {
+  containsForbiddenMemorySecret,
+  isSensitiveMemory,
+} from "../core/memory-policy.js";
 import { deriveMemoryMetadata } from "../core/memory-candidate.js";
+import {
+  explicitMemoryRememberAuthority,
+  normalizeMemoryWriteEmoji,
+  replyAcknowledgesMemoryWrite,
+} from "../core/memory-explicit-consent.js";
 import type { MemoryService } from "../core/memory-service.js";
 import {
   hasExplicitMemoryForgetRequest,
@@ -140,6 +148,8 @@ import {
   MEMORY_CHANGE_PROMPT,
   MEMORY_PORTRAIT_EMPTY,
   MEMORY_PORTRAIT_UNAVAILABLE,
+  MEMORY_SAVE_UNAVAILABLE,
+  MEMORY_SECRET_REJECTION,
   MEMORY_WIPE_PROMPT,
   memoryConsentActions,
   memoryNoteLines,
@@ -211,6 +221,27 @@ import {
 const REMINDER_LEAD_MS = 60 * 60 * 1000;
 const MEMORY_PORTRAIT_QUERY =
   "Apa yang kamu ingat tentangku sekarang dan dulu: profilku, preferensi, kebiasaan, tujuan, hubungan, proyek, serta hal penting yang berubah?";
+
+interface AuthorizedMemoryCandidate {
+  memory: ExtractedMemory;
+  /** Dibentuk kode lokal dari user turn; tidak pernah dibaca dari JSON model. */
+  explicitConsent: boolean;
+}
+
+interface StoredMemoryBatch {
+  /** Primary memory yang benar-benar baru ditulis dan perlu rollback bila send gagal. */
+  saved: MemoryItem[];
+  /** Kandidat implicit sensitif yang masih memerlukan tombol bertoken. */
+  sensitive: ExtractedMemory | null;
+  /** Primary baru atau duplicate yang diminta eksplisit oleh user turn ini. */
+  explicitlyRemembered: MemoryItem[];
+  /** Hasil code-owned yang boleh dijelaskan model setelah commit selesai. */
+  acknowledgements: Array<{
+    item: MemoryItem;
+    operation: "saved" | "updated" | "already-known";
+    explicit: boolean;
+  }>;
+}
 
 const AI_FAILURE_MESSAGE =
   "Maaf, aku lagi nggak bisa mikir sekarang — sambungan ke otakku lagi bermasalah. Coba kirim lagi sebentar lagi, ya.";
@@ -2023,7 +2054,7 @@ export function createBot(
         understanding.task?.title.trim() ||
         (proposedActions[0] === "listen" ? "Menyimak cerita ini" : "");
       const plannedActions = actionGoal ? proposedActions : [];
-      const memoryCandidates = effectPermissions.generalState
+      const derivedMemoryCandidates = effectPermissions.generalState
           && !requiresAgentPlanning
         ? understanding.memories.map((memory) => ({
             ...memory,
@@ -2033,17 +2064,77 @@ export function createBot(
               : {}),
           }))
         : [];
-      // Berjalan bersama generasi balasan; hanya kandidat memori yang membayar
-      // classifier privasi terpisah ini.
-      const memorySensitivity = assessMemorySensitivity(
+      const explicitRememberSignaled =
+        understanding.memoryAction === "remember" &&
+        understanding.taskAction === null &&
+        understanding.task === null;
+      const explicitRemember = explicitRememberSignaled &&
+          effectPermissions.generalState
+        ? explicitMemoryRememberAuthority(text, derivedMemoryCandidates)
+        : null;
+      const explicitlyConsented = new Set(
+        explicitRemember?.candidateIndexes ?? [],
+      );
+      const explicitAuthorityMissing =
+        explicitRememberSignaled &&
+        (!explicitRemember ||
+          (!explicitRemember.forbiddenSecret &&
+            explicitRemember.candidateIndexes.length === 0));
+      const explicitRequestUnresolved = Boolean(
+        explicitRememberSignaled &&
+        explicitRemember &&
+          !explicitRemember.forbiddenSecret &&
+          explicitRemember.candidateIndexes.length === 0,
+      );
+      const memoryCandidates: AuthorizedMemoryCandidate[] =
+        explicitRemember?.forbiddenSecret ||
+          explicitAuthorityMissing ||
+          explicitRequestUnresolved
+          ? []
+          : derivedMemoryCandidates
+            .map((memory, index) => ({
+              memory,
+              explicitConsent: explicitlyConsented.has(index),
+            }))
+            // Primary MemoryService menolak lagi. Filter ini juga mencegah
+            // candidate credential membayar classifier privasi kedua.
+            .filter(({ memory }) =>
+              !containsForbiddenMemorySecret(memory.content));
+      // Hanya turn dengan kandidat durable yang membayar classifier ini. Hasil
+      // policy dan commit harus ada sebelum model diberi izin menyusun kalimat
+      // "aku ingat"; kata atau emoji dari model tidak pernah menjadi authority.
+      const sensitiveByModel = await assessMemorySensitivity(
         ownerId,
-        memoryCandidates,
+        memoryCandidates.map(({ memory }) => memory),
         runtime,
       );
+      if (!(await runtimeIsCurrent(runtime))) {
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        return;
+      }
+      const remembered = await storeOrdinaryMemories(
+        ownerId,
+        memoryCandidates,
+        sensitiveByModel,
+      );
+      if (!(await runtimeIsCurrent(runtime))) {
+        await rollbackOrdinaryMemories(ownerId, remembered.saved);
+        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        return;
+      }
+      const explicitCommitMissing =
+        explicitlyConsented.size > remembered.explicitlyRemembered.length;
+      const memoryAcknowledgements = remembered.acknowledgements.map(
+        ({ item, operation, explicit }) => ({
+          content: item.content,
+          operation,
+          explicit,
+        }),
+      );
 
-      // Balasan disusun lebih dulu, termasuk untuk pesan yang berisi tugas.
-      // Kalimat yang membawa perasaan sekaligus pekerjaan pernah dijawab hanya
-      // dengan struk pencatatan, dan bagian perasaannya hilang tanpa jejak.
+      // Sesudah policy dan commit selesai, balasan tetap disusun sebagai
+      // percakapan utama—bukan struk penyimpanan. Kalimat yang membawa perasaan
+      // sekaligus pekerjaan harus tetap menjawab perasaannya lebih dulu.
       let reply: string | null = null;
       let debitDeliveredReply = true;
       let agentPending: Extract<Pending, { kind: "agent-input" }> | null = null;
@@ -2053,7 +2144,11 @@ export function createBot(
           ? "request"
           : "question";
       try {
-        if (effectPermissions.generalState && isDirectTimeQuestion(text)) {
+        if (explicitRemember?.forbiddenSecret) {
+          reply = MEMORY_SECRET_REJECTION;
+        } else if (explicitRequestUnresolved || explicitCommitMissing) {
+          reply = MEMORY_SAVE_UNAVAILABLE;
+        } else if (effectPermissions.generalState && isDirectTimeQuestion(text)) {
           reply = conversation.deterministicTimeReply(timeZone);
         } else if (
           effectPermissions.generalState &&
@@ -2122,6 +2217,7 @@ export function createBot(
                   style: profile.stylePreference,
                   intent: agentIntent,
                   routingAssessment: understanding.routingAssessment ?? null,
+                  memoryAcknowledgements,
                 },
               );
               if (agentResult.status === "stopped") {
@@ -2186,6 +2282,7 @@ export function createBot(
                 session: null,
                 plannedActionLabels: plannedActions.map(adaptiveActionLabel),
                 routingAssessment: understanding.routingAssessment ?? null,
+                memoryAcknowledgements,
               },
             );
           }
@@ -2205,6 +2302,7 @@ export function createBot(
               session: effectPermissions.generalState ? engagedSession : null,
               plannedActionLabels: plannedActions.map(adaptiveActionLabel),
               routingAssessment: understanding.routingAssessment ?? null,
+              memoryAcknowledgements,
             },
           );
         }
@@ -2213,6 +2311,7 @@ export function createBot(
         reply = await guardReply(ownerId, text, reply, triage, context, runtime);
       } catch (error) {
         if (!(await runtimeIsCurrent(runtime))) {
+          await rollbackOrdinaryMemories(ownerId, remembered.saved);
           await telemetry.discardUndelivered?.(ownerId, currentTurnId());
           return;
         }
@@ -2226,6 +2325,11 @@ export function createBot(
         if (triage.level !== "biasa") {
           await noteTurnSignal(ownerId, "safety-fallback");
           reply = safeFallbackReply(triage.level);
+        } else if (remembered.acknowledgements.length > 0) {
+          // Model gagal memilih wording, tetapi commit sudah nyata. Beri satu
+          // fallback manusiawi dan tetap biarkan delivery guard menentukan
+          // apakah primary write dipertahankan atau di-rollback.
+          reply = memoryFallbackAcknowledgement(remembered);
         } else if (route.kind !== "save-task") {
           const failure = aiFailureMessage(error);
           await ctx.reply(failure);
@@ -2237,29 +2341,29 @@ export function createBot(
       }
 
       if (!(await runtimeIsCurrent(runtime))) {
-        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
-        return;
-      }
-
-      const sensitiveByModel = await memorySensitivity;
-      // Classifier privacy berjalan overlap dengan reply. Cancellation dapat
-      // terjadi selama await itu; jangan menulis lalu mengandalkan rollback
-      // setelah turn sudah stale atau penghapusan data sudah dimulai.
-      if (!(await runtimeIsCurrent(runtime))) {
-        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
-        return;
-      }
-      const remembered = await storeOrdinaryMemories(
-        ownerId,
-        memoryCandidates,
-        sensitiveByModel,
-      );
-      if (!(await runtimeIsCurrent(runtime))) {
         await rollbackOrdinaryMemories(ownerId, remembered.saved);
         await telemetry.discardUndelivered?.(ownerId, currentTurnId());
         return;
       }
+      if (
+        reply &&
+        remembered.acknowledgements.length > 0
+      ) {
+        reply = normalizeMemoryWriteEmoji(reply);
+      }
+      if (
+        reply &&
+        remembered.acknowledgements.length > 0 &&
+        !replyAcknowledgesMemoryWrite(reply)
+      ) {
+        reply = [
+          reply.trimEnd(),
+          "",
+          memoryFallbackAcknowledgement(remembered),
+        ].join("\n");
+      }
       let memoryNoticeDelivered = remembered.saved.length === 0;
+      const memoryNoticeItems = memoryNoticeItemsForReply(reply, remembered);
 
       let adaptiveKeyboard: InlineKeyboard | undefined;
 
@@ -2277,6 +2381,18 @@ export function createBot(
 
       if (reply) {
         let replyDelivered = false;
+        const onBubbleDelivered = (deliveredText: string): void => {
+          replyDelivered = true;
+          // Acknowledgement kontekstual dapat berada sebelum bubble terakhir.
+          // Setelah pengguna benar-benar melihat klaim write itu, rollback pada
+          // kegagalan bubble lanjutan justru akan membuat klaim tersebut palsu.
+          if (
+            remembered.acknowledgements.length > 0 &&
+            replyAcknowledgesMemoryWrite(deliveredText)
+          ) {
+            memoryNoticeDelivered = true;
+          }
+        };
         try {
           let deliveredBySession = false;
           if (
@@ -2301,10 +2417,11 @@ export function createBot(
                 await sendReply(
                   ctx,
                   reply ?? "",
-                  remembered.saved,
+                  memoryNoticeItems,
                   remembered.saved.length === 0 && next
                     ? sessionActions(next)
-                  : undefined,
+                    : undefined,
+                  onBubbleDelivered,
                 );
                 replyDelivered = true;
                 memoryNoticeDelivered = true;
@@ -2328,11 +2445,9 @@ export function createBot(
               : await sendReply(
                 ctx,
                 reply,
-                remembered.saved,
+                memoryNoticeItems,
                 adaptiveKeyboard,
-                () => {
-                  replyDelivered = true;
-                },
+                onBubbleDelivered,
               );
             replyDelivered = true;
             memoryNoticeDelivered = true;
@@ -2449,7 +2564,7 @@ export function createBot(
             reply ? undefined : taskSavedHeading(),
           );
           if (!reply) {
-            await sendMemoryNotes(ctx, remembered.saved);
+            await sendMemoryNotes(ctx, memoryNoticeItems);
             memoryNoticeDelivered = true;
           }
         } catch (error) {
@@ -2462,9 +2577,9 @@ export function createBot(
         return;
       }
 
-      if (!reply && remembered.saved.length > 0) {
+      if (!reply && memoryNoticeItems.length > 0) {
         try {
-          await sendMemoryNotes(ctx, remembered.saved);
+          await sendMemoryNotes(ctx, memoryNoticeItems);
           memoryNoticeDelivered = true;
         } catch (error) {
           await rollbackOrdinaryMemories(ownerId, remembered.saved);
@@ -3984,20 +4099,25 @@ export function createBot(
    *
    * Yang biasa disimpan tanpa bertanya, tetapi tidak diam-diam: setiap
    * penyimpanan diumumkan di balasan yang sama berikut jalan keluarnya, sesuai
-   * Pasal 4 nomor 2. Yang sensitif tidak pernah lewat jalur ini — Pasal 4
-   * nomor 3.
+   * Pasal 4 nomor 2. Yang sensitif implicit disisihkan untuk consent bertoken;
+   * yang diminta eksplisit hanya lewat setelah authority item-scoped dibentuk
+   * adapter tepercaya — Pasal 4 nomor 3.
    */
   async function storeOrdinaryMemories(
     ownerId: string,
-    items: ExtractedMemory[],
+    items: AuthorizedMemoryCandidate[],
     sensitiveByModel = false,
-  ): Promise<{ saved: MemoryItem[]; sensitive: ExtractedMemory | null }> {
+  ): Promise<StoredMemoryBatch> {
     const saved: MemoryItem[] = [];
+    const explicitlyRemembered: MemoryItem[] = [];
+    const acknowledgements: StoredMemoryBatch["acknowledgements"] = [];
     let sensitive: ExtractedMemory | null = null;
 
     try {
-      for (const item of items) {
-        if (isSensitiveMemory(item, sensitiveByModel)) {
+      for (const authorized of items) {
+        const item = authorized.memory;
+        const isSensitive = isSensitiveMemory(item, sensitiveByModel);
+        if (isSensitive && !authorized.explicitConsent) {
           sensitive ??= { ...item, sensitivity: "personal" };
           continue;
         }
@@ -4010,15 +4130,81 @@ export function createBot(
             ? { sourceSequences: [...item.sourceSequences] }
             : {}),
           ...knowledgeFields(item),
+          ...(isSensitive
+            ? {
+                sensitivity: "personal" as const,
+                sensitiveConsent: true,
+              }
+            : {}),
         });
-        if (stored) saved.push(stored);
+        if (stored) {
+          saved.push(stored);
+          acknowledgements.push({
+            item: stored,
+            operation: item.correction ? "updated" : "saved",
+            explicit: authorized.explicitConsent,
+          });
+          if (authorized.explicitConsent) explicitlyRemembered.push(stored);
+          continue;
+        }
+        if (authorized.explicitConsent) {
+          const duplicate = (await memories.list(ownerId)).find(
+            (existing) =>
+              existing.content.toLocaleLowerCase("id-ID") ===
+                item.content.toLocaleLowerCase("id-ID"),
+          );
+          if (duplicate) {
+            explicitlyRemembered.push(duplicate);
+            acknowledgements.push({
+              item: duplicate,
+              operation: "already-known",
+              explicit: true,
+            });
+          }
+        }
       }
     } catch (error) {
       await rollbackOrdinaryMemories(ownerId, saved);
       throw error;
     }
 
-    return { saved, sensitive };
+    return { saved, sensitive, explicitlyRemembered, acknowledgements };
+  }
+
+  function memoryNoticeItemsForReply(
+    reply: string | null,
+    remembered: StoredMemoryBatch,
+  ): MemoryItem[] {
+    const alreadyAcknowledged = Boolean(
+      reply && replyAcknowledgesMemoryWrite(reply),
+    );
+    if (alreadyAcknowledged) return [];
+
+    const notices = [...remembered.saved];
+    for (const item of remembered.explicitlyRemembered) {
+      if (!notices.some((candidate) => candidate.id === item.id)) {
+        notices.push(item);
+      }
+    }
+    return notices;
+  }
+
+  function memoryFallbackAcknowledgement(
+    remembered: StoredMemoryBatch,
+  ): string {
+    const receipts = remembered.acknowledgements;
+    if (receipts.length > 1) {
+      return "Oke, beberapa hal penting dari ceritamu aku bawa untuk kuingat ke depan 📍";
+    }
+    switch (receipts[0]?.operation) {
+      case "updated":
+        return "Oke, yang itu sudah aku perbarui untuk ke depan 📍";
+      case "already-known":
+        return "Iya, yang itu masih aku ingat.";
+      case "saved":
+      default:
+        return "Oke, yang ini aku ingat untuk ke depan 📍";
+    }
   }
 
   async function rollbackOrdinaryMemories(

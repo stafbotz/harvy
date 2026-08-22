@@ -48,6 +48,7 @@ import {
   depthDirective,
   dueDateInput,
   dueDatePrompt,
+  type MemoryAcknowledgementReceipt,
   replyPrompt,
   turnBoundaryInput,
   TURN_BOUNDARY_PROMPT,
@@ -161,6 +162,8 @@ export interface ConversationRuntime {
   timeZone?: string;
   session?: ActiveSession | null;
   plannedActionLabels?: readonly string[];
+  /** Receipt code-owned; model hanya memilih cara bicara setelah commit sukses. */
+  memoryAcknowledgements?: readonly MemoryAcknowledgementReceipt[];
   /** Kontrak suara/intent untuk jawaban final Agent Runtime. */
   style?: StylePreference | null;
   intent?: ConversationIntent;
@@ -767,6 +770,9 @@ export class Conversation {
       ...(runtime.plannedActionLabels
         ? { plannedActionLabels: runtime.plannedActionLabels }
         : {}),
+      ...(runtime.memoryAcknowledgements
+        ? { memoryAcknowledgements: runtime.memoryAcknowledgements }
+        : {}),
     });
 
     // Satu jalur arahan saja. Dulu ada dua: `safetyGuidance` yang lengkap, dan
@@ -1160,6 +1166,9 @@ export class Conversation {
           ? this.defaultTimeZone
           : runtime.timeZone ?? this.defaultTimeZone,
         suppressFirstMessageClaim,
+        ...(runtime.memoryAcknowledgements
+          ? { memoryAcknowledgements: runtime.memoryAcknowledgements }
+          : {}),
       });
       const nativeTools = agentNativeTools(
         effectivePlannerInput.callableCapabilities,

@@ -10,7 +10,10 @@ import {
   URGENT_ACKNOWLEDGEMENT,
 } from "../src/ai/safety.js";
 import type { HarvyContext } from "../src/ai/context.js";
-import type { Conversation } from "../src/ai/conversation.js";
+import type {
+  Conversation,
+  ConversationRuntime,
+} from "../src/ai/conversation.js";
 import type { RoutingAssessment } from "../src/ai/model-policy.js";
 import { createBot } from "../src/bot/create-bot.js";
 import { PRE_CONSENT_SAFETY } from "../src/bot/onboarding.js";
@@ -255,6 +258,610 @@ describe("alur adapter Telegram", () => {
     assert.equal(wipes, 0);
     assert.match(harness.sent.at(-1) ?? "", /mulai mengenal lagi/iu);
     assert.ok(findCallback(harness.telegramCalls, "memallyes:"));
+  });
+
+  it("menyimpan explicit personal memory tanpa consent kedua dan memantulkannya di /memori", async () => {
+    const stored: MemoryItem[] = [];
+    const inputs: NewMemory[] = [];
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memoryAction: "remember",
+          memories: [{ kind: "personal", content: "Sangat mencintai Sohit" }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () =>
+          "Aku bakal inget kok kalau kamu cinta banget sama Sohit.",
+        memoryPortrait: async (context: HarvyContext) => {
+          assert.equal(context.memories[0]?.content, "Sangat mencintai Sohit");
+          return "Kamu sangat mencintai Sohit.";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          list: async () => [...stored],
+          remember: async (input: NewMemory) => {
+            inputs.push(input);
+            const item = memoryItem("explicit-love", input.content);
+            item.kind = input.kind;
+            stored.push(item);
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("harvy inget aku cintaaa banget sama sohit", 1),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(inputs.length, 1);
+    assert.equal(inputs[0]?.kind, "personal");
+    assert.equal(inputs[0]?.sensitiveConsent, true);
+    assert.equal(inputs[0]?.sensitivity, "personal");
+    assert.equal(stored.length, 1);
+    assert.equal(findCallbacks(harness.telegramCalls, "memsave:").length, 0);
+    assert.equal(findCallbacks(harness.telegramCalls, "memskip:").length, 0);
+    assert.equal(harness.sent.some((text) => /Boleh aku inget/iu.test(text)), false);
+    assert.equal(
+      harness.sent.filter((text) => /(?:ingat|inget)/iu.test(text)).length,
+      1,
+    );
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /[📍💭]/u);
+
+    await harness.bot.handleUpdate(commandUpdate("/memori", 2));
+    await harness.bot.drainPending();
+    assert.match(harness.sent.at(-1) ?? "", /Kamu sangat mencintai Sohit/iu);
+  });
+
+  it("membiarkan acknowledgement kontekstual memakai 📍 tanpa note kedua", async () => {
+    const inputs: NewMemory[] = [];
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memoryAction: "remember",
+          memories: [{
+            kind: "preference",
+            content: "Lebih nyaman belajar pagi",
+          }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        assessMemoryPrivacy: async () => false,
+        reply: async (
+          _text: string,
+          _understanding: unknown,
+          _context: unknown,
+          _style: unknown,
+          _triage: unknown,
+          _insight: unknown,
+          _raiseHelp: unknown,
+          runtime: ConversationRuntime,
+        ) => {
+          assert.deepEqual(runtime.memoryAcknowledgements, [{
+            operation: "saved",
+            content: "Lebih nyaman belajar pagi",
+            explicit: true,
+          }]);
+          return "Oke, aku inget kamu lebih nyaman belajar pagi 📍";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async (input: NewMemory) => {
+            inputs.push(input);
+            const item = memoryItem("morning-pref", input.content);
+            item.kind = input.kind;
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("inget ya aku lebih nyaman belajar pagi"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(inputs.length, 1);
+    assert.equal((harness.sent.at(-1)?.match(/📍/gu) ?? []).length, 1);
+    assert.equal(
+      (harness.sent.at(-1)?.match(/(?:ingat|inget)/giu) ?? []).length,
+      1,
+    );
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /💭/u);
+  });
+
+  it("membahas correction secara natural tanpa mewajibkan emoji", async () => {
+    const inputs: NewMemory[] = [];
+    const naturalReply =
+      "Ohh, berarti aku salah nangkep sebelumnya. Yang benar kamu lebih produktif pagi. Aku perbaiki.";
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memories: [{
+            kind: "preference",
+            content: "Lebih produktif pagi",
+          }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        assessMemoryPrivacy: async () => false,
+        reply: async (
+          _text: string,
+          _understanding: unknown,
+          _context: unknown,
+          _style: unknown,
+          _triage: unknown,
+          _insight: unknown,
+          _raiseHelp: unknown,
+          runtime: ConversationRuntime,
+        ) => {
+          assert.equal(
+            runtime.memoryAcknowledgements?.[0]?.operation,
+            "updated",
+          );
+          return naturalReply;
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async (input: NewMemory) => {
+            inputs.push(input);
+            const item = memoryItem("morning-correction", input.content);
+            item.kind = input.kind;
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("sebenarnya aku lebih produktif pagi, bukan malam"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(inputs[0]?.correction, true);
+    assert.equal(harness.sent.at(-1), naturalReply);
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /[📍💭]/u);
+  });
+
+  it("tidak membiarkan 💭 menjadi penanda save baru", async () => {
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memoryAction: "remember",
+          memories: [{ kind: "profile", content: "Panggil aku Hafizh" }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        assessMemoryPrivacy: async () => false,
+        reply: async () => "💭 Aku simpan yang ini.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async (input: NewMemory) => {
+            const item = memoryItem("nickname", input.content);
+            item.kind = input.kind;
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("ingat ya panggil aku Hafizh"));
+    await harness.bot.drainPending();
+
+    assert.equal(harness.sent.at(-1), "📍 Aku simpan yang ini.");
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /💭/u);
+  });
+
+  it("menyatukan beberapa write dalam satu jawaban, bukan log per item", async () => {
+    const inputs: NewMemory[] = [];
+    const naturalReply =
+      "Oke, dua hal itu aku inget biar nanti kamu nggak perlu ngulang.";
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memories: [
+            { kind: "profile", content: "Nama panggilan Hafizh" },
+            { kind: "preference", content: "Lebih nyaman belajar pagi" },
+          ],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        assessMemoryPrivacy: async () => false,
+        reply: async () => naturalReply,
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async (input: NewMemory) => {
+            inputs.push(input);
+            const item = memoryItem(`multi-${inputs.length}`, input.content);
+            item.kind = input.kind;
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("panggil aku Hafizh, aku juga lebih nyaman belajar pagi"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(inputs.length, 2);
+    assert.equal(harness.sent.at(-1), naturalReply);
+    assert.doesNotMatch(
+      harness.sent.at(-1) ?? "",
+      /(?:•|Nama panggilan Hafizh|Lebih nyaman belajar pagi|[📍💭])/u,
+    );
+  });
+
+  it("membolehkan recall lama dengan atau tanpa 💭 tanpa membuat memory baru", async () => {
+    for (const recalledReply of [
+      "💭 Aku masih inget dulu kamu sempat mempertimbangkan UI.",
+      "Aku masih inget dulu kamu sempat mempertimbangkan UI.",
+    ]) {
+      let saves = 0;
+      const harness = basicHarness(
+        {
+          classifyTurnBoundary: async () => "complete",
+          understand: async () => understanding({
+            intent: "history",
+            memories: [],
+          }),
+          triageRisk: async () => CALM_TRIAGE,
+          reply: async () => recalledReply,
+        } as unknown as Conversation,
+        {} as TaskService,
+        {
+          memories: {
+            relevantTo: async () => [
+              memoryItem("college-memory", "Pernah mempertimbangkan UI"),
+            ],
+            remember: async () => {
+              saves += 1;
+              return null;
+            },
+            markUsed: async () => undefined,
+          } as unknown as MemoryService,
+        },
+      );
+
+      await harness.bot.handleUpdate(messageUpdate("aku bingung pilih kampus lagi"));
+      await harness.bot.drainPending();
+
+      assert.equal(saves, 0, recalledReply);
+      assert.equal(harness.sent.at(-1), recalledReply);
+      assert.doesNotMatch(harness.sent.at(-1) ?? "", /📍/u);
+    }
+  });
+
+  it("menyimpan explicit relationship dengan metadata derivation normal", async () => {
+    const inputs: NewMemory[] = [];
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memoryAction: "remember",
+          memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Oke.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async (input: NewMemory) => {
+            inputs.push(input);
+            const item = memoryItem("explicit-partner", input.content);
+            item.kind = input.kind;
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("inget ya Sohit pacarku"));
+    await harness.bot.drainPending();
+
+    assert.equal(inputs.length, 1);
+    assert.equal(inputs[0]?.sensitiveConsent, true);
+    assert.equal(inputs[0]?.predicate, "romantic_partner");
+    assert.equal(inputs[0]?.value, "Sohit");
+    assert.equal(inputs[0]?.graphProjection?.relation, "partner_of");
+    assert.equal(findCallbacks(harness.telegramCalls, "memsave:").length, 0);
+    assert.match(harness.sent.at(-1) ?? "", /yang ini aku ingat untuk ke depan.*📍/iu);
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /(?:💭|Sohit adalah pacarku)/iu);
+  });
+
+  it("tetap meminta consent untuk personal memory yang hanya diceritakan", async () => {
+    let saves = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Aku dengar ceritamu.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async () => {
+            saves += 1;
+            return null;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("Sohit pacarku"));
+    await harness.bot.drainPending();
+
+    assert.equal(saves, 0);
+    assert.match(harness.sent.at(-1) ?? "", /Boleh aku inget/iu);
+    assert.ok(findCallback(harness.telegramCalls, "memsave:"));
+    assert.ok(findCallback(harness.telegramCalls, "memskip:"));
+  });
+
+  it("menyimpan explicit sensitive non-credential tanpa consent kedua", async () => {
+    const inputs: NewMemory[] = [];
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memoryAction: "remember",
+          memories: [{ kind: "personal", content: "Memiliki alergi kacang" }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Oke, aku paham.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async (input: NewMemory) => {
+            inputs.push(input);
+            const item = memoryItem("explicit-health", input.content);
+            item.kind = input.kind;
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("catat ya aku punya alergi kacang"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(inputs.length, 1);
+    assert.equal(inputs[0]?.sensitiveConsent, true);
+    assert.equal(findCallbacks(harness.telegramCalls, "memsave:").length, 0);
+    assert.match(harness.sent.at(-1) ?? "", /yang ini aku ingat untuk ke depan.*📍/iu);
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /💭/u);
+  });
+
+  it("tidak mempercayai sinyal remember model tanpa perintah write lokal", async () => {
+    for (const text of [
+      "jangan ingat kalau Sohit pacarku",
+      "kamu inget gak Sohit itu siapa?",
+      "ingetin aku belajar jam 7",
+    ]) {
+      let saves = 0;
+      const harness = basicHarness(
+        {
+          classifyTurnBoundary: async () => "complete",
+          understand: async () => understanding({
+            memoryAction: "remember",
+            memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+          }),
+          triageRisk: async () => CALM_TRIAGE,
+          reply: async () => "Oke.",
+        } as unknown as Conversation,
+        {} as TaskService,
+        {
+          memories: {
+            relevantTo: async () => [],
+            remember: async () => {
+              saves += 1;
+              return null;
+            },
+            markUsed: async () => undefined,
+          } as unknown as MemoryService,
+        },
+      );
+
+      await harness.bot.handleUpdate(messageUpdate(text));
+      await harness.bot.drainPending();
+
+      assert.equal(saves, 0, text);
+      assert.equal(
+        findCallbacks(harness.telegramCalls, "memsave:").length,
+        0,
+        text,
+      );
+    }
+  });
+
+  it("tidak memperluas consent explicit ke fakta sensitif lain dalam turn", async () => {
+    const inputs: NewMemory[] = [];
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memoryAction: "remember",
+          memories: [
+            { kind: "personal", content: "Sohit adalah pacarku" },
+            { kind: "personal", content: "Baru pulang dari rumah sakit" },
+          ],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Oke.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async (input: NewMemory) => {
+            inputs.push(input);
+            const item = memoryItem("scoped-partner", input.content);
+            item.kind = input.kind;
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate(
+        "inget ya Sohit pacarku, btw tadi aku habis dari rumah sakit",
+      ),
+    );
+    await harness.bot.drainPending();
+
+    assert.deepEqual(inputs.map((input) => input.content), ["Sohit adalah pacarku"]);
+    assert.equal(inputs[0]?.sensitiveConsent, true);
+    assert.match(harness.sent.at(-1) ?? "", /Baru pulang dari rumah sakit/iu);
+    assert.ok(findCallback(harness.telegramCalls, "memsave:"));
+  });
+
+  it("menolak secret meski user meminta explicit remember", async () => {
+    let saves = 0;
+    let replyCalls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memoryAction: "remember",
+          memories: [{
+            kind: "personal",
+            content: "Password email adalah CONTOH_SANDI_123",
+          }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => {
+          replyCalls += 1;
+          return "akan kusimpan";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async () => {
+            saves += 1;
+            return null;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("ingat password emailku adalah CONTOH_SANDI_123"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(saves, 0);
+    assert.equal(replyCalls, 0);
+    assert.match(harness.sent.at(-1) ?? "", /nggak akan menyimpan password/iu);
+    assert.equal(findCallbacks(harness.telegramCalls, "memsave:").length, 0);
+  });
+
+  it("mengakui duplicate explicit request tanpa menulis atau meminta izin lagi", async () => {
+    const existing = memoryItem("known-love", "Sangat mencintai Sohit");
+    existing.kind = "personal";
+    let attempts = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memoryAction: "remember",
+          memories: [{ kind: "personal", content: existing.content }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Oke.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async () => {
+            attempts += 1;
+            return null;
+          },
+          list: async () => [existing],
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("inget ya aku cinta banget sama Sohit"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(attempts, 1);
+    assert.equal(findCallbacks(harness.telegramCalls, "memsave:").length, 0);
+    assert.match(harness.sent.at(-1) ?? "", /yang itu masih aku ingat/iu);
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /(?:📍|💭|Sangat mencintai Sohit)/iu);
+  });
+
+  it("tidak mengaku ingat bila primary write explicit gagal", async () => {
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          memoryAction: "remember",
+          memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Aku bakal inget kalau Sohit pacarmu.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async () => null,
+          list: async () => [],
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("ingat ya Sohit pacarku"));
+    await harness.bot.drainPending();
+
+    assert.match(harness.sent.at(-1) ?? "", /belum bisa menyimpan/iu);
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /bakal inget/iu);
+    assert.equal(findCallbacks(harness.telegramCalls, "memsave:").length, 0);
   });
 
   it("menolak /memori di grup dan mengarahkannya ke chat privat", async () => {
@@ -1456,6 +2063,48 @@ describe("alur adapter Telegram", () => {
     await harness.bot.drainPending();
 
     assert.equal(stored.size, 0);
+  });
+
+  it("tidak me-rollback memory setelah acknowledgement utama sudah terkirim", async () => {
+    const stored = new Map<string, MemoryItem>();
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({
+          memories: [{ kind: "preference", content: "Suka warna biru" }],
+        }),
+        assessMemoryPrivacy: async () => false,
+        reply: async () =>
+          "Oke, aku inget kamu suka warna biru.\n\nKita bisa pakai itu buat pilihan berikutnya.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async () => {
+            const item = memoryItem("mem-blue-visible", "Suka warna biru");
+            stored.set(item.id, item);
+            return item;
+          },
+          forget: async (_ownerId: string, id: string) => {
+            const item = stored.get(id) ?? null;
+            stored.delete(id);
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+        failSend: (text) => text.includes("pilihan berikutnya"),
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("aku suka warna biru"));
+    await harness.bot.drainPending();
+
+    assert.equal(stored.size, 1);
+    assert.ok(
+      harness.sent.some((text) => /aku inget kamu suka warna biru/iu.test(text)),
+    );
   });
 
   it("menolak pengingat langsung yang jatuh pada jam tenang", async () => {

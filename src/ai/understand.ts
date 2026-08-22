@@ -67,7 +67,7 @@ export interface Understanding {
   intent: ConversationIntent;
   /** Menyimpan langsung, menawarkan, atau tidak memperlakukan teks sebagai tugas. */
   taskAction: TaskAction | null;
-  /** Tindakan eksplisit terhadap memori; fakta baru sendiri bukan tindakan list. */
+  /** Sinyal tindakan eksplisit; adapter tetap wajib membuktikan authority dari user turn. */
   memoryAction: MemoryAction | null;
   /** Topik bahasa alami untuk forget; bukan ID storage dan belum memberi izin mutasi. */
   memoryTarget?: string | null;

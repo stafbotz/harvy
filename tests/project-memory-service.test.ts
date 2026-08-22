@@ -146,6 +146,16 @@ describe("ProjectMemoryService Phase G", () => {
       }]),
       /credential/iu,
     );
+    await assert.rejects(
+      memories.remember(ownerScope, project.id, project.revision, [{
+        kind: "fact",
+        subject: "secret",
+        predicate: "contains",
+        value: "API key adalah CONTOH_KUNCI_123456",
+        displayText: "credential berlabel natural juga harus ditolak",
+      }]),
+      /credential/iu,
+    );
 
     const replaced = await projects.replaceFromUpload(
       ownerScope,

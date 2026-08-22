@@ -48,7 +48,7 @@ giliran, pengguna tidak dapat menghapus satu hal tertentu karena tidak ada "satu
 hal" yang dapat ditunjuk, dan hal paling sensitif ikut tersimpan tanpa pernah
 ada yang memutuskan bahwa ia tersimpan.
 
-### 2. Memori biasa disimpan otomatis, memori sensitif ditawarkan lebih dulu
+### 2. Memori biasa disimpan otomatis; memori sensitif memerlukan izin spesifik
 
 Jenis memori menentukan perlakuannya:
 
@@ -58,20 +58,42 @@ Jenis memori menentukan perlakuannya:
 | `preference` | lebih paham lewat contoh, tidak suka dikejar-kejar | otomatis |
 | `routine` | les Jumat sore, ekskul Sabtu | otomatis |
 | `context` | ujian biologi minggu depan, sedang lomba | otomatis |
-| `personal` | kesehatan, keluarga, relasi, gender, orientasi seksual, tekanan emosional berat | **ditawarkan** |
+| `personal` | kesehatan, keluarga, relasi, gender, orientasi seksual, tekanan emosional berat | **ditawarkan bila hanya diceritakan; langsung disimpan bila pengguna eksplisit meminta item itu diingat** |
 
-Yang otomatis tetap **diberitahukan** saat disimpan lewat copy `💭` yang adaptif
-dan menempel di ujung balasan. Sejak ADR-043, pemberitahuan itu tidak lagi
-memasang tombol Lupakan per item; pengguna mengoreksi atau melupakan dengan
-bahasa biasa, sementara `/memori` dan Data & izin menjaga transparansi. Pasal 4
-nomor 2 meminta pengguna tahu sebelum sesuatu yang baru disimpan; ia tidak
-meminta Harvy bertanya atau membuka pengelola record untuk setiap remah.
+Yang otomatis tetap **diberitahukan** saat disimpan, tetapi acknowledgement
+menjadi bagian balasan kontekstual, bukan copy per-kind atau dump record. Sejak
+ADR-043, primary commit menghasilkan receipt code-owned sebelum model memilih
+wording; balasan yang sudah jelas tidak mendapat note kedua. `📍` boleh dipakai
+untuk write/update, `💭` hanya untuk recall lama, dan keduanya tidak wajib.
+Pemberitahuan juga tidak memasang tombol Lupakan per item; pengguna mengoreksi
+atau melupakan dengan bahasa biasa, sementara `/memori` dan Data & izin menjaga
+transparansi. Pasal 4 nomor 2 meminta pengguna tahu ketika sesuatu yang baru
+disimpan dan tetap mewajibkan consent lebih dulu untuk jenis yang memerlukannya;
+ia tidak meminta Harvy membuka pengelola record untuk setiap remah.
 
-Secara kontrak, yang sensitif tidak boleh disimpan tanpa jawaban pengguna.
-Pasal 4 nomor 3 melarang informasi sensitif disimpan otomatis.
+Secara kontrak, yang sensitif tidak boleh disimpan tanpa tindakan pengguna.
+Pada cerita biasa, tindakan itu tetap jawaban atas tawaran bertoken. Pada
+perintah seperti `ingat ya ...`, perintah user turn sendiri sudah menjadi
+persetujuan spesifik atas item tersebut; Harvy tidak meminta persetujuan yang
+sama untuk kedua kalinya. Pasal 4 nomor 3 melarang penyimpanan otomatis, bukan
+penyimpanan yang memang diperintahkan pengguna.
+
+Authority ini tidak berasal dari JSON model saja. Adapter tepercaya memerlukan
+`memoryAction: "remember"` yang tervalidasi **dan** bukti lokal konservatif pada
+teks user turn, lalu mencocokkannya dengan candidate yang berada dalam klausa
+yang diminta diingat. Izin terikat user, turn, item, dan scope. Fakta sensitif
+lain dalam pesan yang sama tetap masuk jalur consent biasa. Negasi, retrieval,
+cerita `aku lupa`, serta reminder waktu gagal tertutup dan tidak memperoleh
+authority write.
+
+Credential merupakan hard exclusion yang berbeda dari data personal sensitif.
+Password, OTP, PIN, token, API key, dan credential sejenis ditolak lagi oleh
+primary service sekalipun adapter membawa consent eksplisit; derivation tidak
+pernah dimulai untuk konten tersebut.
 
 Harvy **boleh** mengingat curhat. Yang dilarang Konstitusi bukan mengingatnya,
-melainkan menyimpannya diam-diam.
+melainkan menyimpannya diam-diam. Perintah pengguna untuk mengingat bukan
+penyimpanan diam-diam.
 
 Jenis hasil ekstraksi bukan satu-satunya pagar. Triase model yang terpisah juga
 menilai apakah isi sensitif dan memaksanya ke jalur izin meskipun ekstraksi

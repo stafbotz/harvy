@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  containsForbiddenMemorySecret,
   expiryFor,
   isExpired,
   isSensitiveMemory,
@@ -29,6 +30,18 @@ describe("kebijakan memori", () => {
     assert.equal(isSensitiveMemory({ kind: "profile" }), false);
     assert.equal(isSensitiveMemory({ kind: "profile" }, true), true);
     assert.equal(isSensitiveMemory({ kind: "context" }, false), false);
+  });
+
+  it("memisahkan data personal berizin dari credential yang tetap terlarang", () => {
+    assert.equal(containsForbiddenMemorySecret("Sangat mencintai Sohit"), false);
+    for (const content of [
+      "Password email adalah CONTOH_SANDI_123",
+      "OTP-ku 123456",
+      "PIN kartu aku 4321",
+      "API key adalah CONTOH_KUNCI_123456",
+    ]) {
+      assert.equal(containsForbiddenMemorySecret(content), true, content);
+    }
   });
 
   it("memberi masa berlaku pada yang sementara, bukan pada jati diri", () => {

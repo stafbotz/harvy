@@ -2,6 +2,8 @@
 
 - **Status:** Diterima
 - **Tanggal:** 21 Agustus 2026
+- **Amandemen:** 22 Agustus 2026 — explicit remember adalah consent item-spesifik;
+  acknowledgement memakai receipt commit dan bahasa percakapan kontekstual
 - **Pemilik keputusan:** pemilik produk Harvy
 - **Terkait:** ADR-002, ADR-006, ADR-014, ADR-031, ADR-032, ADR-042
 
@@ -51,10 +53,34 @@ pengalaman percakapan.
    izin dan tetap memakai token konfirmasi sekali pakai. Jalur forget-all lama
    yang menyuspensi memory/history dan menghapus seluruh turunannya tidak
    dilemahkan.
-8. **Pemberitahuan ordinary memory tetap terlihat tetapi tidak menjadi panel
-   administrasi.** Copy `💭` menyesuaikan jenis/jumlah memory dan tidak lagi
-   menambahkan tombol `Lupakan itu` pada setiap penyimpanan. Callback lama tetap
-   dapat dibaca hanya untuk pesan yang sudah terlanjur terkirim.
+8. **Acknowledgement memory adalah bagian percakapan, bukan log.** Authority dan
+   policy menentukan write lebih dulu; primary memory harus benar-benar commit
+   sebelum kode memberikan receipt `saved`, `updated`, atau `already-known` ke
+   lapisan percakapan. Model hanya memilih cara menyampaikannya sesuai isi,
+   emosi, dan gaya turn. Balasan yang sudah jelas mengatakan ingat/simpan/catat/
+   perbarui tidak mendapat note kedua. Fallback tidak mencetak `content`, kind,
+   atau daftar record, dan beberapa write disintesis menjadi satu kalimat.
+   Callback lama tetap dapat dibaca hanya untuk pesan yang sudah terlanjur
+   terkirim.
+9. **Perintah explicit remember adalah consent item-spesifik.** Sinyal model
+   `memoryAction: "remember"` tidak membawa authority sendiri. Adapter tepercaya
+   juga memeriksa bentuk perintah pada teks user turn, menolak negasi,
+   retrieval, dan reminder, lalu hanya memberi `sensitiveConsent` kepada
+   candidate yang cocok dengan klausa yang diminta disimpan. Personal memory
+   itu langsung ditulis dan diakui sekali tanpa tombol `Boleh diingat`/`Jangan`.
+   Candidate lain tetap mengikuti policy implicit. Credential/secret ditolak
+   di adapter dan service walaupun diminta eksplisit. Aturan yang sama pada
+   member-local group memory tetap terikat anggota dan grup asal; shared room
+   memory tidak memperoleh authority ini.
+10. **📍 dan 💭 memiliki peran berbeda tetapi tidak wajib.** `📍` hanya boleh
+    membantu menyatakan write atau update yang sudah terkonfirmasi. `💭` hanya
+    boleh membantu recall pemahaman lama yang sedang dibawa kembali ke turn
+    sekarang; ia tidak menjadi simbol save. Kalimat natural tanpa emoji tetap
+    sah. Kata atau emoji pada draft model bukan bukti commit, dan kegagalan
+    delivery sebelum acknowledgement terlihat tetap me-rollback primary write
+    baru. Bila acknowledgement sudah terkirim pada bubble awal, write
+    dipertahankan meski bubble lanjutan gagal agar Harvy tidak mengaku ingat
+    sesuatu yang kemudian justru dihapusnya sendiri.
 
 ## Konsekuensi
 
@@ -66,7 +92,11 @@ Positif:
 - satu renderer mencegah `/memori`, pertanyaan natural, dan Data & izin
   menyimpang; dan
 - correction, scoped forget, forget-all, serta full data deletion tetap memakai
-  lifecycle backend yang sudah teruji.
+  lifecycle backend yang sudah teruji; dan
+- pengguna yang sudah berkata “ingat” tidak harus mengulang izin, sementara
+  cerita personal biasa tetap tidak disimpan diam-diam; dan
+- Harvy tidak terdengar seperti dua suara—percakapan lalu database—ketika
+  mengakui memory write.
 
 Trade-off dan batas:
 
@@ -84,4 +114,7 @@ Trade-off dan batas:
 Tes mengunci command/menu/private gate, renderer bersama tiga entry point,
 context route/budget, ketidakpastian, larangan metadata, empty state, tombol
 `Ubah` tanpa pending, targeted forget tanpa ID, konfirmasi forget-all,
-correction kuliah/relasi, cascade lama, serta regresi command dan memory suite.
+correction kuliah/relasi, explicit remember item-scoped, implicit personal
+consent, hard exclusion credential, receipt sebelum acknowledgement, semantik
+opsional `📍`/`💭`, larangan duplicate note/log per-item, cascade lama, serta
+regresi command dan memory suite.

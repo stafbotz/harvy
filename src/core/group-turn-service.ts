@@ -53,6 +53,12 @@ import {
   type GroupMutationGuard,
 } from "./group-memory-service.js";
 import {
+  explicitMemoryRememberAuthority,
+  normalizeMemoryWriteEmoji,
+  replyAcknowledgesMemoryWrite,
+} from "./memory-explicit-consent.js";
+import { containsForbiddenMemorySecret } from "./memory-policy.js";
+import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
 } from "../observability/operational-logger.js";
@@ -92,6 +98,8 @@ const GROUP_DANGER_FALLBACK_REPLY =
   "Kalau ada bahaya yang sedang terjadi, utamakan menjauh ke tempat yang lebih aman atau hubungi layanan darurat setempat bila memungkinkan. Jangan kirim nama, alamat, lokasi rinci, atau detail identitas di grup.";
 const GROUP_URGENT_ACK =
   "Aku lihat ini mungkin mendesak. Jangan kirim nama, alamat, lokasi rinci, atau detail identitas di grup; aku akan menanggapinya secepatnya.";
+const GROUP_MEMORY_SECRET_REJECTION =
+  "Aku nggak akan menyimpan password, OTP, PIN, token, API key, atau credential lain sebagai ingatan. Simpan rahasia seperti itu di pengelola sandi yang aman.";
 
 type PendingGroupControl = {
   kind: "forget-self" | "reset-group" | "remember-sensitive";
@@ -123,6 +131,10 @@ type GroupMemoryConsentProposal = {
 type GroupMemoryCandidateResult = {
   saved: GroupMemberMemoryItem[];
   consent: GroupMemoryConsentProposal | null;
+  explicitlyRememberedIds: string[];
+  explicitDuplicateContent: string | null;
+  explicitSaveFailed: boolean;
+  forbiddenSecret: boolean;
 };
 
 type GroupRiskMarker = {
@@ -1471,13 +1483,43 @@ export class GroupTurnService {
             message,
             memoryUnderstanding,
           )
-        : { saved: [], consent: null };
+        : {
+            saved: [],
+            consent: null,
+            explicitlyRememberedIds: [],
+            explicitDuplicateContent: null,
+            explicitSaveFailed: false,
+            forbiddenSecret: false,
+          };
     const savedMemories = memoryCandidates.saved;
-    if (savedMemories.length > 0) {
-      reply = withGroupMemoryNotes(reply, savedMemories);
-    }
-    if (memoryCandidates.consent) {
-      reply = withSensitiveMemoryConsentNote(reply);
+    if (memoryCandidates.forbiddenSecret) {
+      reply = GROUP_MEMORY_SECRET_REJECTION;
+    } else {
+      if (
+        savedMemories.length > 0 ||
+        memoryCandidates.explicitDuplicateContent
+      ) {
+        reply = normalizeMemoryWriteEmoji(reply);
+      }
+      if (memoryCandidates.explicitSaveFailed) {
+        reply = withGroupMemorySaveFailure(reply);
+      }
+      const replyAlreadyAcknowledges = replyAcknowledgesMemoryWrite(reply);
+      const noticeItems = replyAlreadyAcknowledges ? [] : savedMemories;
+      if (noticeItems.length > 0) {
+        reply = withGroupMemoryNotes(reply, noticeItems);
+      }
+      if (
+        memoryCandidates.explicitDuplicateContent &&
+        !replyAlreadyAcknowledges
+      ) {
+        reply = withGroupMemoryDuplicateNote(
+          reply,
+        );
+      }
+      if (memoryCandidates.consent) {
+        reply = withSensitiveMemoryConsentNote(reply);
+      }
     }
 
     return this.deliver(
@@ -1503,12 +1545,73 @@ export class GroupTurnService {
     understanding: Understanding,
   ): Promise<GroupMemoryCandidateResult> {
     const saved: GroupMemberMemoryItem[] = [];
+    const explicitlyRememberedIds: string[] = [];
+    let explicitDuplicateContent: string | null = null;
+    let explicitSaveFailed = false;
     let consent: GroupMemoryConsentProposal | null = null;
-    const candidates = understanding.memories.slice(0, 2);
-    if (candidates.length === 0) return { saved, consent };
+    const extracted = understanding.memories.slice(0, 2);
+    const explicitRememberSignaled =
+      understanding.memoryAction === "remember" &&
+      understanding.taskAction === null &&
+      understanding.task === null;
+    const authority = explicitRememberSignaled
+      ? explicitMemoryRememberAuthority(message.text, extracted)
+      : null;
+    if (authority?.forbiddenSecret) {
+      return {
+        saved,
+        consent,
+        explicitlyRememberedIds,
+        explicitDuplicateContent,
+        explicitSaveFailed,
+        forbiddenSecret: true,
+      };
+    }
+    if (
+      explicitRememberSignaled &&
+      authority &&
+      authority.candidateIndexes.length === 0
+    ) {
+      return {
+        saved,
+        consent,
+        explicitlyRememberedIds,
+        explicitDuplicateContent,
+        explicitSaveFailed: true,
+        forbiddenSecret: false,
+      };
+    }
+    if (explicitRememberSignaled && !authority) {
+      return {
+        saved,
+        consent,
+        explicitlyRememberedIds,
+        explicitDuplicateContent,
+        explicitSaveFailed,
+        forbiddenSecret: false,
+      };
+    }
+    const authorizedIndexes = new Set(authority?.candidateIndexes ?? []);
+    const candidates = extracted
+      .map((candidate, index) => ({
+        candidate,
+        explicitConsent: authorizedIndexes.has(index),
+      }))
+      .filter(({ candidate }) =>
+        !containsForbiddenMemorySecret(candidate.content));
+    if (candidates.length === 0) {
+      return {
+        saved,
+        consent,
+        explicitlyRememberedIds,
+        explicitDuplicateContent,
+        explicitSaveFailed,
+        forbiddenSecret: false,
+      };
+    }
 
     let sensitive = candidates.some(
-      (candidate) => candidate.kind === "personal",
+      ({ candidate }) => candidate.kind === "personal",
     );
     if (!sensitive) {
       try {
@@ -1516,7 +1619,7 @@ export class GroupTurnService {
         // Port hilang, parse error, dan outage semuanya gagal tertutup.
         sensitive =
           (await this.memoryExtractor?.assessMemoryPrivacy?.(
-            candidates,
+            candidates.map(({ candidate }) => candidate),
             scopeKey,
           )) ?? true;
       } catch (error) {
@@ -1529,7 +1632,7 @@ export class GroupTurnService {
       }
     }
 
-    for (const candidate of candidates) {
+    for (const { candidate, explicitConsent } of candidates) {
       try {
         const result = await this.memories.rememberParticipantMemory(
           scopeKey,
@@ -1539,8 +1642,8 @@ export class GroupTurnService {
             kind: candidate.kind,
             content: candidate.content,
             sensitivity: sensitive ? "sensitive" : "ordinary",
-            consent: "notice",
-            source: "conversation",
+            consent: explicitConsent ? "explicit" : "notice",
+            source: explicitConsent ? "explicit" : "conversation",
           },
           this.authorityMutationGuard(
             scopeKey,
@@ -1550,7 +1653,24 @@ export class GroupTurnService {
             "member.self.manage",
           ),
         );
-        if (result.status === "saved") saved.push(result.item);
+        if (result.status === "saved") {
+          saved.push(result.item);
+          if (explicitConsent) explicitlyRememberedIds.push(result.item.id);
+        }
+        if (
+          result.status === "duplicate" &&
+          explicitConsent &&
+          !explicitDuplicateContent
+        ) {
+          explicitDuplicateContent = candidate.content;
+        }
+        if (
+          explicitConsent &&
+          result.status !== "saved" &&
+          result.status !== "duplicate"
+        ) {
+          explicitSaveFailed = true;
+        }
         if (result.status === "requires-consent" && !consent) {
           consent = {
             accountId: message.accountId,
@@ -1560,6 +1680,7 @@ export class GroupTurnService {
           };
         }
       } catch (error) {
+        if (explicitConsent) explicitSaveFailed = true;
         this.logger.warn(
           "group_member_memory_save_failed",
           "Penyimpanan memori anggota grup gagal tanpa mengubah balasan.",
@@ -1567,7 +1688,14 @@ export class GroupTurnService {
         );
       }
     }
-    return { saved, consent };
+    return {
+      saved,
+      consent,
+      explicitlyRememberedIds,
+      explicitDuplicateContent,
+      explicitSaveFailed,
+      forbiddenSecret: false,
+    };
   }
 
   private async controlReply(
@@ -3950,14 +4078,13 @@ function withGroupMemoryNotes(
   reply: string,
   items: readonly GroupMemberMemoryItem[],
 ): string {
-  const notes = items
-    .slice(0, 2)
-    .map((item) => item.content)
-    .join("; ");
+  const note = items.length > 1
+    ? "Beberapa hal penting dari ceritamu juga aku ingat untuk percakapan di grup ini 📍"
+    : "Yang ini juga aku ingat untuk percakapan di grup ini 📍";
   return [
     reply.trim(),
     "",
-    `📎 Untuk grup ini, kuingat: ${notes}. Kamu bisa bilang “lupakan tentang aku” kapan saja.`,
+    note,
   ].join("\n");
 }
 
@@ -3965,8 +4092,23 @@ function withSensitiveMemoryConsentNote(reply: string): string {
   return [
     reply.trim(),
     "",
-    "📎 Satu hal tadi tampak pribadi, jadi belum kusimpan. Kalau kamu memang ingin menyimpannya hanya untuk dirimu di grup ini, balas dalam 10 menit dengan “ya, simpan memori ini”.",
+    "Satu hal tadi tampak pribadi, jadi belum kusimpan. Kalau kamu memang ingin menyimpannya hanya untuk dirimu di grup ini, balas dalam 10 menit dengan “ya, simpan memori ini”.",
   ].join("\n");
+}
+
+function withGroupMemoryDuplicateNote(reply: string): string {
+  return [
+    reply.trim(),
+    "",
+    "Yang itu masih aku ingat untuk grup ini.",
+  ].join("\n");
+}
+
+function withGroupMemorySaveFailure(reply: string): string {
+  const note =
+    "Aku belum bisa menyimpan yang itu sebagai ingatan untuk grup ini sekarang. Coba lagi nanti, ya.";
+  if (replyAcknowledgesMemoryWrite(reply)) return note;
+  return [reply.trim(), "", note].join("\n");
 }
 
 function messageParts(message: GroupMessage): GroupMessagePart[] {

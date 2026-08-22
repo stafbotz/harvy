@@ -13,8 +13,9 @@
  * bertanya, dan berapa lama ia hidup.
  *
  * `personal` berdiri sendiri karena Pasal 4 nomor 3 melarang informasi sensitif
- * disimpan secara otomatis. Jenis lain boleh langsung disimpan asal pengguna
- * diberi tahu.
+ * disimpan otomatis dari cerita biasa. Ia memerlukan consent bertoken atau
+ * perintah explicit-remember item-spesifik yang dibuktikan adapter tepercaya.
+ * Jenis lain boleh langsung disimpan asal pengguna diberi tahu.
  */
 export type MemoryKind =
   | "profile"
@@ -50,7 +51,10 @@ export interface NewMemory {
   sourceEpisodeIds?: string[];
   sourceSequences?: number[];
   sensitivity?: import("./memory-knowledge.js").MemorySensitivity;
-  /** Hanya adapter consent bertoken yang boleh mengisi true. */
+  /**
+   * Hanya adapter tepercaya yang boleh mengisi true setelah konfirmasi
+   * bertoken atau bukti explicit-remember item-scoped dari user turn.
+   */
   sensitiveConsent?: boolean;
   provenance?: import("./memory-knowledge.js").MemoryProvenance;
   /** Hanya parser lokal atas giliran user yang boleh menandai koreksi. */

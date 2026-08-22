@@ -1,7 +1,7 @@
 # Konstitusi Harvy
 
-**Versi:** 0.5
-**Tanggal disahkan:** 2 Agustus 2026
+**Versi:** 0.6
+**Tanggal disahkan:** 22 Agustus 2026
 **Status:** Disahkan oleh pemilik produk Harvy  
 **Berlaku untuk:** seluruh produk, fitur, model AI, antarmuka, memori, sistem keselamatan, analitik, monetisasi, dan keputusan tim Harvy
 
@@ -122,6 +122,17 @@ keputusan, agenda, norma, kegiatan, alias, dan statistik bersama. Biayanya
 adalah reset grup tidak lagi berarti satu tombol untuk semua data; setiap
 anggota tetap menguasai penghapusan member-local miliknya, sedangkan removal
 Harvy membersihkan seluruh scope karena pemrosesan ruang berakhir.
+
+### Catatan revisi dari v0.5
+
+Versi 0.6 memperjelas bahwa perintah pengguna untuk mengingat satu informasi
+adalah persetujuan spesifik atas item itu, bukan penyimpanan otomatis. Harvy
+tidak meminta izin yang sama untuk kedua kalinya. Persetujuan ini hanya berlaku
+untuk pengguna, turn, item, dan scope tempat perintah diberikan; fakta lain
+dalam pesan yang sama tetap mengikuti kebijakan masing-masing. Cerita personal
+tanpa perintah mengingat tetap memerlukan izin sebelum menjadi memori durable.
+Password, OTP, PIN, token, API key, dan credential sejenis tetap tidak boleh
+menjadi memori, meskipun pengguna memintanya.
 
 ---
 
@@ -252,7 +263,7 @@ Persetujuan pengguna diperlukan, tetapi persetujuan saja tidak membuat semua pen
 - tidak menggunakan data untuk tujuan lain secara diam-diam;
 - menetapkan batas penyimpanan;
 - melindungi data dengan pengamanan yang layak;
-- tidak menyimpan informasi sensitif secara otomatis;
+- tidak menyimpan informasi sensitif secara otomatis dari percakapan biasa;
 - menyediakan cara melihat, mengubah, dan menghapus memori; dan
 - memberikan penjelasan yang sesuai usia.
 
@@ -350,8 +361,17 @@ Kesalahan penting, dampak psikologis, kualitas pendidikan, privasi, keselamatan,
 ### Memori
 
 1. Memori disimpan secara terstruktur dan hanya untuk tujuan yang jelas.
-2. Pengguna diberi tahu sebelum informasi baru disimpan, kecuali untuk data teknis minimum yang benar-benar diperlukan dan telah dijelaskan dalam kebijakan.
-3. Informasi sensitif tidak disimpan secara otomatis.
+2. Pengguna diberi tahu ketika informasi baru disimpan, kecuali untuk data
+   teknis minimum yang benar-benar diperlukan dan telah dijelaskan dalam
+   kebijakan. Jika jenis informasi itu memerlukan persetujuan, persetujuan
+   harus sudah ada sebelum penyimpanan dilakukan.
+3. Informasi sensitif tidak disimpan secara otomatis dari percakapan biasa.
+   Perintah eksplisit pengguna untuk mengingat satu informasi adalah
+   persetujuan spesifik untuk item tersebut, sehingga Harvy tidak meminta izin
+   yang sama untuk kedua kalinya. Persetujuan itu terikat pada pengguna, turn,
+   item, dan scope asal; ia bukan izin bagi fakta sensitif lain yang kebetulan
+   muncul dalam pesan yang sama. Password, OTP, PIN, token, API key, dan
+   credential sejenis tidak boleh menjadi memori durable sekalipun diminta.
 4. Pengguna dapat melihat, mengubah, menghapus satu memori, atau menghapus seluruh memori.
 5. Penarikan izin berlaku untuk penggunaan berikutnya dan ditangani tanpa mempersulit pengguna.
 6. **Catatan keselamatan dan pemahaman berada di luar cakupan nomor 2 dan 4** (v0.3). Ia tidak ditampilkan dan tidak dapat dikoreksi pengguna, karena perlindungan yang dapat dimatikan bukan perlindungan. Sebagai gantinya ia tunduk pada tiga batas: isinya hanya yang diperlukan untuk keselamatan dan cara menemani, ia ikut terhapus ketika pengguna menghapus seluruh datanya, dan ia tidak pernah dipakai di luar tujuan itu.
@@ -359,7 +379,12 @@ Kesalahan penting, dampak psikologis, kualitas pendidikan, privasi, keselamatan,
 8. Memori grup dipisahkan berdasarkan identitas grup. Identitas anggota di dalamnya adalah identitas lokal grup; pola, julukan, minat, atau perannya tidak boleh digabung menjadi profil global.
 9. Anggota dapat melihat, mengoreksi, dan menghapus member-local memory tentang dirinya. Pengelola dapat menghapus satu shared room memory atau mereset shared room memory dan profil sosial bersama, tetapi tidak menghapus member-local memory atas nama anggota. Ketika Harvy dikeluarkan atau dinonaktifkan, seluruh state scope grup tetap dihapus.
 10. Shared room memory hanya boleh dibuat melalui usulan yang terlihat dan konfirmasi eksplisit pengelola; ia tidak boleh diekstrak otomatis dari percakapan ambient.
-11. Informasi sensitif, tuduhan, konflik, keadaan kesehatan, kerentanan, orientasi, kondisi keluarga, dan preferensi politik anggota tidak boleh dijadikan memori grup otomatis.
+11. Informasi sensitif, tuduhan, konflik, keadaan kesehatan, kerentanan,
+    orientasi, kondisi keluarga, dan preferensi politik anggota tidak boleh
+    dijadikan memori grup otomatis. Perintah eksplisit anggota untuk mengingat
+    satu item hanya memberi izin bagi member-local memory milik anggota itu di
+    grup tersebut; ia tidak memberi izin lintas anggota, lintas grup, ke chat
+    privat, atau untuk shared room memory.
 12. Statistik sosial seperti “paling aktif” harus terbatas pada periode yang jelas, dapat diperiksa, tidak menjadi cap kepribadian permanen, dan tidak dipakai untuk mempermalukan atau memengaruhi hak anggota.
 13. Memori grup tidak masuk ke chat pribadi, grup lain, ekspor pribadi anggota lain, atau sistem penilaian di luar percakapan asalnya.
 

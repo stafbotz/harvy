@@ -124,13 +124,47 @@ describe("MemoryService", () => {
     );
   });
 
-  it("menolak primary personal memory tanpa token consent adapter", async () => {
+  it("menolak primary personal memory tanpa authority consent adapter", async () => {
     const service = new MemoryService(new MemoryStore());
     assert.equal(await service.remember({
       ownerId: "student",
       kind: "personal",
       content: "Ibunya sedang sakit",
     }), null);
+  });
+
+  it("menolak credential meski adapter membawa sensitive consent", async () => {
+    const lifecycle = new MemoryLifecycle();
+    const service = new MemoryService(new MemoryStore(), () => new Date(), lifecycle);
+    assert.equal(await service.remember({
+      ownerId: "student",
+      kind: "personal",
+      content: "Password email adalah CONTOH_SANDI_123",
+      sensitiveConsent: true,
+    }), null);
+    await service.drain();
+    assert.deepEqual(await service.list("student"), []);
+    assert.deepEqual(lifecycle.events, []);
+  });
+
+  it("meneruskan explicit personal memory ke derivation normal", async () => {
+    const lifecycle = new MemoryLifecycle();
+    const service = new MemoryService(new MemoryStore(), () => new Date(), lifecycle);
+    const saved = await service.remember({
+      ownerId: "student",
+      kind: "personal",
+      content: "Sohit adalah pacarku",
+      sensitiveConsent: true,
+      sensitivity: "personal",
+      sourceSequences: [12],
+      subject: "user",
+      predicate: "romantic_partner",
+      value: "Sohit",
+    });
+
+    assert.ok(saved);
+    await service.drain();
+    assert.deepEqual(lifecycle.events, ["remember:student:12"]);
   });
 
   it("mengubah isi tanpa mengganti ID, jenis, atau metadata", async () => {
@@ -154,6 +188,21 @@ describe("MemoryService", () => {
     assert.equal(updated?.createdAt, saved.createdAt);
     assert.equal(updated?.expiresAt, saved.expiresAt);
     assert.equal(updated?.content, "Lebih suka belajar pagi");
+  });
+
+  it("menolak edit yang mencoba memasukkan credential", async () => {
+    const service = new MemoryService(new MemoryStore());
+    const saved = await service.remember({
+      ownerId: "student",
+      kind: "preference",
+      content: "Suka belajar pagi",
+    });
+    assert.ok(saved);
+    assert.equal(
+      await service.edit("student", saved.id, "PIN kartu aku 4321"),
+      null,
+    );
+    assert.equal((await service.list("student"))[0]?.content, "Suka belajar pagi");
   });
 
   it("menolak edit kosong, terlalu panjang, duplikat, atau milik orang lain", async () => {

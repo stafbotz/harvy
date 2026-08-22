@@ -17,6 +17,10 @@ import {
   withoutMemoryNote,
   withdrawConsentConfirmActions,
 } from "../src/bot/messages.js";
+import {
+  normalizeMemoryWriteEmoji,
+  replyAcknowledgesMemoryWrite,
+} from "../src/core/memory-explicit-consent.js";
 import type { MemoryItem } from "../src/domain/memory.js";
 import type { ActiveSession } from "../src/domain/session.js";
 
@@ -62,17 +66,60 @@ describe("jeda antar bubble", () => {
 });
 
 describe("catatan memori pada balasan", () => {
-  it("menempel di ujung bubble, bukan menjadi pesan tersendiri", () => {
+  it("memakai satu fallback write tanpa mencetak record atau simbol recall", () => {
     const bubble = withMemoryNotes("Oke, aku ngerti.", [memory()]);
 
-    // Pasal 4 nomor 2 meminta pengguna diberi tahu, bukan meminta percakapan
-    // dipotong pop-up yang harus ditutup dulu.
     assert.match(bubble, /^Oke, aku ngerti\./);
-    assert.match(bubble, /💭 Siap, yang ini aku ingat: Nama pengguna Dimas/);
+    assert.match(bubble, /Yang ini juga aku ingat untuk ke depan 📍/u);
+    assert.doesNotMatch(bubble, /Nama pengguna Dimas/iu);
+    assert.doesNotMatch(bubble, /💭/u);
+  });
+
+  it("merangkum beberapa write sebagai satu kalimat, bukan rentetan log", () => {
+    const second = { ...memory(), id: "mem00002", content: "Belajar pagi" };
+    const bubble = withMemoryNotes("Oke.", [memory(), second]);
+
+    assert.equal((bubble.match(/📍/gu) ?? []).length, 1);
+    assert.doesNotMatch(bubble, /(?:•|Nama pengguna Dimas|Belajar pagi)/u);
+    assert.equal(bubble.split("\n").filter((line) => /ingat/iu.test(line)).length, 1);
   });
 
   it("tidak mengubah bubble ketika tidak ada yang diingat", () => {
     assert.equal(withMemoryNotes("Oke.", []), "Oke.");
+  });
+
+  it("mengenali bahasa save/update tanpa menyamakan recall dengan write", () => {
+    assert.equal(
+      replyAcknowledgesMemoryWrite(
+        "Aku bakal inget kok kalau kamu cinta banget sama Sohit.",
+      ),
+      true,
+    );
+    assert.equal(replyAcknowledgesMemoryWrite("Oke, aku mencatat yang ini."), true);
+    assert.equal(replyAcknowledgesMemoryWrite("Aku perbarui yang dulu 📍"), true);
+    assert.equal(replyAcknowledgesMemoryWrite("Mulai sekarang aku panggil Hafizh."), true);
+    assert.equal(replyAcknowledgesMemoryWrite("Tenang, aku nggak bakal lupa."), true);
+    assert.equal(replyAcknowledgesMemoryWrite("Sip, Hafizh 📍"), true);
+    assert.equal(replyAcknowledgesMemoryWrite("Aku belum bisa menyimpan itu."), false);
+    assert.equal(replyAcknowledgesMemoryWrite("Kamu perlu ingat hal ini."), false);
+    assert.equal(
+      replyAcknowledgesMemoryWrite("💭 Aku masih inget dulu kamu mempertimbangkan UI."),
+      false,
+    );
+    assert.equal(replyAcknowledgesMemoryWrite("Aku dengar ceritamu."), false);
+  });
+
+  it("mengoreksi 💭 hanya bila dipakai pada klausa write", () => {
+    assert.equal(
+      normalizeMemoryWriteEmoji("💭 Aku simpan yang ini."),
+      "📍 Aku simpan yang ini.",
+    );
+    assert.equal(
+      normalizeMemoryWriteEmoji(
+        "💭 Aku masih inget dulu kamu condong ke UI. Yang baru ini aku catat 📍",
+      ),
+      "💭 Aku masih inget dulu kamu condong ke UI. Yang baru ini aku catat 📍",
+    );
   });
 
   it("menawarkan satu tombol Ubah pada potret, bukan tombol per-item", () => {
@@ -94,7 +141,7 @@ describe("catatan memori pada balasan", () => {
     // Balasan itu pesan sungguhan. Menimpanya dengan daftar memori berarti
     // menghapus percakapan hanya karena satu tombol ditekan.
     assert.match(after, /^Oke, aku ngerti\./);
-    assert.doesNotMatch(after, /💭/);
+    assert.doesNotMatch(after, /📍/);
     assert.match(after, /aku lupain/i);
   });
 

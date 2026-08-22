@@ -9,6 +9,7 @@ import {
   type OperationalLogger,
 } from "../observability/operational-logger.js";
 import {
+  containsForbiddenMemorySecret,
   expiryFor,
   isExpired,
   selectRelevantMemories,
@@ -44,6 +45,7 @@ export class MemoryService {
       const content = input.content.trim();
       if (
         !content ||
+        containsForbiddenMemorySecret(content) ||
         this.blockedOwners.has(input.ownerId) ||
         (input.kind === "personal" && input.sensitiveConsent !== true)
       ) return null;
@@ -164,7 +166,11 @@ export class MemoryService {
     content: string,
   ): Promise<MemoryItem | null> {
     const clean = content.trim().replaceAll(/\s+/g, " ");
-    if (!clean || clean.length > 200) return null;
+    if (
+      !clean ||
+      clean.length > 200 ||
+      containsForbiddenMemorySecret(clean)
+    ) return null;
 
     return this.exclusiveSource(ownerId, async () => {
       const items = await this.repository.list(ownerId);

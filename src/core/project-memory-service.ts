@@ -14,7 +14,7 @@ import {
 import { projectMemoryNamespace } from "./memory-namespace.js";
 import { ProjectWorkspaceService } from "./project-workspace-service.js";
 import { WorkspaceAuthorityService } from "./workspace-authority-service.js";
-import { containsSecretLikeValue } from "../security/credential-like.js";
+import { containsForbiddenMemorySecret } from "./memory-policy.js";
 
 export interface ProjectMemoryCandidate {
   kind: "fact" | "procedure";
@@ -192,7 +192,7 @@ function bounded(value: unknown, max: number, field: string): string {
     !clean ||
     clean.length > max ||
     /\p{Cc}/u.test(clean.replace(/[\r\n\t]/gu, "")) ||
-    containsSecretLikeValue(clean)
+    containsForbiddenMemorySecret(clean)
   ) throw new Error(`${field} project memory tidak sah atau menyerupai credential.`);
   return clean;
 }

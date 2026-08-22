@@ -589,16 +589,18 @@ Provider embedding nyata dan perilaku Telegram tetap **NOT RUN** sampai langkah
 manual terkait dijalankan; jangan menurunkan bukti unit menjadi klaim live.
 
 13. Sebutkan sesuatu yang biasa, misalnya "aku kelas 11 IPA". Pastikan Harvy
-    mengatakan bahwa ia mengingatnya sebagai satu baris `📎` di ujung balasan —
-    bukan bubble tersendiri — dan tombol Lupakan ada di pesan yang sama.
-    Menyimpan tanpa mengatakannya melanggar Pasal 4 nomor 2.
+    menanggapinya secara natural dan, bila perlu, membuat jelas bahwa hal itu
+    akan diingat. Jika balasan utama sudah jelas, tidak boleh ada note kedua.
+    `📍` boleh muncul sebagai write/update tetapi tidak wajib; `💭` tidak boleh
+    dipakai sebagai tanda save. Tidak ada tombol Lupakan per item.
 14. Sebutkan sesuatu yang sensitif, misalnya kondisi kesehatan atau keadaan
     keluarga. Pastikan Harvy **bertanya lebih dulu** dan tidak menyimpan apa pun
     sebelum dijawab. Pasal 4 nomor 3.
 15. Tekan "Jangan" pada tawaran itu, lalu tanyakan apa yang Harvy ingat.
-    Pastikan hal tadi memang tidak ada di daftarnya.
-16. Tulis "apa yang kamu ingat tentang aku". Pastikan daftarnya muncul tanpa ID
-    teknis, dan setiap butir punya tombol Lupakan.
+    Pastikan hal tadi memang tidak muncul dalam potret pemahamannya.
+16. Tulis "apa yang kamu ingat tentang aku". Pastikan potret naratif yang sama
+    dengan `/memori` muncul tanpa ID/metadata teknis atau tombol per item; hanya
+    tombol `Ubah` yang mengembalikan pengguna ke percakapan bebas.
 17. Sebut sesuatu, lalu pada pesan berikutnya rujuk dengan "yang tadi itu".
     Pastikan Harvy mengerti tanpa diberi tahu ulang. Ini yang membedakan riwayat
     yang benar-benar tersambung dari riwayat yang hanya tersimpan.
@@ -651,10 +653,10 @@ manual terkait dijalankan; jangan menurunkan bukti unit menjadi klaim live.
       pertanyaan umum, dan distress samar. Bentuk tersebut tidak boleh memicu
       ACK lokal; hasil negatif tetap masuk classifier/triase, bukan dianggap
       aman.
-25. Tekan Lupakan pada catatan `📎` yang menempel di sebuah balasan. Pastikan
-    yang hilang hanya barisnya: teks balasannya harus tetap utuh, tidak diganti
-    daftar memori, dan tidak dihapus. Tanyakan lagi apa yang Harvy ingat untuk
-    memastikan catatannya memang sudah hilang.
+25. Koreksi satu fakta dengan bahasa biasa, lalu minta Harvy melupakan topik
+    lain. Pastikan correction memperbarui keadaan/supersession, sedangkan
+    perintah melupakan memakai cascade. Keduanya tidak boleh meminta ID atau
+    membuka UI record.
 26. Minta jawaban dua paragraf dan pastikan Harvy mengirimnya sebagai bubble
     terpisah, maksimal tiga, dengan indikator mengetik dan jeda pendek di
     antaranya. Blok kode pendek harus tetap satu bubble; blok di atas 4.000
@@ -683,8 +685,9 @@ manual terkait dijalankan; jangan menurunkan bukti unit menjadi klaim live.
 32. Tulis "aku kewalahan karena harus belajar biologi". Pastikan Harvy
     menanggapi perasaan lebih dulu dan hanya *menawarkan* pencatatan.
 33. Tulis "warna favoritku biru". Pastikan Harvy menanggapinya secara alami,
-    menyimpan preferensi dengan catatan `📎` di balasan yang sama, dan tidak
-    membuka daftar memori lama.
+    menyimpan preferensi, dan tidak membuka daftar memori lama. Balasan natural
+    tanpa emoji sah; bila memakai marker write gunakan `📍`, bukan `💭`, dan
+    jangan menambahkan suffix/template kedua setelah acknowledgement jelas.
 34. Setelah langkah 33, tulis "apa yang kamu ingat tentang aku". Pastikan baru
     pada permintaan eksplisit ini daftar memori terbuka dan preferensi tadi ada.
 35. Tulis kalimat yang membawa perasaan sekaligus pekerjaan, misalnya "besok
@@ -764,8 +767,9 @@ Telegram**.
     Ini pelanggaran Pasal 4 nomor 3 kalau gagal, bukan sekadar cacat kecil.
 51a. Picu dua proposal memori sensitif berturut-turut, lalu tekan tombol izin
     dari proposal pertama. Tombol lama harus ditolak dan tidak boleh menyimpan
-    proposal kedua. Putuskan pengiriman catatan `📎` untuk memori biasa dan
-    pastikan catatan yang belum pernah diumumkan dibatalkan dari penyimpanan.
+    proposal kedua. Putuskan pengiriman acknowledgement untuk memori biasa dan
+    pastikan primary write yang belum pernah diumumkan dibatalkan dari
+    penyimpanan.
 52. Tekan "Aku mau tanya dulu" dua kali berturut-turut. Penjelasan persetujuan
     hanya boleh muncul sekali; tombol pada pesan lama harus mati.
 53. Lihat perkenalan dan penjelasan persetujuan di ponsel, bukan di komputer.

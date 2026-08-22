@@ -6,6 +6,7 @@
  * selalu diberikan pemanggil supaya seluruh aturan di sini dapat diuji.
  */
 import type { MemoryItem, MemoryKind } from "../domain/memory.js";
+import { containsSecretLikeValue } from "../security/credential-like.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -74,6 +75,25 @@ export function isSensitiveMemory(
   sensitiveByModel = false,
 ): boolean {
   return isSensitiveKind(memory.kind) || sensitiveByModel;
+}
+
+/**
+ * Credential bukan sekadar data personal sensitif. Ia tidak layak menjadi
+ * durable memory bahkan bila pengguna secara eksplisit memintanya.
+ */
+export function containsForbiddenMemorySecret(content: string): boolean {
+  if (containsSecretLikeValue(content)) return true;
+  const clean = content.normalize("NFKC").toLocaleLowerCase("id-ID");
+  if (
+    /\b(?:password|kata\s+sandi|one[\s_-]?time\s+password|otp|passcode|api[\s_-]?key|kunci\s+api|access[\s_-]?token|auth[\s_-]?token|token\s+akses|client[\s_-]?secret|credential|kredensial)\b/u
+      .test(clean)
+  ) return true;
+  if (
+    /\b(?:pin|kode\s+(?:verifikasi|autentikasi))\b(?:ku|mu|nya)?[^\r\n]{0,32}\b\d{4,8}\b/u
+      .test(clean)
+  ) return true;
+  return /\b(?:password|kata\s+sandi|api[\s_-]?key|kunci\s+api|access[\s_-]?token|token\s+akses|client[\s_-]?secret|credential|kredensial)\b(?:ku|mu|nya)?[^\r\n]{0,48}\b(?:adalah|ialah|yaitu|is)\b\s*[:=]?\s*["']?[^\s"',;}{]{4,}/u
+    .test(clean);
 }
 
 export function expiryFor(kind: MemoryKind, now: Date): Date | null {

@@ -133,12 +133,16 @@ Harvy tidak menghabiskan jendela konteks tiga kali lebih cepat.
 
 ### 4. Pemberitahuan memori menempel pada balasan
 
-Koreksi 26 Juli 2026: bubble pemberitahuan sementara dan
-`EphemeralMessageStore` dihapus. Memori biasa tetap disimpan otomatis dan
-diumumkan sebagai satu baris `📎` di ujung bubble balasan terakhir. Tombol
-**Lupakan** berada pada pesan yang sama dan callback `memdrop:` hanya membuang
-baris catatan tanpa menimpa isi balasan. Ini memenuhi hak pemberitahuan tanpa
-memotong percakapan seperti pop-up.
+Koreksi 26 Juli 2026 menghapus bubble pemberitahuan sementara dan
+`EphemeralMessageStore`.
+
+Amandemen 22 Agustus 2026 (ADR-043) menggantikan bentuk `📎` dan tombol
+**Lupakan** per item. Memory write kini diakui di dalam balasan utama yang
+kontekstual sesudah primary commit. Jika balasan itu sudah jelas, tidak ada
+baris kedua; fallback hanya satu kalimat tanpa dump content atau daftar record.
+`📍` opsional berarti write/update terkonfirmasi, sedangkan `💭` opsional hanya
+untuk recall pemahaman lama. Callback `memdrop:` tetap dibaca hanya untuk pesan
+legacy yang sudah terlanjur terkirim.
 
 ### 5. Sensitivitas tidak dipercaya dari satu label model
 
@@ -241,6 +245,6 @@ Trade-off:
 ## Yang belum terbukti
 
 Gerbang otomatis dan probe model langsung sudah lulus. Alur Telegram
-end-to-end setelah perubahan ini—termasuk jeda tiga bubble, catatan `📎`,
-permintaan kode, preferensi baru, penyuntingan memori, dan riwayat setelah
-restart—masih harus dicoba pada bot nyata.
+end-to-end setelah perubahan ini—termasuk jeda tiga bubble, acknowledgement
+memory kontekstual, permintaan kode, preferensi baru, penyuntingan memori, dan
+riwayat setelah restart—masih harus dicoba pada bot nyata.

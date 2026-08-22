@@ -60,30 +60,30 @@ gagal); `npm run context:check` PASS.
 Not verified: payment provider production, signed webhook/reconciliation live,
 secret rotation/KMS, dan `/penggunaan` pada akun Telegram/WhatsApp live.
 
-## 2026-08-21 — Long-term memory, learning, dan UX `/memori`
+## 2026-08-22 — Long-term memory, `/memori`, dan explicit remember
 
-Scope: history/memory core, cold storage/learning, context compiler, Telegram
-UX, data control, tes, serta ADR-042–043.
+Scope: memory/history/learning core, Telegram+group adapter, project memory,
+data control, policy, tes, ADR-006/043, serta Constitution v0.6.
 
-Changed: episode masuk cold FTS5 archive sebelum hot eviction; user model,
-versioned procedure/error lesson, evidence/candidate/outbox, dan persistent
-embedding tetap owner-scoped dengan recovery serta generation fence. `/memori`,
-pertanyaan natural, dan Data & izin kini berbagi potret naratif bounded yang
-bukan canonical memory. `Ubah` kembali ke percakapan tanpa pending; scoped
-forget memakai guard lokal dan cascade `MemoryService`; forget-all tetap
-bertoken. Notice memory adaptif tidak lagi memasang tombol per item.
+Changed: potret `/memori` tetap bounded dan bukan canonical source; natural
+edit/forget tetap memakai cascade. Perintah explicit remember kini menjadi
+consent item-spesifik setelah signal understanding dan guard raw user turn
+sama-sama cocok; personal memory langsung ditulis tanpa consent kedua, tetapi
+cerita implicit tetap bertoken. Negasi/retrieval/reminder, candidate lain, dan
+scope lain tidak mendapat authority. Credential ditolak lagi oleh primary,
+group, dan project memory service. Acknowledgment hanya mengaku ingat setelah
+write atau duplicate terbukti. Receipt hasil commit dibawa ke penyusun balasan
+agar Harvy mengakuinya di dalam jawaban utama yang mengikuti konteks, bukan
+lewat template atau log memory kedua. `📍` bersifat opsional untuk save/update,
+sedangkan `💭` hanya untuk recall; beberapa write dalam satu turn disintesis
+menjadi satu pengalaman.
 
-Verified: tes terarah potret/parser/copy/routing 122/122 dan flow
-Telegram/matcher 72/72 PASS; `npm run check` PASS; `npm test` PASS,
-1.542/1.542 test dalam 198 suite; `npm run context:check` PASS; `git diff
---check` PASS selain peringatan line-ending Windows.
+Verified: targeted acknowledgement/explicit/Telegram/group 223/223 PASS;
+`npm run check` PASS; `npm test` PASS 1.575/1.575 dalam 199 suite; `npm run
+context:check` PASS; `git diff --check` PASS selain warning line-ending Windows.
 
-Not verified: provider embedding/model synthesis live, Telegram/WhatsApp live,
-multi-node worker, PostgreSQL/pgvector/object storage, ANN cold retrieval,
-learning group/project/connector/multimodal, dan skill promotion.
-
-Next: evaluasi kualitas potret, precision/context pollution, dan procedure reuse
-pada traffic consented sebelum memperluas producer atau promotion.
+Not verified: provider/model atau Telegram/WhatsApp live, multi-node storage,
+dan kualitas recall guard pada ragam bahasa di luar fixture.
 
 ## 2026-08-20 — Routing role dan bounded orchestration
 

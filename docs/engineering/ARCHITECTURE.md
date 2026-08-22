@@ -55,8 +55,10 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   ProjectWorkspace/safe-ZIP secara eksplisit mengelola filesystem terkelola
   yang terpisah dari root aplikasi, bukan boundary isolasi:
   `prioritizer.ts` (skor prioritas
-  murni), `task-service.ts`, `memory-policy.ts` (jenis sensitif, masa berlaku,
-  pemilihan memori untuk prompt), `memory-service.ts`, `history-policy.ts`
+  murni), `task-service.ts`, `memory-policy.ts` (jenis sensitif, hard exclusion
+  credential, masa berlaku, pemilihan memori untuk prompt),
+  `memory-explicit-consent.ts` (bukti lokal item-scoped untuk perintah remember),
+  `memory-service.ts`, `history-policy.ts`
   (jendela dan ambang pemadatan), `history-service.ts`, `profile-service.ts`
   (`CONSENT_VERSION`, `needsOnboarding`, `shouldAskStyle`),
   `safety-policy.ts` (`RiskHint`, `RiskDisposition`, sinyal immediate-danger,
@@ -122,6 +124,13 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   personalization, procedure, dan lesson fusion, temporal/privacy filter, serta
   manifest content-free. Compaction membatasi satu request lalu mengejar backlog
   antar-slot; learning processing tidak berada pada jalur sapaan biasa.
+  Pada adapter privat, kandidat durable melewati authority/privacy lalu primary
+  commit sebelum penyusunan balasan. Hanya receipt code-owned
+  `saved|updated|already-known` yang masuk `replyPrompt`; model memilih wording
+  kontekstual tetapi tidak menentukan apakah write terjadi. Delivery yang
+  gagal sebelum acknowledgement terlihat me-rollback primary write baru;
+  sesudah acknowledgement pada bubble awal benar-benar terkirim, write
+  dipertahankan agar klaim user-facing tidak menjadi palsu.
   Core grup berada di `group-memory-service.ts` dan `group-turn-service.ts`:
   binding akun, statistik sosial berjendela, konteks pendek beridentitas, FIFO
   per grup, notice, kontrol dua langkah, planner nimbrung, triase/review,

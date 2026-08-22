@@ -144,22 +144,35 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   menggantikan pembungkus itu, dan ia **wajib ikut setiap kali** `context.turns`
   tidak kosong. Memori dan ringkasan tetap di dalam `<konteks>`; keduanya memang
   catatan, dan tidak ada bentuk chat yang wajar untuk mereka.
-- **Memori yang dinilai sensitif tidak pernah disimpan tanpa jawaban
-  pengguna.** Jenis `personal` atau classifier `memory-privacy` yang menandai
-  kandidat sensitif selalu lewat tombol izin bertoken. Classifier itu hanya
-  dipanggil setelah compiler benar-benar menghasilkan kandidat; parse invalid,
-  timeout, atau error dianggap sensitif. Karena pengenalan isi dilakukan model
-  dan tidak ada daftar kata lokal, bila ekstraksi dan classifier sama-sama
-  salah menilai kandidat sensitif sebagai biasa, jalur otomatis masih dapat
-  terlewati. Ini keterbatasan yang wajib disebut apa adanya, bukan diklaim sudah
-  tertutup.
-  Jenis biasa wajib diumumkan secara natural; bila pemberitahuan itu gagal
-  terkirim, catatan yang baru ditulis wajib dibatalkan. Jalan keluar tetap
-  mudah lewat percakapan, `/memori`, dan Data & izin.
-- **Pemberitahuan memori menempel di balasan, bukan menjadi bubble sendiri.**
-  `withMemoryNotes` menambahkan copy `💭` adaptif di ujung bubble terakhir tanpa
-  tombol per-item. Bubble tersendiri memenuhi Pasal 4 nomor 2 tetapi memotong
-  percakapan seperti pop-up. Callback `memdrop:` lama hanya dipertahankan untuk
+- **Memori sensitif memerlukan authority pengguna yang item-spesifik.** Bila
+  informasi personal hanya diceritakan, jenis `personal` atau classifier
+  `memory-privacy` yang menandai kandidat sensitif wajib lewat tombol izin
+  bertoken. Perintah user turn untuk mengingat item tersebut sudah merupakan
+  jawaban pengguna dan tidak boleh memicu consent kedua. Sinyal model
+  `memoryAction: "remember"` tidak cukup: adapter juga wajib membuktikan bentuk
+  perintah pada raw user turn dan mencocokkan klausa itu ke exact candidate.
+  Negasi, retrieval, reminder, signal tanpa kecocokan, user/turn/scope lain,
+  serta candidate lain tidak mendapat authority. Password, OTP, PIN, token,
+  API key, dan credential sejenis selalu ditolak lagi di service sebelum
+  primary write atau derivation. Classifier implicit yang invalid, timeout,
+  atau error tetap gagal tertutup sebagai sensitif. Bila ekstraksi dan
+  classifier sama-sama salah menilai cerita implicit sebagai biasa, jalur
+  otomatis masih dapat terlewati; ini keterbatasan yang wajib disebut jujur.
+  Jenis biasa wajib diumumkan secara natural. Urutannya code-owned: authority
+  dan policy → primary commit → receipt `saved|updated|already-known` → wording
+  percakapan → delivery. Kata atau emoji model bukan bukti commit. Bila
+  delivery gagal sebelum acknowledgement terlihat, catatan yang baru ditulis
+  wajib dibatalkan. Jika acknowledgement sudah terkirim pada bubble awal,
+  kegagalan bubble lanjutan tidak boleh me-rollback write dan membuat klaim
+  yang sudah dilihat pengguna menjadi palsu. Jalan keluar tetap mudah lewat
+  percakapan, `/memori`, dan Data & izin.
+- **Acknowledgement memory menyatu dengan balasan utama, bukan menjadi log.**
+  Receipt commit boleh membantu model membedakan save, update/correction, dan
+  already-known; reply yang sudah jelas tidak boleh ditambah note kedua.
+  Fallback `withMemoryNotes` hanya satu kalimat, tidak mencetak content/kind,
+  dan tidak membuat rentetan per item. `📍` opsional hanya untuk write/update
+  terkonfirmasi; `💭` opsional hanya untuk recall lama dan bukan tanda save.
+  Tanpa emoji tetap sah. Callback `memdrop:` lama hanya dipertahankan untuk
   tombol yang sudah terlanjur terkirim sebelum migrasi.
 - **Fitur memori tidak boleh hidup tanpa kendalinya.** Potret naratif, koreksi,
   scoped forget, dan lupakan semua adalah bagian dari fiturnya—Pasal 4 nomor 4.
@@ -992,9 +1005,13 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   `memory-privacy` khusus kandidat menentukan sensitivitas; jenis personal,
   hasil sensitive, port/parse null, timeout, atau error tidak boleh otomatis
   tersimpan. Tidak ada kandidat berarti tidak ada call privacy. Memori biasa
-  boleh ditulis setelah notice lalu diumumkan pada balasan yang sama; kegagalan
-  kirim wajib rollback. Usulan sensitif hanya boleh disimpan sesudah anggota
-  yang sama mengonfirmasi pending 10 menit dalam scope yang sama. Pending baru
+  boleh ditulis lalu diakui secara natural pada balasan yang sama tanpa dump
+  per-item; kegagalan kirim wajib rollback. Usulan sensitif implicit hanya boleh disimpan sesudah
+  anggota yang sama mengonfirmasi pending 10 menit dalam scope yang sama.
+  Perintah explicit remember boleh menjadi consent hanya bila signal
+  understanding dan guard lokal cocok pada candidate, anggota, turn, dan grup
+  yang sama; ia tidak berlaku untuk candidate lain atau shared room memory.
+  Credential tetap ditolak oleh group memory service. Pending baru
   dipasang setelah promptnya berhasil dikirim dan baru dibersihkan setelah
   acknowledgment sukses; kegagalan acknowledgment wajib rollback write dengan
   identitas proposal yang dipakai saat menyimpan, bukan identitas pesan

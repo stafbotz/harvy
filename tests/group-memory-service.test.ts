@@ -500,6 +500,67 @@ describe("memori grup", () => {
     );
   });
 
+  it("menolak credential pada save dan edit meski consent explicit", async () => {
+    const service = createService();
+    const scope = whatsappGroup("secret-memory@g.us");
+    await service.activate(scope, "nomor-a", "Secret");
+
+    const rejected = await service.rememberParticipantMemory(
+      "whatsapp:secret-memory@g.us",
+      "nomor-a",
+      ["anggota-a"],
+      {
+        kind: "personal",
+        content: "API key adalah CONTOH_KUNCI_123456",
+        sensitivity: "sensitive",
+        consent: "explicit",
+        source: "explicit",
+      },
+      ALLOW_MUTATION,
+    );
+    assert.equal(rejected.status, "invalid");
+    assert.equal(
+      (await service.rememberRoomMemory(
+        "whatsapp:secret-memory@g.us",
+        "nomor-a",
+        ["anggota-a"],
+        "note",
+        "OTP rapat adalah 123456",
+        true,
+        ALLOW_MUTATION,
+      )).status,
+      "invalid",
+    );
+
+    const saved = await service.rememberParticipantMemory(
+      "whatsapp:secret-memory@g.us",
+      "nomor-a",
+      ["anggota-a"],
+      {
+        kind: "profile",
+        content: "Nama panggilannya Nara",
+        sensitivity: "ordinary",
+        consent: "notice",
+        source: "conversation",
+      },
+      ALLOW_MUTATION,
+    );
+    assert.equal(saved.status, "saved");
+    if (saved.status !== "saved") return;
+
+    assert.equal(
+      await service.editParticipantMemory(
+        "whatsapp:secret-memory@g.us",
+        ["anggota-a"],
+        saved.item.id,
+        "Password email adalah CONTOH_SANDI_123",
+        "nomor-a",
+        ALLOW_MUTATION,
+      ),
+      false,
+    );
+  });
+
   it("menyimpan catatan bersama hanya setelah konfirmasi admin dan mengisolasi grup", async () => {
     const repository = new MemoryGroupRepository();
     let sequence = 0;

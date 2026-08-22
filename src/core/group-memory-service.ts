@@ -16,6 +16,7 @@ import {
 } from "../domain/group.js";
 import type { MemoryItem, MemoryKind } from "../domain/memory.js";
 import {
+  containsForbiddenMemorySecret,
   expiryFor,
   selectRelevantMemories,
 } from "./memory-policy.js";
@@ -599,7 +600,11 @@ export class GroupMemoryService {
       return { status: "inactive" };
     }
     const content = cleanMemberMemoryContent(candidate.content);
-    if (!content || participantIds.length === 0) return { status: "invalid" };
+    if (
+      !content ||
+      containsForbiddenMemorySecret(content) ||
+      participantIds.length === 0
+    ) return { status: "invalid" };
     const sensitive =
       candidate.kind === "personal" || candidate.sensitivity === "sensitive";
     if (sensitive && candidate.consent !== "explicit") {
@@ -724,7 +729,7 @@ export class GroupMemoryService {
       return false;
     }
     const clean = cleanMemberMemoryContent(content);
-    if (!clean) return false;
+    if (!clean || containsForbiddenMemorySecret(clean)) return false;
     return this.exclusive(scopeKey, async () => {
       if (accountId && !(await this.isActiveBinding(scopeKey, accountId))) {
         return false;
@@ -1160,7 +1165,8 @@ function cleanRoomMemoryContent(value: string): string | null {
   if (
     clean.length < 3 ||
     clean.length > 300 ||
-    /\p{Cc}/u.test(clean)
+    /\p{Cc}/u.test(clean) ||
+    containsForbiddenMemorySecret(clean)
   ) {
     return null;
   }

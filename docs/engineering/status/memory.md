@@ -1,6 +1,7 @@
 # Status — Memory dan Data
 
-Verified: 21 Agustus 2026 pada working tree long-term memory dan UX `/memori`;
+Verified: 22 Agustus 2026 pada working tree long-term memory, explicit remember,
+acknowledgement kontekstual, dan UX `/memori`;
 archive SQLite, outbox learning, user model, procedural/error memory,
 persistent embedding index, compiler konteks, lifecycle, kontrol data, serta
 renderer Telegram teruji otomatis. Baca untuk memory, history, compaction,
@@ -19,11 +20,23 @@ learning, storage, atau kontrol data yang bukan policy safety.
   memory, provenance, validity interval, status `active|superseded|uncertain|
   expired`, suppression receipt, entity, dan relation temporal. Graph tidak
   pernah menjadi authority tanpa semantic source.
-- Kandidat faktual dikonsolidasikan sesudah respons. Parser lokal hanya
-  membentuk slot/graph untuk pola yang didukung; koreksi menutup interval lama,
+- Kandidat faktual melewati policy dan primary commit sebelum acknowledgement
+  balasan disusun. Receipt code-owned membedakan `saved`, `updated`, dan
+  `already-known`; model hanya memilih bahasa percakapannya dan kata/emoji tidak
+  pernah menjadi bukti write. Acknowledgement menyatu dengan jawaban utama,
+  mengikuti konteks, dan tidak menjadi notifikasi record kedua. `📍` opsional
+  hanya untuk save/update, sedangkan `💭` opsional hanya untuk recall; beberapa
+  write tidak dicetak sebagai rentetan log. Parser lokal hanya membentuk
+  slot/graph untuk pola yang didukung; koreksi menutup interval lama,
   kontradiksi tanpa koreksi menjadi `uncertain`, dan nilai yang berulang
-  membentuk interval baru. Personal/sensitif tetap memerlukan consent bertoken;
-  inferred sensitive tidak disimpan otomatis.
+  membentuk interval baru. Personal/sensitif yang hanya diceritakan tetap
+  memerlukan consent bertoken dan inferred sensitive tidak disimpan otomatis.
+  Jika user turn secara eksplisit memerintahkan Harvy mengingat satu item,
+  kombinasi `memoryAction: "remember"` tervalidasi dan guard teks lokal memberi
+  consent hanya kepada candidate yang cocok. Item itu langsung masuk primary
+  memory beserta derivation normal tanpa prompt izin kedua. Negasi, retrieval,
+  reminder, signal tanpa candidate match, serta fakta lain dalam turn yang sama
+  tidak memperoleh authority. Credential ditolak di adapter dan service.
 - Riwayat mentah terbaru dibatasi 24 giliran. Awalan kontigu dipadatkan menjadi
   episode terstruktur dengan source sequence/hash, CAS, generation guard, dan
   drain shutdown. Episode ditulis idempoten ke cold SQLite archive sebelum hot
@@ -65,8 +78,12 @@ learning, storage, atau kontrol data yang bukan policy safety.
   generation fence; completion extractor lama gagal commit. Penarikan consent
   juga dipersistenkan sebagai blocked scope + generation baru sehingga pending
   learning tidak berjalan lagi setelah restart sampai consent diberikan ulang.
-- Notifikasi ordinary memory tetap menempel pada balasan dan adaptif menurut
-  jenis/jumlah, tetapi tidak lagi memasang tombol `Lupakan itu` per item.
+- Acknowledgement ordinary/explicit memory menyatu dengan balasan utama. Jika
+  reply sudah mengatakan ingat/simpan/catat/perbarui, tidak ada note kedua;
+  fallback tidak mencetak content/kind dan beberapa write menjadi satu kalimat.
+  `📍` bersifat opsional untuk write/update terkonfirmasi, `💭` opsional hanya
+  untuk recall lama, dan balasan tanpa emoji tetap sah. Tidak ada tombol
+  `Lupakan itu` per item.
   Pengguna tetap dapat berkata `yang tadi jangan disimpan`, `lupain yang soal
   X`, atau memakai kontrol Data & izin. Mutasi scoped forget memerlukan kata
   forget eksplisit dari teks pengguna sebelum matcher owner-local boleh memilih
@@ -78,8 +95,11 @@ learning, storage, atau kontrol data yang bukan policy safety.
   Sumber Markdown lama direkonsiliasi secara lazy pada read/write berikutnya
   agar koreksi baru dapat melakukan supersession terhadap data pra-Phase E.
 - Namespace private, group-member/group-room, dan project dipisahkan secara
-  fisik dan divalidasi fail-closed. Runtime consumer Phase E/F saat ini hanya
-  Telegram privat; consumer group/project menunggu fase produk berikutnya.
+  fisik dan divalidasi fail-closed. Runtime long-term semantic/learning Phase
+  E/F saat ini hanya Telegram privat. WhatsApp privat hanya melayani dashboard
+  penggunaan; group member memory memakai service terpisah yang mengikat
+  explicit remember pada anggota+turn+grup, sedangkan shared room dan project
+  memory tetap memakai authority masing-masing dan tidak mewarisi consent itu.
 
 ## Batas dan defect aktif
 
@@ -104,32 +124,40 @@ learning, storage, atau kontrol data yang bukan policy safety.
   secara terpisah. Target forget topikal juga hanya dapat menghapus primary
   source yang cocok secara lexical/alias; detail episode-only tanpa primary
   source memerlukan permintaan yang lebih spesifik atau hapus semua ingatan.
-- Dua model masih dapat sama-sama salah menilai isi sensitif sebagai biasa.
-  Consent, notice, export, dan forget membatasi dampak, tetapi bukan pengganti
-  klasifikasi yang sempurna. Episode juga merupakan ringkasan model; provenance
-  membuktikan sumber/coverage, bukan kebenaran klaim.
+- Pada cerita implicit, dua model masih dapat sama-sama salah menilai isi
+  sensitif sebagai biasa. Consent, notice, export, dan forget membatasi dampak,
+  tetapi bukan pengganti klasifikasi yang sempurna. Guard explicit remember
+  juga sengaja lexical/konservatif: parafrasa perintah yang tidak dapat
+  dicocokkan ke candidate gagal tertutup tanpa write, bukan menebak izin.
+  Episode merupakan ringkasan model; provenance membuktikan source/coverage,
+  bukan kebenaran klaim.
 
 ## Bukti dan pointer
 
 - Kode: `src/core/memory-service.ts`, `src/core/memory-knowledge-service.ts`,
+  `src/core/memory-explicit-consent.ts`,
   `src/core/memory-context-compiler.ts`, `src/core/memory-query-plan.ts`,
   `src/core/history-service.ts`, `src/core/history-search.ts`,
   `src/core/long-term-memory-service.ts`,
   `src/core/memory-natural-control.ts`, `src/ai/memory-portrait.ts`,
-  `src/bot/create-bot.ts`,
+  `src/bot/create-bot.ts`, `src/core/group-memory-service.ts`,
+  `src/core/group-turn-service.ts`,
   `src/storage/sqlite-long-term-memory-repository.ts`,
   `src/storage/file-memory-knowledge-repository.ts`, dan
   `src/ai/embedding-client.ts`.
 - Tes: `tests/memory-service.test.ts`,
+  `tests/memory-explicit-consent.test.ts`,
   `tests/memory-knowledge-service.test.ts`,
   `tests/memory-context-compiler.test.ts`,
   `tests/file-memory-knowledge-repository.test.ts`,
   `tests/history-search.test.ts`, `tests/history-service.test.ts`, dan
   `tests/data-control-service.test.ts`, `tests/long-term-memory.test.ts`, dan
   `tests/persistent-embedding-index.test.ts`, `tests/memory-portrait.test.ts`,
-  `tests/memory-natural-control.test.ts`, dan `tests/create-bot-flow.test.ts`.
-- Gerbang terakhir: tes terarah potret/parser/copy/routing 122/122 dan flow
-  Telegram/matcher 72/72 lulus; `npm run check` PASS; `npm test` PASS,
-  1.542/1.542 test dalam 198 suite; `npm run context:check` PASS; dan `git diff
-  --check` PASS selain peringatan line-ending Windows.
+  `tests/memory-natural-control.test.ts`, `tests/group-memory-service.test.ts`,
+  `tests/group-turn-service.test.ts`, `tests/project-memory-service.test.ts`,
+  dan `tests/create-bot-flow.test.ts`.
+- Gerbang terakhir: tes terarah acknowledgement/explicit/Telegram/group
+  223/223 lulus; `npm run check` PASS; `npm test` PASS, 1.575/1.575 test dalam
+  199 suite; `npm run context:check` PASS; dan `git diff --check` PASS selain
+  peringatan line-ending Windows.
 - Keputusan: ADR-006, ADR-014, ADR-030, ADR-031, ADR-032, ADR-042, ADR-043.

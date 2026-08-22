@@ -32,7 +32,7 @@ export const HELP_MESSAGE = [
   "",
   "Kalau keadaanmu lagi berantakan, Harvy bisa menawarkan sesi untuk menjernihkan, memilih prioritas, mulai satu langkah kecil, belajar bertahap, menyusun rencana, atau menyiapkan pesan untuk orang lain. Hanya satu sesi aktif, dan check-in dikirim sekali kalau kamu sendiri memilih waktunya.",
   "",
-  "Aku juga nyimpen beberapa hal biar kamu nggak perlu ngulang cerita: kelasmu, cara belajar yang cocok, apa yang lagi kamu hadapi. Buat hal pribadi aku selalu nanya dulu. Pakai /memori atau tanya aja apa yang aku ingat tentang kamu. Kalau ada yang salah, berubah, atau ingin dilupakan, cukup bilang.",
+  "Aku juga nyimpen beberapa hal biar kamu nggak perlu ngulang cerita: kelasmu, cara belajar yang cocok, apa yang lagi kamu hadapi. Kalau kamu cuma cerita hal pribadi, aku minta izin sebelum menyimpannya. Kalau kamu bilang aku harus mengingatnya, itu sudah jadi izin untuk hal tersebut. Pakai /memori atau tanya aja apa yang aku ingat tentang kamu. Kalau ada yang salah, berubah, atau ingin dilupakan, cukup bilang.",
   "",
   "/tugas — lihat semua tugasmu",
   "/memori — lihat yang aku ingat tentang kamu",
@@ -143,35 +143,22 @@ function shorten(title: string, limit = 28): string {
 }
 
 /**
- * Pemberitahuan bahwa sesuatu baru saja diingat.
+ * Fallback saat balasan utama belum mengakui write yang sudah commit.
  *
- * Pasal 4 nomor 2 meminta pengguna tahu sebelum sesuatu yang baru disimpan.
- * Catatan ini tetap tipis dan menempel pada percakapan, tetapi tidak lagi
- * meminta pengguna mengelola setiap penyimpanan lewat tombol database.
+ * Jalur utama adalah wording kontekstual dari Conversation. Fallback ini tidak
+ * mencetak content/kind dan merangkum beberapa write menjadi satu kalimat agar
+ * tidak berubah menjadi log sistem.
  */
-export const MEMORY_NOTE_PREFIX = "💭";
+export const MEMORY_NOTE_PREFIX = "📍";
+const LEGACY_MEMORY_NOTE_PREFIX = "💭";
 
 export function memoryNoteLines(items: MemoryItem[]): string {
   if (items.length > 1) {
-    return [
-      `${MEMORY_NOTE_PREFIX} Siap, beberapa hal yang berguna dari ceritamu aku ingat supaya kamu nggak perlu mengulangnya:`,
-      ...items.map((item) => `• ${item.content}`),
-    ].join("\n");
+    return `Beberapa hal penting dari ceritamu juga aku ingat untuk ke depan ${MEMORY_NOTE_PREFIX}`;
   }
-  const item = items[0];
-  if (!item) return "";
-  switch (item.kind) {
-    case "preference":
-      return `${MEMORY_NOTE_PREFIX} Oke, yang ini aku ingat supaya caraku membantumu lebih pas: ${item.content}`;
-    case "routine":
-      return `${MEMORY_NOTE_PREFIX} Siap, kebiasaan ini aku ingat: ${item.content}`;
-    case "context":
-      return `${MEMORY_NOTE_PREFIX} Oke, yang sedang berjalan ini aku ingat: ${item.content}`;
-    case "personal":
-      return `${MEMORY_NOTE_PREFIX} Siap, dengan izinmu aku ingat: ${item.content}`;
-    case "profile":
-      return `${MEMORY_NOTE_PREFIX} Siap, yang ini aku ingat: ${item.content}`;
-  }
+  return items[0]
+    ? `Yang ini juga aku ingat untuk ke depan ${MEMORY_NOTE_PREFIX}`
+    : "";
 }
 
 /** Menempelkan catatan ke bubble terakhir sebuah balasan. */
@@ -196,8 +183,13 @@ export function withoutMemoryNote(
     ? text
         .split("\n")
         .filter(
-          (line) =>
-            !(line.startsWith(MEMORY_NOTE_PREFIX) && line.includes(content)),
+          (line) => {
+            if (line.endsWith(MEMORY_NOTE_PREFIX)) return false;
+            return !(
+              line.startsWith(LEGACY_MEMORY_NOTE_PREFIX) &&
+              line.includes(content)
+            );
+          },
         )
     : text.split("\n");
 
@@ -244,6 +236,10 @@ export const MEMORY_PORTRAIT_UNAVAILABLE = [
 ].join("\n");
 export const MEMORY_CHANGE_PROMPT =
   "Ada yang salah atau udah berubah? Bilang aja. Kamu juga bisa minta aku melupakan sesuatu.";
+export const MEMORY_SECRET_REJECTION =
+  "Aku nggak akan menyimpan password, OTP, PIN, API key, token, atau credential lain sebagai ingatan. Kalau credential itu masih aktif dan sudah terlanjur dikirim, sebaiknya segera ganti.";
+export const MEMORY_SAVE_UNAVAILABLE =
+  "Aku belum bisa menyimpan yang itu sebagai ingatan sekarang. Coba lagi nanti, ya.";
 export const MEMORY_WIPE_PROMPT = [
   "Ini bakal membuatku melupakan semua yang kusimpan tentang kamu, termasuk riwayat obrolan kita.",
   "",

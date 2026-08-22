@@ -224,6 +224,18 @@ describe("pembacaan balasan model", () => {
     assert.equal(forget?.memoryAction, "forget");
   });
 
+  it("mempertahankan sinyal explicit remember bersama candidate", () => {
+    const understanding = parseUnderstanding(JSON.stringify({
+      intent: "memory",
+      memoryAction: "remember",
+      memories: [{ kind: "personal", content: "Sangat mencintai Sohit" }],
+    }));
+
+    assert.equal(understanding?.intent, "smalltalk");
+    assert.equal(understanding?.memoryAction, "remember");
+    assert.equal(understanding?.memories[0]?.kind, "personal");
+  });
+
   it("membaca topik forget sebagai bahasa alami, bukan ID memory", () => {
     const understanding = parseUnderstanding(JSON.stringify({
       intent: "memory",
