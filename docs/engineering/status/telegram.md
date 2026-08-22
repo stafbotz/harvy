@@ -7,7 +7,7 @@ Telegram live belum diperbarui.
 ## Keadaan saat ini
 
 - Surface utama adalah chat pribadi Telegram dengan percakapan biasa dan
-  tombol; `/start`, `/tugas`, dan `/bantuan` hanya pelengkap.
+  tombol; `/start`, `/menu`, `/tugas`, dan `/bantuan` hanya pelengkap.
 - Onboarding menahan pesan pertama sampai consent, mempertahankan urutan bubble,
   dan menyediakan jalur safety tanpa consent. Bubble setelah pesan pertama
   tidak dikirim ke model atau dinilai safety sebelum consent. Setelah consent,
@@ -51,6 +51,20 @@ Telegram live belum diperbarui.
 - Route privat mencakup percakapan, action offer, task, session, data control,
   memory, safety, serta Agent Runtime. Waktu berdiri sendiri tanpa episode
   hangat memakai fast path tanpa boundary/understanding/triage model.
+- Understanding pass yang sama kini dapat mengusulkan `SemanticOperation`
+  closed-set untuk account/menu/task/memory/session/data. Proposal ini tidak
+  membawa authority: adapter memeriksa evidence dari raw turn, explicitness,
+  subject, confidence, owner/scope, confirmation, dan policy effect. Exact
+  command tetap deterministic. Natural usage dan follow-up seperti `detailnya`
+  memakai renderer account yang membaca state terbaru, bukan phrase list atau
+  snapshot saldo lama.
+- Surface yang berhasil terkirim mencatat maksimal tiga referen interaksi
+  content-free selama sepuluh menit, terisolasi per owner+channel+conversation.
+  State ini hanya membantu anaphora, hilang saat restart, dan tidak masuk
+  history/memory; withdrawal atau full deletion juga membersihkan scope-nya.
+  `/menu` category-based, `/bantuan` tetap panduan yang berbeda, dan keduanya
+  beserta native command registration berasal dari satu katalog user-facing
+  yang difilter menurut composition aktif.
 - Permintaan planning eksplisit memakai tiga lane: chat tetap diproses
   `MessageBatcher`, quote/target run masuk RunMailbox, dan work lane active
   AgentRun berjalan di latar. Satu Run Anchor editable menampilkan state nyata.
@@ -83,6 +97,8 @@ Telegram live belum diperbarui.
 - Antrean percakapan dan pesan pra-consent masih in-memory. Crash atau force
   stop dapat kehilangan giliran chat yang belum selesai. Active work
   `orchestrate` tahan restart lokal, tetapi query agent `tools` masih sinkron.
+- Transient interaction context juga sengaja process-local; follow-up setelah
+  restart atau lewat TTL dapat meminta pengguna menyebut surface lagi.
 - `AbortSignal` sudah mencapai model dan AgentHarness percakapan, tetapi
   cancellation provider/socket live serta efek eksternal yang telanjur mulai
   belum diuji end-to-end; pre-send/current-generation guard tetap pertahanan
@@ -104,6 +120,9 @@ Telegram live belum diperbarui.
   selain outbound Telegram.
 - Ada bukti live lama untuk onboarding/task/tombol dasar, tetapi bukti lama
   tidak membuktikan build terbaru.
+- Kualitas klasifikasi `SemanticOperation` lintas bahasa baru dibuktikan oleh
+  schema/policy dan fixture otomatis, belum oleh provider atau akun Telegram
+  live.
 
 ## Bukti dan pointer
 
@@ -113,4 +132,5 @@ Telegram live belum diperbarui.
   `tests/turn-taking-policy.test.ts`, `tests/conversation-progress.test.ts`,
   `tests/response-presentation.test.ts`, `tests/onboarding.test.ts`, dan
   `tests/private-coding-application-e2e.test.ts`.
-- Keputusan: ADR-002, ADR-004, ADR-007, ADR-008, ADR-021, ADR-023, ADR-027.
+- Keputusan: ADR-002, ADR-004, ADR-007, ADR-008, ADR-021, ADR-023, ADR-027,
+  ADR-044.

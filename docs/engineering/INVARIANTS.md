@@ -14,11 +14,11 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 - **Aktor pekerjaan harus jelas sebelum mengubah tugas.** Permintaan agar Harvy
   membuat, menulis, menerjemahkan, merangkum, menghitung, atau menghasilkan
   sesuatu adalah intent `request`: kerjakan di chat, jangan masukkan ke daftar
-  tugas. `task + taskAction: save + task` baru boleh langsung mencatat bila teks
-  pengguna sendiri meminta catat/simpan/ingatkan dan payloadnya konkret. Hanya
-  `feeling + taskAction: offer + task` yang boleh menawarkan pencatatan setelah
-  menjawab; konfirmasinya bertoken. Parser dan adapter sama-sama memeriksa
-  kombinasi itu.
+  tugas. `task + taskAction: save + task` baru boleh langsung mencatat bila
+  `SemanticOperation` task/save explicit membawa exact evidence raw-turn dan
+  payload konkret. Hanya `feeling + taskAction: offer + task` yang boleh
+  menawarkan pencatatan setelah menjawab; konfirmasinya bertoken. Parser dan
+  adapter sama-sama memeriksa kombinasi itu.
 - **Langkah tertunda tidak diklasifikasikan ulang sebagai percakapan baru.**
   Khusus Ubah tenggat, pengguna sudah memilih tindakannya lewat tombol; jawaban
   waktunya wajib masuk `Conversation.understandDueDate`, bukan disisipkan ke
@@ -30,12 +30,13 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   yang terbuka salah dan tugas kosong yang tertulis sama-sama pernah terjadi:
   "kamu pahami aja" membuka seluruh catatan pribadi seseorang lengkap dengan
   tombol Lupakan semua, dan "buat pengingat dong" tersimpan sebagai tugas
-  berjudul "Membuat pengingat". Sejak `ADR-008`, penyimpanan tugas mempunyai
-  pagar kode lagi: teks pengguna harus meminta catat/simpan/ingatkan dan membawa
-  isi konkret. Permintaan prioritas dan pengingat kosong tetap percakapan.
-  Kontrol potret memori masih memeriksa pasangan intent/action. Scoped forget
-  juga wajib menemukan kata forget eksplisit pada teks pengguna dan hanya
-  memilih source owner-local; target hasil model tidak menjadi izin mutasi.
+  berjudul "Membuat pengingat". Sejak ADR-008 dan ADR-044, penyimpanan tugas
+  mempunyai pagar kode lagi: semantic save harus explicit, mempunyai evidence
+  dari teks pengguna, dan membawa isi konkret. Permintaan prioritas dan
+  pengingat kosong tetap percakapan. Kontrol potret memori masih memeriksa
+  pasangan intent/action. Scoped forget juga wajib mempunyai semantic forget
+  explicit dengan evidence raw-turn dan hanya memilih source owner-local;
+  target hasil model tidak menjadi izin mutasi.
 - `TaskService` menerima `now: () => Date` agar dapat diuji. Tes memakai
   `MemoryRepository` yang mengimplementasi `TaskRepository`, bukan berkas nyata.
 - ID tugas tidak pernah ditampilkan kepada pengguna. Semua tindakan berjalan
@@ -317,6 +318,39 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   boundary terpisah hanya menilai
   bentuk satu bubble dari closed set; pada jalur boundary umum, multi-bubble dan
   ambiguitas memakai model.
+
+## Semantic operation dan transient interaction context
+
+- **Meaning natural-language bukan authority.** Understanding boleh mengusulkan
+  `SemanticOperation` closed-set, tetapi code wajib memeriksa exact evidence
+  dari raw turn, confidence, explicitness, subject, owner/scope, state aktif,
+  target, confirmation, dan effect policy. Field model/provider/capability/
+  credential/permission/storage ID/raw reasoning tidak boleh masuk contract.
+  Exact command, callback/protocol, ID, nominal, credential guard, schema,
+  syntax, dan safety preflight sempit tetap boleh deterministic.
+- **Intent sekarang menang atas context lama.** Precedence adalah explicit
+  current intent, quote/pending scoped, recent transient interaction, active
+  session/run, recent history, lalu retrieved memory. Conversation turn tidak
+  otomatis menjadi AgentRun input dan context lama tidak boleh mengubah operasi
+  eksplisit yang berbeda.
+- **Transient interaction context bukan history atau memory.** Store wajib
+  bounded+TTL, process-local, dan terisolasi minimal oleh owner, channel, serta
+  conversation. Entry hanya boleh berisi metadata domain/operation/reference
+  content-free dan baru dibuat sesudah delivery berhasil. Ia tidak boleh
+  menyimpan raw message/reply, account value, isi task/memory, credential, ID
+  storage, provider, atau model. Follow-up account selalu membaca state terbaru
+  dari service; withdrawal/full deletion membersihkan scope dan restart loss
+  diterima.
+- **Capability availability bukan context presence.** Final conversation biasa
+  tidak menerima global capability catalog, seluruh tool schema, command
+  internal, atau specialist instructions. Callable subset hanya masuk planner
+  agent ketika executor sudah installed dan authorized. Raw current user turn
+  tetap tersedia bagi final speaker bersama human context relevan yang bounded.
+- **Semantic observability tetap content-free.** Domain/operation, confidence
+  bucket, route, penggunaan recent context, deterministic/fallback, dan
+  clarification boleh dicatat lewat allowlist. Target, evidence, isi turn,
+  response, account value, dan context tidak boleh masuk log atau telemetry.
+  Lihat ADR-044.
 
 ## Onboarding dan persetujuan
 

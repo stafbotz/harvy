@@ -245,6 +245,51 @@ describe("log operasional", () => {
     });
   });
 
+  it("mencatat keputusan semantic route tanpa isi pesan pengguna", async () => {
+    await withTempDirectory(async (directory) => {
+      const system = await createOperationalLogSystem(options(directory));
+      system.logger.info(
+        "semantic_route_selected",
+        "Rute semantik terpilih.",
+        {
+          semanticDomain: "usage",
+          semanticOperation: "show-details",
+          confidenceBucket: "high",
+          route: "account",
+          recentContextUsed: true,
+          recentContextKind: "interaction",
+          deterministic: true,
+          clarificationNeeded: false,
+          semanticFallback: false,
+          text: "detail saldo pribadi yang tidak boleh masuk log",
+        },
+      );
+      await system.flush();
+
+      const record = (await readRecords(directory)).find(
+        (candidate) => candidate["event"] === "semantic_route_selected",
+      );
+      const data = record?.["data"] as Record<string, unknown>;
+      assert.deepEqual(data, {
+        semanticDomain: "usage",
+        semanticOperation: "show-details",
+        confidenceBucket: "high",
+        route: "account",
+        recentContextUsed: true,
+        recentContextKind: "interaction",
+        deterministic: true,
+        clarificationNeeded: false,
+        semanticFallback: false,
+        text: "[REDACTED]",
+      });
+      assert.doesNotMatch(
+        JSON.stringify(record),
+        /detail saldo pribadi yang tidak boleh masuk log/u,
+      );
+      await system.close();
+    });
+  });
+
   it("menjaga trace terpisah pada pekerjaan async yang berjalan bersamaan", async () => {
     await withTempDirectory(async (directory) => {
       const system = await createOperationalLogSystem(options(directory));

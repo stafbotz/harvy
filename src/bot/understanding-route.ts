@@ -4,10 +4,20 @@ import type {
   MemoryAction,
   Understanding,
 } from "../ai/understand.js";
+import {
+  semanticOperationAuthorized,
+  type SemanticOperationName,
+  type SemanticReference,
+} from "../domain/semantic-operation.js";
 
 export type ImmediateUnderstandingRoute =
   | { kind: "memory-control"; action: "list" | "edit" }
-  | { kind: "memory-control"; action: "forget"; target: string | null }
+  | {
+      kind: "memory-control";
+      action: "forget";
+      target: string | null;
+      reference: SemanticReference;
+    }
   | { kind: "control"; action: ControlAction }
   | { kind: "save-task"; task: ExtractedTask }
   | { kind: "conversation" };
@@ -32,13 +42,20 @@ export function immediateUnderstandingRoute(
 ): ImmediateUnderstandingRoute {
   if (
     understanding.intent === "memory" &&
-    isMemoryControl(understanding.memoryAction)
+    isMemoryControl(understanding.memoryAction) &&
+    memoryControlAuthorized(
+      originalMessage,
+      understanding.memoryAction,
+      understanding.semanticOperation,
+    )
   ) {
     return understanding.memoryAction === "forget"
       ? {
           kind: "memory-control",
           action: "forget",
-          target: understanding.memoryTarget?.trim() || null,
+          target: understanding.semanticOperation?.target?.trim() ||
+            understanding.memoryTarget?.trim() || null,
+          reference: understanding.semanticOperation?.reference ?? "none",
         }
       : { kind: "memory-control", action: understanding.memoryAction };
   }
@@ -46,7 +63,12 @@ export function immediateUnderstandingRoute(
   if (
     understanding.intent === "control" &&
     understanding.controlAction !== null &&
-    understanding.controlAction !== undefined
+    understanding.controlAction !== undefined &&
+    controlAuthorized(
+      originalMessage,
+      understanding.controlAction,
+      understanding.semanticOperation,
+    )
   ) {
     return { kind: "control", action: understanding.controlAction };
   }
@@ -55,8 +77,22 @@ export function immediateUnderstandingRoute(
     understanding.intent === "task" &&
     understanding.taskAction === "save" &&
     understanding.task &&
-    hasExplicitTaskWriteRequest(originalMessage) &&
-    hasConcreteTaskContent(originalMessage, understanding.task.title)
+    understanding.semanticOperation &&
+    semanticOperationAuthorized(
+      originalMessage,
+      understanding.semanticOperation,
+      {
+        domain: "task",
+        operations: ["save"],
+        minConfidence: 0.85,
+        explicitness: ["explicit"],
+      },
+    ) &&
+    hasConcreteTaskEvidence(
+      understanding.task.title,
+      understanding.semanticOperation.target,
+      understanding.semanticOperation.evidence,
+    )
   ) {
     return { kind: "save-task", task: understanding.task };
   }
@@ -64,101 +100,64 @@ export function immediateUnderstandingRoute(
   return { kind: "conversation" };
 }
 
-const TASK_WRITE_WORDS = new Set([
-  "aku",
-  "agar",
-  "aja",
-  "buat",
-  "buatkan",
-  "bikin",
-  "catat",
-  "catatkan",
-  "deh",
-  "di",
-  "dong",
-  "ingatkan",
-  "ingetin",
-  "ini",
-  "itu",
-  "jam",
-  "ke",
-  "masukkan",
-  "masukin",
-  "nanti",
-  "pasang",
-  "pasangkan",
-  "pengingat",
-  "pukul",
-  "remind",
-  "reminder",
-  "saja",
-  "saya",
-  "setel",
-  "setelkan",
-  "simpan",
-  "simpankan",
-  "supaya",
-  "tambah",
-  "tambahkan",
-  "tersebut",
-  "tolong",
-  "tugas",
-  "untuk",
-  "ya",
-]);
-
-function hasConcreteTaskContent(message: string, title: string): boolean {
-  const normalized = message
-    .toLocaleLowerCase("id-ID")
-    .trim()
-    .replaceAll(/\s+/g, " ");
-  const vagueRequest =
-    /^(tolong\s+)?(buat(?:kan)?|bikin|pasang(?:kan)?|setel(?:kan)?)?\s*(pengingat|reminder)\s*(dong|ya|tolong)?[.!?]*$/u.test(
-      normalized,
-    ) ||
-    /^(tolong\s+)?(ingatkan|ingetin|remind)(\s+(aku|saya))?\s*(dong|ya)?[.!?]*$/u.test(
-      normalized,
-    );
-  const genericTitle =
-    /^(buat|membuat|bikin|pasang|mencatat|menyimpan|menambah)?\s*(tugas|pengingat|reminder)?$/u.test(
-      title.toLocaleLowerCase("id-ID").trim(),
-    );
-  const payloadWords = normalized
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(
-      (word) =>
-        word.length >= 3 &&
-        !TASK_WRITE_WORDS.has(word) &&
-        !/^\d+$/u.test(word),
-    );
-  return !vagueRequest && !genericTitle && payloadWords.length > 0;
+function hasConcreteTaskEvidence(
+  title: string,
+  target: string | null,
+  evidence: string | null,
+): boolean {
+  const titleTerms = meaningfulTerms(title);
+  const sourceTerms = meaningfulTerms(target ?? evidence ?? "");
+  if (titleTerms.size === 0 || sourceTerms.size === 0) return false;
+  return [...titleTerms].some((term) => sourceTerms.has(term));
 }
 
-/**
- * Model boleh mengusulkan sebuah tugas, tetapi izin menulis datang dari kata
- * pengguna sendiri. Pernyataan kewajiban atau permintaan memilih prioritas
- * bukan izin untuk mengubah daftar tugas.
- */
-export function hasExplicitTaskWriteRequest(message: string): boolean {
-  const normalized = message.toLocaleLowerCase("id-ID").replaceAll(/\s+/g, " ");
-  const negatedWrite =
-    /\b(jangan|tidak|tak|gak|ga|nggak|enggak)\s+(?:(?:usah|perlu|pernah|mau|ingin|minta|boleh|untuk)\s+){0,3}(?:di)?(catat(?:kan)?|simpan(?:kan)?|masuk(?:kan)?|tambah(?:kan)?|ingatkan|ingetin|remind)\b/u.test(
-      normalized,
-    );
-  if (negatedWrite) return false;
-
-  return (
-    /\b(catat(?:kan)?|simpan(?:kan)?|masuk(?:kan)?|tambah(?:kan)?)\b/.test(
-      normalized,
-    ) ||
-    /\b(ingatkan|ingetin|remind)\b/.test(normalized) ||
-    /\b(pasang(?:kan)?|setel(?:kan)?|buat(?:kan)?)\b.{0,30}\b(pengingat|reminder)\b/.test(
-      normalized,
-    ) ||
-    /\b(pengingat|reminder)\b.{0,30}\b(untuk|buat|agar|supaya)\b/.test(
-      normalized,
-    )
+function meaningfulTerms(value: string): Set<string> {
+  return new Set(
+    (value.normalize("NFKC").toLocaleLowerCase("und").match(/[\p{L}\p{N}]+/gu) ?? [])
+      .filter((term) => term.length >= 2),
   );
+}
+
+function memoryControlAuthorized(
+  message: string,
+  action: "list" | "forget" | "edit",
+  semantic: Understanding["semanticOperation"],
+): boolean {
+  const operation: SemanticOperationName = action;
+  return semanticOperationAuthorized(message, semantic, {
+    domain: "memory",
+    operations: [operation],
+    minConfidence: action === "list" ? 0.75 : 0.85,
+    explicitness: action === "list"
+      ? ["explicit", "contextual"]
+      : ["explicit"],
+  });
+}
+
+const CONTROL_OPERATIONS: Readonly<Record<ControlAction, SemanticOperationName>> = {
+  data: "show-controls",
+  timezone: "set-timezone",
+  "quiet-hours": "set-quiet-hours",
+  "active-session": "show-controls",
+  "withdraw-consent": "withdraw-consent",
+  export: "export",
+  "delete-all": "delete-all",
+};
+
+function controlAuthorized(
+  message: string,
+  action: ControlAction,
+  semantic: Understanding["semanticOperation"],
+): boolean {
+  const readOnly = action === "data" || action === "active-session";
+  return semanticOperationAuthorized(message, semantic, {
+    domain: "data",
+    operations: [CONTROL_OPERATIONS[action]],
+    minConfidence: readOnly ? 0.75 : 0.85,
+    explicitness: readOnly
+      ? ["explicit", "contextual"]
+      : ["explicit"],
+  });
 }
 
 function isMemoryControl(

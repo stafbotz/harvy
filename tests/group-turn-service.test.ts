@@ -36,6 +36,7 @@ import type {
   GroupRoomMemory,
   GroupTurn,
 } from "../src/domain/group.js";
+import type { SemanticOperation } from "../src/domain/semantic-operation.js";
 
 const NOW = new Date("2026-07-29T12:00:00.000Z");
 
@@ -285,7 +286,10 @@ describe("giliran grup", () => {
         understand: async () => understanding({
           kind: "personal",
           content: "Sedang menghadapi masalah keluarga",
-        }, "remember"),
+        }, "remember", memorySemantic(
+          "Harvy, inget ya aku sedang menghadapi masalah keluarga",
+          "aku sedang menghadapi masalah keluarga",
+        )),
       },
     });
 
@@ -319,7 +323,10 @@ describe("giliran grup", () => {
         understand: async () => understanding({
           kind: "personal",
           content: "PIN kartu adalah 4321",
-        }, "remember"),
+        }, "remember", memorySemantic(
+          "Harvy, ingat PIN kartu aku 4321",
+          "PIN kartu aku 4321",
+        )),
       },
     });
 
@@ -3677,6 +3684,7 @@ function createRuntime(options: RuntimeOptions = {}): {
 function understanding(
   memory: Understanding["memories"][number],
   memoryAction: Understanding["memoryAction"] = null,
+  semanticOperation: SemanticOperation | null = null,
 ): Understanding {
   return {
     intent: "smalltalk",
@@ -3687,6 +3695,21 @@ function understanding(
     needsStepByStep: false,
     task: null,
     memories: [memory],
+    semanticOperation,
+  };
+}
+
+function memorySemantic(message: string, target: string): SemanticOperation {
+  return {
+    version: 1,
+    domain: "memory",
+    operation: "remember",
+    target,
+    subject: "self",
+    reference: "none",
+    explicitness: "explicit",
+    evidence: message,
+    confidence: 0.95,
   };
 }
 

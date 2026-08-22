@@ -43,7 +43,25 @@ describe("corpus evaluasi percakapan", () => {
         continue;
       }
       assert.equal(
-        sessionAppliesToMessage(testCase.session, testCase.message),
+        sessionAppliesToMessage(
+          testCase.session,
+          testCase.message,
+          testCase.expectedSessionRelevant
+            ? {
+                version: 1,
+                domain: "session",
+                operation: testCase.expectedSessionSignal ?? "continue",
+                target: null,
+                subject: "self",
+                reference: "current",
+                explicitness: testCase.expectedSessionSignal
+                  ? "explicit"
+                  : "contextual",
+                evidence: testCase.message,
+                confidence: 0.95,
+              }
+            : null,
+        ),
         testCase.expectedSessionRelevant,
         testCase.id,
       );

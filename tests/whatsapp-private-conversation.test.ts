@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { HarvyContext } from "../src/ai/context.js";
 import type { ConversationRuntime } from "../src/ai/conversation.js";
 import type { Understanding } from "../src/ai/understand.js";
 import { NO_RISK_HINT } from "../src/core/safety-policy.js";
@@ -210,8 +211,9 @@ describe("WhatsAppPrivateConversation", () => {
   it("menampilkan dan menghapus memori melalui perintah teks", async () => {
     const harness = createHarness(true);
     const listed = await harness.service.handle(message("/memori", "memori-1"));
-    assert.equal(typeof listed, "string");
-    assert.match(String(listed), /Suka belajar dengan contoh visual/u);
+    assert.equal(typeof listed, "object");
+    assert.match((listed as WhatsAppPrivateReply).text, /Suka belajar dengan contoh visual/u);
+    await (listed as WhatsAppPrivateReply).onDelivered?.();
 
     const forgotten = await harness.service.handle(message(
       "/lupakan 1",
@@ -220,6 +222,120 @@ describe("WhatsAppPrivateConversation", () => {
     assert.match(String(forgotten), /sudah aku lupakan/u);
     assert.equal(harness.memoryCount, 0);
     assert.equal(harness.understandCalls, 0);
+  });
+
+  it("menampilkan /menu teks yang berbeda dari /bantuan tanpa model", async () => {
+    const harness = createHarness(true);
+    const menu = await harness.service.handle(message("/menu", "menu-1")) as
+      WhatsAppPrivateReply;
+    const help = await harness.service.handle(message("/bantuan", "menu-2")) as
+      WhatsAppPrivateReply;
+    assert.match(menu.text, /^Menu Harvy/u);
+    assert.match(menu.text, /Penggunaan & paket/u);
+    assert.match(help.text, /Contoh:/u);
+    assert.notEqual(menu.text, help.text);
+    assert.equal(harness.understandCalls, 0);
+  });
+
+  it("merender kategori menu natural dari katalog WhatsApp yang sama", async () => {
+    const text = "tampilkan menu memori";
+    const harness = createHarness(true, {
+      understand: async () => ({
+        ...semanticUnderstanding("show-summary", text, "explicit"),
+        semanticOperation: {
+          version: 1,
+          domain: "menu",
+          operation: "show-category",
+          target: "memory",
+          subject: "self",
+          reference: "none",
+          explicitness: "explicit",
+          evidence: text,
+          confidence: 0.98,
+        },
+      }),
+    });
+
+    const result = await harness.service.handle(message(text, "menu-natural")) as
+      WhatsAppPrivateReply;
+    assert.match(result.text, /^Memori & data/u);
+    assert.match(result.text, /\/memori|\/lupakan/u);
+    assert.doesNotMatch(result.text, /\/project|\/tugas/u);
+    await result.onDelivered?.();
+    assert.equal(harness.replyMessages.length, 0);
+    assert.equal(harness.history.length, 0);
+  });
+
+  it("tidak mempertahankan transient surface yang gagal dikirim", async () => {
+    const harness = createHarness(true);
+    const menu = await harness.service.handle(message("/menu", "menu-fail")) as
+      WhatsAppPrivateReply;
+    await menu.onDeliveryFailed?.();
+
+    const ordinary = await harness.service.handle(message(
+      "aku ingin ngobrol biasa",
+      "after-menu-fail",
+    )) as WhatsAppPrivateReply;
+    assert.deepEqual(harness.understandContexts[0]?.interactions, []);
+    await ordinary.onDeliveryFailed?.();
+  });
+
+  it("membersihkan transient surface ketika consent ditarik", async () => {
+    const harness = createHarness(true);
+    const menu = await harness.service.handle(message("/menu", "menu-before-withdraw")) as
+      WhatsAppPrivateReply;
+    await menu.onDelivered?.();
+
+    await harness.service.handle(message("/tarik-izin", "withdraw-after-menu"));
+    await harness.service.handle(message("SETUJU", "accept-again"));
+    const ordinary = await harness.service.handle(message(
+      "aku ingin ngobrol biasa",
+      "after-accept-again",
+    )) as WhatsAppPrivateReply;
+
+    assert.deepEqual(harness.understandContexts[0]?.interactions, []);
+    await ordinary.onDeliveryFailed?.();
+  });
+
+  it("mempertahankan referen usage untuk follow-up natural tanpa history", async () => {
+    let usageRead = 0;
+    const harness = createHarness(true, {
+      understand: async (text) => semanticUnderstanding(
+        text === "detailnya" ? "show-details" : "show-summary",
+        text,
+        text === "detailnya" ? "contextual" : "explicit",
+      ),
+      economyHandle: async (_ownerId, input) => {
+        usageRead += 1;
+        return input.semanticOperation?.operation === "show-details"
+          ? `detail usage terbaru ${usageRead}`
+          : `ringkasan usage terbaru ${usageRead}`;
+      },
+    });
+
+    const first = await harness.service.handle(message(
+      "harvy berapa sisa penggunaan ku",
+      "usage-natural-1",
+    )) as WhatsAppPrivateReply;
+    assert.match(first.text, /ringkasan usage terbaru 1/u);
+    await first.onDelivered?.();
+
+    const second = await harness.service.handle(message(
+      "detailnya",
+      "usage-natural-2",
+    )) as WhatsAppPrivateReply;
+    assert.match(second.text, /detail usage terbaru 2/u);
+    const recentInteraction = harness.understandContexts[1]?.interactions?.[0];
+    assert.equal(recentInteraction?.version, 1);
+    assert.equal(recentInteraction?.domain, "usage");
+    assert.equal(recentInteraction?.operation, "show-summary");
+    assert.equal(recentInteraction?.reference, "current");
+    assert.doesNotMatch(JSON.stringify(recentInteraction), /saldo|rupiah|token/iu);
+    await second.onDelivered?.();
+
+    assert.equal(usageRead, 2);
+    assert.equal(harness.history.length, 0);
+    assert.equal(harness.replyMessages.length, 0);
   });
 
   it("menghapus seluruh data lewat konfirmasi meski consent belum aktif", async () => {
@@ -252,6 +368,17 @@ function createHarness(
       text: string,
       runtime: ConversationRuntime,
     ) => Promise<string>;
+    understand?: (
+      text: string,
+      context: HarvyContext,
+    ) => Promise<Understanding | null>;
+    economyHandle?: (
+      ownerId: string,
+      input: {
+        rawText: string;
+        semanticOperation: Understanding["semanticOperation"];
+      },
+    ) => Promise<string | null>;
   } = {},
 ): {
   service: WhatsAppPrivateConversation;
@@ -266,6 +393,7 @@ function createHarness(
   history: ConversationTurn[];
   replyChannels: Array<ConversationRuntime["channel"]>;
   replyMessages: string[];
+  understandContexts: HarvyContext[];
   turnOutcomes: string[];
 } {
   let consent = initialConsent;
@@ -279,6 +407,7 @@ function createHarness(
   const history: ConversationTurn[] = [];
   const replyChannels: Array<ConversationRuntime["channel"]> = [];
   const replyMessages: string[] = [];
+  const understandContexts: HarvyContext[] = [];
   const turnOutcomes: string[] = [];
   const memoryItems: MemoryItem[] = [{
     id: "memory-1",
@@ -315,6 +444,7 @@ function createHarness(
     actionGoal: null,
     controlAction: null,
     sessionSignal: null,
+    semanticOperation: null,
   };
   const dependencies = {
     conversation: {
@@ -326,9 +456,12 @@ function createHarness(
       }),
       classifyTurnInterruption: async () =>
         options.interruptionRelation ?? "independent",
-      understand: async () => {
+      understand: async (text: string, context: HarvyContext) => {
         understandCalls += 1;
-        return understanding;
+        understandContexts.push(context);
+        return options.understand
+          ? options.understand(text, context)
+          : understanding;
       },
       triageRisk: async () => ({
         level: "biasa" as const,
@@ -436,6 +569,15 @@ function createHarness(
         memoryItems.splice(0, memoryItems.length);
       },
     },
+    economyCommands: {
+      handle: async (
+        ownerId: string,
+        input: {
+          rawText: string;
+          semanticOperation: Understanding["semanticOperation"];
+        },
+      ) => options.economyHandle?.(ownerId, input) ?? null,
+    },
   } as unknown as WhatsAppPrivateConversationDependencies;
   const service = new WhatsAppPrivateConversation(
     dependencies,
@@ -476,7 +618,41 @@ function createHarness(
     history,
     replyChannels,
     replyMessages,
+    understandContexts,
     turnOutcomes,
+  };
+}
+
+function semanticUnderstanding(
+  operation: "show-summary" | "show-details",
+  evidence: string,
+  explicitness: "explicit" | "contextual",
+): Understanding {
+  return {
+    intent: "question",
+    taskAction: null,
+    memoryAction: null,
+    riskHint: NO_RISK_HINT,
+    safetySensitive: false,
+    needsStepByStep: false,
+    routingAssessment: null,
+    task: null,
+    memories: [],
+    suggestedActions: [],
+    actionGoal: null,
+    controlAction: null,
+    sessionSignal: null,
+    semanticOperation: {
+      version: 1,
+      domain: "usage",
+      operation,
+      target: null,
+      subject: "self",
+      reference: explicitness === "contextual" ? "recent" : "none",
+      explicitness,
+      evidence,
+      confidence: 0.98,
+    },
   };
 }
 

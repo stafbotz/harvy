@@ -12,6 +12,11 @@ import {
   planResponsePresentation,
   presentationPauseMs,
 } from "../core/response-presentation.js";
+import {
+  commandCategories,
+  renderHelpMessage,
+  type TelegramCommandOptions,
+} from "./commands.js";
 
 const IMPORTANCE_LABEL: Record<TaskImportance, string> = {
   1: "santai",
@@ -24,26 +29,18 @@ const IMPORTANCE_LABEL: Record<TaskImportance, string> = {
  * format tanggal, atau ID teknis. Seluruh teks di bawah ini memakai bahasa
  * sehari-hari dan tindakan dijalankan lewat tombol, bukan kode.
  */
-export const HELP_MESSAGE = [
-  "Tulis aja tugasmu seperti biasa, aku yang rapikan.",
-  "",
-  "Contoh:",
-  "• besok jam 7 malam kumpulin matematika halaman 20",
-  "• senin ada ulangan biologi, penting banget",
-  "• bawa buku sejarah",
-  "",
-  "Setelah tercatat, tinggal pakai tombol buat nandain selesai, memilih waktu pengingat, atau ngebatalin. Kamu yang nentuin, aku cuma bantu.",
-  "",
-  "Kalau keadaanmu lagi berantakan, Harvy bisa menawarkan sesi untuk menjernihkan, memilih prioritas, mulai satu langkah kecil, belajar bertahap, menyusun rencana, atau menyiapkan pesan untuk orang lain. Hanya satu sesi aktif, dan check-in dikirim sekali kalau kamu sendiri memilih waktunya.",
-  "",
-  "Aku juga nyimpen beberapa hal biar kamu nggak perlu ngulang cerita: kelasmu, cara belajar yang cocok, apa yang lagi kamu hadapi. Kalau kamu cuma cerita hal pribadi, aku minta izin sebelum menyimpannya. Kalau kamu bilang aku harus mengingatnya, itu sudah jadi izin untuk hal tersebut. Pakai /memori atau tanya aja apa yang aku ingat tentang kamu. Kalau ada yang salah, berubah, atau ingin dilupakan, cukup bilang.",
-  "",
-  "/tugas — lihat semua tugasmu",
-  "/memori — lihat yang aku ingat tentang kamu",
-  "/penggunaan — lihat kapasitas dan waktu pembaruan Harvy",
-  "/dukung — informasi kontribusi sukarela Harvy Commons",
-  "/bantuan — tampilkan pesan ini",
-].join("\n");
+export const HELP_MESSAGE = renderHelpMessage(
+  { codingRuntime: false, githubPublishing: false },
+  "telegram",
+);
+
+export function menuActions(options: TelegramCommandOptions): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const category of commandCategories(options, "telegram")) {
+    keyboard.text(category.label, `menu:${category.id}`).row();
+  }
+  return keyboard;
+}
 
 export function helpActions(): InlineKeyboard {
   return new InlineKeyboard()

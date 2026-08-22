@@ -1,37 +1,75 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { telegramCommands } from "../src/bot/commands.js";
+import {
+  renderCommandCategory,
+  renderCommandMenu,
+  renderHelpMessage,
+  telegramCommands,
+  userCommandCatalog,
+} from "../src/bot/commands.js";
 
-describe("menu command Telegram", () => {
-  it("mendaftarkan /memori dengan deskripsi manusiawi", () => {
-    const commands = telegramCommands({
-      codingRuntime: false,
-      githubPublishing: false,
-    });
-    const memory = commands.find((item) => item.command === "memori");
+const OFF = { codingRuntime: false, githubPublishing: false };
+const ON = { codingRuntime: true, githubPublishing: true };
 
-    assert.deepEqual(memory, {
+describe("katalog command user-facing", () => {
+  it("menyinkronkan /menu, /penggunaan, help, dan registrasi Telegram", () => {
+    const commands = telegramCommands(OFF);
+    const names = commands.map((item) => item.command);
+    for (const name of ["menu", "tugas", "memori", "penggunaan", "dukung", "bantuan"]) {
+      assert.ok(names.includes(name), name);
+    }
+    assert.deepEqual(commands.find((item) => item.command === "memori"), {
       command: "memori",
       description: "Lihat yang aku ingat tentang kamu",
     });
-    assert.ok(commands.some((item) => item.command === "tugas"));
-    assert.ok(commands.some((item) => item.command === "bantuan"));
+
+    const menu = renderCommandMenu(OFF, "telegram");
+    const help = renderHelpMessage(OFF, "telegram");
+    assert.match(menu, /Menu Harvy/u);
+    assert.match(menu, /Penggunaan & paket/u);
+    assert.match(help, /Contoh:/u);
+    assert.match(help, /\/menu/u);
+    assert.notEqual(menu, help);
   });
 
-  it("mempertahankan command coding ketika runtime tersedia", () => {
-    const commands = telegramCommands({
-      codingRuntime: true,
-      githubPublishing: true,
-    }).map((item) => item.command);
-
+  it("memfilter command berdasarkan availability dari sumber yang sama", () => {
+    const off = telegramCommands(OFF).map((item) => item.command);
+    const on = telegramCommands(ON).map((item) => item.command);
     for (const command of [
-      "memori",
       "project",
       "code",
       "code_status",
       "code_cancel",
       "github",
       "publish",
-    ]) assert.ok(commands.includes(command), command);
+    ]) {
+      assert.ok(!off.includes(command), command);
+      assert.ok(on.includes(command), command);
+    }
+    assert.equal(renderCommandCategory("coding", OFF, "telegram"), null);
+    assert.match(renderCommandCategory("coding", ON, "telegram") ?? "", /\/publish/u);
+  });
+
+  it("memberi WhatsApp menu teks yang sesuai tanpa command Telegram-only", () => {
+    const names = userCommandCatalog(OFF, "whatsapp").map((item) => item.command);
+    for (const name of ["menu", "penggunaan", "memori", "izin", "tarik-izin", "hapus-data", "bantuan"]) {
+      assert.ok(names.includes(name), name);
+    }
+    assert.ok(!names.includes("tugas"));
+    assert.ok(!names.includes("dukung"));
+    const help = renderHelpMessage(OFF, "whatsapp");
+    assert.doesNotMatch(help, /\/project|\/publish/u);
+    assert.doesNotMatch(help, /ingatkan aku|Tugas,/u);
+  });
+
+  it("tidak mengekspos command internal/operator", () => {
+    const rendered = [
+      ...userCommandCatalog(ON, "telegram"),
+      ...userCommandCatalog(ON, "whatsapp"),
+    ].map((item) => `${item.command} ${item.description} ${item.detail}`).join("\n");
+    assert.doesNotMatch(
+      rendered,
+      /agent\.delegate|parallel\.delegate|terminal\.run|worker #|provider|credential|operator/iu,
+    );
   });
 });

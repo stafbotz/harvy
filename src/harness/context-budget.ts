@@ -11,6 +11,7 @@ export interface ContextBudget {
   maxMemoryCharacters: number;
   maxTurns: number;
   maxMemories: number;
+  maxInteractions?: number;
 }
 
 export const DEFAULT_CONTEXT_BUDGET: ContextBudget = Object.freeze({
@@ -20,24 +21,28 @@ export const DEFAULT_CONTEXT_BUDGET: ContextBudget = Object.freeze({
   maxMemoryCharacters: 400,
   maxTurns: 18,
   maxMemories: 8,
+  maxInteractions: 3,
 });
 
 export interface ContextProjection {
   includeSummary: boolean;
   includeTurns: boolean;
   includeMemories: boolean;
+  includeInteractions?: boolean;
 }
 
 export const FULL_CONTEXT_PROJECTION: ContextProjection = Object.freeze({
   includeSummary: true,
   includeTurns: true,
   includeMemories: true,
+  includeInteractions: true,
 });
 
 export const TURNS_ONLY_CONTEXT_PROJECTION: ContextProjection = Object.freeze({
   includeSummary: false,
   includeTurns: true,
   includeMemories: false,
+  includeInteractions: false,
 });
 
 export interface CompiledHarvyContext {
@@ -75,6 +80,18 @@ export function compileHarvyContext(
   let remaining = budget.maxCharacters;
   let clippedTurnCount = 0;
   let clippedMemoryCount = 0;
+
+  const interactions = projection.includeInteractions !== false
+    ? (context.interactions ?? [])
+        .slice(0, budget.maxInteractions ?? 3)
+        .filter((interaction) => {
+          const size = interaction.domain.length + interaction.operation.length +
+            interaction.reference.length + 32;
+          if (size > remaining) return false;
+          remaining -= size;
+          return true;
+        })
+    : [];
 
   const selected = [] as HarvyContext["turns"];
   if (projection.includeTurns) {
@@ -198,6 +215,7 @@ export function compileHarvyContext(
       turns: selected,
       memories,
       ...(retrieved.length > 0 ? { retrieved } : {}),
+      ...(interactions.length > 0 ? { interactions } : {}),
     },
     manifest,
   };
@@ -233,7 +251,13 @@ function contextSourceCharacters(context: HarvyContext): number {
     (total, evidence) => total + evidence.text.trim().length + 24,
     0,
   );
-  return summary + turns + memories + retrieved;
+  const interactions = (context.interactions ?? []).reduce(
+    (total, interaction) =>
+      total + interaction.domain.length + interaction.operation.length +
+      interaction.reference.length + 32,
+    0,
+  );
+  return summary + turns + memories + retrieved + interactions;
 }
 
 function validateBudget(budget: ContextBudget): void {

@@ -1637,7 +1637,11 @@ export class GroupTurnService {
       understanding.taskAction === null &&
       understanding.task === null;
     const authority = explicitRememberSignaled
-      ? explicitMemoryRememberAuthority(message.text, extracted)
+      ? explicitMemoryRememberAuthority(
+          message.text,
+          extracted,
+          understanding.semanticOperation,
+        )
       : null;
     if (authority?.forbiddenSecret) {
       return {

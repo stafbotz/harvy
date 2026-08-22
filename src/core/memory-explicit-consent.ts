@@ -1,4 +1,9 @@
 import { containsForbiddenMemorySecret } from "./memory-policy.js";
+import {
+  semanticEvidenceMatches,
+  semanticOperationAuthorized,
+  type SemanticOperation,
+} from "../domain/semantic-operation.js";
 
 export interface ExplicitMemoryRememberAuthority {
   /** Potongan turn yang benar-benar berada di bawah verba simpan/ingat. */
@@ -13,24 +18,23 @@ export interface ExplicitMemoryRememberAuthority {
  * Membentuk bukti consent item-scoped dari teks user turn sendiri.
  *
  * `memoryAction: remember` tetap diperlukan oleh adapter, tetapi tidak cukup:
- * model tidak boleh memberi authority. Fungsi lokal ini memeriksa bentuk
- * perintah, memisahkannya dari retrieval/forget/reminder, lalu hanya memilih
- * candidate yang benar-benar beririsan dengan klausa yang diminta disimpan.
+ * model tidak boleh memberi authority. Fungsi lokal ini memvalidasi proposal
+ * closed-set, exact evidence dan target dari raw turn, lalu hanya memilih
+ * candidate yang berkorespondensi secara bounded dengan span yang diminta.
  */
 export function explicitMemoryRememberAuthority(
   message: string,
   candidates: readonly { content: string }[],
+  semantic: SemanticOperation | null | undefined,
 ): ExplicitMemoryRememberAuthority | null {
-  const normalized = normalizeSentence(message);
-  if (!normalized || isForgetOrNegativeInstruction(normalized)) return null;
-  if (isMemoryRetrievalQuestion(normalized)) return null;
-  if (isReminderRequest(normalized)) return null;
-
-  const request = extractRememberRequest(normalized);
-  if (!request) return null;
-  if (request.verb === "ingetin" && !request.semanticCue) return null;
-
-  const requestedText = boundedRequestedText(request.content);
+  if (!semantic || !semanticOperationAuthorized(message, semantic, {
+    domain: "memory",
+    operations: ["remember"],
+    minConfidence: 0.85,
+    explicitness: ["explicit"],
+  })) return null;
+  const requestedText = (semantic.target ?? "").trim();
+  if (!semanticEvidenceMatches(message, requestedText)) return null;
   if (!hasConcreteMemoryContent(requestedText)) return null;
   const forbiddenSecret = containsForbiddenMemorySecret(requestedText);
   if (forbiddenSecret) {
@@ -113,91 +117,9 @@ export function normalizeMemoryWriteEmoji(text: string): string {
   );
 }
 
-interface RememberRequest {
-  verb: "ingat" | "inget" | "simpan" | "catat" | "jangan-lupa" | "ingetin";
-  content: string;
-  semanticCue: boolean;
-}
-
-function extractRememberRequest(message: string): RememberRequest | null {
-  const janganLupa = /\bjangan\s+lupa\s*(?:ya|yah|dong|deh)?\s*[:,]?\s+(.+)$/u
-    .exec(message);
-  if (janganLupa?.[1]) {
-    return {
-      verb: "jangan-lupa",
-      content: janganLupa[1],
-      semanticCue: true,
-    };
-  }
-
-  const store = /\b(simpan|catat)\s*(?:ini\s*)?(?:ya|yah|dong|deh)?\s*[:,]?\s+(.+)$/u
-    .exec(message);
-  if (store?.[1] && store[2]) {
-    return {
-      verb: store[1] as "simpan" | "catat",
-      content: store[2],
-      semanticCue: true,
-    };
-  }
-
-  const remember = /\b(ingat|inget)\s*(?:ya|yah|dong|deh|nih)?\s*[:,]?\s+(.+)$/u
-    .exec(message);
-  if (remember?.[1] && remember[2]) {
-    return {
-      verb: remember[1] as "ingat" | "inget",
-      content: remember[2],
-      semanticCue: true,
-    };
-  }
-
-  const remind = /\bingetin\s+(?:kamu|dirimu|harvy)\s+(kalau|bahwa|tentang|soal)\s+(.+)$/u
-    .exec(message);
-  if (remind?.[2]) {
-    return {
-      verb: "ingetin",
-      content: remind[2],
-      semanticCue: true,
-    };
-  }
-  return null;
-}
-
-function isForgetOrNegativeInstruction(message: string): boolean {
-  if (/\b(?:lupakan|lupain|melupakan|hapus|hilangkan)\b/u.test(message)) {
-    return true;
-  }
-  return /\b(?:jangan|tidak|tak|gak|ga|nggak|enggak)\s+(?:(?:usah|perlu|pernah|mau|ingin|boleh|untuk)\s+){0,3}(?:(?:kamu|harvy)\s+)?(?:di)?(?:ingat|inget|simpan|catat)\b/u
-    .test(message);
-}
-
-function isMemoryRetrievalQuestion(message: string): boolean {
-  return /\b(?:ingat|inget)\s+(?:gak|ga|nggak|tidak|enggak|kah)\b/u
-      .test(message) ||
-    /\b(?:kamu|harvy)\s+(?:masih\s+)?(?:ingat|inget)\s+(?:gak|ga|nggak|tidak|enggak|kah)\b/u
-      .test(message) ||
-    /\bapa(?:kah)?\s+(?:kamu|harvy)\s+(?:masih\s+)?(?:ingat|inget)\b/u
-      .test(message) ||
-    /^(?:kamu|harvy)\s+(?:masih\s+)?(?:ingat|inget)\b.*\?$/u.test(message) ||
-    /\bmasih\s+(?:ingat|inget)\b.*\?$/u.test(message) ||
-    /^(?:ingat|inget)\s+(?:siapa|apa|kapan|di\s*mana|gimana|bagaimana)\b.*\?$/u
-      .test(message);
-}
-
-function isReminderRequest(message: string): boolean {
-  return /\b(?:ingatkan|ingetin)\s+(?:aku|saya|gue|gw|kami|kita)\b/u
-    .test(message);
-}
-
-function boundedRequestedText(value: string): string {
-  return value
-    .split(/(?:[.!?]\s+|\s*[,;]\s*(?:btw|by\s+the\s+way|ngomong-ngomong|oh\s+iya)\b)/u)[0]!
-    .replace(/^[\s,:-]+|[\s,:-]+$/gu, "")
-    .trim();
-}
-
 function hasConcreteMemoryContent(value: string): boolean {
   const terms = meaningfulTerms(value);
-  return terms.size >= 2 && !/^(?:ini|itu|yang\s+tadi|hal\s+ini)$/u.test(value);
+  return value.length >= 2 && terms.size >= 1;
 }
 
 function candidateMatchesRequest(
@@ -210,25 +132,18 @@ function candidateMatchesRequest(
   for (const term of candidateTerms) {
     if (requestedTerms.has(term)) overlap += 1;
   }
-  return (overlap >= 2 && overlap === candidateTerms.size) ||
-    (overlap === 1 && candidateTerms.size === 1);
+  // Candidate tetap output model yang tidak tepercaya. Batasi parafrasa pada
+  // overlap konkret dan maksimal dua term tambahan; primary memory policy
+  // memvalidasinya lagi sebelum commit.
+  return overlap >= 1 && candidateTerms.size - overlap <= 2;
 }
 
 function meaningfulTerms(value: string): Set<string> {
   return new Set(
     (normalizeSentence(value).match(/[\p{L}\p{N}]+/gu) ?? [])
-      .filter((term) => !STOP_WORDS.has(term))
-      .map(canonicalTerm)
-      .filter((term) => term.length >= 2 && !STOP_WORDS.has(term)),
+      .map((term) => term.replace(/([\p{L}])\1{2,}/gu, "$1"))
+      .filter((term) => term.length >= 3 || /^\d+$/u.test(term)),
   );
-}
-
-function canonicalTerm(value: string): string {
-  let term = value.replace(/([a-z])\1{2,}/gu, "$1");
-  term = term.replace(/(?:ku|mu|nya)$/u, "");
-  term = term.replace(/^(?:meng|meny|men|mem|me|ber|ter)/u, "");
-  term = term.replace(/(?:kan|an|i)$/u, "");
-  return term;
 }
 
 function normalizeSentence(value: string): string {
@@ -239,28 +154,3 @@ function normalizeSentence(value: string): string {
     .replaceAll(/\s+/gu, " ")
     .trim();
 }
-
-const STOP_WORDS = new Set([
-  "adalah",
-  "aku",
-  "banget",
-  "bahwa",
-  "dengan",
-  "dia",
-  "ini",
-  "ingin",
-  "itu",
-  "kalau",
-  "kamu",
-  "lebih",
-  "mau",
-  "memiliki",
-  "merupakan",
-  "pengguna",
-  "sangat",
-  "saya",
-  "sekarang",
-  "tentang",
-  "tolong",
-  "yang",
-]);

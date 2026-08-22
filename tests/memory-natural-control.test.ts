@@ -6,48 +6,88 @@ import {
   memoriesMatchingNaturalTarget,
 } from "../src/core/memory-natural-control.js";
 import type { MemoryItem } from "../src/domain/memory.js";
+import type { SemanticOperation } from "../src/domain/semantic-operation.js";
 
-describe("kontrol memori natural", () => {
+describe("kontrol memori semantic", () => {
   const items = [
     memory("school", "Sekarang kelas 12 di SMAN 3", "2026-08-01T00:00:00.000Z"),
     memory("sohit", "Sohit adalah pacarku", "2026-08-02T00:00:00.000Z"),
     memory("study", "Lebih nyaman belajar pagi", "2026-08-03T00:00:00.000Z"),
   ];
 
-  it("memerlukan kata forget eksplisit sebelum mutasi", () => {
-    assert.equal(hasExplicitMemoryForgetRequest("ceritain soal Sohit"), false);
-    assert.equal(hasExplicitMemoryForgetRequest("lupain semua soal Sohit"), true);
+  it("memerlukan forget explicit dengan evidence dari raw turn", () => {
+    for (const [message, target] of [
+      ["Forget what I told you about school", "school"],
+      ["Pupuskeun anu ngeunaan sakola", "sakola"],
+      ["Tulung laliaken sing soal sekolah", "sekolah"],
+    ] as const) {
+      assert.equal(
+        hasExplicitMemoryForgetRequest(message, forget(message, target)),
+        true,
+        message,
+      );
+    }
+    const message = "Please forget Sohit";
+    assert.equal(
+      hasExplicitMemoryForgetRequest(message, {
+        ...forget(message, "Sohit"),
+        explicitness: "implicit",
+      }),
+      false,
+    );
+    assert.equal(
+      hasExplicitMemoryForgetRequest(message, forget("different evidence", "Sohit")),
+      false,
+    );
   });
 
-  it("memilih topik tanpa meminta ID memory", () => {
+  it("memilih semantic target tanpa meminta ID memory", () => {
     assert.deepEqual(
-      memoriesMatchingNaturalTarget(items, "Sohit", "lupain soal Sohit")
-        .map((item) => item.id),
+      memoriesMatchingNaturalTarget(items, "Sohit").map((item) => item.id),
       ["sohit"],
     );
     assert.deepEqual(
-      memoriesMatchingNaturalTarget(items, "sekolahku", "jangan ingat sekolahku")
-        .map((item) => item.id),
+      memoriesMatchingNaturalTarget(items, "sekolahku").map((item) => item.id),
       ["school"],
     );
   });
 
-  it("memahami yang tadi sebagai source terbaru", () => {
+  it("memakai reference recent sebagai source terbaru tanpa phrase parser", () => {
     assert.deepEqual(
-      memoriesMatchingNaturalTarget(items, "yang tadi", "yang tadi jangan disimpan")
-        .map((item) => item.id),
+      memoriesMatchingNaturalTarget(items, null, "recent").map((item) => item.id),
       ["study"],
     );
   });
 
   it("memisahkan forget-all untuk gerbang konfirmasi", () => {
+    const all = "Delete everything you remember about me";
     assert.equal(
-      isExplicitForgetAllMemories("hapus semua ingatanmu tentang aku"),
+      isExplicitForgetAllMemories(all, {
+        ...forget(all, null),
+        reference: "all",
+      }),
       true,
     );
-    assert.equal(isExplicitForgetAllMemories("lupain semua soal Sohit"), false);
+    assert.equal(
+      isExplicitForgetAllMemories("Lali Sohit", forget("Lali Sohit", "Sohit")),
+      false,
+    );
   });
 });
+
+function forget(message: string, target: string | null): SemanticOperation {
+  return {
+    version: 1,
+    domain: "memory",
+    operation: "forget",
+    target,
+    subject: "self",
+    reference: "none",
+    explicitness: "explicit",
+    evidence: message,
+    confidence: 0.95,
+  };
+}
 
 function memory(id: string, content: string, createdAt: string): MemoryItem {
   return {

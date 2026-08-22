@@ -19,6 +19,7 @@ import { createBot } from "../src/bot/create-bot.js";
 import { PRE_CONSENT_SAFETY } from "../src/bot/onboarding.js";
 import type { AppConfig } from "../src/config.js";
 import type { DataControlService } from "../src/core/data-control-service.js";
+import type { EconomyService } from "../src/core/economy-service.js";
 import { AgentRunService } from "../src/core/agent-run-service.js";
 import type { HistoryService } from "../src/core/history-service.js";
 import type { InsightService } from "../src/core/insight-service.js";
@@ -47,6 +48,13 @@ import type {
 } from "../src/domain/profile.js";
 import type { ActiveSession } from "../src/domain/session.js";
 import type { NewTask, StudentTask } from "../src/domain/task.js";
+import type {
+  SemanticDomain,
+  SemanticExplicitness,
+  SemanticOperation,
+  SemanticOperationName,
+  SemanticReference,
+} from "../src/domain/semantic-operation.js";
 import type { AgentRunCheckpoint } from "../src/harness/agent-harness.js";
 import { privateAgentScope, scopeKey } from "../src/harness/scope.js";
 import { FileAgentRunRepository } from "../src/storage/file-agent-run-repository.js";
@@ -63,6 +71,11 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           intent: "memory",
           memoryAction: "list",
+          semanticOperation: semanticOperation(
+            "memory",
+            "list",
+            "apa yang kamu ingat tentang aku?",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         memoryPortrait: async (context: HarvyContext) => {
@@ -199,6 +212,12 @@ describe("alur adapter Telegram", () => {
           intent: "memory",
           memoryAction: "forget",
           memoryTarget: "Sohit",
+          semanticOperation: semanticOperation(
+            "memory",
+            "forget",
+            "lupain semua yang kamu tahu soal Sohit",
+            "Sohit",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
       } as unknown as Conversation,
@@ -234,6 +253,14 @@ describe("alur adapter Telegram", () => {
           intent: "memory",
           memoryAction: "forget",
           memoryTarget: "semua ingatan tentang aku",
+          semanticOperation: semanticOperation(
+            "memory",
+            "forget",
+            "hapus semua ingatanmu tentang aku",
+            null,
+            "explicit",
+            "all",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
       } as unknown as Conversation,
@@ -269,6 +296,12 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           memoryAction: "remember",
           memories: [{ kind: "personal", content: "Sangat mencintai Sohit" }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "harvy inget aku cintaaa banget sama sohit",
+            "aku cintaaa banget sama sohit",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () =>
@@ -330,6 +363,12 @@ describe("alur adapter Telegram", () => {
             kind: "preference",
             content: "Lebih nyaman belajar pagi",
           }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "inget ya aku lebih nyaman belajar pagi",
+            "aku lebih nyaman belajar pagi",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         assessMemoryPrivacy: async () => false,
@@ -444,6 +483,12 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           memoryAction: "remember",
           memories: [{ kind: "profile", content: "Panggil aku Hafizh" }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "ingat ya panggil aku Hafizh",
+            "panggil aku Hafizh",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         assessMemoryPrivacy: async () => false,
@@ -563,6 +608,12 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           memoryAction: "remember",
           memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "inget ya Sohit pacarku",
+            "Sohit pacarku",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () => "Oke.",
@@ -636,6 +687,12 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           memoryAction: "remember",
           memories: [{ kind: "personal", content: "Memiliki alergi kacang" }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "catat ya aku punya alergi kacang",
+            "aku punya alergi kacang",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () => "Oke, aku paham.",
@@ -720,6 +777,12 @@ describe("alur adapter Telegram", () => {
             { kind: "personal", content: "Sohit adalah pacarku" },
             { kind: "personal", content: "Baru pulang dari rumah sakit" },
           ],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "inget ya Sohit pacarku, btw tadi aku habis dari rumah sakit",
+            "Sohit pacarku",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () => "Oke.",
@@ -764,6 +827,12 @@ describe("alur adapter Telegram", () => {
             kind: "personal",
             content: "Password email adalah CONTOH_SANDI_123",
           }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "ingat password emailku adalah CONTOH_SANDI_123",
+            "password emailku adalah CONTOH_SANDI_123",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () => {
@@ -805,6 +874,12 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           memoryAction: "remember",
           memories: [{ kind: "personal", content: existing.content }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "inget ya aku cinta banget sama Sohit",
+            "aku cinta banget sama Sohit",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () => "Oke.",
@@ -841,6 +916,12 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           memoryAction: "remember",
           memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "ingat ya Sohit pacarku",
+            "Sohit pacarku",
+          ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () => "Aku bakal inget kalau Sohit pacarmu.",
@@ -1150,6 +1231,12 @@ describe("alur adapter Telegram", () => {
             importance: 2,
           },
           memories: [],
+          semanticOperation: semanticOperation(
+            "task",
+            "save",
+            "tolong catat kumpulkan matematika",
+            "kumpulkan matematika",
+          ),
         }),
         triageRisk: async () => {
           triageCalls += 1;
@@ -1232,6 +1319,12 @@ describe("alur adapter Telegram", () => {
             remindAt: null,
             importance: 2,
           },
+          semanticOperation: semanticOperation(
+            "task",
+            "save",
+            "aku kewalahan, tolong catat kumpulkan matematika",
+            "kumpulkan matematika",
+          ),
         }),
         triageRisk: async () => ({
           level: "dukungan",
@@ -1279,6 +1372,11 @@ describe("alur adapter Telegram", () => {
             category: "acute_distress",
             confidence: 0.7,
           },
+          semanticOperation: semanticOperation(
+            "data",
+            "export",
+            "aku lagi kewalahan, ekspor dataku",
+          ),
         }),
         triageRisk: async () => ({
           level: "dukungan",
@@ -1785,6 +1883,11 @@ describe("alur adapter Telegram", () => {
             category: "acute_distress",
             confidence: 0.95,
           },
+          semanticOperation: semanticOperation(
+            "data",
+            "delete-all",
+            "hapus semua dataku, aku belum aman",
+          ),
         }),
         triageRisk: async () => ({
           level: "bahaya",
@@ -2203,6 +2306,12 @@ describe("alur adapter Telegram", () => {
             remindAt: reminderAt,
             importance: 2,
           },
+          semanticOperation: semanticOperation(
+            "task",
+            "save",
+            "ingatkan aku jam 2 pagi minum obat",
+            "minum obat",
+          ),
         }),
         reply: async () => "Aku catat.",
       } as unknown as Conversation,
@@ -3548,13 +3657,20 @@ describe("alur adapter Telegram", () => {
     assert.ok(harness.sent.some((text) => text.includes("model Capybara")));
   });
 
-  it("mengarahkan variasi pertanyaan fitur ke snapshot kemampuan produk", async () => {
+  it("mengarahkan pertanyaan fitur semantic ke menu, bukan capability snapshot", async () => {
     let agentCalls = 0;
     let replyCalls = 0;
     const harness = basicHarness({
       classifyTurnBoundary: async () => "complete",
       triageRisk: async () => CALM_TRIAGE,
-      understand: async () => understanding({ intent: "question" }),
+      understand: async () => understanding({
+        intent: "question",
+        semanticOperation: semanticOperation(
+          "menu",
+          "show",
+          "fitur Harvy apa saja?",
+        ),
+      }),
       agent: async () => {
         agentCalls += 1;
         return { status: "completed", reply: "slice agent" };
@@ -3569,8 +3685,8 @@ describe("alur adapter Telegram", () => {
     await harness.bot.drainPending();
 
     assert.equal(agentCalls, 0);
-    assert.equal(replyCalls, 1);
-    assert.ok(harness.sent.some((text) => text.includes("snapshot kemampuan")));
+    assert.equal(replyCalls, 0);
+    assert.ok(harness.sent.some((text) => text.startsWith("Menu Harvy")));
   });
 
   it("command membatalkan pemahaman aktif tanpa mengirim fallback lama", async () => {
@@ -3743,6 +3859,42 @@ describe("alur adapter Telegram", () => {
     );
   });
 
+  it("/menu deterministik, category-based, dan berbeda dari /bantuan", async () => {
+    let modelCalls = 0;
+    const forbidden = (): never => {
+      modelCalls += 1;
+      throw new Error("menu exact tidak boleh memanggil model");
+    };
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => forbidden(),
+      understand: async () => forbidden(),
+      triageRisk: async () => forbidden(),
+      reply: async () => forbidden(),
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(commandUpdate("/menu", 1));
+    await harness.bot.drainPending();
+    const menu = harness.sent.at(-1) ?? "";
+    assert.match(menu, /^Menu Harvy/u);
+    assert.match(menu, /Penggunaan & paket/u);
+    assert.ok(findCallback(harness.telegramCalls, "menu:usage"));
+
+    await harness.bot.handleUpdate(callbackUpdate("menu:usage", 2));
+    await harness.bot.drainPending();
+    const categoryEdit = harness.telegramCalls.find((call) =>
+      call.method === "editMessageText" &&
+      /\/penggunaan/u.test((call.payload as { text?: string }).text ?? "")
+    );
+    assert.ok(categoryEdit);
+
+    await harness.bot.handleUpdate(commandUpdate("/bantuan", 3));
+    await harness.bot.drainPending();
+    const help = harness.sent.at(-1) ?? "";
+    assert.match(help, /Contoh:/u);
+    assert.notEqual(help, menu);
+    assert.equal(modelCalls, 0);
+  });
+
   it("/penggunaan deterministik, owner-scoped, dan privat di Telegram", async () => {
     let modelCalls = 0;
     let summaryCalls = 0;
@@ -3796,6 +3948,82 @@ describe("alur adapter Telegram", () => {
     assert.match(harness.sent.at(-1) ?? "", /chat pribadi/iu);
     assert.equal(summaryCalls, 1);
     assert.equal(modelCalls, 0);
+  });
+
+  it("menjaga follow-up usage semantic pada surface yang sama dan membaca state baru", async () => {
+    let understandingCalls = 0;
+    let replyCalls = 0;
+    let summaryCalls = 0;
+    const seenContexts: HarvyContext[] = [];
+    const first = "harvy berapa sisa penggunaan ku";
+    const followUp = "detailnya";
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      understand: async (message: string, context: HarvyContext) => {
+        understandingCalls += 1;
+        seenContexts.push(context);
+        return understanding({
+          intent: "question",
+          semanticOperation: semanticOperation(
+            "usage",
+            message === followUp ? "show-details" : "show-summary",
+            message,
+            null,
+            message === followUp ? "contextual" : "explicit",
+            message === followUp ? "recent" : "none",
+          ),
+        });
+      },
+      triageRisk: async () => {
+        throw new Error("usage tenang tidak perlu triase safety");
+      },
+      reply: async () => {
+        replyCalls += 1;
+        throw new Error("usage semantic tidak boleh jatuh ke percakapan/Python");
+      },
+      memoryPortrait: async () => {
+        throw new Error("usage follow-up bukan memory portrait");
+      },
+    } as unknown as Conversation, {} as TaskService, {
+      economy: {} as EconomyService,
+      usageDashboard: {
+        summary: async () => {
+          summaryCalls += 1;
+          const current = usageSummary();
+          return {
+            ...current,
+            allowance: {
+              ...current.allowance,
+              remainingBasisPoints: 6_900 - summaryCalls * 100,
+              usedBasisPoints: 3_100 + summaryCalls * 100,
+            },
+          };
+        },
+      },
+    });
+
+    await harness.bot.handleUpdate(messageUpdate(first, 1));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(messageUpdate(followUp, 2));
+    await harness.bot.drainPending();
+
+    assert.equal(understandingCalls, 2);
+    assert.equal(summaryCalls, 2, "follow-up wajib membaca state usage terbaru");
+    assert.equal(replyCalls, 0);
+    assert.equal(seenContexts[0]?.interactions?.length ?? 0, 0);
+    assert.deepEqual(
+      seenContexts[1]?.interactions?.map(({ domain, operation }) => ({
+        domain,
+        operation,
+      })),
+      [{ domain: "usage", operation: "show-summary" }],
+    );
+    assert.equal(harness.turns.length, 0, "account surface tidak masuk history");
+    assert.equal(
+      harness.sent.filter((text) => /Penggunaan Harvy/u.test(text)).length,
+      2,
+    );
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /Python|memori|maksudmu/iu);
   });
 });
 
@@ -4606,6 +4834,7 @@ function basicHarness(
     failSend?: (text: string) => boolean;
     onSend?: (text: string) => Promise<void> | void;
     usageDashboard?: Pick<UserUsageSummaryService, "summary">;
+    economy?: EconomyService;
   } = {},
 ): {
   bot: ReturnType<typeof createBot>;
@@ -4652,7 +4881,7 @@ function basicHarness(
     overrides.agentRuns,
     overrides.memoryContextCompiler,
     undefined,
-    undefined,
+    overrides.economy,
     overrides.usageDashboard,
   );
   installFakeTelegram(
@@ -4725,7 +4954,29 @@ function understanding(
     actionGoal: null,
     task: null,
     memories: [],
+    semanticOperation: null,
     ...overrides,
+  };
+}
+
+function semanticOperation(
+  domain: SemanticDomain,
+  operation: SemanticOperationName,
+  evidence: string,
+  target: string | null = null,
+  explicitness: SemanticExplicitness = "explicit",
+  reference: SemanticReference = "none",
+): SemanticOperation {
+  return {
+    version: 1,
+    domain,
+    operation,
+    target,
+    subject: "self",
+    reference,
+    explicitness,
+    evidence,
+    confidence: 0.95,
   };
 }
 

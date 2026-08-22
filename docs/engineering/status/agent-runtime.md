@@ -11,6 +11,10 @@ agent, scope/authority, atau executor internal.
 
 - Capability catalog menghasilkan snapshot immutable per scope/surface dan
   hanya mengekspos executor dengan versi serta schema native yang terpasang.
+- Capability availability tidak lagi membuat global catalog hadir di setiap
+  final conversation prompt. `Conversation.reply` biasa hanya menerima human
+  context relevan yang bounded; callable tool schema tetap berada pada planner
+  agent ketika composition benar-benar memasang dan mengotorisasinya.
 - Planner memakai native tool calling tertutup. Plain text, function asing,
   multi-call, argumen rusak, dan control output kosong ditolak sebelum kernel.
 - Seluruh call conversation/group/worker production membawa execution plan

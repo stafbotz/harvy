@@ -2,6 +2,10 @@ import type { MemoryKind } from "../domain/memory.js";
 import type { TaskImportance } from "../domain/task.js";
 import type { SessionSignal } from "../domain/session.js";
 import {
+  parseSemanticOperation,
+  type SemanticOperation,
+} from "../domain/semantic-operation.js";
+import {
   isAdaptiveActionId,
   type AdaptiveActionId,
 } from "../core/action-policy.js";
@@ -87,6 +91,8 @@ export interface Understanding {
   actionGoal?: string | null;
   controlAction?: ControlAction | null;
   sessionSignal?: SessionSignal | null;
+  /** Bounded meaning proposal; never permission or a capability selection. */
+  semanticOperation?: SemanticOperation | null;
 }
 
 const INTENTS: readonly ConversationIntent[] = [
@@ -163,6 +169,7 @@ const MEMORY_MAX_CHARS = 200;
 export function parseUnderstanding(raw: string): Understanding | null {
   const payload = extractJson(raw);
   if (!payload) return null;
+  if (containsPrivateReasoningField(payload)) return null;
 
   let task = readTask(payload["task"]);
   let taskAction = readTaskAction(payload["taskAction"]);
@@ -217,6 +224,9 @@ export function parseUnderstanding(raw: string): Understanding | null {
     payload["safetySensitive"] === true,
   );
   if (!riskHint) return null;
+  const semanticOperation = parseSemanticOperation(
+    payload["semanticOperation"],
+  );
 
   return {
     intent,
@@ -233,7 +243,40 @@ export function parseUnderstanding(raw: string): Understanding | null {
     actionGoal,
     controlAction,
     sessionSignal: readSessionSignal(payload["sessionSignal"]),
+    semanticOperation,
   };
+}
+
+const PRIVATE_REASONING_KEYS = new Set([
+  "chainofthought",
+  "privatereasoning",
+  "reasoningcontent",
+  "reasoningdetails",
+  "thoughtsignature",
+]);
+
+function containsPrivateReasoningField(
+  value: unknown,
+): boolean {
+  const pending: unknown[] = [value];
+  let visited = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === null || typeof current !== "object") continue;
+    // Provider output is JSON, hence acyclic. An excessively nested/wide
+    // payload is invalid rather than a reason to stop inspecting fail-open.
+    if (++visited > 1_000) return true;
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    for (const [key, entry] of Object.entries(current)) {
+      const normalizedKey = key.toLowerCase().replaceAll(/[^a-z]/gu, "");
+      if (PRIVATE_REASONING_KEYS.has(normalizedKey)) return true;
+      pending.push(entry);
+    }
+  }
+  return false;
 }
 
 function readRoutingAssessment(value: unknown): RoutingAssessment | null {

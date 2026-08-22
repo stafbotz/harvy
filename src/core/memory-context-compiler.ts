@@ -65,6 +65,7 @@ export interface CompiledMemoryContext {
 export interface MemoryContextCompileOptions {
   allowRetrieval?: boolean;
   signal?: AbortSignal;
+  semanticOperation?: import("../domain/semantic-operation.js").SemanticOperation | null;
 }
 
 /**
@@ -92,6 +93,7 @@ export class MemoryContextCompiler {
     const plan = planMemoryQuery(rawRequest, {
       allowRetrieval: false,
       now: this.now(),
+      semanticOperation: options.semanticOperation ?? null,
     });
     return this.contextualizePrivate(ownerId, plan, baseContext, options);
   }
@@ -108,6 +110,7 @@ export class MemoryContextCompiler {
         ? { allowRetrieval: options.allowRetrieval }
         : {}),
       now: this.now(),
+      semanticOperation: options.semanticOperation ?? null,
     });
     const empty = emptyManifest(plan, this.knowledge.hasSemanticProvider());
     if (options.signal?.aborted) {
@@ -127,6 +130,9 @@ export class MemoryContextCompiler {
       summary: normalizedBase.summary,
       turns: normalizedBase.turns,
       memories: normalizedBase.memories,
+      ...(normalizedBase.interactions
+        ? { interactions: normalizedBase.interactions }
+        : {}),
     };
     if (!memoryPlanUsesRetrieval(plan)) {
       this.logger.debug(
@@ -490,12 +496,22 @@ export class MemoryContextCompiler {
         ...(currentRetrieved.length > 0
           ? { retrieved: currentRetrieved }
           : {}),
+        ...(baseContext.interactions
+          ? { interactions: baseContext.interactions }
+          : {}),
       };
     } catch (error) {
       this.routeFailure("context-normalization", error);
       // Tombstone/derivative yang tidak dapat dibaca tidak boleh dilewati
       // dengan membawa ulang summary atau primary memory mentah.
-      return { summary: null, turns: baseContext.turns, memories: [] };
+      return {
+        summary: null,
+        turns: baseContext.turns,
+        memories: [],
+        ...(baseContext.interactions
+          ? { interactions: baseContext.interactions }
+          : {}),
+      };
     }
   }
 

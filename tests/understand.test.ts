@@ -518,6 +518,72 @@ describe("pembacaan balasan model", () => {
     assert.equal(understanding?.intent, "memory");
     assert.equal(understanding?.memoryAction, "edit");
   });
+
+  it("membaca semantic operation exact dan menolak field atau pasangan asing", () => {
+    const valid = {
+      version: 1,
+      domain: "usage",
+      operation: "show-details",
+      target: null,
+      subject: "self",
+      reference: "recent",
+      explicitness: "contextual",
+      evidence: "detailnya",
+      confidence: 0.94,
+    };
+    const parsed = parseUnderstanding(JSON.stringify({
+      intent: "question",
+      semanticOperation: valid,
+    }));
+    assert.deepEqual(parsed?.semanticOperation, valid);
+
+    for (const semanticOperation of [
+      { ...valid, operation: "delete-all" },
+      { ...valid, confidence: 2 },
+      { ...valid, capability: "billing.admin" },
+      { ...valid, target: "" },
+      { ...valid, target: "x".repeat(161) },
+      { ...valid, evidence: "detailnya\nreasoning" },
+    ]) {
+      assert.equal(
+        parseUnderstanding(JSON.stringify({ intent: "question", semanticOperation }))
+          ?.semanticOperation,
+        null,
+      );
+    }
+  });
+
+  it("menolak reasoning privat pada payload provider-neutral", () => {
+    for (const key of [
+      "chain_of_thought",
+      "private_reasoning",
+      "reasoning_content",
+      "reasoning_details",
+      "thought_signature",
+      "chainOfThought",
+      "privateReasoning",
+    ]) {
+      assert.equal(
+        parseUnderstanding(JSON.stringify({
+          intent: "question",
+          semanticOperation: null,
+          nested: { [key]: "rahasia" },
+        })),
+        null,
+        key,
+      );
+    }
+    assert.equal(
+      parseUnderstanding(JSON.stringify({
+        intent: "question",
+        semanticOperation: null,
+        nested: { a: { b: { c: { d: { e: { f: {
+          private_reasoning: "tetap tidak boleh lolos",
+        } } } } } } },
+      })),
+      null,
+    );
+  });
 });
 
 describe("pembacaan tenggat baru", () => {

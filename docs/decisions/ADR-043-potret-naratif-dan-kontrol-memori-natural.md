@@ -4,6 +4,9 @@
 - **Tanggal:** 21 Agustus 2026
 - **Amandemen:** 22 Agustus 2026 — explicit remember adalah consent item-spesifik;
   acknowledgement memakai receipt commit dan bahasa percakapan kontekstual
+- **Disupersesi sebagian:** ADR-044 menggantikan guard frasa pada poin 6 dan 9
+  dengan `SemanticOperation` tervalidasi; lexical matching tetap hanya untuk
+  ranking target owner-local
 - **Pemilik keputusan:** pemilik produk Harvy
 - **Terkait:** ADR-002, ADR-006, ADR-014, ADR-031, ADR-032, ADR-042
 

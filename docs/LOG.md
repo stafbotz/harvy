@@ -40,6 +40,33 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-22 — Semantic operation, transient context, dan menu terpadu
+
+Scope: Understanding, operasi usage/task/memory/session, adapter percakapan
+pribadi Telegram dan WhatsApp, context compiler, command catalog,
+observability, tes, ADR, dan status subsystem.
+
+Changed: natural free text kini dipetakan satu kali ke `SemanticOperation`
+tertutup, lalu code tetap memegang authority dengan evidence dari turn aktif,
+explicitness, confidence, subject, dan target yang cocok. Exact slash command
+tetap deterministik. Follow-up seperti `detailnya` dapat merujuk surface usage
+yang berhasil dikirim melalui transient interaction context yang content-free,
+process-local, TTL-scoped, bounded maksimal tiga, dan baru dicatat setelah
+delivery; state akun selalu dibaca ulang. Konteks jawaban percakapan biasa tidak
+lagi memuat katalog capability global, sedangkan planner agent tetap menerima
+subset callable. `/menu` Telegram dan menu teks WhatsApp kini berasal dari satu
+katalog user-facing; help tetap surface terpisah. Routing role-aware,
+specialist orchestration, serta batas authority tidak diubah.
+
+Verified: suite terarah perubahan PASS 339/339 dalam 23 suite dan recheck
+hardening final PASS 52/52 dalam 4 suite; `npm run check` PASS; `npm test` PASS
+1.646/1.646 dalam 206 suite termasuk build; `npm run context:check` PASS.
+
+Not verified: perilaku multilingual model/provider live, akun Telegram atau
+WhatsApp nyata, UX setelah process restart (transient context sengaja hilang),
+dan latency provider live. Evaluasi yang dijalankan bersifat unit/sintetis,
+bukan bukti live provider.
+
 ## 2026-08-22 — Specialist production opt-in dan role-aware cleanup
 
 Scope: model policy/config/profile, Conversation Agent Runtime, specialist
@@ -350,17 +377,3 @@ model toughest, serta privacy behavior provider eksternal.
 Next: implementasikan resolver+lease authority dan composition produksi secara
 terpisah, lalu jalankan conformance/live test sintetis sebelum capability
 diaktifkan.
-
-## 2026-08-14 — Koordinasi penulisan coding agent menjadi adaptif
-
-Scope: workflow kontribusi, ADR-001/005/038, dan indeks keputusan.
-
-Changed: mandat satu penulis, read-only otomatis untuk peran lain, dan worktree/
-clone wajib bagi penulis kedua dicabut. Agent kini memilih strategi koordinasi
-berdasarkan scope dan risiko, sambil tetap menjaga perubahan yang ada serta
-otoritas pengguna. Invariant runtime `CodingRun` tidak berubah.
-
-Verified: `npm run context:check` PASS; tes kontrak agent PASS 11/11; pencarian
-sumber aktif tidak menemukan mandat lama.
-
-Not verified: kolaborasi live beberapa penulis pada perubahan yang overlap.

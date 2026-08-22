@@ -134,6 +134,17 @@ export function understandingPrompt(now: Date, timeZone: string): string {
     '  "taskAction": "save" | "offer" | null,',
     '  "memoryAction": "list" | "forget" | "edit" | "remember" | null,',
     '  "memoryTarget": string singkat atau null,',
+    '  "semanticOperation": null atau {',
+    '    "version": 1,',
+    '    "domain": "usage" | "billing" | "memory" | "task" | "session" | "menu" | "data" | "history",',
+    '    "operation": "show-summary" | "show-details" | "recommend-plan" | "select-plan" | "set-funding" | "setup-byok" | "cancel-subscription" | "show-support" | "dismiss-support" | "top-up" | "contribute" | "list" | "remember" | "forget" | "edit" | "recall" | "save" | "update" | "complete" | "continue" | "stuck" | "done" | "cancel" | "show" | "show-help" | "show-category" | "show-controls" | "set-timezone" | "set-quiet-hours" | "withdraw-consent" | "export" | "delete-all",',
+    '    "target": string singkat dari pengguna atau null,',
+    '    "subject": "self" | "other" | "unspecified",',
+    '    "reference": "none" | "current" | "recent" | "all" | "quoted",',
+    '    "explicitness": "explicit" | "contextual" | "implicit",',
+    '    "evidence": potongan persis dari pesan saat ini atau null,',
+    '    "confidence": number antara 0 dan 1',
+    "  },",
     '  "controlAction": "data" | "timezone" | "quiet-hours" | "active-session" | "withdraw-consent" | "export" | "delete-all" | null,',
     '  "riskHint": {',
     '    "level": "none" | "possible" | "strong",',
@@ -168,6 +179,50 @@ export function understandingPrompt(now: Date, timeZone: string): string {
     "}",
     "",
     "Aturan:",
+    '- "semanticOperation" wajib selalu hadir, tetapi isi null bila pesan tidak',
+    "  mengusulkan operasi yang tersedia atau maknanya belum cukup pasti.",
+    "- Nilai makna, bukan kata kunci. Bahasa Indonesia, Inggris, Sunda, Jawa,",
+    "  bahasa campuran, slang, dan salah ketik diperlakukan dengan prinsip yang",
+    "  sama. Jangan bergantung pada bahasa tertentu.",
+    '- "semanticOperation" hanya usulan makna. Jangan pernah memasukkan model,',
+    "  provider, capability, tool, permission, storage ID, credential, atau",
+    "  account value ke object ini.",
+    '- "evidence" harus berupa span persis yang benar-benar ada di pesan saat',
+    "  ini, bukan parafrasa atau kutipan dari konteks. Untuk tindakan yang",
+    "  mengubah state, explicitness hanya explicit jika turn saat ini sendiri",
+    "  benar-benar meminta tindakan itu. Pernyataan kewajiban/keinginan tidak",
+    "  sama dengan izin menulis.",
+    '- Gunakan subject self hanya untuk data/account/scope pengguna sendiri.',
+    "  Permintaan tentang akun atau memori orang lain harus subject other dan",
+    "  tidak boleh ditebak sebagai self.",
+    '- Urutan resolusi referensi: maksud eksplisit pesan saat ini; quote/pending;',
+    "  recent interaction; sesi/run aktif; recent turns; memory. Konteks lama",
+    "  tidak boleh mengalahkan permintaan eksplisit baru.",
+    '- Follow-up singkat seperti "detailnya" boleh menjadi usage/show-details',
+    "  dengan explicitness contextual hanya bila recent interaction memang",
+    "  usage. Follow-up selalu meminta kode membaca state terbaru; jangan salin",
+    "  angka dari konteks.",
+    '- Domain usage: show-summary untuk status/kapasitas/paket saat ini;',
+    "  show-details untuk rincian atau follow-up terhadap surface usage.",
+    "  Pertanyaan usage/account tidak pernah menjadi memory atau history hanya",
+    "  karena mengandung kata yang mirip dengan ingatan.",
+    '- Domain billing memakai operasi closed-set di schema. Untuk select-plan,',
+    "  target hanya nama paket yang disebut pengguna. Untuk set-funding, target",
+    '  hanya "wallet-on", "wallet-off", "harvy-first", atau "byok-first";',
+    "  bila tidak yakin isi semanticOperation null. Top-up/contribute harus",
+    "  explicit dan evidence memuat nominal; jangan mengarang nominal.",
+    '- Domain task/save wajib target isi pekerjaan konkret yang merupakan span',
+    "  dari pesan. “Remind me to send the form tomorrow” adalah explicit save;",
+    "  “I should send the form tomorrow” adalah implicit dan bukan izin save.",
+    '- Domain memory harus sejalan dengan memoryAction. remember/forget/edit',
+    "  wajib explicit. Target adalah span fakta/topik dari pesan; reference all",
+    "  hanya bila semua memori benar-benar diminta, recent untuk yang baru saja",
+    "  dirujuk. Recall adalah read-only dan tidak pernah remember.",
+    '- Domain session hanya digunakan bila state sesi aktif ada. done/cancel',
+    "  wajib explicit; jawaban atau lanjutan dapat contextual.",
+    '- Domain menu: show untuk menu utama, show-help untuk panduan, dan',
+    '  show-category dengan target "tasks", "usage", "memory", "coding",',
+    '  "settings", atau "guide" bila kategori disebut jelas.',
     '- "intent" wajib salah satu dari delapan nilai di atas. Jangan membuat nilai',
     '  baru seperti "reminder".',
     '- "task" hanya untuk kewajiban milik pengguna yang ingin dicatat atau',
@@ -177,8 +232,8 @@ export function understandingPrompt(now: Date, timeZone: string): string {
     "  menyebut isinya**, biarkan task null dan taskAction null. Harvy akan",
     '  menanyakannya dulu. Judul seperti "Membuat pengingat" adalah tugas kosong',
     "  dan tidak berguna bagi siapa pun.",
-    '- "taskAction" "save" hanya bila pengguna secara eksplisit meminta Harvy',
-    "  mencatat, menyimpan, atau mengingatkan. Pernyataan seperti “aku harus",
+    '- "taskAction" "save" hanya bila makna pesan secara eksplisit meminta Harvy',
+    "  mencatat, menyimpan, atau mengingatkan, apa pun bahasanya. Pernyataan seperti “aku harus",
     "  bikin presentasi” bukan izin menulis data: isi task bila berguna, tetapi",
     '  taskAction null. "offer" hanya bila kewajiban tersirat di balik',
     "  curhat/cerita dan pantas ditawarkan dulu. Selain itu null.",
@@ -204,8 +259,8 @@ export function understandingPrompt(now: Date, timeZone: string): string {
     '  "remember" bila pengguna secara eksplisit',
     "  meminta fakta baru diingat, dan null untuk pernyataan biasa.",
     '- "remember" adalah sinyal permintaan user turn, bukan izin yang boleh kamu',
-    "  karang. Gunakan hanya untuk verba perintah seperti ingat/inget, simpan,",
-    '  catat, atau idiom "jangan lupa" yang menunjuk fakta konkret. Jangan pakai',
+    "  karang. Gunakan hanya untuk makna perintah explicit lintas bahasa yang",
+    '  menunjuk fakta konkret; kata ingat/simpan hanya contoh, bukan daftar. Jangan pakai',
     '  untuk pertanyaan retrieval ("kamu inget gak...?"), negasi ("jangan',
     '  ingat..."), cerita "aku lupa", atau reminder waktu ("ingetin aku jam 7").',
     "- Bila satu turn memuat fakta lain di luar klausa yang diminta diingat,",
@@ -223,8 +278,8 @@ export function understandingPrompt(now: Date, timeZone: string): string {
     '- Pernyataan bahwa keadaan lama sudah tidak berlaku juga mengusulkan fakta',
     '  kini bila dapat ditulis jujur, misalnya "aku udah nggak mempertimbangkan',
     '  ITB lagi" menjadi context "Tidak lagi mempertimbangkan ITB". Ini perubahan',
-    '  keadaan, bukan permintaan menghapus sejarah. Hanya kata lupakan/hapus/',
-    '  jangan simpan yang menjadi memoryAction forget.',
+    '  keadaan, bukan permintaan menghapus sejarah. Hanya permintaan semantic',
+    '  explicit untuk melupakan yang menjadi memoryAction forget.',
     "- Sebuah pesan boleh berisi perasaan sekaligus tugas. Pilih intent yang",
     "  paling utama, tetapi tetap isi task bila ada pekerjaan nyata.",
     '- "riskHint" hanya sinyal routing acute safety, bukan putusan akhir dan',
@@ -582,6 +637,19 @@ export function contextSection(
 ): string {
   const lines = ["<konteks>"];
 
+  if ((context.interactions?.length ?? 0) > 0) {
+    lines.push(
+      "Permukaan interaksi terbaru (referensi navigasi saja):",
+      "Tidak ada nilai akun atau isi pengguna di sini. Baca state terbaru bila diperlukan.",
+    );
+    for (const interaction of context.interactions ?? []) {
+      lines.push(
+        `- domain=${interaction.domain}; operation=${interaction.operation}; reference=${interaction.reference}`,
+      );
+    }
+    lines.push("");
+  }
+
   if (context.memories.length > 0) {
     lines.push("Yang kamu ingat tentang pengguna ini:");
     for (const memory of context.memories) {
@@ -704,7 +772,8 @@ export function replyPrompt(
   if (
     context.memories.length > 0 ||
     (context.retrieved?.length ?? 0) > 0 ||
-    context.summary
+    context.summary ||
+    (context.interactions?.length ?? 0) > 0
   ) {
     parts.push(
       "",

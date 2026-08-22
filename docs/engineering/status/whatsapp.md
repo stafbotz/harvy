@@ -20,6 +20,12 @@ terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
   `/tarik-izin`, lihat/hapus memori, serta `/hapus-data` dengan konfirmasi exact
   mempunyai perintah teks tertutup. Kontrol lihat/hapus tetap dapat dipakai
   tanpa consent AI aktif.
+- `/menu` dan `/bantuan` mempunyai renderer teks berbeda dari satu katalog
+  user-facing yang sama dengan Telegram, tetapi hanya memuat command WhatsApp
+  yang benar-benar tersedia. Free-text account/menu memakai bounded
+  `SemanticOperation`; code tetap memeriksa raw evidence, explicitness,
+  subject, confidence, owner, dan operation sebelum renderer/service
+  deterministic dipanggil.
 - Private upsert dideduplikasi per account+pengirim lalu dilepas dari callback
   event agar bubble baru tetap dapat masuk selama model bekerja. Setelah
   consent, `MessageBatcher` dan semantic boundary yang sama dengan Telegram
@@ -28,6 +34,12 @@ terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
   History balasan dan settlement usage baru di-commit setelah socket mengakui
   send. Jika delivery terputus, hanya bubble yang sungguh terkirim masuk satu
   logical assistant turn dan unsent continuation tidak diakui.
+- Referen usage/menu/memory juga baru dicatat setelah socket mengakui send.
+  Store process-local terisolasi per owner+channel+conversation, maksimal tiga
+  entry/sepuluh menit, dan hanya membawa domain/operation/reference—bukan isi
+  chat, account value, memory, atau credential. Kegagalan delivery tidak
+  meninggalkan referen atau selection memori yang tak pernah terlihat;
+  withdrawal/full deletion juga membersihkan scope transient.
 - WhatsApp privat memakai shared `ResponsePresentationPlan`, sehingga tidak ada
   aturan maksimal tiga bubble atau truncation respons. Keputusan beat tetap
   sama dengan Telegram; hard splitter 12.000 karakter baru berjalan sesudah
@@ -279,4 +291,5 @@ terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
   `tests/group-coding-delivery-service.test.ts`,
   `tests/group-coding-run-driver.test.ts`, dan
   `tests/group-coding-lifecycle-fence.test.ts`.
-- Keputusan: ADR-009, ADR-011, ADR-016, ADR-023, ADR-024, ADR-037, ADR-039.
+- Keputusan: ADR-009, ADR-011, ADR-016, ADR-023, ADR-024, ADR-037, ADR-039,
+  ADR-044.

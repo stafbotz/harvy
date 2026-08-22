@@ -141,6 +141,7 @@ export function safetyOnlyUnderstanding(): Understanding {
     actionGoal: null,
     controlAction: null,
     sessionSignal: null,
+    semanticOperation: null,
   };
 }
 

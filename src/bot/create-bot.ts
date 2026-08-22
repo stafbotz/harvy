@@ -36,7 +36,10 @@ import type { CodingRun } from "../domain/coding-run.js";
 import { renderCodingRunAnchor } from "../coding/coding-run-anchor.js";
 import type { CodingRuntimeComposition } from "../core/coding-runtime-composition.js";
 import type { EconomyService } from "../core/economy-service.js";
-import { EconomyCommandService } from "../core/economy-command-service.js";
+import {
+  EconomyCommandService,
+  economyCredentialSafetyReply,
+} from "../core/economy-command-service.js";
 import type { UserUsageSummaryService } from "../core/user-usage-summary-service.js";
 import {
   parseUsageDashboardCommand,
@@ -66,7 +69,6 @@ import {
 } from "../core/memory-explicit-consent.js";
 import type { MemoryService } from "../core/memory-service.js";
 import {
-  hasExplicitMemoryForgetRequest,
   isExplicitForgetAllMemories,
   memoriesMatchingNaturalTarget,
   naturalMemoryTargetLabel,
@@ -129,6 +131,14 @@ import type {
 } from "../domain/session.js";
 import type { StudentTask } from "../domain/task.js";
 import {
+  semanticConfidenceBucket,
+  semanticOperationAuthorized,
+  semanticOperationForExactCommand,
+} from "../domain/semantic-operation.js";
+import {
+  TransientInteractionContextStore,
+} from "../core/transient-interaction-context.js";
+import {
   bubblePauseMs,
   adaptiveActionLabel,
   adaptiveActionButtons,
@@ -143,8 +153,8 @@ import {
   formatTask,
   formatTimeSettings,
   formatUsage,
-  HELP_MESSAGE,
   helpActions,
+  menuActions,
   MEMORY_CHANGE_PROMPT,
   MEMORY_PORTRAIT_EMPTY,
   MEMORY_PORTRAIT_UNAVAILABLE,
@@ -168,6 +178,12 @@ import {
   withoutMemoryNote,
   withdrawConsentConfirmActions,
 } from "./messages.js";
+import {
+  renderCommandCategory,
+  renderCommandMenu,
+  renderHelpMessage,
+  type TelegramCommandOptions,
+} from "./commands.js";
 import { ActionOfferStore } from "./action-offers.js";
 import { MessageBatcher } from "./message-batcher.js";
 import {
@@ -351,6 +367,16 @@ export function createBot(
   economy: EconomyService | null = null,
   usageDashboard: Pick<UserUsageSummaryService, "summary"> | null = null,
 ): HarvyBot {
+  const commandOptions: TelegramCommandOptions = Object.freeze({
+    codingRuntime: codingRuntime !== null,
+    githubPublishing: Boolean(codingRuntime?.privateGitHub),
+  });
+  const interactionContext = new TransientInteractionContextStore();
+  const interactionScope = (ownerId: string) => ({
+    ownerId,
+    channel: "telegram" as const,
+    conversationId: ownerId,
+  });
   const economyCommands = economy
     ? new EconomyCommandService(economy, usageDashboard)
     : null;
@@ -364,6 +390,10 @@ export function createBot(
         "telegram",
       );
       await ctx.reply(rendered.text, { parse_mode: "HTML" });
+      interactionContext.record(interactionScope(ownerId), {
+        domain: "usage",
+        operation: "show-summary",
+      });
       return;
     }
     await ctx.reply(
@@ -371,6 +401,10 @@ export function createBot(
         ? formatEconomyUsage(await economy.usage(ownerId))
         : formatUsage(await telemetry.summary(ownerId)),
     );
+    interactionContext.record(interactionScope(ownerId), {
+      domain: "usage",
+      operation: "show-summary",
+    });
   };
   const currentTurnId = (): string | null =>
     currentUsageAttribution()?.turnId ?? null;
@@ -839,7 +873,34 @@ export function createBot(
       async () => {
         await clearPending(ownerId);
         actionOffers.clear(ownerId);
-        await ctx.reply(HELP_MESSAGE, { reply_markup: helpActions() });
+        await ctx.reply(renderHelpMessage(commandOptions, "telegram"), {
+          reply_markup: helpActions(),
+        });
+        interactionContext.record(interactionScope(ownerId), {
+          domain: "menu",
+          operation: "show-help",
+        });
+      },
+    );
+  });
+
+  bot.command("menu", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(
+      ctx,
+      ownerId,
+      "cancel",
+      "Perintah /menu gagal:",
+      async () => {
+        await clearPending(ownerId);
+        actionOffers.clear(ownerId);
+        await ctx.reply(renderCommandMenu(commandOptions, "telegram"), {
+          reply_markup: menuActions(commandOptions),
+        });
+        interactionContext.record(interactionScope(ownerId), {
+          domain: "menu",
+          operation: "show",
+        });
       },
     );
   });
@@ -892,11 +953,22 @@ export function createBot(
         const reply = economy
           ? await economyCommands!.handle(
               ownerId,
-              ctx.message?.text ?? "/dukung",
+              {
+                rawText: ctx.message?.text ?? "/dukung",
+                semanticOperation: semanticOperationForExactCommand(
+                  "billing",
+                  "show-support",
+                  "/dukung",
+                ),
+              },
               currentTurnId() ?? `telegram:${ctx.update.update_id}`,
             )
           : "Harvy bisa digunakan gratis. Kontribusi sukarela belum tersedia pada instalasi ini.";
         await ctx.reply(reply ?? "Kontribusi sukarela tetap opsional dan tidak memengaruhi kualitas Harvy.");
+        interactionContext.record(interactionScope(ownerId), {
+          domain: "billing",
+          operation: "show-support",
+        });
       },
     );
   });
@@ -1240,7 +1312,11 @@ export function createBot(
         "Perintah tak dikenal gagal ditanggapi:",
         async () => {
           await ctx.reply(
-            ["Aku belum punya perintah itu.", "", HELP_MESSAGE].join("\n"),
+            [
+              "Aku belum punya perintah itu.",
+              "",
+              renderHelpMessage(commandOptions, "telegram"),
+            ].join("\n"),
           );
         },
       );
@@ -1741,25 +1817,13 @@ export function createBot(
     ) {
       return;
     }
-    if (
-      economyCommands &&
-      !explicitImmediateDanger &&
-      !urgentBoundary &&
-      !hasExplicitImmediateDangerSignal(text)
-    ) {
-      const accountReply = await economyCommands.handle(
-        ownerId,
-        text,
-        currentTurnId() ?? `telegram:${firstIngressUpdateId}`,
-      );
-      if (accountReply) {
-        if (!(await runtimeIsCurrent(runtime))) return;
-        await ctx.reply(accountReply);
-        // Account/billing controls are deterministic control-plane actions.
-        // Keeping them out of conversation history prevents billing state and
-        // accidentally pasted credentials from becoming future prompt input.
-        return;
-      }
+    const credentialSafetyReply = economyCredentialSafetyReply(text);
+    if (credentialSafetyReply) {
+      if (!(await runtimeIsCurrent(runtime))) return;
+      await ctx.reply(credentialSafetyReply);
+      // Credentials never enter history, memory, semantic compilation, or
+      // transient navigation context.
+      return;
     }
     actionOffers.clear(ownerId);
     if (!runtime.interruptionRelation) {
@@ -1774,10 +1838,7 @@ export function createBot(
       sessions.active(ownerId),
     ]);
     let context = initialContext;
-    const engagedSession =
-      activeSession && sessionAppliesToMessage(activeSession, text)
-        ? activeSession
-        : null;
+    let engagedSession: ActiveSession | null = null;
     const timeZone = profile.timeZone ?? config.defaultTimezone;
     if (!(await runtimeIsCurrent(runtime))) return;
 
@@ -1879,10 +1940,68 @@ export function createBot(
       );
     }
 
-    // Retrieval lama/vector/graph baru boleh dibayar sesudah seluruh fast path
-    // lokal di atas selesai. Jalur bahaya segera tetap memakai recent context
-    // saja agar bantuan akut tidak menunggu provider embedding.
-    if (memoryContextCompiler && !immediateDanger && !urgentBoundary) {
+    let understanding: Understanding | null;
+    let triage: RiskAssessment;
+    let userAlreadyAppended = false;
+    let storedUserTurn: StoredConversationTurn | null = null;
+    let activeRunLaunch: ActiveAgentRun | null = null;
+    let activeRunLaunched = false;
+    let activeRunSurfaceReply = false;
+    const requestRiskTriage = (): Promise<RiskTriage | null> =>
+      conversation
+        .triageRisk(text, ownerId, context, runtime.signal)
+        .catch((error: unknown) => {
+          logger.error(
+            "risk_triage_failed",
+            "Triase keselamatan gagal.",
+            error,
+          );
+          return null;
+        });
+    // Bahaya eksplisit tidak menunggu compiler. Pesan lain baru membayar
+    // triase setelah RiskHint compiler menyatakan possible/strong.
+    const earlyRisk = immediateDanger || urgentBoundary
+      ? requestRiskTriage()
+      : undefined;
+    const readResult = immediateDanger
+      ? ({ value: safetyOnlyUnderstanding() } as const)
+      : await conversation
+        .understand(text, context, {
+          ...runtime,
+          ownerId,
+          timeZone,
+          // The semantic compiler may see bounded active-session state so it
+          // can decide relevance; the session itself is not assumed relevant
+          // merely because it exists.
+          session: activeSession,
+        })
+        .then(
+          (value) => ({ value } as const),
+          (error: unknown) => ({ error } as const),
+        );
+    if (!(await runtimeIsCurrent(runtime))) {
+      await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+      return;
+    }
+
+    understanding = "error" in readResult ? null : readResult.value;
+    const parsedHint = understanding
+      ? parseRiskHint(
+          understanding.riskHint,
+          understanding.safetySensitive,
+        ) ?? NO_RISK_HINT
+      : NO_RISK_HINT;
+    const riskHint = withImmediateDangerHint(
+      parsedHint,
+      immediateDanger || urgentBoundary,
+    );
+    // Retrieval follows the one mechanical understanding pass so activation is
+    // semantic and multilingual. Safety-signalled turns keep the recent-only
+    // path and never wait on an embedding/vector provider.
+    if (
+      memoryContextCompiler && understanding &&
+      riskHint.level === "none" && !immediateDanger && !urgentBoundary
+    ) {
       try {
         const compiled = await memoryContextCompiler.compilePrivate(
           ownerId,
@@ -1890,6 +2009,7 @@ export function createBot(
           context,
           {
             allowRetrieval: true,
+            semanticOperation: understanding.semanticOperation ?? null,
             ...(runtime.signal ? { signal: runtime.signal } : {}),
           },
         );
@@ -1923,59 +2043,6 @@ export function createBot(
       }
       if (!(await runtimeIsCurrent(runtime))) return;
     }
-
-    let understanding: Understanding | null;
-    let triage: RiskAssessment;
-    let userAlreadyAppended = false;
-    let storedUserTurn: StoredConversationTurn | null = null;
-    let activeRunLaunch: ActiveAgentRun | null = null;
-    let activeRunLaunched = false;
-    let activeRunSurfaceReply = false;
-    const requestRiskTriage = (): Promise<RiskTriage | null> =>
-      conversation
-        .triageRisk(text, ownerId, context, runtime.signal)
-        .catch((error: unknown) => {
-          logger.error(
-            "risk_triage_failed",
-            "Triase keselamatan gagal.",
-            error,
-          );
-          return null;
-        });
-    // Bahaya eksplisit tidak menunggu compiler. Pesan lain baru membayar
-    // triase setelah RiskHint compiler menyatakan possible/strong.
-    const earlyRisk = immediateDanger || urgentBoundary
-      ? requestRiskTriage()
-      : undefined;
-    const readResult = immediateDanger
-      ? ({ value: safetyOnlyUnderstanding() } as const)
-      : await conversation
-        .understand(text, context, {
-          ...runtime,
-          ownerId,
-          timeZone,
-          session: engagedSession,
-        })
-        .then(
-          (value) => ({ value } as const),
-          (error: unknown) => ({ error } as const),
-        );
-    if (!(await runtimeIsCurrent(runtime))) {
-      await telemetry.discardUndelivered?.(ownerId, currentTurnId());
-      return;
-    }
-
-    understanding = "error" in readResult ? null : readResult.value;
-    const parsedHint = understanding
-      ? parseRiskHint(
-          understanding.riskHint,
-          understanding.safetySensitive,
-        ) ?? NO_RISK_HINT
-      : NO_RISK_HINT;
-    const riskHint = withImmediateDangerHint(
-      parsedHint,
-      immediateDanger || urgentBoundary,
-    );
     // Bila compiler gagal, tidak adanya RiskHint bukan bukti tenang. Jalankan
     // triase sebagai fallback; bila itu juga gagal, policy tetap memetakan
     // keadaan tanpa bukti kuat ke `unavailable` + jalur percakapan biasa.
@@ -2015,6 +2082,106 @@ export function createBot(
       }
     } else if (!understanding && triage.level !== "biasa") {
       understanding = safetyOnlyUnderstanding();
+    }
+
+    if (understanding && activeSession) {
+      engagedSession = sessionAppliesToMessage(
+          activeSession,
+          text,
+          understanding.semanticOperation,
+        )
+        ? activeSession
+        : null;
+    }
+
+    // Natural-language account/menu requests use the same bounded mechanical
+    // understanding pass as the rest of the turn. These deterministic
+    // surfaces do not enter durable conversation history, and every follow-up
+    // reads fresh state from its owner-scoped service.
+    if (understanding && triage.level === "biasa") {
+      const semantic = understanding.semanticOperation;
+      if (semantic && semanticOperationAuthorized(text, semantic, {
+        domain: "menu",
+        operations: ["show", "show-help", "show-category"],
+        minConfidence: 0.75,
+        explicitness: ["explicit", "contextual"],
+      })) {
+        const rendered = semantic.operation === "show-help"
+          ? renderHelpMessage(commandOptions, "telegram")
+          : semantic.operation === "show-category" && semantic.target
+            ? renderCommandCategory(
+                semantic.target,
+                commandOptions,
+                "telegram",
+              ) ?? renderCommandMenu(commandOptions, "telegram")
+            : renderCommandMenu(commandOptions, "telegram");
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await ctx.reply(rendered, {
+          reply_markup: semantic.operation === "show-help"
+            ? helpActions()
+            : menuActions(commandOptions),
+        });
+        interactionContext.record(interactionScope(ownerId), {
+          domain: "menu",
+          operation: semantic.operation,
+          reference: semantic.reference === "all" ? "all" : "current",
+        });
+        logger.info(
+          "semantic_route_selected",
+          "Semantic turn memakai surface deterministik.",
+          {
+            semanticDomain: semantic.domain,
+            semanticOperation: semantic.operation,
+            confidenceBucket: semanticConfidenceBucket(semantic),
+            route: "menu",
+            recentContextUsed: semantic.explicitness === "contextual",
+            recentContextKind: semantic.explicitness === "contextual"
+              ? "interaction"
+              : "none",
+            deterministic: true,
+            clarificationNeeded: false,
+            semanticFallback: false,
+          },
+        );
+        return;
+      }
+
+      if (economyCommands) {
+        const accountReply = await economyCommands.handle(
+          ownerId,
+          { rawText: text, semanticOperation: semantic },
+          currentTurnId() ?? `telegram:${firstIngressUpdateId}`,
+        );
+        if (accountReply) {
+          if (!(await runtimeIsCurrent(runtime))) return;
+          await ctx.reply(accountReply);
+          if (semantic) {
+            interactionContext.record(interactionScope(ownerId), {
+              domain: semantic.domain,
+              operation: semantic.operation,
+              reference: semantic.reference === "all" ? "all" : "current",
+            });
+          }
+          logger.info(
+            "semantic_route_selected",
+            "Semantic turn memakai surface account deterministik.",
+            {
+              semanticDomain: semantic?.domain ?? "none",
+              semanticOperation: semantic?.operation ?? "none",
+              confidenceBucket: semanticConfidenceBucket(semantic),
+              route: "account",
+              recentContextUsed: semantic?.explicitness === "contextual",
+              recentContextKind: semantic?.explicitness === "contextual"
+                ? "interaction"
+                : "none",
+              deterministic: true,
+              clarificationNeeded: false,
+              semanticFallback: false,
+            },
+          );
+          return;
+        }
+      }
     }
 
     if (!userAlreadyAppended) {
@@ -2085,9 +2252,7 @@ export function createBot(
       const proposedRouteAllowed = proposedRoute.kind === "save-task"
         ? effectPermissions.ordinaryTask
         : proposedRoute.kind === "memory-control"
-          ? effectPermissions.explicitControl &&
-            (proposedRoute.action !== "forget" ||
-              hasExplicitMemoryForgetRequest(text))
+          ? effectPermissions.explicitControl
         : proposedRoute.kind === "control"
           ? effectPermissions.explicitControl
           : effectPermissions.generalState;
@@ -2113,7 +2278,10 @@ export function createBot(
           return;
         }
         if (route.action !== "forget") return;
-        if (isExplicitForgetAllMemories(text)) {
+        if (isExplicitForgetAllMemories(
+          text,
+          understanding.semanticOperation,
+        )) {
           await confirmMemoryWipe(ctx, ownerId, runtime);
           return;
         }
@@ -2123,7 +2291,7 @@ export function createBot(
         const matches = memoriesMatchingNaturalTarget(
           current,
           route.target,
-          text,
+          route.reference,
         );
         if (matches.length === 0) {
           const response =
@@ -2139,7 +2307,10 @@ export function createBot(
         for (const match of matches) {
           await memories.forget(ownerId, match.id);
         }
-        const label = naturalMemoryTargetLabel(route.target, text);
+        const label = naturalMemoryTargetLabel(
+          route.target,
+          route.reference,
+        );
         const forgottenSubject = label === "yang tadi"
           ? "yang tadi"
           : `yang soal ${label}`;
@@ -2209,7 +2380,11 @@ export function createBot(
         understanding.task === null;
       const explicitRemember = explicitRememberSignaled &&
           effectPermissions.generalState
-        ? explicitMemoryRememberAuthority(text, derivedMemoryCandidates)
+        ? explicitMemoryRememberAuthority(
+            text,
+            derivedMemoryCandidates,
+            understanding.semanticOperation,
+          )
         : null;
       const explicitlyConsented = new Set(
         explicitRemember?.candidateIndexes ?? [],
@@ -2549,6 +2724,7 @@ export function createBot(
               text,
               understanding.sessionSignal,
               engagedSession,
+              understanding.semanticOperation,
             );
             await sessions.progressAfterDelivery(
               ownerId,
@@ -2924,6 +3100,7 @@ export function createBot(
       summary: conversationContext.summary,
       turns: conversationContext.turns,
       memories: relevant,
+      interactions: interactionContext.read(interactionScope(ownerId)),
     };
   }
 
@@ -4689,7 +4866,10 @@ export function createBot(
     await ctx.reply(text, hasEvidence
       ? { reply_markup: memoryPortraitActions() }
       : {});
-    await history.append(ownerId, "harvy", text);
+    interactionContext.record(interactionScope(ownerId), {
+      domain: "memory",
+      operation: "list",
+    });
   }
 
   async function confirmMemoryWipe(
@@ -4827,6 +5007,21 @@ export function createBot(
     target: string,
   ): Promise<void> {
     switch (action) {
+      case "menu": {
+        const rendered = renderCommandCategory(
+          target,
+          commandOptions,
+          "telegram",
+        );
+        if (!rendered) return;
+        await safeEdit(ctx, rendered, menuActions(commandOptions));
+        interactionContext.record(interactionScope(ownerId), {
+          domain: "menu",
+          operation: "show-category",
+        });
+        return;
+      }
+
       case "consent": {
         await acceptConsent(ctx, ownerId, target);
         return;
@@ -5637,6 +5832,7 @@ export function createBot(
     pending.clear(ownerId);
     actionOffers.clear(ownerId);
     held.clear(ownerId);
+    interactionContext.clear(interactionScope(ownerId));
     messageBatcher.invalidate(ownerId);
     history.suspend(ownerId);
     memories.suspend?.(ownerId);
@@ -5690,6 +5886,7 @@ export function createBot(
     pending.clear(ownerId);
     actionOffers.clear(ownerId);
     held.clear(ownerId);
+    interactionContext.clear(interactionScope(ownerId));
     messageBatcher.invalidate(ownerId);
     await dataControls.deleteAll(ownerId);
     messageBatcher.invalidate(ownerId);
@@ -5932,6 +6129,10 @@ export function createBot(
 
     if (active.length === 0) {
       await ctx.reply(emptyListNote());
+      interactionContext.record(interactionScope(ownerId), {
+        domain: "task",
+        operation: "list",
+      });
       return;
     }
 
@@ -5943,6 +6144,10 @@ export function createBot(
       ].join("\n"),
       { reply_markup: taskListActions(active) },
     );
+    interactionContext.record(interactionScope(ownerId), {
+      domain: "task",
+      operation: "list",
+    });
   }
 
   function enqueueBotAction(
@@ -5970,20 +6175,10 @@ export function createBot(
   }
 
   function shouldUseAgentRuntime(
-    text: string,
+    _text: string,
     _mode: "tools" | "orchestrate",
   ): boolean {
-    // Pertanyaan kemampuan produk perlu snapshot lengkap, bukan hanya irisan
-    // executor agent. Jalur reply lama sudah membawa capabilityContext itu.
-    return !isProductCapabilityQuestion(text);
-  }
-
-  function isProductCapabilityQuestion(text: string): boolean {
-    return /\b(?:kamu|harvy).{0,24}(?:bisa apa|dapat apa|kemampuan|fitur|punya (?:tool|alat|fitur))\b/iu.test(text) ||
-      /\b(?:fitur|kemampuan|tool|alat)(?:mu| kamu| harvy).{0,18}\b(?:apa|apa saja|apa aja|punya|tersedia)\b/iu.test(text) ||
-      /\bapa(?: saja| aja)? (?:fitur|kemampuan|tool|alat)(?:mu| kamu| harvy)\b/iu.test(text) ||
-      /\bapa (?:saja|aja) yang bisa kamu lakukan\b/iu.test(text) ||
-      /\bapa yang (?:tidak|nggak|gak) bisa (?:kamu|harvy) lakukan\b/iu.test(text);
+    return true;
   }
 
   function isExplicitPlanningRequest(text: string): boolean {

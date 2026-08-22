@@ -847,8 +847,6 @@ export class Conversation {
     const timeZone = runtime.timeZone ?? this.defaultTimeZone;
     const { context: boundedContext, manifest: contextManifest } =
       compileHarvyContext(context);
-    const scope = this.runtimeScope(runtime);
-
     const base = replyPrompt(understanding.intent, {
       context: boundedContext,
       style,
@@ -871,7 +869,10 @@ export class Conversation {
     // apa pun — persis perilaku yang sedang diperbaiki, muncul kembali tepat
     // ketika sistemnya paling rapuh. Kegagalan triase kini ditangani dengan
     // menaikkan tingkat, bukan dengan prompt cadangan yang berbeda.
-    const system = `${base}\n\n${this.harness.capabilityContext(scope)}${safetyGuidance(triage)}${
+    // Ordinary conversation receives relevant human context, not the global
+    // capability registry. Callable tool schemas remain confined to the agent
+    // planner where code has actually installed and authorized those tools.
+    const system = `${base}${safetyGuidance(triage)}${
       modelIdentityQuestion
         ? `\n\n${CAPYBARA_MIXED_MESSAGE_GUIDANCE}`
         : ""

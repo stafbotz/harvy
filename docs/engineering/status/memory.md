@@ -32,8 +32,9 @@ learning, storage, atau kontrol data yang bukan policy safety.
   membentuk interval baru. Personal/sensitif yang hanya diceritakan tetap
   memerlukan consent bertoken dan inferred sensitive tidak disimpan otomatis.
   Jika user turn secara eksplisit memerintahkan Harvy mengingat satu item,
-  kombinasi `memoryAction: "remember"` tervalidasi dan guard teks lokal memberi
-  consent hanya kepada candidate yang cocok. Item itu langsung masuk primary
+  kombinasi `memoryAction: "remember"` dan `SemanticOperation` exact tervalidasi;
+  code mengikat evidence+target ke raw turn dan memberi consent hanya kepada
+  candidate yang cocok. Item itu langsung masuk primary
   memory beserta derivation normal tanpa prompt izin kedua. Negasi, retrieval,
   reminder, signal tanpa candidate match, serta fakta lain dalam turn yang sama
   tidak memperoleh authority. Credential ditolak di adapter dan service.
@@ -49,7 +50,9 @@ learning, storage, atau kontrol data yang bukan policy safety.
   dan lesson lewat RRF, lalu menerapkan validity, privacy/suppression,
   provenance, health, serta satu budget context bersama. Sapaan/perhitungan
   biasa tidak memanggil archive, embedding, graph berat, procedure, lesson,
-  user model, atau reflection.
+  user model, atau reflection. Semantic memory/history recall dapat mengaktifkan
+  route lintas bahasa; pattern lexical lama tetap fallback/ranking, bukan satu-
+  satunya parser makna.
 - Potret `/memori` adalah satu-satunya jalur UI yang sengaja membayar synthesis
   khusus. Query potret memilih primary, episode relevan, semantic, graph, dan
   user model dalam budget compiler 8 item/3.000 karakter; procedure dan error
@@ -84,10 +87,11 @@ learning, storage, atau kontrol data yang bukan policy safety.
   `📍` bersifat opsional untuk write/update terkonfirmasi, `💭` opsional hanya
   untuk recall lama, dan balasan tanpa emoji tetap sah. Tidak ada tombol
   `Lupakan itu` per item.
-  Pengguna tetap dapat berkata `yang tadi jangan disimpan`, `lupain yang soal
-  X`, atau memakai kontrol Data & izin. Mutasi scoped forget memerlukan kata
-  forget eksplisit dari teks pengguna sebelum matcher owner-local boleh memilih
-  source; model tidak diberi kuasa menghapus hanya dari klasifikasinya.
+  Pengguna tetap dapat meminta secara natural agar yang tadi atau topik X
+  dilupakan, atau memakai kontrol Data & izin. Mutasi scoped forget memerlukan
+  `SemanticOperation` explicit dengan evidence dari raw turn sebelum matcher
+  lexical owner-local boleh meranking source; model tidak diberi kuasa
+  menghapus hanya dari klasifikasinya. Forget-all tetap masuk confirmation.
 - Ekspor v4 mencakup primary memory, hot history, cold archive, semantic/graph,
   user model, versioned procedures, error lessons, candidates, dan metadata
   outbox tanpa credential atau payload operational tersembunyi. Insight
@@ -130,8 +134,8 @@ learning, storage, atau kontrol data yang bukan policy safety.
 - Pada cerita implicit, dua model masih dapat sama-sama salah menilai isi
   sensitif sebagai biasa. Consent, notice, export, dan forget membatasi dampak,
   tetapi bukan pengganti klasifikasi yang sempurna. Guard explicit remember
-  juga sengaja lexical/konservatif: parafrasa perintah yang tidak dapat
-  dicocokkan ke candidate gagal tertutup tanpa write, bukan menebak izin.
+  juga sengaja konservatif setelah evidence semantik: parafrasa candidate yang
+  tidak dapat dicocokkan gagal tertutup tanpa write, bukan menebak izin.
   Episode merupakan ringkasan model; provenance membuktikan source/coverage,
   bukan kebenaran klaim.
 
@@ -158,9 +162,10 @@ learning, storage, atau kontrol data yang bukan policy safety.
   `tests/persistent-embedding-index.test.ts`, `tests/memory-portrait.test.ts`,
   `tests/memory-natural-control.test.ts`, `tests/group-memory-service.test.ts`,
   `tests/group-turn-service.test.ts`, `tests/project-memory-service.test.ts`,
-  dan `tests/create-bot-flow.test.ts`.
-- Gerbang terakhir: tes terarah acknowledgement/explicit/Telegram/group
-  223/223 lulus; `npm run check` PASS; `npm test` PASS, 1.575/1.575 test dalam
-  199 suite; `npm run context:check` PASS; dan `git diff --check` PASS selain
-  peringatan line-ending Windows.
-- Keputusan: ADR-006, ADR-014, ADR-030, ADR-031, ADR-032, ADR-042, ADR-043.
+  `tests/memory-query-plan.test.ts`, dan `tests/create-bot-flow.test.ts`.
+- Gerbang terakhir 22 Agustus 2026: suite terarah perubahan 339/339 dan recheck
+  hardening final 52/52 lulus; `npm run check` PASS; `npm test` PASS,
+  1.646/1.646 test dalam 206 suite; `npm run context:check` PASS; dan
+  `git diff --check` PASS selain peringatan line-ending Windows.
+- Keputusan: ADR-006, ADR-014, ADR-030, ADR-031, ADR-032, ADR-042, ADR-043,
+  ADR-044.

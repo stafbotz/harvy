@@ -35,7 +35,10 @@ import {
 import { normalizeTelegramText } from "../bot/messages.js";
 import { MessageBatcher, type MessageBatch } from "../bot/message-batcher.js";
 import { notUnderstoodNote } from "../bot/phrasing.js";
-import type { EconomyCommandService } from "../core/economy-command-service.js";
+import {
+  economyCredentialSafetyReply,
+  type EconomyCommandService,
+} from "../core/economy-command-service.js";
 import type { DataControlService } from "../core/data-control-service.js";
 import type { HistoryService } from "../core/history-service.js";
 import type { MemoryContextCompiler } from "../core/memory-context-compiler.js";
@@ -77,6 +80,21 @@ import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
 } from "../observability/operational-logger.js";
+import {
+  renderCommandCategory,
+  renderCommandMenu,
+  renderHelpMessage,
+} from "../bot/commands.js";
+import {
+  semanticConfidenceBucket,
+  semanticOperationAuthorized,
+  semanticOperationForExactCommand,
+  type SemanticDomain,
+  type SemanticOperationName,
+} from "../domain/semantic-operation.js";
+import {
+  TransientInteractionContextStore,
+} from "../core/transient-interaction-context.js";
 
 export type {
   WhatsAppPrivateReply,
@@ -123,21 +141,23 @@ export interface WhatsAppPrivateConversationOptions {
   operationalLogRetentionDays: number;
 }
 
-const WHATSAPP_PRIVATE_HELP = [
-  "Tulis aja seperti chat pribadi biasa; Harvy akan menjawab lewat nomor WhatsApp ini.",
-  "",
-  "Perintah yang tersedia:",
-  "• /penggunaan — lihat kapasitas akunmu",
-  "• /memori — lihat atau hapus memori yang tersimpan",
-  "• /hapus-data — hapus seluruh data setelah konfirmasi",
-  "• /izin — baca cara pesan dan data diproses",
-  "• /tarik-izin — hentikan pemrosesan AI sampai kamu setuju lagi",
-  "• /bantuan — tampilkan pesan ini",
-].join("\n");
+const PRIVATE_COMMAND_OPTIONS = Object.freeze({
+  codingRuntime: false,
+  githubPublishing: false,
+});
 
 const AI_FAILURE_MESSAGE =
   "Maaf, aku lagi nggak bisa mikir sekarang — sambungan ke otakku lagi bermasalah. Coba kirim lagi sebentar lagi, ya.";
 const MAX_PRIVATE_REPLY_CHARACTERS = 12_000;
+
+interface ComposedPrivateReply {
+  text: string;
+  storeHistory: boolean;
+  interaction?: {
+    domain: SemanticDomain;
+    operation: SemanticOperationName;
+  };
+}
 
 interface PrivateIngressCarrier {
   message: WhatsAppPrivateMessage;
@@ -165,6 +185,7 @@ export class WhatsAppPrivateConversation {
   private readonly memorySelections = new Map<string, string[]>();
   private readonly pendingMemoryWipes = new Set<string>();
   private readonly pendingDataDeletions = new Set<string>();
+  private readonly interactionContext = new TransientInteractionContextStore();
   private readonly batcher: MessageBatcher<PrivateIngressCarrier>;
   private acceptingIngress = true;
 
@@ -440,11 +461,39 @@ export class WhatsAppPrivateConversation {
 
     const usageCommand = parseUsageDashboardCommand(text);
     if (usageCommand === "invalid") return USAGE_COMMAND_TARGET_REJECTED;
-    if (usageCommand === "summary" && this.dependencies.usageDashboard) {
-      return renderUsageDashboard(
-        await this.dependencies.usageDashboard.summary(ownerId),
-        "whatsapp",
-      ).text;
+    if (usageCommand === "summary") {
+      if (this.dependencies.usageDashboard) {
+        const rendered = renderUsageDashboard(
+          await this.dependencies.usageDashboard.summary(ownerId),
+          "whatsapp",
+        ).text;
+        return this.interactionAwareReply(
+          ownerId,
+          rendered,
+          "usage",
+          "show-summary",
+        );
+      }
+      const rendered = await this.dependencies.economyCommands?.handle(
+        ownerId,
+        {
+          rawText: text,
+          semanticOperation: semanticOperationForExactCommand(
+            "usage",
+            "show-summary",
+            text,
+          ),
+        },
+        `whatsapp:${message.messageId}`,
+      );
+      if (rendered) {
+        return this.interactionAwareReply(
+          ownerId,
+          rendered,
+          "usage",
+          "show-summary",
+        );
+      }
     }
 
     if (isConsentDetail(text)) return this.consentExplanation();
@@ -466,6 +515,7 @@ export class WhatsAppPrivateConversation {
       this.held.clear(ownerId);
       this.memorySelections.delete(ownerId);
       this.pendingMemoryWipes.delete(ownerId);
+      this.clearInteraction(ownerId);
       await this.dependencies.dataControls?.deleteAll(ownerId);
       return "Seluruh data Harvy dalam scope WhatsApp pribadimu sudah dihapus. Pesan berikutnya akan kembali ke persetujuan awal.";
     }
@@ -515,6 +565,7 @@ export class WhatsAppPrivateConversation {
       this.memorySelections.delete(ownerId);
       this.pendingMemoryWipes.delete(ownerId);
       this.pendingDataDeletions.delete(ownerId);
+      this.clearInteraction(ownerId);
       this.dependencies.history.suspend(ownerId);
       this.dependencies.memories.suspend(ownerId);
       await this.dependencies.profiles.withdrawConsent(ownerId);
@@ -524,18 +575,33 @@ export class WhatsAppPrivateConversation {
         "Data yang sudah ada tetap tersimpan sampai kamu menghapusnya lewat kontrol data Harvy.",
       ].join("\n\n");
     }
-    if (isHelp(text)) return WHATSAPP_PRIVATE_HELP;
+    if (isMenu(text)) {
+      return this.interactionAwareReply(
+        ownerId,
+        renderCommandMenu(PRIVATE_COMMAND_OPTIONS, "whatsapp"),
+        "menu",
+        "show",
+      );
+    }
+    if (isHelp(text)) {
+      return this.interactionAwareReply(
+        ownerId,
+        renderHelpMessage(PRIVATE_COMMAND_OPTIONS, "whatsapp"),
+        "menu",
+        "show-help",
+      );
+    }
     if (text.startsWith("/")) {
-      return ["Aku belum punya perintah itu di WhatsApp.", "", WHATSAPP_PRIVATE_HELP]
+      return [
+        "Aku belum punya perintah itu di WhatsApp.",
+        "",
+        renderHelpMessage(PRIVATE_COMMAND_OPTIONS, "whatsapp"),
+      ]
         .join("\n");
     }
 
-    const economyReply = await this.dependencies.economyCommands?.handle(
-      ownerId,
-      text,
-      `whatsapp:${message.messageId}`,
-    );
-    if (economyReply) return economyReply;
+    const credentialReply = economyCredentialSafetyReply(text);
+    if (credentialReply) return credentialReply;
 
     return this.runConversationTurn(ownerId, message);
   }
@@ -624,24 +690,36 @@ export class WhatsAppPrivateConversation {
     );
   }
 
-  private async showMemories(ownerId: string): Promise<string> {
+  private async showMemories(ownerId: string): Promise<WhatsAppPrivateReply> {
     const items = await this.dependencies.memories.list(ownerId);
     if (items.length === 0) {
-      this.memorySelections.delete(ownerId);
-      return "Aku belum punya memori tersimpan tentangmu di chat WhatsApp ini.";
+      return this.interactionAwareReply(
+        ownerId,
+        "Aku belum punya memori tersimpan tentangmu di chat WhatsApp ini.",
+        "memory",
+        "list",
+        () => this.memorySelections.delete(ownerId),
+      );
     }
-    this.memorySelections.set(ownerId, items.map((item) => item.id));
+    const memoryIds = items.map((item) => item.id);
     const lines = items.map((item, index) => {
       const content = item.content.trim().replace(/\s+/gu, " ").slice(0, 240);
       return `${index + 1}. ${content}`;
     });
-    return [
+    const response = [
       "Memori yang tersimpan di chat WhatsApp ini:",
       "",
       ...lines,
       "",
       "Kirim /lupakan <nomor> untuk menghapus satu item, atau /lupakan-semua untuk menghapus semuanya.",
     ].join("\n");
+    return this.interactionAwareReply(
+      ownerId,
+      response,
+      "memory",
+      "list",
+      () => this.memorySelections.set(ownerId, memoryIds),
+    );
   }
 
   private async forgetMemory(ownerId: string, index: number): Promise<string> {
@@ -687,7 +765,7 @@ export class WhatsAppPrivateConversation {
           if (!(await privateRuntimeIsCurrent(runtime))) {
             throw new PrivateTurnSupersededError();
           }
-          const delivery = boundedDelivery(prefix, response);
+          const delivery = boundedDelivery(prefix, response.text);
           return this.deliveryAwareReply({
             ownerId,
             turnId,
@@ -696,6 +774,10 @@ export class WhatsAppPrivateConversation {
             startedAt,
             settleUsage: true,
             recordLifecycle: !runtime.isCurrent,
+            storeHistory: response.storeHistory,
+            ...(response.interaction
+              ? { interaction: response.interaction }
+              : {}),
           });
         } catch (error) {
           if (
@@ -724,6 +806,7 @@ export class WhatsAppPrivateConversation {
             startedAt,
             settleUsage: false,
             recordLifecycle: !runtime.isCurrent,
+            storeHistory: true,
           });
         }
       },
@@ -736,7 +819,7 @@ export class WhatsAppPrivateConversation {
     turnId: string,
     runtime: ConversationRuntime = {},
     urgentBoundary = false,
-  ): Promise<string> {
+  ): Promise<ComposedPrivateReply> {
     const text = message.text;
     const [profile, activeSession, relevant, conversationContext] =
       await Promise.all([
@@ -750,18 +833,26 @@ export class WhatsAppPrivateConversation {
       summary: conversationContext.summary,
       turns: conversationContext.turns,
       memories: relevant,
+      interactions: this.interactionContext.read({
+        ownerId,
+        channel: "whatsapp",
+        conversationId: ownerId,
+      }),
     };
     const timeZone = profile.timeZone ?? this.options.defaultTimezone;
 
     if (canUseModelIdentityFastPath(text, context.turns)) {
       await this.noteTurnSignal(ownerId, turnId, "deterministic-fast-path");
       await this.appendUserHistory(ownerId, text, runtime);
-      return CAPYBARA_MODEL_REPLY;
+      return { text: CAPYBARA_MODEL_REPLY, storeHistory: true };
     }
     if (canUseDirectTimeFastPath(text, context.turns)) {
       await this.noteTurnSignal(ownerId, turnId, "deterministic-fast-path");
       await this.appendUserHistory(ownerId, text, runtime);
-      return this.dependencies.conversation.deterministicTimeReply(timeZone);
+      return {
+        text: this.dependencies.conversation.deterministicTimeReply(timeZone),
+        storeHistory: true,
+      };
     }
     const quickReply = !activeSession && context.turns.length === 0 &&
         !context.summary
@@ -770,19 +861,37 @@ export class WhatsAppPrivateConversation {
     if (quickReply) {
       await this.noteTurnSignal(ownerId, turnId, "deterministic-fast-path");
       await this.appendUserHistory(ownerId, text, runtime);
-      return quickReply;
+      return { text: quickReply, storeHistory: true };
     }
 
     const immediateDanger = hasExplicitImmediateDangerSignal(text);
+    let understanding = immediateDanger || urgentBoundary
+      ? safetyOnlyUnderstanding()
+      : await this.dependencies.conversation.understand(text, context, {
+          ...runtime,
+          ownerId,
+          channel: "whatsapp",
+          timeZone,
+          session: activeSession,
+        });
+    await ensurePrivateCurrent(runtime);
+    const parsedHint = understanding
+      ? parseRiskHint(understanding.riskHint, understanding.safetySensitive) ??
+        NO_RISK_HINT
+      : NO_RISK_HINT;
+    const riskHint = withImmediateDangerHint(
+      parsedHint,
+      immediateDanger || urgentBoundary,
+    );
     if (
-      this.dependencies.memoryContextCompiler &&
-      !immediateDanger &&
-      !urgentBoundary
+      this.dependencies.memoryContextCompiler && understanding &&
+      riskHint.level === "none" && !immediateDanger && !urgentBoundary
     ) {
       try {
         const compiled = await this.dependencies.memoryContextCompiler
           .compilePrivate(ownerId, text, context, {
             allowRetrieval: true,
+            semanticOperation: understanding.semanticOperation ?? null,
             ...(runtime.signal ? { signal: runtime.signal } : {}),
           });
         context = compiled.context;
@@ -795,30 +904,6 @@ export class WhatsAppPrivateConversation {
       }
       await ensurePrivateCurrent(runtime);
     }
-
-    await this.appendUserHistory(ownerId, text, runtime);
-    await ensurePrivateCurrent(runtime);
-
-    let understanding = immediateDanger || urgentBoundary
-      ? safetyOnlyUnderstanding()
-      : await this.dependencies.conversation.understand(text, context, {
-          ...runtime,
-          ownerId,
-          channel: "whatsapp",
-          timeZone,
-          session: activeSession && sessionAppliesToMessage(activeSession, text)
-            ? activeSession
-            : null,
-        });
-    await ensurePrivateCurrent(runtime);
-    const parsedHint = understanding
-      ? parseRiskHint(understanding.riskHint, understanding.safetySensitive) ??
-        NO_RISK_HINT
-      : NO_RISK_HINT;
-    const riskHint = withImmediateDangerHint(
-      parsedHint,
-      immediateDanger || urgentBoundary,
-    );
     const triageRequired = understanding === null || riskHint.level !== "none";
     let triage: RiskTriage | null | undefined;
     if (triageRequired) {
@@ -851,11 +936,98 @@ export class WhatsAppPrivateConversation {
       understanding = safetyOnlyUnderstanding();
     }
 
-    if (!understanding) return notUnderstoodNote();
+    if (understanding && assessment.level === "biasa") {
+      const semantic = understanding.semanticOperation;
+      if (semantic && semanticOperationAuthorized(text, semantic, {
+        domain: "menu",
+        operations: ["show", "show-help", "show-category"],
+        minConfidence: 0.75,
+        explicitness: ["explicit", "contextual"],
+      })) {
+        this.logger.info(
+          "semantic_route_selected",
+          "Semantic WhatsApp turn memakai menu deterministik.",
+          {
+            semanticDomain: semantic.domain,
+            semanticOperation: semantic.operation,
+            confidenceBucket: semanticConfidenceBucket(semantic),
+            route: "menu",
+            recentContextUsed: semantic.explicitness === "contextual",
+            recentContextKind: semantic.explicitness === "contextual"
+              ? "interaction"
+              : "none",
+            deterministic: true,
+            clarificationNeeded: false,
+            semanticFallback: false,
+          },
+        );
+        return {
+          text: semantic.operation === "show-help"
+            ? renderHelpMessage(PRIVATE_COMMAND_OPTIONS, "whatsapp")
+            : semantic.operation === "show-category" && semantic.target
+              ? renderCommandCategory(
+                  semantic.target,
+                  PRIVATE_COMMAND_OPTIONS,
+                  "whatsapp",
+                ) ?? renderCommandMenu(PRIVATE_COMMAND_OPTIONS, "whatsapp")
+              : renderCommandMenu(PRIVATE_COMMAND_OPTIONS, "whatsapp"),
+          storeHistory: false,
+          interaction: {
+            domain: "menu",
+            operation: semantic.operation,
+          },
+        };
+      }
+
+      const accountReply = await this.dependencies.economyCommands?.handle(
+        ownerId,
+        { rawText: text, semanticOperation: semantic },
+        `whatsapp:${message.messageId}`,
+      );
+      if (accountReply) {
+        this.logger.info(
+          "semantic_route_selected",
+          "Semantic WhatsApp turn memakai account surface deterministik.",
+          {
+            semanticDomain: semantic?.domain ?? "none",
+            semanticOperation: semantic?.operation ?? "none",
+            confidenceBucket: semanticConfidenceBucket(semantic),
+            route: "account",
+            recentContextUsed: semantic?.explicitness === "contextual",
+            recentContextKind: semantic?.explicitness === "contextual"
+              ? "interaction"
+              : "none",
+            deterministic: true,
+            clarificationNeeded: false,
+            semanticFallback: false,
+          },
+        );
+        return {
+          text: accountReply,
+          storeHistory: false,
+          ...(semantic
+            ? {
+                interaction: {
+                  domain: semantic.domain,
+                  operation: semantic.operation,
+                },
+              }
+            : {}),
+        };
+      }
+    }
+
+    await this.appendUserHistory(ownerId, text, runtime);
+    await ensurePrivateCurrent(runtime);
+
+    if (!understanding) {
+      return { text: notUnderstoodNote(), storeHistory: true };
+    }
 
     const engagedSession = activeSession && sessionAppliesToMessage(
         activeSession,
         text,
+        understanding.semanticOperation,
       )
       ? activeSession
       : null;
@@ -879,7 +1051,7 @@ export class WhatsAppPrivateConversation {
     reply = normalizeTelegramText(reply);
     reply = withEmergencyAvailability(reply, assessment);
     await ensurePrivateCurrent(runtime);
-    return this.guardReply(
+    const guarded = await this.guardReply(
       ownerId,
       text,
       reply,
@@ -888,6 +1060,7 @@ export class WhatsAppPrivateConversation {
       turnId,
       runtime,
     );
+    return { text: guarded, storeHistory: true };
   }
 
   private async appendUserHistory(
@@ -950,6 +1123,11 @@ export class WhatsAppPrivateConversation {
     startedAt: number;
     settleUsage: boolean;
     recordLifecycle: boolean;
+    storeHistory: boolean;
+    interaction?: {
+      domain: SemanticDomain;
+      operation: SemanticOperationName;
+    };
   }): WhatsAppPrivateReply {
     let finalized = false;
     return {
@@ -977,15 +1155,17 @@ export class WhatsAppPrivateConversation {
             ),
           );
         }
-        const historyStored = await this.runDeliveryCommitStep(
-          "whatsapp_private_history_commit_failed",
-          "Balasan privat WhatsApp terkirim tetapi gagal dicatat ke histori.",
-          () => this.dependencies.history.append(
-            input.ownerId,
-            "harvy",
-            deliveredText,
-          ),
-        );
+        const historyStored = input.storeHistory
+          ? await this.runDeliveryCommitStep(
+              "whatsapp_private_history_commit_failed",
+              "Balasan privat WhatsApp terkirim tetapi gagal dicatat ke histori.",
+              () => this.dependencies.history.append(
+                input.ownerId,
+                "harvy",
+                deliveredText,
+              ),
+            )
+          : null;
         if (historyStored) {
           void this.dependencies.history.compact(input.ownerId).catch(
             (error: unknown) => {
@@ -1002,6 +1182,13 @@ export class WhatsAppPrivateConversation {
             "whatsapp_private_turn_record_failed",
             "Hasil giliran privat WhatsApp gagal dicatat setelah delivery.",
             () => this.recordTurn(input, "completed", bubbleCount),
+          );
+        }
+        if (input.interaction) {
+          this.recordInteraction(
+            input.ownerId,
+            input.interaction.domain,
+            input.interaction.operation,
           );
         }
       },
@@ -1029,15 +1216,17 @@ export class WhatsAppPrivateConversation {
               ),
             );
           }
-          const stored = await this.runDeliveryCommitStep(
-            "whatsapp_private_history_commit_failed",
-            "Respons parsial WhatsApp gagal dicatat ke histori.",
-            () => this.dependencies.history.append(
-              input.ownerId,
-              "harvy",
-              deliveredText,
-            ),
-          );
+          const stored = input.storeHistory
+            ? await this.runDeliveryCommitStep(
+                "whatsapp_private_history_commit_failed",
+                "Respons parsial WhatsApp gagal dicatat ke histori.",
+                () => this.dependencies.history.append(
+                  input.ownerId,
+                  "harvy",
+                  deliveredText,
+                ),
+              )
+            : null;
           if (stored) {
             void this.dependencies.history.compact(input.ownerId).catch(
               (error: unknown) => {
@@ -1136,6 +1325,51 @@ export class WhatsAppPrivateConversation {
       );
     }
   }
+
+  private recordInteraction(
+    ownerId: string,
+    domain: SemanticDomain,
+    operation: SemanticOperationName,
+  ): void {
+    this.interactionContext.record({
+      ownerId,
+      channel: "whatsapp",
+      conversationId: ownerId,
+    }, {
+      domain,
+      operation,
+    });
+  }
+
+  private clearInteraction(ownerId: string): void {
+    this.interactionContext.clear({
+      ownerId,
+      channel: "whatsapp",
+      conversationId: ownerId,
+    });
+  }
+
+  private interactionAwareReply(
+    ownerId: string,
+    text: string,
+    domain: SemanticDomain,
+    operation: SemanticOperationName,
+    beforeRecord?: () => void,
+  ): WhatsAppPrivateReply {
+    let finalized = false;
+    return {
+      text,
+      onDelivered: async () => {
+        if (finalized) return;
+        finalized = true;
+        beforeRecord?.();
+        this.recordInteraction(ownerId, domain, operation);
+      },
+      onDeliveryFailed: async () => {
+        finalized = true;
+      },
+    };
+  }
 }
 
 async function privateRuntimeIsCurrent(
@@ -1179,6 +1413,7 @@ function isDeterministicPrivateControl(text: string): boolean {
     isConsentDetail(text) ||
     isConsentWithdrawal(text) ||
     isHelp(text) ||
+    isMenu(text) ||
     isMemoryList(text) ||
     isMemoryWipe(text) ||
     isMemoryWipeConfirmation(text) ||
@@ -1196,12 +1431,12 @@ function isConsentAcceptance(text: string): boolean {
 function isConsentDetail(text: string): boolean {
   const normalized = normalizeCommand(text);
   return normalized === "info" || normalized === "/info" ||
-    normalized === "/izin" || normalized === "jelaskan izin";
+    normalized === "/izin";
 }
 
 function isConsentWithdrawal(text: string): boolean {
   const normalized = normalizeCommand(text);
-  return normalized === "/tarik-izin" || normalized === "tarik izin ai";
+  return normalized === "/tarik-izin";
 }
 
 function isHelp(text: string): boolean {
@@ -1209,9 +1444,13 @@ function isHelp(text: string): boolean {
   return normalized === "/bantuan" || normalized === "/help";
 }
 
+function isMenu(text: string): boolean {
+  return normalizeCommand(text) === "/menu";
+}
+
 function isMemoryList(text: string): boolean {
   const normalized = normalizeCommand(text);
-  return normalized === "/memori" || normalized === "lihat memori";
+  return normalized === "/memori";
 }
 
 function isMemoryWipe(text: string): boolean {

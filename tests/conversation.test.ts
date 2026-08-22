@@ -561,7 +561,7 @@ describe("balasan percakapan", () => {
     assert.equal(requests[2]?.execution?.requestedEffort, "high");
   });
 
-  it("meneruskan capability snapshot runtime agar model sadar batas alatnya", async () => {
+  it("menjaga percakapan biasa bersih dari capability catalog", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(
       recorder(requests, "Aku belum bisa mencari web langsung."),
@@ -581,13 +581,14 @@ describe("balasan percakapan", () => {
     );
 
     const system = requests[0]?.messages[0]?.content ?? "";
-   assert.match(system, /KEMAMPUAN RUNTIME TEPERCAYA/u);
-    assert.doesNotMatch(system, /web\.search|web\.open/u);
-   assert.match(system, /Model hanya boleh mengusulkan tindakan/u);
+    assert.doesNotMatch(system, /KEMAMPUAN RUNTIME TEPERCAYA/u);
+    assert.doesNotMatch(system, /web\.search|web\.open|agent\.delegate|terminal\.run/u);
+    assert.doesNotMatch(system, /capability|tool schema|provider catalog/iu);
     assert.doesNotMatch(system, /pemilik-rahasia/u);
+    assert.equal(requests[0]?.messages.at(-1)?.content, "tolong cari berita hari ini");
   });
 
-  it("menjelaskan agenda internal dan terminal virtual tanpa mengaku punya kalender atau shell host", async () => {
+  it("tidak memuat catalog lengkap meski harness memasang banyak capability", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(
       recorder(requests, "Aku hanya punya agenda internal dan terminal virtual."),
@@ -614,17 +615,13 @@ describe("balasan percakapan", () => {
     );
 
     const system = requests[0]?.messages[0]?.content ?? "";
-    assert.match(
+    assert.doesNotMatch(
       system,
-      /calendar\.agenda: membaca tenggat, pengingat tugas, dan check-in Harvy untuk 1–31 hari atau satu tanggal lokal; bukan kalender Google atau Outlook/u,
+      /calendar\.agenda|terminal\.run|external\.act|agent\.delegate/u,
     );
-    assert.match(
-      system,
-      /terminal\.run: menjalankan perintah terstruktur aman pada workspace virtual kosong tanpa shell host, network, environment, atau berkas Harvy/u,
-    );
-    assert.match(
-      system,
-      /external\.act: Belum ada konektor aplikasi eksternal yang dipasang/u,
+    assert.equal(
+      requests[0]?.messages.at(-1)?.content,
+      "kalender dan terminal apa yang kamu punya?",
     );
   });
 

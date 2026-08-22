@@ -1,3 +1,8 @@
+import {
+  semanticOperationAuthorized,
+  type SemanticOperation,
+} from "../domain/semantic-operation.js";
+
 export type MemoryTemporalMode = "current" | "historical";
 
 export interface MemoryQueryPlan {
@@ -31,6 +36,7 @@ export interface MemoryQueryPlan {
 export interface MemoryQueryPlanningOptions {
   allowRetrieval?: boolean;
   now?: Date;
+  semanticOperation?: SemanticOperation | null;
 }
 
 /**
@@ -44,10 +50,25 @@ export function planMemoryQuery(
   const raw = boundedRawRequest(rawRequest);
   const normalized = normalize(raw);
   const terms = significantTerms(normalized);
+  const semanticProposal = options.semanticOperation ?? null;
+  const semanticMemoryRecall = semanticOperationAuthorized(raw, semanticProposal, {
+    domain: "memory",
+    operations: ["recall"],
+    minConfidence: 0.65,
+    explicitness: ["explicit", "contextual"],
+  });
+  const semanticHistoryRecall = semanticOperationAuthorized(raw, semanticProposal, {
+    domain: "history",
+    operations: ["recall"],
+    minConfidence: 0.65,
+    explicitness: ["explicit", "contextual"],
+  });
+  const semanticRecall = semanticMemoryRecall || semanticHistoryRecall;
   const allowed = options.allowRetrieval !== false &&
     raw.length >= 4 &&
     terms.length > 0 &&
-    !LOCAL_ONLY_PATTERNS.some((pattern) => pattern.test(normalized));
+    (semanticRecall ||
+      !LOCAL_ONLY_PATTERNS.some((pattern) => pattern.test(normalized)));
   const recall = RECALL_PATTERNS.some((pattern) => pattern.test(normalized));
   const temporal = TEMPORAL_PATTERNS.some((pattern) => pattern.test(normalized));
   const relational = RELATION_PATTERNS.some((pattern) => pattern.test(normalized));
@@ -61,13 +82,21 @@ export function planMemoryQuery(
     PERSONALIZATION_TASK_PATTERNS.some((pattern) => pattern.test(normalized));
   const asOf = parseExplicitDate(normalized, options.now ?? new Date());
   const historical = asOf !== null ||
+    (semanticHistoryRecall && semanticProposal?.reference === "all") ||
     PAST_PATTERNS.some((pattern) => pattern.test(normalized));
-  const usefulQuery = terms.slice(0, 20).join(" ");
-  const episodic = allowed && (recall || historical);
+  const semanticQueryTerms = semanticRecall && semanticProposal?.target
+    ? significantTerms(normalize(semanticProposal.target))
+    : [];
+  const usefulQuery = [...new Set([...semanticQueryTerms, ...terms])]
+    .slice(0, 20).join(" ");
+  const episodic = allowed &&
+    (semanticHistoryRecall || recall || historical);
   const semantic = allowed &&
-    (recall || temporal || relational || memorySeeking);
-  const graph = allowed && (relational || temporal);
-  const personalization = allowed && personalizationSeeking;
+    (semanticMemoryRecall || semanticHistoryRecall || recall || temporal || relational || memorySeeking);
+  const graph = allowed &&
+    (relational || temporal || (semanticRecall && Boolean(options.semanticOperation?.target)));
+  const personalization = allowed &&
+    (semanticMemoryRecall || personalizationSeeking);
   const procedural = allowed && (proceduralSeeking || failureSeeking);
   const errorLessons = allowed && failureSeeking;
   const usesRetrieval = episodic || semantic || graph || personalization ||
