@@ -10,6 +10,7 @@ material lama berada di:
 
 - [`log/2026-08-08.md`](log/2026-08-08.md)
 - [`log/2026-08-09.md`](log/2026-08-09.md)
+- [`log/2026-08-13.md`](log/2026-08-13.md)
 - [`log/2026-08-07.md`](log/2026-08-07.md)
 - [`log/2026-08-02-sampai-2026-08-06.md`](log/2026-08-02-sampai-2026-08-06.md)
 - [`log/2026-07-25-sampai-2026-08-02.md`](log/2026-07-25-sampai-2026-08-02.md)
@@ -37,6 +38,53 @@ Next: hanya bila ada tindak lanjut material.
 Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
+
+## 2026-08-22 — Percakapan semantic-first dan interruptible lintas kanal
+
+Scope: kebijakan batas giliran, lifecycle progress, presentasi respons,
+adapter Telegram dan WhatsApp privat/grup, evaluator, tes, dan dokumentasi
+kontrak percakapan.
+
+Changed: seluruh batch, konteks ringkas, dan timing kini menjadi dasar
+assessment semantik `complete|open|incomplete|urgent`; guard lokal dibatasi
+pada bentuk deterministik sempit. Pesan yang masuk saat pekerjaan aktif
+dibedakan menjadi addition, correction, redirect, atau independent supaya
+pekerjaan stale dapat dibatalkan tanpa mematikan percakapan independen.
+Progress memakai satu surface sementara setelah grace period dan hanya
+mengumumkan fase kerja yang benar-benar berjalan. Telegram dan WhatsApp memakai
+planner presentasi bersama tanpa batas personality tiga bubble, memeriksa fence
+sebelum setiap bubble/efek, serta hanya mencatat history dan usage yang
+benar-benar terkirim. Grup WhatsApp tetap diam untuk arus ambient.
+
+Verified: suite terarah PASS 386/386 dalam 21 suite; `npm run check` PASS;
+`npm test` PASS 1.614/1.614 dalam 202 suite; `git diff --check` PASS selain
+warning line-ending Windows.
+
+Not verified: provider/model live, akun Telegram nyata, akun WhatsApp nyata,
+reconnect, edit/delete status, dan interupsi delivery pada jaringan nyata.
+
+## 2026-08-22 — WhatsApp pribadi opt-in dan default-off
+
+Scope: konfigurasi dan transport WhatsApp, percakapan privat, consent, safety,
+context/memory/history, usage/funding, tes, dan dokumentasi kanal.
+
+Changed: `WHATSAPP_PRIVATE_ENABLED` ditambahkan dengan default `false`. Saat
+mati, transport membuang chat pribadi sebelum callback tetapi grup tetap
+berjalan. Saat aktif, pesan pribadi memakai consent `SETUJU`, core percakapan
+dan safety yang sama, scope data WhatsApp terisolasi, kontrol teks izin/memori,
+penghapusan penuh dengan konfirmasi exact, serta settlement history balasan dan
+usage hanya setelah send berhasil.
+Surface khusus Telegram seperti tombol, ZIP/coding, task/reminder, dan sesi
+interaktif belum dipindahkan.
+
+Verified: tes terarah WhatsApp PASS 63/63 dalam 4 suite; `npm run check` dan
+`npm run build` PASS; `npm test` PASS 1.586/1.586 dalam 200 suite;
+`npm run context:check` PASS (6.088 byte, estimasi 1.522 token) dengan warning
+bahwa snapshot CURRENT 21 Agustus mendahului entri ini;
+`git diff --check` PASS selain warning line-ending Windows.
+
+Not verified: akun WhatsApp nyata, reconnect/delivery live, banyak nomor nyata,
+provider/model live, dan parity surface khusus Telegram.
 
 ## 2026-08-21 — Fondasi Harvy Compute dan funding resolver
 
@@ -302,121 +350,3 @@ check` PASS; `npm test` PASS 1.270/1.270 dalam 158 suite termasuk build;
 
 Not verified: WhatsApp/reconnect/model/work live, restart proses nyata,
 reconciliation `unknown`, dan multi-process.
-
-## 2026-08-13 — Fondasi ProjectWorkspace dan coding Phase G–J
-
-Scope: Workspace permission/capability, ProjectWorkspace/safe ZIP/snapshot,
-SandboxRunner policy, CodingRun/repository tools/validators, local git, GitHub
-broker, client HTTP trust-domain, AgentHarness deadline, adapter metadata, tes,
-ADR-033–036, dan status coding.
-
-Changed: Project archive kini masuk parser ZIP internal fail-closed dan menjadi
-snapshot content-addressed read-only dengan revision/rollback, quota logical+
-allocated termasuk working/trash, artifact upload tanpa bit tulis, staged
-retention dan crash recovery,
-ACL/CAS, serta namespace memory project. Sandbox menjadi port trust-domain
-Linux terpisah dengan binding tenant+snapshot, network-off, resource/admission/
-lease/watchdog/artifact policy, late-allocation cleanup, queued-abort guard, dan
-quarantine lease ambigu. Lifecycle lease ditulis durable sebelum allocation,
-dipasangi fence tanpa reattach saat startup, dan baru dihapus sesudah exact disposal
-ACK; adapter SQLite memberi CAS lintas proses. Default tetap unavailable tanpa
-host fallback. Snapshot dialirkan sebagai bundle content-addressed tanpa host
-path; execute mengikat operation/request digest, dan artifact byte diverifikasi
-size+hash sebelum menjadi evidence.
-Lifecycle runtime eksplisit kini menuntaskan recovery sebelum readiness,
-menutup admission secara sinkron, menunggu operasi aktif saat drain, mem-fence
-seluruh record, dan baru menutup journal setelah semua ACK exact. Fence gagal
-mempertahankan record `disposing` agar shutdown tidak mengarang keberhasilan.
-Penghapusan project kini memakai tombstone durable sebelum cleanup. Semua
-jalur project/run gagal tertutup setelah request; saga yang dapat dilanjutkan
-memasang fence pada operasi provider dan seluruh lease sandbox project,
-menghapus evidence termasuk orphan, record run, metadata GitHub lokal, memory,
-serta payload project secara berurutan. Pending commit atau receipt GitHub
-`unknown` menahan cleanup; tombstone completed dipertahankan agar ID tidak
-hidup kembali. Tombstone incomplete kini dipage sebagai locator content-free;
-worker bounded melanjutkan cleanup lokal exact tanpa scope pengguna, efek
-coding/publish non-cleanup baru, atau sapuan trash project lain. Penghapusan ini tidak pernah menghapus
-repository remote.
-Authority dan antrean project sekarang menjadi critical section terstruktur:
-child re-entrant ikut ditunggu, descendant yang lolos wajib revalidasi, dan
-guard tidak dapat dipakai lintas repository realm. Snapshot hanya keluar lewat
-callback satu-kali selama guard ACL+revision masih aktif; disposal working copy
-juga memerlukan guard ACL/project dengan `code.write`.
-CodingRun menegakkan single writer, worker read yang terserialisasi, structured
-patch ber-hash dengan rollback, post-read freshness, ChangeSet/freshness,
-validator receipt yang mengikat task+command, repository map, plan, task-level
-review evidence, rolling event ledger, diff/security gate, pending commit, dan
-recovery tanpa retry. Executor coding berbatas tersedia tetapi belum dipasang
-ke surface produksi; mutasi memerlukan `code.write`, input credential-like
-ditolak pada brief/constraint/plan/path/source sebelum persistence/provider,
-terminalisasi stale merevalidasi authority, execution/artifact ID sandbox harus
-opaque dan credential-free, dan file teks besar tetap dipindai.
-Validator evidence disalin ke store content-addressed sebelum lease sandbox
-dibuang dan diverifikasi lagi saat completion/recovery. Coordinator memiliki
-budget keputusan kumulatif, pause/resume `waiting_input`, state fence per
-action, `sandbox.exec`, serta registri operasi provider yang dapat di-abort dan
-ditunggu secara berbatas oleh deletion fence.
-Scheduler immediate-admission membatasi concurrency global+workspace tanpa
-mengantre scope basi, mencadangkan state revision melalui CAS, dan baru melepas
-slot setelah provider asli quiescent. Receipt conformance deployment wajib
-diverifikasi ulang pada setiap admission; health saja tidak membuka coding.
-Pending commit terjadwal tetap fail-closed sampai recovery authority terpisah
-melakukan reconciliation; jalur coordinator langsung tetap berscope pengguna.
-Supervisor maintenance mengurutkan sandbox recovery, GitHub unknown initial
-pass, lalu deletion initial pass dengan admission tetap tertutup. Shutdown
-menyegel seluruh caller, men-drain mereka, lalu men-drain/menutup sandbox paling
-akhir; failure stop/quiescence tetap fail-closed dan dapat di-retry.
-Local git
-dan GitHub publish dipisah; broker menolak schema asing, memeriksa
-ACL+App+base/target ref, memakai effect ID deterministik, canonical pending
-receipt, ordered attempt, tri-state reconciliation, contract confirmation
-authority/grant sekali pakai tanpa menyimpan proof, workflow effect/approval terpisah,
-server-side operation fence contract, non-force `harvy/*`, dan draft PR. Field
-asing dan nilai yang menyerupai credential ditolak sebelum canonical effect
-atau metadata dipersistenkan. Commit lokal juga menghasilkan descriptor object
-bundle Git content-addressed; exact push mengikatnya ke effect/approval dan
-receipt tidak boleh committed bila broker tidak mengonsumsi seluruh stream
-sesuai size+SHA-256.
-Client HTTP default-off untuk sandbox, local-git, dan GitHub broker memakai
-origin/protocol/audience tetap, proof HMAC service-bound, schema tertutup,
-request proof + response protocol/request-ID echo, AbortSignal tanpa retry
-efek, serta upload/download
-content-addressed berbatas. Mode loopback hanya fixture dev; client ini bukan
-backend isolasi, daemon git, GitHub App broker, atau bukti live. Push kedua pada
-branch Harvy yang sama mengikat immediate parent/head sebelumnya dan tetap
-non-force.
-Grant publish mengikat interaction ID dan audience `workspace-private`;
-interaction group gagal sebelum approval. Detach saat project deletion hanya
-membersihkan ledger/selection credential-free lokal setelah receipt ambigu
-selesai dan tidak melakukan remote unlink atau menghapus repository GitHub.
-Receipt `unknown` kini dapat dipage sebagai locator content-free dan diamati
-worker bounded satu proses setelah restart tanpa scope pengguna atau replay
-branch/push/PR. Worker menerima authority historis exact saat installation sudah
-revoked, memerlukan ACK terminal fenced, dan hanya mencatat agregat; primitive
-ini belum dirangkai di `app.ts` atau membuktikan recovery multi-instance.
-Watchdog AgentHarness mengatribusikan `AbortError` ke owner deadline yang sudah
-dipilih sehingga tie invocation/RunBudget tidak berubah karena scheduler load.
-Semua capability baru default-off.
-
-Verified: `npm run check` PASS; tes terarah G–J/authority/HTTP PASS, 171 test
-dalam 19 suite; `npm test` PASS, 1.120 test dalam 138 suite, 0 gagal;
-`npm run context:check` PASS. Tes mencakup malicious
-archive, tamper/quota, tenant/admission/watchdog, writer/validator/commit race,
-stale zombie, structured guard/escaped source, strict HTTP proof/stream,
-second-run non-force push, exact ref/approval/replay/reconciliation, serta
-penolakan credential-like key dan value.
-
-Not verified: runner Linux/container nyata, seccomp/cgroup/mount/network/secret
-isolation dan streaming cap; daemon local-git/object store dan GitHub App
-broker di trust domain nyata, provision secret identitas service + verifier
-server-side, confirmation controller
-produksi; Workspace ingress/UI/kanal E2E;
-provider/model coding;
-power-loss durability file journal
-pada Windows; serta metadata project/run/evidence/deletion/GitHub
-multi-instance.
-
-Next: pasang dan conformance-test runner, daemon local-git, object store, serta
-GitHub App broker di trust domain terpisah; provision secret identitas service,
-verifier server-side, dan
-confirmation controller; lalu baru rangkai executor/surface dan capability.

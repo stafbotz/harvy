@@ -7,7 +7,13 @@ import type { UserInsight } from "../domain/insight.js";
 import type { StylePreference } from "../domain/profile.js";
 import type { ActiveSession } from "../domain/session.js";
 import type { AiPurpose } from "../domain/telemetry.js";
-import type { TurnBoundaryState } from "../core/turn-taking-policy.js";
+import {
+  normalizeTurnBoundaryAssessment,
+  type TurnBoundaryAssessment,
+  type TurnBoundarySignals,
+  type TurnBoundaryState,
+  type TurnInterruptionRelation,
+} from "../core/turn-taking-policy.js";
 import {
   isTruncatedAiResponse,
   type AiClient,
@@ -51,7 +57,9 @@ import {
   type MemoryAcknowledgementReceipt,
   replyPrompt,
   turnBoundaryInput,
+  turnInterruptionInput,
   TURN_BOUNDARY_PROMPT,
+  TURN_INTERRUPTION_PROMPT,
   understandingInput,
   understandingPrompt,
 } from "./persona.js";
@@ -141,6 +149,11 @@ import {
 import type { RunBudgetAccount } from "../core/run-budget.js";
 import type { TierPrice } from "../core/telemetry-service.js";
 import { prepareAgentContext } from "./agent-context-pressure.js";
+import {
+  capabilityProgressEvent,
+  executionProgressEvent,
+  type ConversationProgressReporter,
+} from "../core/conversation-progress.js";
 
 export interface RoutingConfig {
   mode: "testing" | "production";
@@ -176,6 +189,12 @@ export interface ConversationRuntime {
   /** Cancellation dan generation guard dari adapter untuk run agent panjang. */
   signal?: AbortSignal;
   isCurrent?: () => boolean | Promise<boolean>;
+  /** Barrier hubungan pesan baru; adapter menunggu assessment sebelum efek. */
+  awaitCurrent?: () => Promise<boolean>;
+  /** Adapter menandai pesan user sudah durable agar restart tidak menduplikasi. */
+  markUserCommitted?: () => void;
+  interruptionRelation?: TurnInterruptionRelation | null;
+  progress?: ConversationProgressReporter;
 }
 
 /**
@@ -201,6 +220,8 @@ export interface ConversationRuntime {
 export const UNDERSTANDING_MAX_TOKENS = 2048;
 export const TURN_BOUNDARY_MAX_TOKENS = 128;
 export const TURN_BOUNDARY_TIMEOUT_MS = 2_000;
+export const TURN_INTERRUPTION_MAX_TOKENS = 128;
+export const TURN_INTERRUPTION_TIMEOUT_MS = 2_000;
 
 /**
  * Triase risiko berjalan berbarengan dengan ekstraksi, jadi jatahnya kecil dan
@@ -291,22 +312,24 @@ export class Conversation {
     const timeZone = runtime.timeZone ?? this.defaultTimeZone;
     const { context: boundedContext, manifest: contextManifest } =
       compileHarvyContext(context);
+    const execution = this.execution(
+      modelRoute.tier,
+      "extractor",
+      "mechanical",
+      UNDERSTANDING_MAX_TOKENS,
+      GENERAL_MODEL_DEADLINE_MS,
+      {
+        modelId: modelRoute.modelId,
+        cognitiveRole: modelRoute.role,
+        difficulty: "mechanical",
+      },
+    );
+    runtime.progress?.report({ phase: "checking", detail: "consistency" });
     const raw = await this.client.complete({
       model: modelRoute.modelId,
       temperature: 0,
       maxTokens: UNDERSTANDING_MAX_TOKENS,
-      execution: this.execution(
-        modelRoute.tier,
-        "extractor",
-        "mechanical",
-        UNDERSTANDING_MAX_TOKENS,
-        GENERAL_MODEL_DEADLINE_MS,
-        {
-          modelId: modelRoute.modelId,
-          cognitiveRole: modelRoute.role,
-          difficulty: "mechanical",
-        },
-      ),
+      execution,
       json: true,
       validateResponse: (content) => parseUnderstanding(content) !== null,
       ...(runtime.signal ? { signal: runtime.signal } : {}),
@@ -352,19 +375,22 @@ export class Conversation {
     runtime: ConversationRuntime = {},
   ): Promise<Date | null> {
     const timeZone = runtime.timeZone ?? this.defaultTimeZone;
+    const execution = this.execution(
+      "cheap",
+      "extractor",
+      "mechanical",
+      UNDERSTANDING_MAX_TOKENS,
+      GENERAL_MODEL_DEADLINE_MS,
+    );
+    runtime.progress?.report({ phase: "checking", detail: "consistency" });
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
       maxTokens: UNDERSTANDING_MAX_TOKENS,
-      execution: this.execution(
-        "cheap",
-        "extractor",
-        "mechanical",
-        UNDERSTANDING_MAX_TOKENS,
-        GENERAL_MODEL_DEADLINE_MS,
-      ),
+      execution,
       json: true,
       validateResponse: (content) => parseDueDate(content) !== null,
+      ...(runtime.signal ? { signal: runtime.signal } : {}),
       usage: this.usage(runtime.ownerId, "cheap", "due-date"),
       messages: [
         {
@@ -389,7 +415,23 @@ export class Conversation {
   async classifyTurnBoundary(
     message: string,
     ownerId?: string,
+    context?: Pick<HarvyContext, "turns">,
+    signals?: TurnBoundarySignals,
   ): Promise<TurnBoundaryState> {
+    return (await this.assessTurnBoundary(
+      message,
+      ownerId,
+      context,
+      signals,
+    )).state;
+  }
+
+  async assessTurnBoundary(
+    message: string,
+    ownerId?: string,
+    context?: Pick<HarvyContext, "turns">,
+    signals?: TurnBoundarySignals,
+  ): Promise<TurnBoundaryAssessment> {
     const raw = await this.client.complete({
       model: resolveModel("cheap", this.routing),
       temperature: 0,
@@ -404,20 +446,56 @@ export class Conversation {
       timeoutMs: TURN_BOUNDARY_TIMEOUT_MS,
       maxAttempts: 1,
       json: true,
-      validateResponse: (content) => parseTurnBoundaryDecision(content) !== null,
+      validateResponse: (content) => parseTurnBoundaryAssessment(content) !== null,
       // `urgent` adalah satu-satunya jalur acknowledgment di luar FIFO.
       // Karena itu classifier ini bagian dari keselamatan dan tidak boleh mati
       // hanya karena batas pemakaian percakapan biasa tercapai.
       usage: this.usage(ownerId, "cheap", "turn-boundary", true),
       messages: [
         { role: "system", content: TURN_BOUNDARY_PROMPT },
-        { role: "user", content: turnBoundaryInput(message) },
+        { role: "user", content: turnBoundaryInput(message, context, signals) },
       ],
     });
 
-    const decision = parseTurnBoundaryDecision(raw);
+    const decision = parseTurnBoundaryAssessment(raw);
     if (decision === null) {
       throw new Error("Model tidak mengembalikan keputusan bubble yang sah.");
+    }
+    return decision;
+  }
+
+  async classifyTurnInterruption(
+    activeMessage: string,
+    incomingMessage: string,
+    ownerId?: string,
+  ): Promise<TurnInterruptionRelation> {
+    const raw = await this.client.complete({
+      model: resolveModel("cheap", this.routing),
+      temperature: 0,
+      maxTokens: TURN_INTERRUPTION_MAX_TOKENS,
+      execution: this.execution(
+        "cheap",
+        "classifier",
+        "mechanical",
+        TURN_INTERRUPTION_MAX_TOKENS,
+        TURN_INTERRUPTION_TIMEOUT_MS,
+      ),
+      timeoutMs: TURN_INTERRUPTION_TIMEOUT_MS,
+      maxAttempts: 1,
+      json: true,
+      validateResponse: (content) => parseTurnInterruptionDecision(content) !== null,
+      usage: this.usage(ownerId, "cheap", "turn-boundary"),
+      messages: [
+        { role: "system", content: TURN_INTERRUPTION_PROMPT },
+        {
+          role: "user",
+          content: turnInterruptionInput(activeMessage, incomingMessage),
+        },
+      ],
+    });
+    const decision = parseTurnInterruptionDecision(raw);
+    if (!decision) {
+      throw new Error("Model tidak mengembalikan hubungan interupsi yang sah.");
     }
     return decision;
   }
@@ -812,6 +890,7 @@ export class Conversation {
           : {}),
       },
     );
+    runtime.progress?.report(executionProgressEvent(execution));
 
     const reply = await this.client.complete({
       model: modelRoute.modelId,
@@ -930,7 +1009,23 @@ export class Conversation {
           runBudget,
         ),
       ...(runtime.signal ? { signal: runtime.signal } : {}),
-      ...(runtime.isCurrent ? { isCurrent: runtime.isCurrent } : {}),
+      ...(runtime.isCurrent || runtime.awaitCurrent
+        ? { isCurrent: () => conversationRuntimeIsCurrent(runtime) }
+        : {}),
+      ...(runtime.progress
+        ? {
+            onActivity: (event: {
+              phase: "planning" | "executing";
+              capabilityId: string | null;
+            }) => {
+              runtime.progress!.report(
+                event.phase === "planning" || !event.capabilityId
+                  ? { phase: "thinking", detail: "general" }
+                  : capabilityProgressEvent(event.capabilityId),
+              );
+            },
+          }
+        : {}),
       ...(runtime.runId ? { makeRunId: () => runtime.runId! } : {}),
       ...(runtime.initialAgentInputs
         ? { initialUserInputs: runtime.initialAgentInputs }
@@ -1353,6 +1448,7 @@ export class Conversation {
         difficulty: session.kind === "tutor" ? "deep" : "normal",
       },
     );
+    runtime.progress?.report(executionProgressEvent(execution));
 
     return this.client.complete({
       model: modelRoute.modelId,
@@ -1645,6 +1741,88 @@ export function parseWaitDecision(raw: string): boolean | null {
 export function parseTurnBoundaryDecision(
   raw: string,
 ): TurnBoundaryState | null {
+  return parseTurnBoundaryAssessment(raw)?.state ?? null;
+}
+
+const TURN_BOUNDARY_REASON_CLASSES = new Set([
+  "closed-request",
+  "closed-response",
+  "narrative-opening",
+  "narrative-continuation",
+  "syntactic-fragment",
+  "correction",
+  "redirect",
+  "urgent-danger",
+  "uncertain",
+]);
+
+export function parseTurnBoundaryAssessment(
+  raw: string,
+): TurnBoundaryAssessment | null {
+  const record = parseJsonRecord(raw);
+  if (!record) return null;
+  const state = record["state"];
+  if (
+    state !== "complete" &&
+    state !== "open" &&
+    state !== "incomplete" &&
+    state !== "urgent"
+  ) {
+    // Kompatibilitas defensif bila model masih mengulang kontrak wait lama.
+    return typeof record["wait"] === "boolean"
+      ? normalizeTurnBoundaryAssessment(record["wait"] ? "open" : "complete")
+      : null;
+  }
+  const confidence = record["confidence"];
+  const continuationLikelihood = record["continuationLikelihood"];
+  const reasonClass = record["reasonClass"];
+  if (
+    typeof confidence === "number" && Number.isFinite(confidence) &&
+    typeof continuationLikelihood === "number" &&
+    Number.isFinite(continuationLikelihood) &&
+    typeof reasonClass === "string" &&
+    TURN_BOUNDARY_REASON_CLASSES.has(reasonClass)
+  ) {
+    return normalizeTurnBoundaryAssessment({
+      state,
+      confidence,
+      continuationLikelihood,
+      reasonClass: reasonClass as TurnBoundaryAssessment["reasonClass"],
+    });
+  }
+  if (
+    "confidence" in record ||
+    "continuationLikelihood" in record ||
+    "reasonClass" in record
+  ) {
+    return null;
+  }
+  // Model lama yang hanya mengirim state tetap aman, tetapi metadata default
+  // diberi confidence moderat agar timing tidak berpura-pura pasti.
+  return normalizeTurnBoundaryAssessment(state);
+}
+
+export function parseTurnInterruptionDecision(
+  raw: string,
+): TurnInterruptionRelation | null {
+  const record = parseJsonRecord(raw);
+  const relation = record?.["relation"];
+  return relation === "addition" || relation === "correction" ||
+      relation === "redirect" || relation === "independent"
+    ? relation
+    : null;
+}
+
+async function conversationRuntimeIsCurrent(
+  runtime: ConversationRuntime,
+): Promise<boolean> {
+  if (runtime.signal?.aborted) return false;
+  if (runtime.awaitCurrent && !(await runtime.awaitCurrent())) return false;
+  if (runtime.signal?.aborted) return false;
+  return runtime.isCurrent ? await runtime.isCurrent() : true;
+}
+
+function parseJsonRecord(raw: string): Record<string, unknown> | null {
   const withoutFence = raw
     .replace(/^\s*```(?:json)?/i, "")
     .replace(/```\s*$/, "")
@@ -1662,23 +1840,7 @@ export function parseTurnBoundaryDecision(
     ) {
       return null;
     }
-    const record = parsed as Record<string, unknown>;
-    const state = record["state"];
-    if (
-      state === "complete" ||
-      state === "open" ||
-      state === "incomplete" ||
-      state === "urgent"
-    ) {
-      return state;
-    }
-
-    // Kompatibilitas defensif bila model masih mengulang kontrak lama.
-    return typeof record["wait"] === "boolean"
-      ? record["wait"]
-        ? "open"
-        : "complete"
-      : null;
+    return parsed as Record<string, unknown>;
   } catch {
     return null;
   }

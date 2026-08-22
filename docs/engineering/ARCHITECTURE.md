@@ -104,9 +104,12 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   `data-control-service.ts` (ekspor,
   tombstone, dan penghapusan lintas store), serta
   `adaptive-debounce-policy.ts` (p90 gap content-free per subjek, TTL, dan LRU),
-  `turn-taking-policy.ts` (closed set boundary lokal, koreksi bentuk, serta
-  jendela state-aware 4/7/12 detik). Policy emergency dan policy bentuk giliran
-  sengaja terpisah; disposition keselamatan tetap milik triase risiko.
+  `turn-taking-policy.ts` (assessment boundary terstruktur, pagar lokal sempit,
+  relation interupsi, serta jendela state-aware 4/7/12 detik),
+  `response-presentation.ts` (rencana bubble semantik bersama sebelum hard
+  limit transport), dan `conversation-progress.ts` (satu lifecycle progress
+  sementara dari event kerja nyata). Policy emergency, bentuk giliran,
+  presentation, dan disposition keselamatan tetap terpisah.
   `HistoryService` menerima fungsi peringkas episode dari luar supaya `core/`
   tetap bebas jaringan. `episodic-compaction.ts` membuat provenance/hash,
   hot retention, dan rendering context v2 tanpa merangkum ulang episode lama;
@@ -195,9 +198,11 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   peringkasan episode, dan Agent Runtime).
   Pada free-text Telegram privat pasca-consent, pure policy immediate-danger
   berjalan saat ingress sebelum debounce dan hanya dapat mempercepat ACK.
-  Sesudah settle, closed set lokal memutus satu bubble yang jelas sebagai
-  `complete`/`incomplete`; model `cheap` hanya menjadi fallback
-  `complete|open|incomplete|urgent` untuk jalur boundary yang ambigu. Giliran
+  Sesudah settle, closed set lokal hanya memutus bentuk deterministik sempit;
+  model `cheap` menilai bahasa natural ambigu dari current batch, konteks
+  terbaru, dan timing content-free menjadi state, confidence, continuation
+  likelihood, serta reason class tertutup. Classifier kedua membedakan
+  `addition|correction|redirect|independent` ketika input datang selama work.
   Metadata immediate-danger per bubble dan hasil boundary `urgent` bertahan
   sampai handler. Sebelum consent hanya pesan pertama boleh dinilai; batas
   bubble lain dipertahankan dan baru diperiksa per bagian setelah consent.
@@ -371,12 +376,15 @@ jalur ini tidak membaca transcript dan tidak memanggil model.
 - `src/bot/` — adapter grammY: `create-bot.ts` memasang guard chat pribadi,
   gerbang perkenalan, kontrol data/waktu, alur sesi, tombol, serta fast path
   `/penggunaan`; command usage di grup hanya mengarahkan ke chat pribadi;
-  `message-batcher.ts` menggabungkan bubble serta menyediakan antrean idle bagi
-  worker; `onboarding.ts` memuat naskah kenalan, arahan keselamatan
+  `message-batcher.ts` menggabungkan bubble, menjaga `AbortController`/relation
+  barrier/generation, serta menyediakan antrean idle bagi worker;
+  `onboarding.ts` memuat naskah kenalan, arahan keselamatan
   pra-persetujuan, dan `HeldMessageStore`; `action-offers.ts` menyimpan tawaran
   adaptif bertoken; `phrasing.ts` menyimpan beberapa bentuk untuk tiap kalimat
-  tetap Harvy; `messages.ts` memformat keluaran, memecah balasan menjadi bubble,
-  serta menyusun keyboard; `understanding-route.ts` memeriksa pasangan
+  tetap Harvy; `messages.ts` memformat keluaran dan merender shared response
+  plan sesuai batas Telegram, sementara `create-bot.ts` memagari setiap bubble,
+  mencatat partial delivery, serta mengelola satu transient progress surface;
+  `understanding-route.ts` memeriksa pasangan
   intent/action sebelum adapter mengubah data; `fast-path-policy.ts` membatasi
   acknowledgment dingin dan jawaban pending yang boleh melewati compiler;
   `pending.ts` menyimpan satu langkah sementara yang sedang menunggu jawaban;
@@ -435,15 +443,25 @@ jalur ini tidak membaca transcript dan tidak memanggil model.
 ## WhatsApp
 
 - `src/whatsapp/` — adapter grup WhatsApp beta berbasis `baileys@7.0.0-rc14`
-  serta jalur private command deterministik untuk `/penggunaan`.
+  serta percakapan privat opt-in yang default-off.
   `baileys-account-manager.ts` menjalankan satu auth namespace/socket/reconnect
   supervisor per `accountId`; `baileys-message-normalizer.ts` mempertahankan
   participant PN/LID, tag, quote, dan timestamp;
   `group-message-batcher.ts` menggabungkan burst satu anggota tanpa membuang ID
-  bubble; `config.ts` memvalidasi registry banyak nomor. Ingress private hanya
-  menghasilkan respons untuk command yang dikenali, dideduplikasi dengan ID
-  content-free, dan tidak mengaktifkan percakapan private umum. Detail billing
-  tidak pernah dikirim ke grup. Auth multi-file hanya untuk pengembangan lokal,
+  bubble; `config.ts` memvalidasi registry banyak nomor.
+  `private-conversation.ts` memberi consent gate serta memakai core conversation,
+  safety, context, history, memory, telemetry, dan funding yang sama; transport
+  membuang ingress privat ketika `WHATSAPP_PRIVATE_ENABLED=false`, mendeduplikasi
+  ID content-free, dan baru mengakui history balasan serta usage setelah send
+  berhasil. Private conversation memakai MessageBatcher, cancellation,
+  progress, dan presentation core yang sama dengan Telegram. Batcher grup
+  memakai assessment boundary semantik setelah authority; delivery grup
+  membawa fence generation+observation ke setiap segmen dan melaporkan partial
+  receipt agar context tidak memuat continuation yang tidak terkirim. Direct
+  group turn membuat lifecycle progress bersama hanya setelah authority dan
+  notice terbukti; adapter Baileys merender satu status editable/deletable,
+  sedangkan ambient turn tetap diam. Detail
+  billing tidak pernah dikirim ke grup. Auth multi-file hanya untuk pengembangan lokal,
   bukan penyimpanan produksi.
 
 ## Observability

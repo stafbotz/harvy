@@ -1417,6 +1417,86 @@ describe("alur adapter Telegram", () => {
     assert.ok(harness.sent.some((text) => text.includes("udah aku ubah")));
   });
 
+  it("koreksi membatalkan mutasi tenggat pending yang sudah stale", async () => {
+    const firstStarted = deferredVoid();
+    const relationStarted = deferredVoid();
+    const releaseFirst = deferredVoid();
+    const firstDueAt = new Date("2026-08-09T19:00:00+07:00");
+    const correctedDueAt = new Date("2026-08-09T20:00:00+07:00");
+    const dueUpdates: Date[] = [];
+    let dueDateCalls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        classifyTurnInterruption: async () => {
+          relationStarted.resolve();
+          return "correction";
+        },
+        understandDueDate: async () => {
+          dueDateCalls += 1;
+          if (dueDateCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+            return firstDueAt;
+          }
+          return correctedDueAt;
+        },
+      } as unknown as Conversation,
+      {
+        setDue: async (ownerId: string, taskId: string, date: Date) => {
+          dueUpdates.push(date);
+          return {
+            ...taskFrom({
+              ownerId,
+              chatId: "123",
+              title: "Matematika",
+              dueAt: date,
+              remindAt: null,
+              importance: 2,
+            }),
+            id: taskId,
+            dueAt: date.toISOString(),
+          };
+        },
+      } as unknown as TaskService,
+      {
+        histories: {
+          context: async () => ({ summary: null, turns: [] }),
+          append: async (
+            _ownerId: string,
+            role: "user" | "harvy",
+            text: string,
+          ) => ({
+            sequence: 1,
+            role,
+            text,
+            at: new Date().toISOString(),
+          }),
+          compact: async () => undefined,
+          allow: () => undefined,
+          suspend: () => undefined,
+        } as unknown as HistoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(callbackUpdate("edit:task-1", 1));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(messageUpdate("besok jam 7", 2));
+    await firstStarted.promise;
+
+    await harness.bot.handleUpdate(messageUpdate("jam 8", 3));
+    await relationStarted.promise;
+    releaseFirst.resolve();
+    await harness.bot.drainPending();
+
+    assert.equal(dueDateCalls, 2);
+    assert.deepEqual(dueUpdates, [correctedDueAt]);
+    assert.equal(
+      harness.sent.filter((text) => text.includes("udah aku ubah")).length,
+      1,
+    );
+  });
+
   it("mengikat izin memori sensitif ke proposal yang terlihat", async () => {
     let saved = 0;
     const telegramCalls: TelegramCall[] = [];
@@ -3563,6 +3643,106 @@ describe("alur adapter Telegram", () => {
     );
   });
 
+  it("koreksi saat multi-bubble menghentikan continuation dan history unsent", async () => {
+    const turns: Array<ConversationTurn & { sequence?: number }> = [];
+    let sequence = 0;
+    let injected = false;
+    let botRef!: ReturnType<typeof createBot>;
+    const replyInputs: string[] = [];
+    const conversation = {
+      assessTurnBoundary: async () => ({
+        state: "complete" as const,
+        confidence: 0.95,
+        continuationLikelihood: 0.05,
+        reasonClass: "closed-request" as const,
+      }),
+      classifyTurnBoundary: async () => "complete",
+      classifyTurnInterruption: async () => "correction",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({ intent: "smalltalk" }),
+      reply: async (text: string) => {
+        replyInputs.push(text);
+        return text === "jelaskan pilihan awal?"
+          ? "bubble satu\n\nbubble dua\n\nbubble tiga"
+          : "jawaban revisi";
+      },
+    } as unknown as Conversation;
+    const harness = basicHarness(conversation, {} as TaskService, {
+      histories: {
+        context: async () => ({ summary: null, turns: [...turns] }),
+        append: async (
+          _ownerId: string,
+          role: "user" | "harvy",
+          text: string,
+        ) => {
+          sequence += 1;
+          const turn = {
+            role,
+            text,
+            at: new Date().toISOString(),
+            sequence,
+          };
+          turns.push(turn);
+          return turn;
+        },
+        compact: async () => undefined,
+        allow: () => undefined,
+        suspend: () => undefined,
+      } as unknown as HistoryService,
+      onSend: async (text) => {
+        if (text !== "bubble satu" || injected) return;
+        injected = true;
+        await botRef.handleUpdate(messageUpdate(
+          "eh maksudku pilihan yang baru",
+          2,
+        ));
+      },
+    });
+    botRef = harness.bot;
+
+    await harness.bot.handleUpdate(messageUpdate("jelaskan pilihan awal?", 1));
+    await harness.bot.drainPending();
+
+    assert.deepEqual(harness.sent, ["bubble satu", "jawaban revisi"]);
+    assert.deepEqual(
+      turns.filter((turn) => turn.role === "harvy").map((turn) => turn.text),
+      ["bubble satu", "jawaban revisi"],
+    );
+    assert.deepEqual(replyInputs, [
+      "jelaskan pilihan awal?",
+      "eh maksudku pilihan yang baru",
+    ]);
+  });
+
+  it("kegagalan transport multi-bubble hanya mencatat bagian yang terkirim", async () => {
+    const conversation = {
+      assessTurnBoundary: async () => ({
+        state: "complete" as const,
+        confidence: 0.95,
+        continuationLikelihood: 0.05,
+        reasonClass: "closed-request" as const,
+      }),
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({ intent: "smalltalk" }),
+      reply: async () => "bubble satu\n\nbubble dua\n\nbubble tiga",
+    } as unknown as Conversation;
+    const harness = basicHarness(conversation, {} as TaskService, {
+      failSend: (text) => text === "bubble dua",
+    });
+
+    await harness.bot.handleUpdate(messageUpdate("jelaskan secara singkat?", 1));
+    await harness.bot.drainPending();
+
+    assert.deepEqual(harness.sent, ["bubble satu"]);
+    assert.deepEqual(
+      harness.turns
+        .filter((turn) => turn.role === "harvy")
+        .map((turn) => turn.text),
+      ["bubble satu"],
+    );
+  });
+
   it("/penggunaan deterministik, owner-scoped, dan privat di Telegram", async () => {
     let modelCalls = 0;
     let summaryCalls = 0;
@@ -4104,6 +4284,7 @@ function config(): AppConfig {
     ai: {} as AppConfig["ai"],
     whatsapp: {
       enabled: false,
+      privateEnabled: false,
       pairingMode: "qr",
       accounts: [],
       authFolder: "unused",
@@ -4371,6 +4552,7 @@ function installFakeTelegram(
   sent: string[],
   calls: TelegramCall[] = [],
   failSend?: (text: string) => boolean,
+  onSend?: (text: string) => Promise<void> | void,
 ): void {
   bot.botInfo = {
     id: 999,
@@ -4393,6 +4575,7 @@ function installFakeTelegram(
       const body = payload as { chat_id: number; text: string };
       if (failSend?.(body.text)) throw new Error("Telegram gagal");
       sent.push(body.text);
+      await onSend?.(body.text);
       return {
         ok: true,
         result: {
@@ -4421,6 +4604,7 @@ function basicHarness(
     histories?: HistoryService;
     telegramCalls?: TelegramCall[];
     failSend?: (text: string) => boolean;
+    onSend?: (text: string) => Promise<void> | void;
     usageDashboard?: Pick<UserUsageSummaryService, "summary">;
   } = {},
 ): {
@@ -4471,7 +4655,13 @@ function basicHarness(
     undefined,
     overrides.usageDashboard,
   );
-  installFakeTelegram(bot, sent, telegramCalls, overrides.failSend);
+  installFakeTelegram(
+    bot,
+    sent,
+    telegramCalls,
+    overrides.failSend,
+    overrides.onSend,
+  );
   return { bot, sent, turns, telegramCalls };
 }
 

@@ -23,12 +23,17 @@ import type {
   GroupCodingAuthorityExpectation,
   GroupCodingAuthorityGuard,
 } from "../core/group-workspace-coding-controller.js";
-import type {
-  GroupNoticeTarget,
-  GroupTransport,
+import {
+  GroupReplyPartialDeliveryError,
+  type GroupNoticeTarget,
+  type GroupTransport,
+  type GroupReplyDeliveryResult,
 } from "../core/group-turn-service.js";
 import { GroupAgentRunDeliveryNotCommittedError } from
   "../core/group-agent-run-service.js";
+import { planResponsePresentation } from "../core/response-presentation.js";
+import { TransientConversationProgress } from
+  "../core/conversation-progress.js";
 import type {
   WhatsAppAccountConfig,
   WhatsAppConfig,
@@ -37,6 +42,9 @@ import {
   normalizeBaileysGroupMessage,
   normalizeBaileysPrivateMessage,
   type WhatsAppPrivateMessage,
+  type WhatsAppPrivateReply,
+  type WhatsAppPrivateReplyResult,
+  type WhatsAppPrivateTransport,
 } from "./baileys-message-normalizer.js";
 import {
   NOOP_OPERATIONAL_LOGGER,
@@ -61,8 +69,11 @@ export type WhatsAppAccountStatus =
 
 export interface BaileysAccountEvents {
   onMessage(message: GroupMessage): Promise<void>;
-  /** Mengembalikan response hanya untuk private command yang dikenali. */
-  onPrivateMessage?(message: WhatsAppPrivateMessage): Promise<string | null>;
+  /** Tidak dipasang ketika ingress privat default-off. */
+  onPrivateMessage?(
+    message: WhatsAppPrivateMessage,
+    transport: WhatsAppPrivateTransport,
+  ): Promise<WhatsAppPrivateReplyResult>;
   onGroupActive(
     message: Pick<GroupMessage, "scope" | "accountId" | "groupName" | "at">,
     authorityFence: () => boolean,
@@ -440,8 +451,49 @@ export class BaileysAccountManager
     );
   }
 
-  async sendReply(message: GroupMessage, text: string): Promise<void> {
-    await this.sendText(message, text, message.messageId);
+  async sendReply(
+    message: GroupMessage,
+    text: string,
+    runtimeFence?: GroupNoticeRuntimeFence,
+  ): Promise<GroupReplyDeliveryResult> {
+    const plan = planResponsePresentation(text, {
+      maxSegmentCharacters: 12_000,
+    });
+    const delivered: string[] = [];
+    for (const [index, segment] of plan.segments.entries()) {
+      if (
+        index > 0 &&
+        !(await waitForGroupPresentation(
+          segment.pauseBeforeMs,
+          runtimeFence,
+        ))
+      ) {
+        return groupReplyDelivery(delivered, false);
+      }
+      if (!groupRuntimeFenceAllows(runtimeFence)) {
+        return groupReplyDelivery(delivered, false);
+      }
+      try {
+        await this.sendText(
+          message,
+          segment.text,
+          index === 0 ? message.messageId : undefined,
+          undefined,
+          false,
+          runtimeFence,
+        );
+      } catch (error) {
+        if (delivered.length > 0) {
+          throw new GroupReplyPartialDeliveryError(
+            groupReplyDelivery(delivered, false),
+            error,
+          );
+        }
+        throw error;
+      }
+      delivered.push(segment.text);
+    }
+    return groupReplyDelivery(delivered, true);
   }
 
   /**
@@ -775,6 +827,80 @@ export class BaileysAccountManager
     await runtime.socket.sendPresenceUpdate(
       "composing",
       target.scope.groupId,
+    );
+  }
+
+  createProgress(
+    target: GroupNoticeTarget,
+    seed: string,
+    runtimeFence: GroupNoticeRuntimeFence,
+  ): TransientConversationProgress<{ messageId: string | null }> {
+    const runtime = this.accounts.get(target.accountId);
+    const socket = runtime?.socket ?? null;
+    const generation = runtime?.generation ?? -1;
+    const socketCurrent = (): boolean => Boolean(
+      runtime && socket && !runtime.stopping && runtime.status === "open" &&
+        runtime.socket === socket && this.isCurrent(runtime, generation),
+    );
+    const turnCurrent = (): boolean =>
+      socketCurrent() && groupRuntimeFenceAllows(runtimeFence);
+
+    return new TransientConversationProgress(
+      {
+        show: async (text) => ({
+          messageId: await this.sendText(
+            target,
+            text,
+            undefined,
+            undefined,
+            true,
+            turnCurrent,
+          ),
+        }),
+        update: async (reference, text) => {
+          if (!reference.messageId) {
+            throw new Error("Status grup WhatsApp tidak mempunyai ID pesan.");
+          }
+          await this.sendText(
+            target,
+            text,
+            undefined,
+            undefined,
+            false,
+            turnCurrent,
+            reference.messageId,
+          );
+        },
+        remove: async (reference) => {
+          if (!reference.messageId || !socketCurrent() || !socket) return;
+          await socket.sendMessage(target.scope.groupId, {
+            delete: {
+              remoteJid: target.scope.groupId,
+              fromMe: true,
+              id: reference.messageId,
+            },
+          });
+        },
+        typing: async () => {
+          if (!turnCurrent() || !socket) {
+            throw groupNoticeRuntimeUnavailable();
+          }
+          await socket.sendPresenceUpdate("composing", target.scope.groupId);
+        },
+      },
+      {
+        seed,
+        onError: (operation, error) => {
+          this.logger.debug(
+            "whatsapp_group_progress_operation_failed",
+            "Status kerja grup WhatsApp gagal diperbarui.",
+            {
+              operation,
+              errorType: error instanceof Error ? error.name : "unknown",
+            },
+          );
+        },
+      },
     );
   }
 
@@ -1221,6 +1347,7 @@ export class BaileysAccountManager
       const groupId = raw.key.remoteJid ?? undefined;
       if (!groupId) continue;
       if (!isJidGroup(groupId)) {
+        if (!this.config.privateEnabled) continue;
         const normalized = normalizeBaileysPrivateMessage(raw, {
           accountId: runtime.config.id,
           selfJids: selfJids(socket),
@@ -1233,12 +1360,23 @@ export class BaileysAccountManager
         this.prunePrivateMessageIds(runtime);
         if (runtime.privateMessageIds.has(duplicateKey)) continue;
         this.rememberPrivateMessageId(runtime, duplicateKey);
-        processing.push(this.handlePrivateMessage(
-          runtime,
-          socket,
-          generation,
-          normalized,
-        ));
+        processing.push(
+          this.enqueueGroupOperation(
+            runtime,
+            `private:${normalized.userId}`,
+            async () => {
+              const task = this.handlePrivateMessage(
+                runtime,
+                socket,
+                generation,
+                normalized,
+              );
+              // Callback ingress privat harus kembali cepat agar bubble baru
+              // dapat menginterupsi model/delivery yang sedang berjalan.
+              this.trackEvent(runtime, task);
+            },
+          ),
+        );
         continue;
       }
       processing.push(
@@ -1349,24 +1487,135 @@ export class BaileysAccountManager
     generation: number,
     message: WhatsAppPrivateMessage,
   ): Promise<void> {
+    const transport = this.privateTransport(
+      runtime,
+      socket,
+      generation,
+      message.userId,
+    );
     try {
-      const response = await this.events.onPrivateMessage?.(message);
-      const text = response?.trim() ?? "";
-      if (!text) return;
-      if (
-        !this.acceptingEvents ||
-        runtime.status !== "open" ||
-        !this.isCurrent(runtime, generation) ||
-        runtime.socket !== socket
-      ) {
+      const response = await this.events.onPrivateMessage?.(message, transport);
+      const prepared = typeof response === "string"
+        ? { text: response }
+        : response;
+      const text = prepared?.text.trim() ?? "";
+      if (!text) {
+        if (prepared) {
+          await this.privateDeliveryFailed(prepared, {
+            text: "",
+            bubbleCount: 0,
+            complete: false,
+          });
+        }
         return;
       }
-      await socket.sendMessage(message.userId, { text: text.slice(0, 12_000) });
+      const plan = planResponsePresentation(text, {
+        maxSegmentCharacters: 12_000,
+      });
+      const delivered: string[] = [];
+      try {
+        for (const segment of plan.segments) {
+          await transport.send(segment.text);
+          delivered.push(segment.text);
+        }
+      } catch (error) {
+        await this.privateDeliveryFailed(prepared ?? undefined, {
+          text: delivered.join("\n\n"),
+          bubbleCount: delivered.length,
+          complete: false,
+        });
+        throw error;
+      }
+      try {
+        await prepared?.onDelivered?.({
+          text: delivered.join("\n\n"),
+          bubbleCount: delivered.length,
+          complete: true,
+        });
+      } catch (error) {
+        // Socket sudah mengakui send. Kegagalan commit lokal tidak boleh
+        // diterjemahkan sebagai delivery failure lalu mendiscard usage.
+        this.reportError(runtime.config.id, error);
+      }
     } catch (error) {
       // Error boundary tetap content-free; callback tidak boleh membuat raw
       // private message masuk operational log.
       this.reportError(runtime.config.id, error);
     }
+  }
+
+  private async privateDeliveryFailed(
+    response: WhatsAppPrivateReply | undefined,
+    delivery?: {
+      text: string;
+      bubbleCount: number;
+      complete: boolean;
+    },
+  ): Promise<void> {
+    try {
+      await response?.onDeliveryFailed?.(delivery);
+    } catch (error) {
+      this.logger.error(
+        "whatsapp_private_delivery_failure_commit_failed",
+        "Kegagalan delivery privat WhatsApp tidak dapat diselesaikan.",
+        error,
+      );
+    }
+  }
+
+  private privateTransport(
+    runtime: AccountRuntime,
+    socket: WASocket,
+    generation: number,
+    userId: string,
+  ): WhatsAppPrivateTransport {
+    const isCurrent = (): boolean =>
+      !runtime.stopping &&
+      runtime.status === "open" &&
+      runtime.socket === socket &&
+      this.isCurrent(runtime, generation);
+    const assertCurrent = (): void => {
+      if (!isCurrent()) {
+        throw new Error("Transport privat WhatsApp tidak lagi current.");
+      }
+    };
+    return {
+      isCurrent,
+      send: async (text) => {
+        assertCurrent();
+        const sent = await socket.sendMessage(userId, { text: text.trim() });
+        return { messageId: sent?.key.id ?? null };
+      },
+      edit: async (reference, text) => {
+        assertCurrent();
+        if (!reference.messageId) {
+          throw new Error("Status WhatsApp tidak mempunyai ID untuk diedit.");
+        }
+        await socket.sendMessage(userId, {
+          text: text.trim(),
+          edit: {
+            remoteJid: userId,
+            fromMe: true,
+            id: reference.messageId,
+          },
+        });
+      },
+      remove: async (reference) => {
+        assertCurrent();
+        if (!reference.messageId) return;
+        await socket.sendMessage(userId, {
+          delete: {
+            remoteJid: userId,
+            fromMe: true,
+            id: reference.messageId,
+          },
+        });
+      },
+      typing: async () => {
+        assertCurrent();
+        await socket.sendPresenceUpdate("composing", userId);
+      },
+    };
   }
 
   private async sendText(
@@ -1904,6 +2153,45 @@ function groupRunDeliveryNotCommitted(
 
 function groupNoticeRuntimeUnavailable(): Error {
   return new Error("Authority notice grup tidak aktif atau berubah.");
+}
+
+function groupReplyDelivery(
+  delivered: readonly string[],
+  complete: boolean,
+): GroupReplyDeliveryResult {
+  return {
+    text: delivered.join("\n\n"),
+    bubbleCount: delivered.length,
+    complete,
+  };
+}
+
+function groupRuntimeFenceAllows(
+  runtimeFence?: GroupNoticeRuntimeFence,
+): boolean {
+  if (!runtimeFence) return true;
+  try {
+    return runtimeFence() === true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForGroupPresentation(
+  pauseMs: number,
+  runtimeFence?: GroupNoticeRuntimeFence,
+): Promise<boolean> {
+  if (!groupRuntimeFenceAllows(runtimeFence)) return false;
+  const deadline = Date.now() + Math.max(0, pauseMs);
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, Math.min(50, remaining));
+      timer.unref?.();
+    });
+    if (!groupRuntimeFenceAllows(runtimeFence)) return false;
+  }
+  return groupRuntimeFenceAllows(runtimeFence);
 }
 
 export function reconnectDecision(

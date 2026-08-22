@@ -136,7 +136,7 @@ describe("normalisasi pesan Baileys", () => {
     );
   });
 
-  it("menormalisasi private command tanpa mencampurnya dengan scope grup", () => {
+  it("menormalisasi pesan privat tanpa mencampurnya dengan scope grup", () => {
     const normalized = normalizeBaileysPrivateMessage(
       message({
         key: {

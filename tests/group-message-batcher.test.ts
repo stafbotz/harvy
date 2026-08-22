@@ -402,6 +402,64 @@ describe("batch bubble grup WhatsApp", () => {
     assert.deepEqual(observed, ["A-lambat", "B-cepat"]);
     assert.deepEqual(handled, ["A-lambat", "B-cepat"]);
   });
+
+  it("memakai semantic assessment atas seluruh burst dan tetap cepat untuk hitungan", async () => {
+    const handled: string[] = [];
+    const assessed: string[] = [];
+    const batcher = new GroupMessageBatcher(
+      async (incoming) => {
+        handled.push(incoming.text);
+      },
+      5,
+      120,
+      20,
+      24_000,
+      undefined,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      async (incoming) => {
+        assessed.push(incoming.text);
+        return incoming.text.includes("menurutmu")
+          ? {
+              state: "complete",
+              confidence: 0.95,
+              continuationLikelihood: 0.05,
+              reasonClass: "closed-request",
+            }
+          : {
+              state: "open",
+              confidence: 0.9,
+              continuationLikelihood: 0.9,
+              reasonClass: "narrative-opening",
+            };
+      },
+    );
+
+    const first = batcher.enqueue(message({
+      messageId: "cerita-1",
+      text: "aku bingung loh",
+    }));
+    await delay(25);
+    assert.deepEqual(handled, []);
+    const second = batcher.enqueue(message({
+      messageId: "cerita-2",
+      text: "menurutmu aku pilih mana?",
+    }));
+    await Promise.all([first, second]);
+
+    assert.equal(handled[0], "aku bingung loh\nmenurutmu aku pilih mana?");
+    assert.ok(assessed.some((text) => text.includes("menurutmu")));
+
+    const quick = batcher.enqueue(message({
+      messageId: "hitung",
+      text: "17 × 24 berapa?",
+    }));
+    await quick;
+    assert.equal(handled.at(-1), "17 × 24 berapa?");
+    assert.equal(assessed.includes("17 × 24 berapa?"), false);
+  });
 });
 
 function message(overrides: Partial<GroupMessage> = {}): GroupMessage {

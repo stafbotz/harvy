@@ -149,6 +149,52 @@ describe("giliran grup", () => {
     assert.deepEqual(events, ["notice", "typing", "reply:siap"]);
   });
 
+  it("memakai satu lifecycle progress grup sampai sebelum reply", async () => {
+    const events: string[] = [];
+    let finished = false;
+    const runtime = createRuntime({
+      events,
+      createProgress: () => ({
+        report: (event) => events.push(`progress:${event.phase}`),
+        responding: async () => {
+          events.push("progress:responding");
+        },
+        finish: async () => {
+          if (finished) return;
+          finished = true;
+          events.push("progress:finish");
+        },
+      }),
+      reply: async (
+        _message,
+        _context,
+        _triage,
+        _ownerId,
+        _signal,
+        progress,
+      ) => {
+        progress?.report({ phase: "thinking", detail: "general" });
+        events.push("model");
+        return "siap";
+      },
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({ mentionsHarvy: true })),
+      "replied",
+    );
+    assert.deepEqual(events, [
+      "notice",
+      "progress:reading",
+      "progress:checking",
+      "progress:thinking",
+      "model",
+      "progress:responding",
+      "reply:siap",
+      "progress:finish",
+    ]);
+  });
+
   it("menyimpan memori biasa hanya untuk anggota lokal dan menempelkannya pada balasan", async () => {
     const runtime = createRuntime({
       memoryExtractor: {
@@ -381,6 +427,72 @@ describe("giliran grup", () => {
         }),
       ),
       /gagal kirim/u,
+    );
+    assert.deepEqual(
+      await runtime.memories.memberMemories(
+        "whatsapp:grup@g.us",
+        ["anggota-a"],
+      ),
+      [],
+    );
+  });
+
+  it("mempertahankan memori grup bila bubble partial sudah mengakui write", async () => {
+    const runtime = createRuntime({
+      memoryExtractor: {
+        understand: async () => understanding({
+          kind: "profile",
+          content: "Nama panggilannya Nara",
+        }),
+      },
+      sendReply: async () => ({
+        text: "Sudah kusimpan.",
+        bubbleCount: 1,
+        complete: false,
+      }),
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "partial-write-terlihat",
+        participantId: "anggota-a",
+        participantAliases: ["anggota-a"],
+        mentionsHarvy: true,
+      })),
+      "inactive",
+    );
+    assert.equal(
+      (await runtime.memories.memberMemories(
+        "whatsapp:grup@g.us",
+        ["anggota-a"],
+      )).length,
+      1,
+    );
+  });
+
+  it("merollback memori grup bila bubble partial belum mengakui write", async () => {
+    const runtime = createRuntime({
+      memoryExtractor: {
+        understand: async () => understanding({
+          kind: "profile",
+          content: "Nama panggilannya Nara",
+        }),
+      },
+      sendReply: async () => ({
+        text: "Aku dengar bagian itu.",
+        bubbleCount: 1,
+        complete: false,
+      }),
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "partial-write-belum-terlihat",
+        participantId: "anggota-a",
+        participantAliases: ["anggota-a"],
+        mentionsHarvy: true,
+      })),
+      "inactive",
     );
     assert.deepEqual(
       await runtime.memories.memberMemories(
@@ -1710,6 +1822,54 @@ describe("giliran grup", () => {
     assert.equal(contexts[1]?.[0]?.participantName, "Ayu");
     assert.equal(contexts[1]?.[0]?.text, "halo semua");
     assert.equal(contexts[1]?.[1]?.role, "harvy");
+  });
+
+  it("hanya memasukkan bubble grup yang benar-benar terkirim ke konteks", async () => {
+    let observedFollowUp: GroupTurn[] = [];
+    const runtime = createRuntime({
+      reply: async (incoming, context) => {
+        if (incoming.messageId === "jawaban-terpotong") {
+          return "Bubble terkirim.\n\nContinuation yang tidak terkirim.";
+        }
+        observedFollowUp = [...context.turns];
+        return "Jawaban terbaru.";
+      },
+      sendReply: async (incoming) => {
+        if (incoming.messageId === "jawaban-terpotong") {
+          return {
+            text: "Bubble terkirim.",
+            bubbleCount: 1,
+            complete: false,
+          };
+        }
+      },
+    });
+
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "jawaban-terpotong",
+        text: "Harvy, bantu dulu",
+        mentionsHarvy: true,
+      })),
+      "inactive",
+    );
+    assert.equal(
+      await runtime.turns.handle(message({
+        messageId: "lanjutan-setelah-potong",
+        text: "Harvy, lanjut yang terbaru",
+        mentionsHarvy: true,
+      })),
+      "replied",
+    );
+
+    const harvyContext = observedFollowUp
+      .filter((turn) => turn.role === "harvy")
+      .map((turn) => turn.text);
+    assert.deepEqual(harvyContext, ["Bubble terkirim."]);
+    assert.doesNotMatch(
+      observedFollowUp.map((turn) => turn.text).join(" "),
+      /Continuation yang tidak terkirim/u,
+    );
   });
 
   it("membatalkan balasan yang selesai setelah Harvy dikeluarkan", async () => {
@@ -3395,6 +3555,7 @@ interface RuntimeOptions {
   sendNotice?: GroupTransport["sendNotice"];
   sendReply?: GroupTransport["sendReply"];
   sendTyping?: NonNullable<GroupTransport["sendTyping"]>;
+  createProgress?: NonNullable<GroupTransport["createProgress"]>;
   now?: () => Date;
   repository?: MemoryGroupRepository;
   memoryExtractor?: GroupMemoryExtractionPort;
@@ -3460,6 +3621,9 @@ function createRuntime(options: RuntimeOptions = {}): {
         events.push(`reply:${text}`);
       }),
     sendTyping: options.sendTyping ?? (async () => undefined),
+    ...(options.createProgress
+      ? { createProgress: options.createProgress }
+      : {}),
   };
   const memoryExtractor: GroupMemoryExtractionPort | null =
     options.memoryExtractor

@@ -99,8 +99,10 @@ wajib loopback dan bukan server internet-ready. Cadangan mode uji memakai
 `AI_TESTING_FALLBACK_MODEL`, `AI_TESTING_FALLBACK_PROVIDER_ID`, dan
 `AI_TESTING_FALLBACK_COOLDOWN_MS`; tiga nilai
 pertama wajib diisi bersama. WhatsApp beta memakai `WHATSAPP_ENABLED`,
-`WHATSAPP_PAIRING_MODE`, `WHATSAPP_ACCOUNTS`, `WHATSAPP_AUTH_FOLDER`,
-`WHATSAPP_GROUP_FILE`, serta batas reconnect. GroupAgentRun tetap opt-in melalui
+`WHATSAPP_PRIVATE_ENABLED` (default `false`), `WHATSAPP_PAIRING_MODE`,
+`WHATSAPP_ACCOUNTS`, `WHATSAPP_AUTH_FOLDER`, `WHATSAPP_GROUP_FILE`, serta batas
+reconnect. Flag private hanya membuka chat pribadi; ketika mati, grup tetap
+berjalan. GroupAgentRun tetap opt-in melalui
 `WHATSAPP_GROUP_AGENT_RUN_ENABLED`; state run dan intent cleanup wajib memakai
 `WHATSAPP_GROUP_AGENT_RUN_FILE` dan
 `WHATSAPP_GROUP_AGENT_RUN_CLEANUP_FILE` yang terpisah. Flag tidak melewati

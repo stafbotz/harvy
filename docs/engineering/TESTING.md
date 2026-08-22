@@ -657,20 +657,25 @@ manual terkait dijalankan; jangan menurunkan bukti unit menjadi klaim live.
     lain. Pastikan correction memperbarui keadaan/supersession, sedangkan
     perintah melupakan memakai cascade. Keduanya tidak boleh meminta ID atau
     membuka UI record.
-26. Minta jawaban dua paragraf dan pastikan Harvy mengirimnya sebagai bubble
-    terpisah, maksimal tiga, dengan indikator mengetik dan jeda pendek di
-    antaranya. Blok kode pendek harus tetap satu bubble; blok di atas 4.000
-    karakter harus terbagi tanpa karakter hilang agar Telegram tidak
-    menolaknya.
+26. Uji beberapa bentuk output: pertanyaan sederhana harus satu bubble;
+    penjelasan panjang yang koheren boleh tetap satu bubble; empat beat chat
+    pendek yang memang natural boleh tetap empat bubble. Pastikan tidak ada
+    target atau batas kepribadian tiga bubble. Guard anti-spam hanya boleh
+    menggabungkan rentetan ekstrem tanpa membuang teks. Blok kode pendek harus
+    tetap satu bubble; blok di atas 4.000 karakter harus terbagi tanpa karakter
+    hilang agar Telegram tidak menolaknya. Selama jeda antar-bubble, kirim
+    koreksi dan pastikan continuation yang belum terkirim berhenti.
 27. Kirim lebih dari 16 giliran dan amati bahwa pengguna tidak menunggu model
     peringkas. Setelah pemadatan selesai, rujukan "yang tadi" tetap dipahami.
-28. Saat satu balasan bebas masih dibuat, kirim `/tugas`. Pastikan balasan lama
-    selesai sebelum daftar tugas dan tidak ada balasan lama yang muncul
-    sesudahnya. Ulangi dengan tombol Lupakan semua yang sudah tersedia ketika
-    ada bubble tertunda; bubble itu harus ditangani lebih dulu, lalu setelah
-    konfirmasi memori dan riwayat tetap kosong. Spinner tombol harus tertutup
-    segera. Dari akun kedua, kirim pesan ketika akun pertama masih menunggu
-    model dan pastikan polling akun kedua tidak ikut tertahan.
+28. Saat satu balasan bebas masih dibuat, kirim `/tugas`. Pastikan signal work
+    lama dibatalkan, bubble continuation yang belum terkirim tidak muncul, dan
+    daftar tugas baru berjalan setelah handler lama settle. Ulangi dengan
+    tombol Lupakan semua yang sudah tersedia ketika ada bubble tertunda;
+    callback tetap menguras pekerjaan yang lebih dulu terlihat sebelum
+    penghapusan, lalu setelah konfirmasi memori dan riwayat tetap kosong.
+    Spinner tombol harus tertutup segera. Dari akun kedua, kirim pesan ketika
+    akun pertama masih menunggu model dan pastikan polling akun kedua tidak
+    ikut tertahan.
 29. Kirim beberapa bubble lalu hentikan proses secara normal sebelum fail-safe
     12 detik. Pastikan shutdown menunggu batch diproses. Catat bahwa crash
     paksa tidak dijamin oleh antrean in-memory dan shutdown keluar paksa setelah

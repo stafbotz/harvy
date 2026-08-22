@@ -89,17 +89,23 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   berpresisi tinggi berjalan saat `enqueue`, sebelum debounce; hasil
   positif hanya mengirim acknowledgment tetap dan mempercepat flush, bukan
   menetapkan disposition atau izin mutasi. Pada jalur boundary umum setelah
-  fast path/pending dikecualikan, satu bubble dalam closed set diputus lokal
-  sebagai `complete`/`incomplete`; multi-bubble dan bentuk ambigu memakai model
-  `cheap` sebagai fallback `complete|open|incomplete|urgent`. Guard lokal tetap
-  mengoreksi bentuk hasil itu. Debounce mempelajari p90 gap antar-arrival,
+  fast path/pending dikecualikan, hanya bentuk deterministik sempit diputus
+  lokal sebagai `complete`/`incomplete`; bahasa natural ambigu memakai model
+  `cheap` atas seluruh current batch, konteks terbaru, dan timing content-free.
+  Hasil wajib berupa state `complete|open|incomplete|urgent`, confidence,
+  continuation likelihood, dan reason class closed-set; metadata ini bukan
+  reasoning privat. Guard lokal hanya boleh mengoreksi command/hitungan/
+  pertanyaan atau acknowledgment yang jelas dan fragmen sintaksis keras,
+  bukan menebak emosi/narasi luas. Debounce mempelajari p90 gap antar-arrival,
   termasuk lintas batch yang sudah ter-flush, dari maksimum 32 sampel
   content-free per pemilik setelah tiga sampel; state hanya di RAM, kedaluwarsa
   dua jam tanpa diperpanjang oleh akses, dibatasi 5.000 subjek, dan dilupakan
   saat invalidasi.
   Sebelum cukup sampel, settle tetap 650 ms. Estimasi adaptif mengubah settle
-  awal dan ruang gabungan lengkap, sedangkan pembuka/narasi terbuka dan fragmen
-  keras tetap menunggu 7/12 detik sejak bubble terakhir. Emergency lokal maupun hasil `urgent` model
+  awal; complete yakin langsung flush sesudah settle, complete multi-bubble
+  ber-confidence rendah dapat memakai ruang gabungan 4 detik, sedangkan
+  pembuka/narasi terbuka dan fragmen keras tetap menunggu 7/12 detik sejak
+  bubble terakhir. Emergency lokal maupun hasil `urgent` model
   mengirim acknowledgment di luar FIFO; timer 12 detik tetap fail-safe saat
   model berpikir. Sinyal `explicitImmediateDanger` per bubble dan
   `urgentBoundary` wajib bertahan sebagai metadata sampai handler; merge teks
@@ -108,8 +114,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   batch biasa lama yang belum mulai dibatalkan, sedangkan handler lengkap dan
   semua mutasi tetap FIFO di belakang handler pengguna yang masih aktif.
   Satu pemilik hanya boleh memiliki satu pemeriksaan batas yang aktif; revisi
-  perantara dikoaleskan ke bubble terbaru. Indikator mengetik hanya dikirim
-  setelah batch mulai ditangani dan kegagalannya wajib dianggap kosmetik.
+  perantara dikoaleskan ke bubble terbaru. Selama listening tidak boleh ada
+  typing atau status. Surface progress baru boleh muncul setelah grace period
+  dan work nyata dimulai; kegagalannya wajib dianggap kosmetik.
   Balasan pengguna yang sama selalu diproses berurutan. Command menaikkan
   generasi untuk membatalkan batch tertunda—termasuk yang sudah masuk chain
   tetapi belum mulai—lalu menunggu handler aktif; callback menguras batch yang
@@ -127,6 +134,44 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   di-flush paling akhir setelah seluruh drain dan memakai append sinkron untuk
   catatan fatal timeout. Antrean ini tidak
   persisten dan crash paksa tetap dapat kehilangan update yang sudah diterima.
+- **Interupsi adalah bagian dari giliran, bukan event samping.** Pesan yang
+  masuk saat work aktif harus dinilai `addition|correction|redirect|independent`
+  melalui relation barrier. Addition/correction/redirect membatalkan signal dan
+  menyupersesi output/efek lama; context yang belum durable hanya boleh digabung
+  untuk addition/correction, sedangkan redirect meninggalkannya. Independent
+  harus tetap diantrekan tanpa otomatis membatalkan work aktif. Error/timeout
+  classifier tidak boleh membuka jalan bagi output stale. Setiap model/tool,
+  history, memory/action offer, tombol, dan bubble outbound wajib memeriksa
+  current generation sesudah barrier tepat sebelum efeknya. Parser waktu pada
+  flow pending wajib menerima signal yang sama; edit tenggat/pengingat,
+  check-in, memory, dan jam tenang harus memeriksa fence lagi tepat sebelum
+  mutasi. Bila mutasi sudah commit atau bubble sudah diakui transport,
+  acknowledgment/history harus mencatat kenyataan itu dan tidak boleh
+  mengarang rollback.
+- **Presentasi respons adalah keputusan core lintas kanal.** Satu logical
+  response terlebih dahulu menjadi `ResponsePresentationPlan`; Telegram dan
+  WhatsApp tidak boleh mempunyai heuristik bubble semantik terpisah. Tidak ada
+  batas personality tiga bubble. Beat pendek boleh terpisah, sedangkan
+  penjelasan terstruktur dan code block tetap koheren. Guard anti-spam delapan
+  segmen hanya menggabungkan overflow tanpa membuang teks. Hard split 4.000
+  Telegram/12.000 WhatsApp terjadi sesudahnya dan wajib menjaga setiap code
+  point. Sebelum setiap bubble dan sesudah jeda interruptible, transport wajib
+  memeriksa signal/revision/generation lagi.
+- **History mengikuti receipt delivery.** Beberapa bubble yang terkirim tetap
+  satu assistant turn logis. Jika delivery terpotong, hanya gabungan bubble
+  yang diakui transport boleh disimpan; unsent continuation, final response
+  penuh, tombol, atau note stale dilarang masuk state. Write yang acknowledgement
+  code-owned-nya sudah terlihat tidak boleh di-rollback; write yang belum
+  diakui harus dikompensasi.
+- **Progress tidak boleh mengarang kerja.** Paling banyak satu transient
+  surface per active turn: tampil setelah grace period, diedit dari event
+  capability/execution yang benar-benar dimulai, dan dihapus sebelum jawaban
+  pertama. Requested effort bukan effective effort. Copy/status/log dilarang
+  membawa raw input, prompt, tool output, model/effort internal, confidence,
+  atau chain-of-thought. Typing/edit/delete best-effort tidak boleh mengubah
+  delivery, safety, atau mutasi. Pada grup, surface baru boleh dibuat setelah
+  authority serta notice terbukti dan hanya untuk direct turn; ambient planner
+  yang mungkin memilih diam tidak boleh memancarkan progress.
 
 ## Memori
 
@@ -297,6 +342,15 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   callback penarikan persetujuan memakai satu rantai per pemilik; callback
   tidak boleh hanya mengambil snapshot sekali lalu membiarkan pesan yang datang
   saat perubahan persetujuan hilang atau terproses ganda.
+- **WhatsApp privat tunduk pada gerbang yang sama dan default-off.**
+  `WHATSAPP_PRIVATE_ENABLED=false` membuang ingress privat di transport sebelum
+  callback tanpa mematikan grup. Saat aktif, pesan pertama ditahan hanya di RAM
+  dan satu-satunya authority consent teks adalah jawaban closed-set `SETUJU`;
+  `INFO` tidak membuka pemrosesan. History context, retrieval memory, telemetry,
+  dan model percakapan baru dibuka setelah consent tersimpan. Kontrol
+  deterministik lihat/hapus memori dan `/hapus-data` tetap tersedia tanpa
+  consent AI agar hak data tidak ikut terkunci. Scope WhatsApp tidak mewarisi
+  consent atau data privat Telegram.
 - **Hak menarik izin dan menghapus data tidak boleh digagalkan pre-clear run.**
   Penarikan izin menutup ingress/history dan mempersistenkan profil lebih dulu,
   lalu cleanup checkpoint dilakukan best-effort dengan scope tetap diblokir
@@ -311,6 +365,15 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   `PendingStore` juga dibatalkan bila pengirimannya gagal. Bila pembuka sesi
   sudah terlihat tetapi penyimpanan sesi gagal, state parsial dibersihkan dan
   keyboard pesan itu dilepas sebagai kompensasi terbaik.
+- **Reply privat WhatsApp mempunyai receipt lokal.** Adapter baru boleh
+  menambahkan balasan Harvy ke history dan menyelesaikan usage setelah
+  `socket.sendMessage` sukses. Callback event tidak boleh menunggu seluruh
+  model response, supaya bubble koreksi dapat masuk ke MessageBatcher dan
+  membatalkan signal lama. Socket/generation stale, shutdown ingress, reply
+  kosong, atau send gagal sebelum bubble pertama wajib menjalankan discard
+  sekali. Jika hanya sebagian bubble terkirim, usage disettle terhadap delivery
+  nyata dan history hanya menyimpan bagian itu; kegagalan commit lokal setelah
+  send tidak boleh diubah menjadi klaim bahwa delivery gagal.
 
 ## Sesi dan check-in
 
@@ -981,6 +1044,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   switch menutup batch lama; duplicate, replay sebelum join, akun non-binding,
   dan turn yang ditolak admission tidak boleh membatalkan atau menggantung
   kandidat sah.
+- **Boundary dan delivery grup memakai primitive percakapan bersama.** Setelah
+  observation authority, batcher menilai seluruh burst satu pembicara dengan
+  assessment boundary terstruktur; hanya hitungan/closed request yang jelas dan
+  fragmen keras boleh memakai keputusan lokal. Emergency preflight tetap lebih
+  dahulu. Untuk balasan, core menangkap generation serta ingress revision dan
+  transport memeriksa fence itu sebelum setiap segmen shared presentation plan.
+  Revision authorized yang lebih baru wajib menghentikan unsent continuation.
+  Receipt partial hanya boleh menambahkan delivered text ke context grup;
+  memory member/room yang belum diakui di bubble tersebut di-rollback, sedangkan
+  write dengan acknowledgment yang sudah terlihat dipertahankan.
 - **Natural bukan berarti menyamar sebagai manusia.** Riwayat grup masuk sebagai
   giliran chat beridentitas. Harvy perlu memahami lowercase, singkatan,
   code-mix, elongation, emoji, dan beberapa bubble, tetapi tidak meniru typo,

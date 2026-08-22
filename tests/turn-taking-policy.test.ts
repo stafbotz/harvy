@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  assessmentIdleWindowMs,
   classifyTurnBoundaryLocally,
   guardTurnBoundary,
   idleWindowMs,
@@ -8,7 +9,16 @@ import {
 
 describe("kebijakan giliran percakapan", () => {
   it("memutus bentuk lengkap yang sempit tanpa classifier", () => {
-    for (const message of ["iya", "oke", "makasih", "B", "opsi 2"]) {
+    for (const message of [
+      "iya",
+      "oke",
+      "makasih",
+      "B",
+      "opsi 2",
+      "17 x 24 berapa?",
+      "apa ibu kota Jepang?",
+      "17 Agustus tahun ini hari apa?",
+    ]) {
       assert.equal(classifyTurnBoundaryLocally(message), "complete", message);
     }
   });
@@ -24,6 +34,8 @@ describe("kebijakan giliran percakapan", () => {
       "jadi gini",
       "aku mau cerita",
       "aku capek banget",
+      "kamu masih ingat yang tadi?",
+      "eh, kenapa ya?",
       "aku mau menyakiti diri sekarang",
       "satu\ndua",
     ]) {
@@ -31,19 +43,16 @@ describe("kebijakan giliran percakapan", () => {
     }
   });
 
-  it("menahan pembuka dan emosi samar meski model terlalu cepat menutup", () => {
-    assert.equal(guardTurnBoundary("eh tau ga", "complete"), "open");
-    assert.equal(guardTurnBoundary("sumpah", "complete"), "open");
-    assert.equal(
-      guardTurnBoundary("aku boleh curhat kah", "complete"),
-      "open",
-    );
+  it("menyerahkan bahasa natural ambigu ke assessment semantik", () => {
+    assert.equal(guardTurnBoundary("eh tau ga", "open"), "open");
+    assert.equal(guardTurnBoundary("eh tau ga", "complete"), "complete");
+    assert.equal(guardTurnBoundary("aku takut", "open"), "open");
     assert.equal(
       guardTurnBoundary(
-        "eh tau ga\nsumpah\naku cape banget\nada tigasss\naku takutttt banget",
+        "aku bingung antara informatika dan SI, menurutmu pilih mana",
         "complete",
       ),
-      "open",
+      "complete",
     );
   });
 
@@ -58,10 +67,7 @@ describe("kebijakan giliran percakapan", () => {
   });
 
   it("menghormati keputusan urgent fallback model tanpa menundanya", () => {
-    assert.equal(
-      guardTurnBoundary("aku takutttt banget", "complete"),
-      "open",
-    );
+    assert.equal(guardTurnBoundary("aku takutttt banget", "open"), "open");
     assert.equal(
       guardTurnBoundary("aku mau menyakiti diri sekarang", "urgent"),
       "urgent",
@@ -69,23 +75,23 @@ describe("kebijakan giliran percakapan", () => {
     assert.equal(idleWindowMs("urgent", 2), 0);
   });
 
-  it("menjaga pesan lengkap cepat tetapi memberi ruang pada gaya multi-bubble", () => {
+  it("menjaga complete kuat cepat dan hanya menunggu complete yang ragu", () => {
     assert.equal(idleWindowMs("complete", 1), 0);
-    assert.equal(idleWindowMs("complete", 3), 4_000);
+    assert.equal(idleWindowMs("complete", 3), 0);
+    assert.equal(
+      assessmentIdleWindowMs({
+        state: "complete",
+        confidence: 0.6,
+        continuationLikelihood: 0.6,
+        reasonClass: "uncertain",
+      }, 3),
+      4_000,
+    );
     assert.equal(idleWindowMs("open", 1), 7_000);
   });
 
-  it("menghormati penutup eksplisit dan tidak menyalahartikan tidak jadi", () => {
-    assert.equal(
-      guardTurnBoundary("eh tau ga\nudah itu aja", "open"),
-      "complete",
-    );
+  it("mempertahankan closed form sempit dan fragmen keras", () => {
     assert.equal(guardTurnBoundary("nggak jadi", "incomplete"), "complete");
-    assert.equal(guardTurnBoundary("udah jadi", "complete"), "complete");
-    assert.equal(
-      guardTurnBoundary("websitenya udah jadi", "incomplete"),
-      "complete",
-    );
     assert.equal(guardTurnBoundary("jadi", "complete"), "incomplete");
   });
 });

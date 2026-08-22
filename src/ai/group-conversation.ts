@@ -49,6 +49,10 @@ import {
 } from "../core/execution-policy.js";
 import type { ModelRole } from "../domain/model-execution.js";
 import { resolveModelProfile } from "./model-profile.js";
+import {
+  executionProgressEvent,
+  type ConversationProgressReporter,
+} from "../core/conversation-progress.js";
 
 /**
  * Naikkan bila prompt, formatter konteks, pemilihan giliran, atau kontrak
@@ -232,6 +236,7 @@ export interface GroupConversationPort {
     triage: RiskTriage,
     ownerId: string,
     signal?: AbortSignal,
+    progress?: ConversationProgressReporter,
   ): Promise<string>;
 }
 
@@ -381,6 +386,7 @@ export class GroupConversation implements GroupConversationPort {
     triage: RiskTriage,
     ownerId: string,
     signal?: AbortSignal,
+    progress?: ConversationProgressReporter,
   ): Promise<string> {
     const modelIdentityQuestion =
       triage.level === "biasa" && isModelIdentityQuestion(message.text);
@@ -413,17 +419,19 @@ export class GroupConversation implements GroupConversationPort {
       modelIdentityQuestion ? CAPYBARA_MIXED_MESSAGE_GUIDANCE : "",
     ].join("\n");
 
+    const execution = this.execution(
+      tier,
+      tier === "ambitious" ? "synthesizer" : "conversationalist",
+      triage.level === "biasa" ? "conversation" : "safety",
+      1_024,
+      GROUP_REPLY_TIMEOUT_MS,
+    );
+    progress?.report(executionProgressEvent(execution));
     const reply = await this.client.complete({
       model: resolveModel(tier, this.routing),
       temperature: 0.7,
       maxTokens: 1_024,
-      execution: this.execution(
-        tier,
-        tier === "ambitious" ? "synthesizer" : "conversationalist",
-        triage.level === "biasa" ? "conversation" : "safety",
-        1_024,
-        GROUP_REPLY_TIMEOUT_MS,
-      ),
+      execution,
       timeoutMs: GROUP_REPLY_TIMEOUT_MS,
       maxAttempts: 1,
       contextManifest: compiled.manifest,

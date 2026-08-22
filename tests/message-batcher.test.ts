@@ -127,7 +127,19 @@ describe("MessageBatcher", () => {
     const batcher = new MessageBatcher<string>(
       async (text) => {
         examined.push(text);
-        return text.includes("tapi aku suka cowo") ? "complete" : "open";
+        return text.includes("tapi aku suka cowo")
+          ? {
+              state: "complete",
+              confidence: 0.6,
+              continuationLikelihood: 0.55,
+              reasonClass: "uncertain",
+            }
+          : {
+              state: "open",
+              confidence: 0.9,
+              continuationLikelihood: 0.9,
+              reasonClass: "narrative-continuation",
+            };
       },
       async (_ownerId, batch) => {
         handled.push(batch.text);
@@ -136,7 +148,7 @@ describe("MessageBatcher", () => {
       5_000,
       40,
       5_000,
-      100,
+      2_000,
     );
 
     batcher.enqueue("student", "aku mau curhat", "ctx-1");
@@ -239,9 +251,12 @@ describe("MessageBatcher", () => {
     const batcher = new MessageBatcher<string>(
       async (text) => {
         examined.push(text);
-        // Uji ini sengaja mensimulasikan model yang terlalu cepat berkata
-        // complete. Pengaman lokal harus tetap mengenali pembuka curhat.
-        return "complete";
+        return {
+          state: "open",
+          confidence: 0.9,
+          continuationLikelihood: 0.9,
+          reasonClass: "narrative-continuation",
+        };
       },
       async (_ownerId, batch) => {
         handled.push(batch.text);
@@ -279,7 +294,12 @@ describe("MessageBatcher", () => {
   it("menunggu paling lama ketika bubble terakhir masih menggantung", async () => {
     const handled: string[] = [];
     const batcher = new MessageBatcher<string>(
-      async () => "complete",
+      async () => ({
+        state: "open",
+        confidence: 0.9,
+        continuationLikelihood: 0.9,
+        reasonClass: "narrative-continuation",
+      }),
       async (_ownerId, batch) => {
         handled.push(batch.text);
       },
@@ -1059,6 +1079,147 @@ describe("MessageBatcher", () => {
     assert.doesNotThrow(() => batcher.invalidate("A"));
     await delay(60);
     assert.deepEqual(handled, []);
+  });
+
+  for (const relation of ["addition", "correction"] as const) {
+    it(`mengganti run aktif dan menggabungkan konteks ${relation} yang belum durable`, async () => {
+      const handled: Array<{
+        text: string;
+        relation: string | null;
+        current: boolean;
+      }> = [];
+      let activeStarted = false;
+      const batcher = new MessageBatcher<string>(
+        async () => "complete",
+        async (_ownerId, batch) => {
+          if (batch.text === "pilihin aku ITB atau UI?") {
+            activeStarted = true;
+            await new Promise<void>((resolve) => {
+              batch.signal.addEventListener("abort", () => resolve(), {
+                once: true,
+              });
+            });
+            handled.push({
+              text: batch.text,
+              relation: batch.interruptionRelation,
+              current: await batch.awaitCurrent(),
+            });
+            return;
+          }
+          handled.push({
+            text: batch.text,
+            relation: batch.interruptionRelation,
+            current: await batch.awaitCurrent(),
+          });
+        },
+        150,
+        1,
+        30,
+        20,
+        undefined,
+        undefined,
+        undefined,
+        async () => relation,
+      );
+
+      batcher.enqueue("student", "pilihin aku ITB atau UI?", "ctx-1");
+      await waitFor(() => activeStarted);
+      batcher.enqueue(
+        "student",
+        relation === "addition"
+          ? "pertimbangin juga aku pengen kerja di AI"
+          : "eh maksudku ITB atau ITS",
+        "ctx-2",
+      );
+      await batcher.drainAll();
+
+      assert.equal(handled[0]?.current, false);
+      assert.equal(handled[1]?.relation, relation);
+      assert.match(handled[1]?.text ?? "", /^pilihin aku ITB atau UI\?/u);
+      assert.equal(handled[1]?.current, true);
+    });
+  }
+
+  it("redirect membatalkan output lama tanpa membawa permintaan lama", async () => {
+    const handled: Array<{ text: string; relation: string | null }> = [];
+    let activeStarted = false;
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async (_ownerId, batch) => {
+        if (batch.text === "cari biaya kuliah ITB?") {
+          activeStarted = true;
+          await new Promise<void>((resolve) => {
+            batch.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            });
+          });
+          return;
+        }
+        handled.push({
+          text: batch.text,
+          relation: batch.interruptionRelation,
+        });
+      },
+      150,
+      1,
+      30,
+      20,
+      undefined,
+      undefined,
+      undefined,
+      async () => "redirect",
+    );
+
+    batcher.enqueue("student", "cari biaya kuliah ITB?", "ctx-1");
+    await waitFor(() => activeStarted);
+    batcher.enqueue("student", "udah deh bahas UI dulu", "ctx-2");
+    await batcher.drainAll();
+
+    assert.deepEqual(handled, [{
+      text: "udah deh bahas UI dulu",
+      relation: "redirect",
+    }]);
+  });
+
+  it("pesan independen mengantre tanpa membatalkan run aktif", async () => {
+    const events: string[] = [];
+    let releaseActive: (() => void) | undefined;
+    const batcher = new MessageBatcher<string>(
+      async () => "complete",
+      async (_ownerId, batch) => {
+        if (batch.text === "bandingkan dua jurusan?") {
+          events.push("aktif-mulai");
+          await new Promise<void>((resolve) => {
+            releaseActive = resolve;
+          });
+          events.push(batch.signal.aborted ? "aktif-batal" : "aktif-selesai");
+          return;
+        }
+        events.push(`berikut:${batch.interruptionRelation}:${batch.text}`);
+      },
+      150,
+      1,
+      30,
+      20,
+      undefined,
+      undefined,
+      undefined,
+      async () => "independent",
+    );
+
+    batcher.enqueue("student", "bandingkan dua jurusan?", "ctx-1");
+    await waitFor(() => releaseActive !== undefined);
+    batcher.enqueue("student", "17 × 24 berapa?", "ctx-2");
+    await delay(20);
+    assert.deepEqual(events, ["aktif-mulai"]);
+    releaseActive?.();
+    await batcher.drainAll();
+
+    assert.deepEqual(events, [
+      "aktif-mulai",
+      "aktif-selesai",
+      "berikut:independent:17 × 24 berapa?",
+    ]);
   });
 });
 

@@ -9,6 +9,8 @@ export type WhatsAppPairingMode = "qr" | "code";
 
 export interface WhatsAppConfig {
   enabled: boolean;
+  /** Ingress dan delivery chat pribadi; sengaja default-off dari kanal grup. */
+  privateEnabled: boolean;
   accounts: WhatsAppAccountConfig[];
   pairingMode: WhatsAppPairingMode;
   authFolder: string;
@@ -107,6 +109,17 @@ export function parseEnabled(value: string | undefined): boolean {
   throw whatsAppConfigurationError(
     "CONFIG_WHATSAPP_ENABLED_INVALID",
     "WHATSAPP_ENABLED harus true atau false.",
+  );
+}
+
+export function parsePrivateEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLocaleLowerCase("en-US");
+  if (!normalized) return false;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw whatsAppConfigurationError(
+    "CONFIG_WHATSAPP_PRIVATE_ENABLED_INVALID",
+    "WHATSAPP_PRIVATE_ENABLED harus true atau false.",
   );
 }
 

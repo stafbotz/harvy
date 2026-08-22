@@ -1139,6 +1139,53 @@ describe("Conversation agent runtime", () => {
     assert.equal(requests.length, 1);
   });
 
+  it("menunggu relation barrier sebelum AgentHarness menjalankan efek", async () => {
+    const requests: ChatRequest[] = [];
+    let executions = 0;
+    let barrierChecks = 0;
+    const guardedExecutor = {
+      ...executor("settings.time.get", {
+        kind: "settings.time.get.result",
+        local: "12.00 WIB",
+      }),
+      execute: async () => {
+        executions += 1;
+        return { status: "ok" as const, summary: "12.00 WIB" };
+      },
+    } satisfies AgentCapabilityExecutor<Record<string, unknown>>;
+    const conversation = fixture(
+      requests,
+      [
+        {
+          kind: "action",
+          capabilityId: "settings.time.get",
+          capabilityVersion: "1",
+          input: {},
+        },
+        { kind: "final", reply: "Sekarang pukul 12.00 WIB." },
+      ],
+      [guardedExecutor],
+    );
+
+    const result = await conversation.agent(
+      "sekarang jam berapa?",
+      "tools",
+      undefined,
+      {
+        ownerId: "student",
+        channel: "telegram",
+        awaitCurrent: async () => {
+          barrierChecks += 1;
+          return false;
+        },
+      },
+    );
+
+    assert.equal(result.status, "stopped");
+    assert.ok(barrierChecks > 0);
+    assert.equal(executions, 0);
+  });
+
   it("tidak mencoba recovery untuk content filter atau incomplete response", async () => {
     const requests: ChatRequest[] = [];
     const client = {

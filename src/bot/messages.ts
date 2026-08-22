@@ -8,6 +8,10 @@ import type { MemoryItem } from "../domain/memory.js";
 import type { QuietHours, UserProfile } from "../domain/profile.js";
 import type { ActiveSession, SessionKind } from "../domain/session.js";
 import type { StudentTask, TaskImportance } from "../domain/task.js";
+import {
+  planResponsePresentation,
+  presentationPauseMs,
+} from "../core/response-presentation.js";
 
 const IMPORTANCE_LABEL: Record<TaskImportance, string> = {
   1: "santai",
@@ -202,7 +206,7 @@ export function withoutMemoryNote(
 /**
  * Jeda kecil sebelum bubble lanjutan dikirim.
  *
- * Tiga bubble yang tiba pada milidetik yang sama terbaca seperti notifikasi
+ * Beberapa bubble yang tiba pada milidetik yang sama terbaca seperti notifikasi
  * beruntun, bukan seperti orang yang sedang mengetik. Jeda ini untuk
  * keterbacaan, bukan untuk memperpanjang percakapan — Pasal 3.12 melarang yang
  * kedua — karena itu ia pendek dan berplafon.
@@ -210,8 +214,7 @@ export function withoutMemoryNote(
 export const MAX_BUBBLE_PAUSE_MS = 1_200;
 
 export function bubblePauseMs(text: string): number {
-  const estimate = Math.round(text.trim().length * 18);
-  return Math.min(Math.max(estimate, 300), MAX_BUBBLE_PAUSE_MS);
+  return presentationPauseMs(text);
 }
 
 /** Persetujuan sebelum hal sensitif disimpan. Pasal 4 nomor 3. */
@@ -532,25 +535,19 @@ export function formatEconomyUsage(view: EconomyUsageView): string {
   ].join("\n");
 }
 
-/**
- * Paragraf pendek terasa seperti bubble chat; blok kode tetap utuh selama
- * ukurannya masih dapat dikirim Telegram.
- *
- * Maksimal tiga bubble mencegah satu balasan berubah menjadi rentetan
- * notifikasi. Jika model menulis lebih banyak paragraf, sisanya digabung ke
- * bubble terakhir tanpa menghilangkan teks. Batas keras platform lebih tinggi
- * prioritas: bubble di atas 4.000 karakter dipecah tanpa membuang karakter,
- * meskipun hasil akhirnya perlu lebih dari tiga bubble.
- */
-export function splitReplyBubbles(reply: string, limit = 3): string[] {
+/** Rencana semantik dibentuk core; adapter ini hanya memilih batas Telegram. */
+export function splitReplyBubbles(
+  reply: string,
+  _legacyLimit?: number,
+): string[] {
+  // Parameter lama diterima agar caller eksternal tidak pecah, tetapi jumlah
+  // bubble bukan lagi aturan produk. Core memakai guard anti-spam terpisah.
+  void _legacyLimit;
   const clean = normalizeTelegramText(reply).trim();
   if (!clean) return [];
-  const logicalBubbles =
-    clean.includes("```") || limit <= 1
-      ? [clean]
-      : splitParagraphs(clean, limit);
-
-  return logicalBubbles.flatMap((bubble) => splitForTelegram(bubble));
+  return planResponsePresentation(clean, {
+    maxSegmentCharacters: TELEGRAM_SAFE_MESSAGE_CHARS,
+  }).segments.map((segment) => segment.text);
 }
 
 /**
@@ -588,37 +585,3 @@ function normalizeMarkup(text: string): string {
 }
 
 const TELEGRAM_SAFE_MESSAGE_CHARS = 4_000;
-
-function splitParagraphs(clean: string, limit: number): string[] {
-  const paragraphs = clean
-    .split(/\n\s*\n+/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-
-  if (paragraphs.length <= 1) return [clean];
-  if (paragraphs.length <= limit) return paragraphs;
-
-  return [
-    ...paragraphs.slice(0, limit - 1),
-    paragraphs.slice(limit - 1).join("\n\n"),
-  ];
-}
-
-function splitForTelegram(text: string): string[] {
-  const characters = Array.from(text);
-  if (characters.length <= TELEGRAM_SAFE_MESSAGE_CHARS) return [text];
-
-  const chunks: string[] = [];
-  for (
-    let start = 0;
-    start < characters.length;
-    start += TELEGRAM_SAFE_MESSAGE_CHARS
-  ) {
-    chunks.push(
-      characters
-        .slice(start, start + TELEGRAM_SAFE_MESSAGE_CHARS)
-        .join(""),
-    );
-  }
-  return chunks;
-}

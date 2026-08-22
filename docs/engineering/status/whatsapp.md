@@ -1,14 +1,40 @@
-# Status — WhatsApp Grup
+# Status — WhatsApp
 
-Refreshed: 15 Agustus 2026 pada production reachability GroupAgentRun dan
-group-coding. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; bukti kanal
-nyata tetap belum lengkap.
+Refreshed: 22 Agustus 2026 pada WhatsApp privat default-off. Angka gerbang penuh
+terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
 
 ## Keadaan saat ini
 
 - Baileys menyediakan fondasi beta grup terpisah dari state privat Telegram.
   Direct, ambient, membership lifecycle, binding, batching, dan generation
   guard tersedia.
+- WhatsApp privat tersedia di balik `WHATSAPP_PRIVATE_ENABLED=true`, terpisah
+  dari `WHATSAPP_ENABLED`. Default-nya `false`; transport membuang ingress
+  privat sebelum normalisasi/callback saat flag mati, sementara ingress grup
+  tetap berjalan.
+- Saat aktif, teks privat memakai `WhatsAppPrivateConversation`: owner scope
+  WhatsApp terpisah dari Telegram, pesan pertama ditahan hanya di RAM sampai
+  pengguna membalas `SETUJU`, lalu core conversation, profile, recent/retrieved
+  memory context, history, selective safety review, telemetry, funding, dan
+  `/penggunaan` dipakai dengan atribusi kanal WhatsApp. `/izin`,
+  `/tarik-izin`, lihat/hapus memori, serta `/hapus-data` dengan konfirmasi exact
+  mempunyai perintah teks tertutup. Kontrol lihat/hapus tetap dapat dipakai
+  tanpa consent AI aktif.
+- Private upsert dideduplikasi per account+pengirim lalu dilepas dari callback
+  event agar bubble baru tetap dapat masuk selama model bekerja. Setelah
+  consent, `MessageBatcher` dan semantic boundary yang sama dengan Telegram
+  menggabungkan burst serta membedakan addition/correction/redirect/independent.
+  Related input membatalkan `AbortController` lama; independent tetap FIFO.
+  History balasan dan settlement usage baru di-commit setelah socket mengakui
+  send. Jika delivery terputus, hanya bubble yang sungguh terkirim masuk satu
+  logical assistant turn dan unsent continuation tidak diakui.
+- WhatsApp privat memakai shared `ResponsePresentationPlan`, sehingga tidak ada
+  aturan maksimal tiga bubble atau truncation respons. Keputusan beat tetap
+  sama dengan Telegram; hard splitter 12.000 karakter baru berjalan sesudah
+  rencana semantik dan tidak membuang code point. Setiap send dipagari socket
+  generation/current turn. Satu transient progress message dapat dikirim,
+  diedit, lalu dihapus dari event kerja backend nyata; respons cepat dan fase
+  listening tetap tanpa status.
 - Metadata membership pengirim dan Harvy harus segar sebelum ingress diterima;
   core melakukan revalidation sebelum binding atau mutasi. Observation authority
   async diserialkan per runtime; hanya observation authorized/live yang boleh
@@ -24,6 +50,18 @@ nyata tetap belum lengkap.
   lagi sebelum model revalidation, fixed ACK, dan delivery; work lama
   dibatalkan bila admission terbaru bukan `process`. Emergency eksplisit tetap
   menjadi pengecualian yang diizinkan pada `direct_only`.
+- Batcher grup menilai seluruh burst dengan kontrak semantic boundary yang sama
+  setelah authority observation; hitungan jelas dan fragmen keras tetap jalur
+  lokal sempit. Balasan grup memakai presentation plan bersama. Core membawa
+  fence generation+ingress revision ke setiap bubble; pesan authorized yang
+  lebih baru menghentikan continuation. Transport mengembalikan receipt
+  partial sehingga context grup hanya menyimpan teks yang terkirim dan mutasi
+  yang belum diakui dapat di-rollback. Direct turn yang lolos authority dan
+  notice memakai lifecycle progress core yang sama: grace period, phase dari
+  execution aktual, satu pesan editable, dan penghapusan sebelum reply.
+  Native typing langsung tetap hanya fallback bila transport tidak menyediakan
+  surface tersebut; ambient turn yang mungkin memilih diam tidak menampilkan
+  progress.
 - Core membuktikan membership, binding account aktif, dan notice live sebelum
   assessment model. Direct memakai ingress compiler; ambient menggabungkan
   `riskHint` dan `contextPrivacy` dengan planner. Ordinary melewati triage,
@@ -43,8 +81,10 @@ nyata tetap belum lengkap.
   generation/AbortSignal. Paket `direct_only` tetap menerima emergency tanpa
   tag; `disabled/paused` tidak memprosesnya.
 - Member-local memory dan shared room memory ada di core dengan authority guard,
-  preview/confirmation, retensi, dan kontrol member/admin. Rollback delivery
-  lengkap hanya untuk record member/room yang baru dibuat.
+  preview/confirmation, retensi, dan kontrol member/admin. Record baru
+  di-rollback bila tidak ada acknowledgment yang terkirim; acknowledgment pada
+  bubble partial yang sudah terlihat mempertahankan write agar UX tidak
+  mengarang kegagalan.
 - Fondasi core Group AgentRun terpisah menyimpan scope+account, initiator,
   participant/audience group-safe, anchor/question reference, input
   teratribusi, ChangeSet, ledger work, hasil final committed, event, revision,
@@ -154,6 +194,14 @@ nyata tetap belum lengkap.
 
 - Notice/privacy terbaru, memory member/room, timing ambient, removal, safety,
   dan shutdown belum diuji end-to-end di grup nyata.
+- WhatsApp privat baru dibuktikan otomatis dengan fake transport; onboarding,
+  consent, model reply, selective safety, memory context, semantic interruption,
+  progress edit/delete, multi-bubble delivery, reconnect, dan opt-out belum
+  diuji end-to-end pada akun WhatsApp nyata.
+- Paritas saat ini adalah chat teks alami dan pagar core. Tombol/callback,
+  ekspor file/edit memori, document ZIP, task/reminder, session/check-in,
+  active AgentRun, dan private coding milik surface Telegram belum tersedia
+  pada adapter WhatsApp privat.
 - Dua nomor nyata sekaligus belum diuji. Tidak ada failover atau rebind otomatis
   antar-account.
 - Pending confirmation dan authority epoch grup tidak durable lintas restart.
@@ -177,11 +225,13 @@ nyata tetap belum lengkap.
 - Satu stream grup belum mempunyai conversation disentanglement sempurna. Quote
   control-copy sengaja dikirim tanpa quote bila cache raw 60 detik kedaluwarsa.
 - Adaptive timing, selective safety/privacy, emergency ACK, dan authority-first
-  preflight belum diuji di grup nyata.
+  preflight, semantic boundary, serta per-bubble interruption belum diuji di
+  grup nyata.
 
 ## Bukti dan pointer
 
 - Kode: `src/whatsapp/`, `src/core/group-turn-service.ts`,
+  `src/core/response-presentation.ts`, `src/core/conversation-progress.ts`,
   `src/core/group-memory-service.ts`, `src/core/group-authority-policy.ts`,
   `src/core/group-agent-run-service.ts`, `src/core/group-agent-run-policy.ts`,
   `src/core/group-agent-run-ingress.ts`, `src/core/group-agent-run-start-policy.ts`,
@@ -201,6 +251,8 @@ nyata tetap belum lengkap.
   `src/core/group-workspace-coding-controller.ts`,
   `src/core/group-runtime-policy.ts`, `src/whatsapp/group-message-batcher.ts`.
 - Tes: `tests/baileys-account-manager.test.ts`,
+  `tests/whatsapp-private-conversation.test.ts`,
+  `tests/whatsapp-config.test.ts`,
   `tests/group-conversation.test.ts`, `tests/group-turn-service.test.ts`,
   `tests/group-memory-service.test.ts`, `tests/group-ingress.test.ts`,
   `tests/group-runtime-policy.test.ts`, `tests/group-message-batcher.test.ts`,

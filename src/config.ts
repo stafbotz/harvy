@@ -29,6 +29,7 @@ import type {
 import {
   parseEnabled,
   parsePairingMode,
+  parsePrivateEnabled,
   parseWhatsAppAccounts,
   type WhatsAppConfig,
 } from "./whatsapp/config.js";
@@ -464,6 +465,9 @@ function loadWhatsAppConfig(): WhatsAppConfig {
 
   return {
     enabled,
+    privateEnabled: parsePrivateEnabled(
+      process.env.WHATSAPP_PRIVATE_ENABLED,
+    ),
     accounts,
     pairingMode: parsePairingMode(process.env.WHATSAPP_PAIRING_MODE),
     authFolder: resolve(

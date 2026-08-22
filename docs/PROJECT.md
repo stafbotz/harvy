@@ -1,6 +1,6 @@
 # Harvy — Keputusan Proyek dan Backlog
 
-Terakhir diperbarui: 9 Agustus 2026.
+Terakhir diperbarui: 22 Agustus 2026.
 
 ## Identitas dan produk
 
@@ -26,8 +26,9 @@ Terakhir diperbarui: 9 Agustus 2026.
   bertipe, context budget, dan kernel agent berbatas untuk seluruh kanal.
   Model hanya mengusulkan tindakan; kode, kebijakan, persetujuan, dan executor
   yang menentukan apa yang sungguh dijalankan. Katalog yang sama tidak boleh
-  menyamarkan adapter yang belum ada: Telegram grup dan WhatsApp privat tetap
-  belum tersedia.
+  menyamarkan adapter yang belum ada: Telegram grup tetap belum tersedia;
+  WhatsApp privat baru tersedia sebagai beta lokal opt-in dengan batas yang
+  dicatat eksplisit di status kanal.
 
 Pengguna yang dituju adalah pelajar Indonesia, terutama Gen Z dan Gen Alpha.
 Ini memengaruhi pilihan kanal, gaya bahasa, dan tingkat perlindungan: sebagian
@@ -49,7 +50,7 @@ jujur, tidak manipulatif, dan menghormati kendali pengguna.
 | Harvy pribadi | Telegram | Dikerjakan sekarang |
 | Harvy di grup | Telegram | Nanti; belum dimulai |
 | Harvy di grup | WhatsApp melalui Baileys | Fondasi beta lokal; satu nomor tersambung dan membalas grup nyata, ambient/direct teruji otomatis dan sintetis, perilaku lengkap belum diuji di grup nyata |
-| Harvy pribadi | WhatsApp melalui Baileys | Beta nanti |
+| Harvy pribadi | WhatsApp melalui Baileys | Beta lokal opt-in dan default-off; chat teks memakai core conversation, consent, safety, context, history, dan usage yang sama, tetapi surface tombol/fitur khusus Telegram belum seluruhnya dipindahkan dan belum diuji live |
 | Visualisasi | Web | Setelah alur chat terbukti perlu |
 
 WhatsApp dirancang untuk dapat memakai **banyak nomor Harvy**. Setiap nomor

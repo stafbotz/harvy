@@ -1,7 +1,8 @@
 # Status — Telegram Privat
 
-Refreshed: 20 Agustus 2026 pada targeted CodingRun input/private publish. Angka gerbang
-penuh terbaru dicatat di `docs/LOG.md`; bukti Telegram live belum diperbarui.
+Refreshed: 22 Agustus 2026 pada orchestration percakapan semantic-first dan
+interruptible. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; bukti
+Telegram live belum diperbarui.
 
 ## Keadaan saat ini
 
@@ -11,20 +12,42 @@ penuh terbaru dicatat di `docs/LOG.md`; bukti Telegram live belum diperbarui.
   dan menyediakan jalur safety tanpa consent. Bubble setelah pesan pertama
   tidak dikirim ke model atau dinilai safety sebelum consent. Setelah consent,
   batas bubble yang ditahan dipertahankan dan matcher lokal menilai tiap bagian.
-- Ingress pesan nonblocking memakai boundary local-first untuk satu bubble
-  jelas dan model fallback untuk ambiguitas. Settle awal memakai fallback 650
-  ms lalu p90 gap antar-arrival content-free per pemilik setelah tiga sampel,
-  termasuk lintas batch yang sudah ter-flush; state RAM berbatas/ber-TTL.
-  Jendela semantik open/incomplete tetap 7/12 detik.
-  Command/callback diserialkan per owner.
+- Ingress pesan nonblocking memakai boundary semantic-first untuk bahasa
+  natural: model menerima seluruh current batch, konteks terbaru, dan timing
+  content-free lalu mengembalikan state, confidence, continuation likelihood,
+  serta reason class closed-set. Regex lokal hanya memutus command, hitungan,
+  pertanyaan/acknowledgment yang jelas, fragmen sintaksis keras, dan emergency
+  eksplisit. Settle awal memakai fallback 650 ms lalu p90 gap antar-arrival
+  content-free per pemilik setelah tiga sampel, termasuk lintas batch yang
+  sudah ter-flush; state RAM berbatas/ber-TTL. Complete yang yakin langsung
+  diproses setelah settle, complete multi-bubble yang ragu dapat menunggu 4
+  detik, dan open/incomplete tetap 7/12 detik. Command/callback diserialkan per
+  owner.
+- Pesan baru tetap dapat masuk selama model/tool/output aktif. Classifier
+  hubungan membedakan addition, correction, redirect, dan independent;
+  tiga yang pertama menyupersesi work lama melalui `AbortController`, relation
+  barrier, serta generation guard, sedangkan independent tetap diantrekan.
+  User turn yang belum durable dapat digabung ulang; history, memory/action
+  offer, tombol, dan output lama diperiksa lagi sebelum commit atau send.
+  Parser waktu pending menerima signal yang sama; mutasi tenggat, reminder,
+  check-in, memory, dan jam tenang dipagari ulang tepat sebelum commit.
 - Emergency preflight lokal berpresisi tinggi dapat mengirim ACK sebelum
   debounce; full triage, review sesuai policy, handler, dan mutasi tetap memakai
   pipeline/FIFO. Batch biasa lama yang belum mulai dibatalkan lewat generation
   guard ketika giliran urgent masuk. Metadata immediate-danger per bubble dan
   hasil boundary `urgent` bertahan sampai handler, sehingga merge teks tidak
   dapat menghapus kewajiban triage/review akhir.
-- Balasan dibagi maksimal tiga bubble, teks Telegram dinormalisasi, dan blok
-  kode dipertahankan bila muat.
+- Balasan memakai shared `ResponsePresentationPlan` yang sama dengan WhatsApp,
+  tanpa aturan maksimal tiga bubble. Beat/follow-up pendek boleh terpisah;
+  penjelasan terstruktur dan blok kode tetap koheren. Anti-spam delapan segmen
+  hanya guard ekstrem, lalu hard splitter 4.000 karakter menjaga semua code
+  point. Setiap bubble dan jedanya interruptible; history hanya mencatat bubble
+  yang benar-benar terkirim.
+- Work yang melewati grace period memakai satu transient progress message.
+  Surface yang sama diedit hanya dari activity event backend nyata, dihapus
+  sebelum jawaban pertama, dan gagal secara kosmetik. Jawaban cepat serta fase
+  listening tidak menampilkan status; copy tidak membawa model, effort,
+  chain-of-thought, raw input, atau istilah internal.
 - Route privat mencakup percakapan, action offer, task, session, data control,
   memory, safety, serta Agent Runtime. Waktu berdiri sendiri tanpa episode
   hangat memakai fast path tanpa boundary/understanding/triage model.
@@ -60,12 +83,16 @@ penuh terbaru dicatat di `docs/LOG.md`; bukti Telegram live belum diperbarui.
 - Antrean percakapan dan pesan pra-consent masih in-memory. Crash atau force
   stop dapat kehilangan giliran chat yang belum selesai. Active work
   `orchestrate` tahan restart lokal, tetapi query agent `tools` masih sinkron.
-- Request model biasa yang aktif belum mempunyai cancellation kooperatif penuh.
+- `AbortSignal` sudah mencapai model dan AgentHarness percakapan, tetapi
+  cancellation provider/socket live serta efek eksternal yang telanjur mulai
+  belum diuji end-to-end; pre-send/current-generation guard tetap pertahanan
+  terakhir.
 - Emergency preflight closed-set Telegram belum mencakup command/callback dan
   bukan pengganti triase; false negative tetap mungkin. WhatsApp grup memakai
   matcher yang sama melalui jalur terpisah ADR-024.
-- Adaptive profile baru teruji otomatis; kualitas split bubble dan latency
-  aktual belum diuji end-to-end lewat Telegram.
+- Adaptive profile, semantic boundary, progress, shared presentation, dan
+  interruption baru teruji otomatis; kualitas timing/status/bubble aktual
+  belum diuji end-to-end lewat Telegram.
 - Metrik turn mempunyai TTFR dan final terpisah untuk delivery yang
   diinstrumentasi, tetapi coverage command/callback/durable run serta dashboard
   agregat belum lengkap dan belum dikalibrasi live.
@@ -83,6 +110,7 @@ penuh terbaru dicatat di `docs/LOG.md`; bukti Telegram live belum diperbarui.
 - Kode: `src/bot/`, `src/ai/conversation.ts`, `src/app.ts`.
 - Tes: `tests/create-bot.test.ts`, `tests/conversation.test.ts`,
   `tests/message-batcher.test.ts`, `tests/create-bot-flow.test.ts`,
-  `tests/onboarding.test.ts`, dan
+  `tests/turn-taking-policy.test.ts`, `tests/conversation-progress.test.ts`,
+  `tests/response-presentation.test.ts`, `tests/onboarding.test.ts`, dan
   `tests/private-coding-application-e2e.test.ts`.
 - Keputusan: ADR-002, ADR-004, ADR-007, ADR-008, ADR-021, ADR-023, ADR-027.

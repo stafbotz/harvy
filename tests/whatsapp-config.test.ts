@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   parseEnabled,
   parsePairingMode,
+  parsePrivateEnabled,
   parseWhatsAppAccounts,
 } from "../src/whatsapp/config.js";
 
@@ -67,6 +68,16 @@ describe("konfigurasi WhatsApp", () => {
     assert.equal(parseEnabled("true"), true);
     assert.equal(parseEnabled("0"), false);
     assert.throws(() => parseEnabled("barangkali"), /true atau false/i);
+  });
+
+  it("mematikan WhatsApp pribadi secara default dan menolak nilai ambigu", () => {
+    assert.equal(parsePrivateEnabled(undefined), false);
+    assert.equal(parsePrivateEnabled("true"), true);
+    assert.equal(parsePrivateEnabled("OFF"), false);
+    assert.throws(
+      () => parsePrivateEnabled("barangkali"),
+      /WHATSAPP_PRIVATE_ENABLED harus true atau false/i,
+    );
   });
 
   it("memakai QR sebagai pairing default dan menerima code secara eksplisit", () => {

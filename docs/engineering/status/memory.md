@@ -96,10 +96,13 @@ learning, storage, atau kontrol data yang bukan policy safety.
   agar koreksi baru dapat melakukan supersession terhadap data pra-Phase E.
 - Namespace private, group-member/group-room, dan project dipisahkan secara
   fisik dan divalidasi fail-closed. Runtime long-term semantic/learning Phase
-  E/F saat ini hanya Telegram privat. WhatsApp privat hanya melayani dashboard
-  penggunaan; group member memory memakai service terpisah yang mengikat
-  explicit remember pada anggota+turn+grup, sedangkan shared room dan project
-  memory tetap memakai authority masing-masing dan tidak mewarisi consent itu.
+  E/F kini dapat menyusun recent/retrieved context untuk Telegram dan WhatsApp
+  privat dengan owner scope terpisah. Adapter WhatsApp menyediakan lihat/hapus
+  memori lewat perintah teks, tetapi extraction/confirmation memori baru dan
+  seluruh surface kontrol Telegram belum ported. Group member memory tetap
+  memakai service terpisah yang mengikat explicit remember pada
+  anggota+turn+grup, sedangkan shared room dan project memory tetap memakai
+  authority masing-masing dan tidak mewarisi consent itu.
 
 ## Batas dan defect aktif
 

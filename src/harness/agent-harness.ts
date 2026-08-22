@@ -219,6 +219,12 @@ export interface AgentTraceEvent {
   capabilityId: string | null;
 }
 
+/** Event operasi aktual untuk UX/telemetry; tidak membawa prompt atau CoT. */
+export interface AgentActivityEvent {
+  phase: "planning" | "executing";
+  capabilityId: string | null;
+}
+
 export type AgentRunResult =
   | {
       status: "completed";
@@ -275,6 +281,7 @@ export interface AgentRunInput {
   answer?: string;
   /** Generation guard milik adapter/core; hasil terlambat tidak boleh commit. */
   isCurrent?: () => boolean | Promise<boolean>;
+  onActivity?: (event: AgentActivityEvent) => void;
   now?: () => Date;
   makeRunId?: () => string;
 }
@@ -524,6 +531,7 @@ export class AgentHarness {
       }
 
       trace.push(event(checkpoint.step, "plan", "started"));
+      input.onActivity?.({ phase: "planning", capabilityId: null });
       let rawDecision: unknown;
       try {
         rawDecision = await boundedCall(
@@ -909,6 +917,7 @@ async function executeAction(
     );
   }
   trace.push(event(checkpoint.step, "execute", "started", capability.id));
+  input.onActivity?.({ phase: "executing", capabilityId: capability.id });
   let result: AgentExecutorResult;
   try {
     result = await boundedCall(

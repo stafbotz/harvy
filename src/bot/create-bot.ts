@@ -216,6 +216,10 @@ import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
 } from "../observability/operational-logger.js";
+import {
+  TransientConversationProgress,
+  type ConversationProgressReporter,
+} from "../core/conversation-progress.js";
 
 /** Jarak bawaan antara pengingat dan tenggat. */
 const REMINDER_LEAD_MS = 60 * 60 * 1000;
@@ -296,6 +300,12 @@ class PartialReplyDeliveryError extends Error {
   ) {
     super("Balasan Telegram hanya terkirim sebagian.");
     this.name = "PartialReplyDeliveryError";
+  }
+}
+class ReplyInterruptedError extends Error {
+  constructor(readonly deliveredText: string) {
+    super("Balasan dihentikan karena giliran percakapan berubah.");
+    this.name = "ReplyInterruptedError";
   }
 }
 export interface TypingContext {
@@ -438,10 +448,12 @@ export function createBot(
     text: string,
     keyboard?: InlineKeyboard,
   ): Promise<void> => safeEditSafely(ctx, text, keyboard, logger);
+  const activeProgress = new Map<string, ConversationProgressReporter>();
   const bot = new Bot(config.telegramBotToken);
   bot.use(async (ctx, next) => {
     const originalReply = ctx.reply.bind(ctx);
     ctx.reply = (async (...args: Parameters<Context["reply"]>) => {
+      await activeProgress.get(ownerOf(ctx))?.responding?.();
       const sent = await originalReply(...args);
       const turnId = currentUsageAttribution()?.turnId ?? null;
       if (turnId) await noteTurnResponse(ownerOf(ctx), turnId);
@@ -626,7 +638,7 @@ export function createBot(
   }
 
   const messageBatcher = new MessageBatcher<Context>(
-    async (text, ownerId, turnId) => {
+    async (text, ownerId, turnId, signals) => {
       if (ownerId && turnId) await telemetry.beginTurn(ownerId, turnId);
       return withUsageAttribution(
         {
@@ -653,7 +665,15 @@ export function createBot(
           ) {
             return "complete";
           }
-          return conversation.classifyTurnBoundary(text, ownerId);
+          const recent = ownerId ? await history.context(ownerId) : undefined;
+          return typeof conversation.assessTurnBoundary === "function"
+            ? conversation.assessTurnBoundary(
+                text,
+                ownerId,
+                recent ? { turns: recent.turns } : undefined,
+                signals,
+              )
+            : conversation.classifyTurnBoundary(text, ownerId);
         },
       );
     },
@@ -673,6 +693,9 @@ export function createBot(
           {
             signal: batch.signal,
             isCurrent: batch.isCurrent,
+            awaitCurrent: batch.awaitCurrent,
+            markUserCommitted: batch.markUserCommitted,
+            interruptionRelation: batch.interruptionRelation,
           },
           batch.firstIngressSequence ?? batch.carrier.update.update_id,
           batch.explicitImmediateDanger,
@@ -690,6 +713,25 @@ export function createBot(
       subjectKind: "private",
       channel: "telegram",
     }),
+    undefined,
+    typeof conversation.classifyTurnInterruption === "function"
+      ? async (activeText, incomingText, ownerId, turnId) => {
+          await telemetry.beginTurn(ownerId, turnId);
+          return withUsageAttribution(
+            {
+              turnId,
+              subjectKind: "private",
+              channel: "telegram",
+              actorAliases: [],
+            },
+            () => conversation.classifyTurnInterruption(
+              activeText,
+              incomingText,
+              ownerId,
+            ),
+          );
+        }
+      : undefined,
   ).onUrgent(async (_ownerId, batch) => {
     // Observer dimulai lebih dulu agar lifecycle-nya terurut sebelum
     // `recordTurn`, tetapi tidak ditunggu: telemetry tidak boleh menahan ACK.
@@ -1590,6 +1632,48 @@ export function createBot(
     }
   }
 
+  function createTelegramProgress(
+    ctx: Context,
+    seed: string,
+  ): TransientConversationProgress<SentMessageRef> | null {
+    const chatId = ctx.chat?.id;
+    if (chatId === undefined) return null;
+    return new TransientConversationProgress<SentMessageRef>(
+      {
+        show: async (text) => {
+          const sent = await bot.api.sendMessage(chatId, text);
+          return { chatId: sent.chat.id, messageId: sent.message_id };
+        },
+        update: async (reference, text) => {
+          await bot.api.editMessageText(
+            reference.chatId,
+            reference.messageId,
+            text,
+          );
+        },
+        remove: async (reference) => {
+          await bot.api.deleteMessage(reference.chatId, reference.messageId);
+        },
+        typing: async () => {
+          await bot.api.sendChatAction(chatId, "typing");
+        },
+      },
+      {
+        seed,
+        onError: (operation, error) => {
+          logger.warn(
+            "telegram_progress_operation_failed",
+            "Status kerja sementara gagal diperbarui.",
+            {
+              operation,
+              errorType: error instanceof Error ? error.name : "unknown",
+            },
+          );
+        },
+      },
+    );
+  }
+
   /**
    * Di luar jalur deterministik yang sempit, pesan bebas masuk compiler lebih
    * dulu. Tugas hanya dicatat ketika maksudnya memang mencatat pekerjaan;
@@ -1605,11 +1689,55 @@ export function createBot(
     explicitImmediateDanger = false,
     urgentBoundary = false,
   ): Promise<void> {
+    const createdProgress = runtime.progress
+      ? null
+      : createTelegramProgress(ctx, currentTurnId() ?? ownerId);
+    const progress = runtime.progress ?? createdProgress ?? undefined;
+    const scopedRuntime: ConversationRuntime = progress
+      ? { ...runtime, progress }
+      : runtime;
+    if (progress) activeProgress.set(ownerId, progress);
+    if (
+      runtime.interruptionRelation === "addition" ||
+      runtime.interruptionRelation === "correction"
+    ) {
+      progress?.report({ phase: "adjusting", detail: "new-context" });
+    } else if (runtime.interruptionRelation === "redirect") {
+      progress?.report({ phase: "switching", detail: "new-direction" });
+    }
+
+    try {
+      await handleFreeTextTurn(
+        ctx,
+        ownerId,
+        text,
+        scopedRuntime,
+        firstIngressUpdateId,
+        explicitImmediateDanger,
+        urgentBoundary,
+      );
+    } finally {
+      if (activeProgress.get(ownerId) === progress) {
+        activeProgress.delete(ownerId);
+      }
+      await createdProgress?.finish();
+    }
+  }
+
+  async function handleFreeTextTurn(
+    ctx: Context,
+    ownerId: string,
+    text: string,
+    runtime: ConversationRuntime = {},
+    firstIngressUpdateId = ctx.update.update_id,
+    explicitImmediateDanger = false,
+    urgentBoundary = false,
+  ): Promise<void> {
     if (
       !explicitImmediateDanger &&
       !urgentBoundary &&
       !hasExplicitImmediateDangerSignal(text) &&
-      await handleLocalActiveRunControl(ctx, ownerId, text)
+      await handleLocalActiveRunControl(ctx, ownerId, text, runtime)
     ) {
       return;
     }
@@ -1633,10 +1761,10 @@ export function createBot(
         return;
       }
     }
-    // Indikator muncul ketika Harvy benar-benar mulai menangani satu giliran,
-    // bukan pada setiap bubble saat ia masih menyimak.
     actionOffers.clear(ownerId);
-    await bestEffortTyping(ctx, logger);
+    if (!runtime.interruptionRelation) {
+      runtime.progress?.report({ phase: "reading", detail: "general" });
+    }
 
     // Konteks disusun sebelum pesan ini ikut tercatat, supaya giliran yang
     // sedang ditangani tidak muncul dua kali di dalam promptnya sendiri.
@@ -1658,7 +1786,7 @@ export function createBot(
     // tidak tersedia. Pesan campuran tetap masuk triase penuh.
     if (canUseModelIdentityFastPath(text, context.turns)) {
       await noteTurnSignal(ownerId, "deterministic-fast-path");
-      await history.append(ownerId, "user", text);
+      await appendUserHistory(ownerId, text, runtime);
       if (!(await runtimeIsCurrent(runtime))) return;
       await ctx.reply(CAPYBARA_MODEL_REPLY);
       await history.append(ownerId, "harvy", CAPYBARA_MODEL_REPLY);
@@ -1669,7 +1797,7 @@ export function createBot(
     if (canUseDirectTimeFastPath(text, context.turns)) {
       const response = conversation.deterministicTimeReply(timeZone);
       await noteTurnSignal(ownerId, "deterministic-fast-path");
-      await history.append(ownerId, "user", text);
+      await appendUserHistory(ownerId, text, runtime);
       if (!(await runtimeIsCurrent(runtime))) return;
       await ctx.reply(response);
       await history.append(ownerId, "harvy", response);
@@ -1700,7 +1828,7 @@ export function createBot(
       isNarrowPendingAnswer(waitingAtStart, text)
     ) {
       await noteTurnSignal(ownerId, "deterministic-fast-path");
-      await history.append(ownerId, "user", text);
+      await appendUserHistory(ownerId, text, runtime);
       if (!(await runtimeIsCurrent(runtime))) return;
       if (
         await handlePendingText(
@@ -1728,7 +1856,7 @@ export function createBot(
         : null;
     if (quickReply) {
       await noteTurnSignal(ownerId, "deterministic-fast-path");
-      await history.append(ownerId, "user", text);
+      await appendUserHistory(ownerId, text, runtime);
       if (!(await runtimeIsCurrent(runtime))) return;
       await ctx.reply(quickReply);
       await history.append(ownerId, "harvy", quickReply);
@@ -1874,7 +2002,7 @@ export function createBot(
         understanding = safetyOnlyUnderstanding();
       } else {
         if (!userAlreadyAppended) {
-          await history.append(ownerId, "user", text);
+          await appendUserHistory(ownerId, text, runtime);
         }
         const response = aiFailureMessage(readResult.error);
         if (!(await runtimeIsCurrent(runtime))) {
@@ -1890,7 +2018,11 @@ export function createBot(
     }
 
     if (!userAlreadyAppended) {
-      storedUserTurn = await history.append(ownerId, "user", text);
+      storedUserTurn = await appendUserHistory(ownerId, text, runtime);
+    }
+    if (!(await runtimeIsCurrent(runtime))) {
+      await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+      return;
     }
 
     try {
@@ -1912,7 +2044,7 @@ export function createBot(
 
       if (
         effectPermissions.generalState &&
-        await handleActiveRunMailboxAfterSafety(ctx, ownerId, text)
+        await handleActiveRunMailboxAfterSafety(ctx, ownerId, text, runtime)
       ) {
         await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
         return;
@@ -1968,9 +2100,11 @@ export function createBot(
           : ({ kind: "conversation" } as const);
 
       if (route.kind === "memory-control") {
+        if (!(await runtimeIsCurrent(runtime))) return;
         await clearPending(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
         if (route.action === "list") {
-          await showMemories(ctx, ownerId);
+          await showMemories(ctx, ownerId, runtime);
           return;
         }
         if (route.action === "edit") {
@@ -1980,11 +2114,12 @@ export function createBot(
         }
         if (route.action !== "forget") return;
         if (isExplicitForgetAllMemories(text)) {
-          await confirmMemoryWipe(ctx, ownerId);
+          await confirmMemoryWipe(ctx, ownerId, runtime);
           return;
         }
 
         const current = await memories.list(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
         const matches = memoriesMatchingNaturalTarget(
           current,
           route.target,
@@ -1998,7 +2133,9 @@ export function createBot(
           return;
         }
 
+        if (!(await runtimeIsCurrent(runtime))) return;
         const stoppedRun = await discardAgentRunForMemoryChange(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
         for (const match of matches) {
           await memories.forget(ownerId, match.id);
         }
@@ -2020,8 +2157,10 @@ export function createBot(
       }
 
       if (route.kind === "control") {
+        if (!(await runtimeIsCurrent(runtime))) return;
         await clearPending(ownerId);
-        await showControl(ctx, ownerId, route.action);
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await showControl(ctx, ownerId, route.action, runtime);
         return;
       }
 
@@ -2322,6 +2461,10 @@ export function createBot(
         );
         debitDeliveredReply = false;
         await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        if (!(await runtimeIsCurrent(runtime))) {
+          await rollbackOrdinaryMemories(ownerId, remembered.saved);
+          return;
+        }
         if (triage.level !== "biasa") {
           await noteTurnSignal(ownerId, "safety-fallback");
           reply = safeFallbackReply(triage.level);
@@ -2381,8 +2524,10 @@ export function createBot(
 
       if (reply) {
         let replyDelivered = false;
+        const deliveredReplyBubbles: string[] = [];
         const onBubbleDelivered = (deliveredText: string): void => {
           replyDelivered = true;
+          deliveredReplyBubbles.push(deliveredText);
           // Acknowledgement kontekstual dapat berada sebelum bubble terakhir.
           // Setelah pengguna benar-benar melihat klaim write itu, rollback pada
           // kegagalan bubble lanjutan justru akan membuat klaim tersebut palsu.
@@ -2412,7 +2557,7 @@ export function createBot(
               async (next) => {
                 deliveredBySession = true;
                 if (!(await runtimeIsCurrent(runtime))) {
-                  throw new Error("Giliran sudah digantikan sebelum delivery.");
+                  throw new ReplyInterruptedError("");
                 }
                 await sendReply(
                   ctx,
@@ -2422,6 +2567,7 @@ export function createBot(
                     ? sessionActions(next)
                     : undefined,
                   onBubbleDelivered,
+                  runtime,
                 );
                 replyDelivered = true;
                 memoryNoticeDelivered = true;
@@ -2441,13 +2587,14 @@ export function createBot(
               return;
             }
             const sent = activeRunLaunch
-              ? await sendRunAnchor(ctx, reply)
+              ? await sendRunAnchor(ctx, reply, runtime)
               : await sendReply(
                 ctx,
                 reply,
                 memoryNoticeItems,
                 adaptiveKeyboard,
                 onBubbleDelivered,
+                runtime,
               );
             replyDelivered = true;
             memoryNoticeDelivered = true;
@@ -2461,8 +2608,29 @@ export function createBot(
                 activeRunLaunch.runId,
                 String(sent.messageId),
               );
-              launchActiveAgentWork(activeRunLaunch);
+              // Anchor yang sudah diakui transport tetap harus terikat ke
+              // record. Namun work backend jangan diluncurkan bila pesan baru
+              // menyupersesi turn persis selama send berlangsung.
               activeRunLaunched = true;
+              if (await runtimeIsCurrent(runtime)) {
+                launchActiveAgentWork(activeRunLaunch);
+              } else {
+                try {
+                  const stopped = await agentRuns!.failActive(
+                    "telegram",
+                    ownerId,
+                    activeRunLaunch.runId,
+                    "superseded_before_launch",
+                  );
+                  if (stopped) await updateActiveRunAnchor(stopped);
+                } catch (error) {
+                  logger.error(
+                    "superseded_active_run_cleanup_failed",
+                    "Run yang disupersesi setelah Anchor terkirim gagal dihentikan.",
+                    error,
+                  );
+                }
+              }
             }
             if (agentPending) {
               try {
@@ -2497,6 +2665,25 @@ export function createBot(
               );
             }
           }
+          if (error instanceof ReplyInterruptedError) {
+            actionOffers.clear(ownerId);
+            if (!memoryNoticeDelivered) {
+              await rollbackOrdinaryMemories(ownerId, remembered.saved);
+            }
+            if (error.deliveredText) {
+              if (debitDeliveredReply) {
+                await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
+              }
+              await history.append(ownerId, "harvy", error.deliveredText);
+              await memories.markUsed(context.memories);
+            } else {
+              await telemetry.discardUndelivered?.(
+                ownerId,
+                currentTurnId(),
+              );
+            }
+            return;
+          }
           if (
             error instanceof PartialReplyDeliveryError &&
             error.deliveredText &&
@@ -2519,6 +2706,30 @@ export function createBot(
             await memories.markUsed(context.memories);
             return;
           }
+          if (
+            error instanceof PartialReplyDeliveryError &&
+            error.deliveredText
+          ) {
+            actionOffers.clear(ownerId);
+            if (!memoryNoticeDelivered) {
+              await rollbackOrdinaryMemories(ownerId, remembered.saved);
+            }
+            if (debitDeliveredReply) {
+              await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
+            }
+            await history.append(ownerId, "harvy", error.deliveredText);
+            await memories.markUsed(context.memories);
+            logger.warn(
+              "telegram_reply_partially_delivered",
+              "Balasan Telegram berhenti setelah sebagian bubble terkirim.",
+              {
+                errorType: error.cause instanceof Error
+                  ? error.cause.name
+                  : "unknown",
+              },
+            );
+            return;
+          }
           if (!replyDelivered) {
             await telemetry.discardUndelivered?.(ownerId, currentTurnId());
           }
@@ -2527,7 +2738,11 @@ export function createBot(
           }
           throw error;
         }
-        await history.append(ownerId, "harvy", reply.trim());
+        await history.append(
+          ownerId,
+          "harvy",
+          deliveredReplyBubbles.join("\n\n") || reply.trim(),
+        );
         if (agentCheckpointWarning) {
           await history.append(ownerId, "harvy", agentCheckpointWarning);
         }
@@ -2535,6 +2750,7 @@ export function createBot(
 
         // Catatan tersembunyi tidak dibuat dari satu false positive dukungan,
         // hasil triase yang gagal, atau balasan yang belum berhasil dikirim.
+        if (!(await runtimeIsCurrent(runtime))) return;
         if (triage.certain && triage.level === "bahaya") {
           await insights.record(
             ownerId,
@@ -2547,6 +2763,8 @@ export function createBot(
         await telemetry.discardUndelivered?.(ownerId, currentTurnId());
       }
 
+      if (!(await runtimeIsCurrent(runtime))) return;
+
       // Satu pending saja per pemilik. Klarifikasi agent yang sudah terlihat
       // menang atas tawaran tugas/memori/gaya agar checkpoint tidak tertimpa.
       if (activeRunSurfaceReply) return;
@@ -2557,12 +2775,19 @@ export function createBot(
         // Kartu tugas menyusul balasan, tanpa kalimat pembuka kedua. Kalau
         // balasannya gagal dibuat, kartunya yang membawa kalimatnya.
         try {
-          await saveTask(
+          const taskDelivered = await saveTask(
             ctx,
             ownerId,
             route.task,
             reply ? undefined : taskSavedHeading(),
+            runtime,
           );
+          if (!taskDelivered) {
+            if (!memoryNoticeDelivered) {
+              await rollbackOrdinaryMemories(ownerId, remembered.saved);
+            }
+            return;
+          }
           if (!reply) {
             await sendMemoryNotes(ctx, memoryNoticeItems);
             memoryNoticeDelivered = true;
@@ -2573,7 +2798,8 @@ export function createBot(
           }
           throw error;
         }
-        await askSensitive(ctx, ownerId, remembered.sensitive);
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await askSensitive(ctx, ownerId, remembered.sensitive, runtime);
         return;
       }
 
@@ -2587,12 +2813,18 @@ export function createBot(
         }
       }
 
+      if (!(await runtimeIsCurrent(runtime))) return;
+
       // Pekerjaan yang tersirat di balik cerita ditawarkan, tidak dicatat diam-diam.
       if (offeredTask) {
         const confirmationToken = await setPending(ownerId, {
           kind: "confirm-task",
           task: offeredTask,
         });
+        if (!(await runtimeIsCurrent(runtime))) {
+          pending.take(ownerId, confirmationToken);
+          return;
+        }
         const offerText =
           `Mau aku catat “${offeredTask.title}” biar nggak perlu kamu ingat-ingat?`;
         try {
@@ -2607,15 +2839,18 @@ export function createBot(
         return;
       }
 
-      await askSensitive(ctx, ownerId, remembered.sensitive);
+      if (!(await runtimeIsCurrent(runtime))) return;
+      await askSensitive(ctx, ownerId, remembered.sensitive, runtime);
 
       // Ditanyakan setelah percakapan punya isi, bukan setelah giliran pertama.
       // Pada uji pertama pesan pembukanya cuma "p", dan pertanyaan gaya sudah
       // muncul di detik berikutnya — pengguna belum punya bahan menjawabnya.
+      if (!(await runtimeIsCurrent(runtime))) return;
       await askStyleOnce(
         ctx,
         ownerId,
         styleEligible && !adaptiveKeyboard,
+        runtime,
       );
     } finally {
       if (activeRunLaunch && !activeRunLaunched) {
@@ -2644,6 +2879,7 @@ export function createBot(
   ): Promise<string> {
     if (!needsConditionalReplyReview(triage.routing)) return reply;
 
+    runtime.progress?.report({ phase: "checking", detail: "consistency" });
     let verdict: boolean | null = null;
     try {
       verdict = await conversation.reviewReply(
@@ -2695,6 +2931,7 @@ export function createBot(
     ctx: Context,
     ownerId: string,
     text: string,
+    runtime: ConversationRuntime,
   ): Promise<boolean> {
     if (!agentRuns) return false;
     const run = await activeRunForIngress(ownerId);
@@ -2708,7 +2945,7 @@ export function createBot(
     if (isTerminalActiveRun(run)) {
       if (relation !== "status_query") return false;
       await noteTurnSignal(ownerId, "deterministic-fast-path");
-      await history.append(ownerId, "user", text);
+      await appendUserHistory(ownerId, text, runtime);
       const response = renderRunAnchor(run);
       await ctx.reply(response);
       await history.append(ownerId, "harvy", response);
@@ -2716,7 +2953,7 @@ export function createBot(
     }
 
     await noteTurnSignal(ownerId, "deterministic-fast-path");
-    await history.append(ownerId, "user", text);
+    await appendUserHistory(ownerId, text, runtime);
     if (relation === "status_query") {
       const response = renderRunAnchor(run);
       await ctx.reply(response);
@@ -2755,9 +2992,11 @@ export function createBot(
     ctx: Context,
     ownerId: string,
     text: string,
+    runtime: ConversationRuntime = {},
   ): Promise<boolean> {
     if (!agentRuns) return false;
     const run = await activeRunForIngress(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) throw new ReplyInterruptedError("");
     if (!run || isTerminalActiveRun(run)) return false;
     const relation = classifyRunMailboxLocally({
       text,
@@ -2773,6 +3012,7 @@ export function createBot(
     }
     const kind = mailboxKindForRelation(relation);
     if (!kind) return false;
+    if (!(await runtimeIsCurrent(runtime))) throw new ReplyInterruptedError("");
     const routed = await agentRuns.routeActiveMessage({
       channel: "telegram",
       ownerId,
@@ -2785,6 +3025,7 @@ export function createBot(
         : {}),
       ingressUpdateId: ctx.update.update_id,
     });
+    if (!(await runtimeIsCurrent(runtime))) throw new ReplyInterruptedError("");
     if (routed.status === "duplicate" || routed.status === "conflict") {
       return true;
     }
@@ -2798,6 +3039,7 @@ export function createBot(
     const response = runUpdateAcknowledgement(relation);
     await ctx.reply(response);
     await history.append(ownerId, "harvy", response);
+    if (!(await runtimeIsCurrent(runtime))) return true;
     await updateActiveRunAnchor(routed.run);
     if (routed.run.status === "queued") launchActiveAgentWork(routed.run);
     return true;
@@ -3448,6 +3690,7 @@ export function createBot(
     runtime: ConversationRuntime,
     style: StylePreference | null,
   ): Promise<boolean> {
+    if (!(await runtimeIsCurrent(runtime))) return true;
     switch (waiting.kind) {
       case "agent-input":
         await continueAgentInput(
@@ -3462,10 +3705,23 @@ export function createBot(
         );
         return true;
       case "edit-due":
-        await applyNewDue(ctx, ownerId, waiting.taskId, text, timeZone);
+        await applyNewDue(
+          ctx,
+          ownerId,
+          waiting.taskId,
+          text,
+          timeZone,
+          runtime,
+        );
         return true;
       case "edit-memory":
-        await applyMemoryEdit(ctx, ownerId, waiting.memoryId, text);
+        await applyMemoryEdit(
+          ctx,
+          ownerId,
+          waiting.memoryId,
+          text,
+          runtime,
+        );
         return true;
       case "set-task-reminder":
         await applyTaskReminder(
@@ -3474,6 +3730,7 @@ export function createBot(
           waiting.taskId,
           text,
           timeZone,
+          runtime,
         );
         return true;
       case "schedule-checkin":
@@ -3483,10 +3740,17 @@ export function createBot(
           waiting.sessionId,
           text,
           timeZone,
+          runtime,
         );
         return true;
       case "custom-quiet-hours":
-        await applyCustomQuietHours(ctx, ownerId, waiting.sessionId, text);
+        await applyCustomQuietHours(
+          ctx,
+          ownerId,
+          waiting.sessionId,
+          text,
+          runtime,
+        );
         return true;
       case "checkin-settings":
         await ctx.reply(
@@ -3554,12 +3818,12 @@ export function createBot(
       );
     } catch (error) {
       await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+      if (!(await runtimeIsCurrent(runtime))) return;
       await clearPending(
         ownerId,
         waiting.checkpoint.runId,
         waiting.revision ?? undefined,
       );
-      if (!(await runtimeIsCurrent(runtime))) return;
       logger.error("agent_resume_failed", "Run agent gagal dilanjutkan.", error);
       const failure = aiFailureMessage(error);
       await ctx.reply(failure);
@@ -3615,8 +3879,20 @@ export function createBot(
       return;
     }
     try {
-      await sendReply(ctx, response);
+      await sendReply(ctx, response, [], undefined, undefined, runtime);
     } catch (error) {
+      if (error instanceof ReplyInterruptedError) {
+        if (error.deliveredText) {
+          if (debitDeliveredReply) {
+            await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
+          }
+          await history.append(ownerId, "harvy", error.deliveredText);
+          await memories.markUsed(context.memories);
+        } else {
+          await telemetry.discardUndelivered?.(ownerId, currentTurnId());
+        }
+        return;
+      }
       if (
         error instanceof PartialReplyDeliveryError &&
         error.deliveredText
@@ -3672,6 +3948,7 @@ export function createBot(
     ownerId: string,
     memoryId: string,
     text: string,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
     if (!text.trim() || text.trim().length > 200) {
       await ctx.reply(
@@ -3682,6 +3959,7 @@ export function createBot(
 
     const clean = text.trim().replaceAll(/\s+/g, " ");
     const currentMemories = await memories.list(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) return;
     const current = currentMemories.find((memory) => memory.id === memoryId);
     const duplicate = currentMemories.some(
       (memory) =>
@@ -3695,7 +3973,9 @@ export function createBot(
       return;
     }
 
+    if (!(await runtimeIsCurrent(runtime))) return;
     const stoppedRun = await discardAgentRunForMemoryChange(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) return;
     const updated = await memories.edit(ownerId, memoryId, clean);
     if (!updated) {
       await ctx.reply(
@@ -3722,11 +4002,13 @@ export function createBot(
     taskId: string,
     text: string,
     timeZone: string,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
-    const at = await readChosenTime(ctx, ownerId, text, timeZone);
+    const at = await readChosenTime(ctx, ownerId, text, timeZone, runtime);
     if (!at) return;
 
     const profile = await profiles.load(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) return;
     if (isInQuietHours(at, timeZone, profile.quietHours)) {
       await ctx.reply(
         "Waktu itu masuk jam tenangmu. Pilih waktu lain, atau ubah jam tenang lewat Data & izin.",
@@ -3734,6 +4016,7 @@ export function createBot(
       return;
     }
 
+    if (!(await runtimeIsCurrent(runtime))) return;
     const updated = await tasks.setReminder(ownerId, taskId, at);
     if (!updated) {
       await clearPending(ownerId);
@@ -3757,11 +4040,13 @@ export function createBot(
     sessionId: string,
     text: string,
     timeZone: string,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
-    const at = await readChosenTime(ctx, ownerId, text, timeZone);
+    const at = await readChosenTime(ctx, ownerId, text, timeZone, runtime);
     if (!at) return;
 
     const profile = await profiles.load(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) return;
     if (isInQuietHours(at, timeZone, profile.quietHours)) {
       await ctx.reply(
         "Waktu itu masuk jam tenangmu, jadi aku nggak akan menggesernya diam-diam. Pilih waktu lain, ya.",
@@ -3769,6 +4054,7 @@ export function createBot(
       return;
     }
 
+    if (!(await runtimeIsCurrent(runtime))) return;
     const updated = await sessions.scheduleCheckIn(
       ownerId,
       at,
@@ -3796,6 +4082,7 @@ export function createBot(
     ownerId: string,
     sessionId: string | null,
     text: string,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
     const quietHours = parseQuietHours(text);
     if (!quietHours) {
@@ -3805,6 +4092,7 @@ export function createBot(
       return;
     }
 
+    if (!(await runtimeIsCurrent(runtime))) return;
     const profile = await profiles.setQuietHours(ownerId, quietHours);
     await clearPending(ownerId);
     if (sessionId) {
@@ -3821,14 +4109,17 @@ export function createBot(
     ownerId: string,
     text: string,
     timeZone: string,
+    runtime: ConversationRuntime = {},
   ): Promise<Date | null> {
     let at: Date | null;
     try {
       at = await conversation.understandDueDate(text, {
+        ...runtime,
         ownerId,
         timeZone,
       });
     } catch (error) {
+      if (!(await runtimeIsCurrent(runtime))) return null;
       logger.error(
         "selected_time_understanding_failed",
         "Pembacaan waktu pilihan gagal.",
@@ -3838,6 +4129,7 @@ export function createBot(
       return null;
     }
 
+    if (!(await runtimeIsCurrent(runtime))) return null;
     if (!at || at.getTime() <= Date.now()) {
       await ctx.reply(
         "Aku belum nangkep waktu yang masih akan datang. Coba tulis seperti “30 menit lagi” atau “besok jam 7 malam”.",
@@ -3872,8 +4164,14 @@ export function createBot(
     ownerId: string,
     value: Pending,
     deliver: (token: string) => Promise<void>,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
+    if (!(await runtimeIsCurrent(runtime))) return;
     const token = await setPending(ownerId, value);
+    if (!(await runtimeIsCurrent(runtime))) {
+      pending.take(ownerId, token);
+      return;
+    }
     try {
       await deliver(token);
     } catch (error) {
@@ -3886,7 +4184,9 @@ export function createBot(
     ctx: Context,
     ownerId: string,
     action: ControlAction,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
+    if (!(await runtimeIsCurrent(runtime))) return;
     switch (action) {
       case "data":
         await ctx.reply(
@@ -3896,6 +4196,7 @@ export function createBot(
         return;
       case "timezone": {
         const profile = await profiles.load(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
         await ctx.reply(
           `Pengaturan waktu saat ini:\n\n${formatTimeSettings(profile)}`,
           { reply_markup: timezoneActions() },
@@ -3904,6 +4205,7 @@ export function createBot(
       }
       case "quiet-hours": {
         const profile = await profiles.load(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
         await ctx.reply(
           `Pengaturan waktu saat ini:\n\n${formatTimeSettings(profile)}`,
           { reply_markup: quietHoursActions() },
@@ -3912,12 +4214,15 @@ export function createBot(
       }
       case "active-session": {
         const session = await sessions.active(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
         if (!session) {
           await ctx.reply("Saat ini nggak ada sesi yang aktif.");
           return;
         }
+        const timeZone = await timeZoneFor(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
         await ctx.reply(
-          formatSession(session, await timeZoneFor(ownerId)),
+          formatSession(session, timeZone),
           { reply_markup: sessionActions(session) },
         );
         return;
@@ -3931,10 +4236,11 @@ export function createBot(
               "Kalau izin ditarik, pesan berikutnya tidak akan diproses AI sampai kamu memilih setuju lagi. Data, sesi, dan check-in yang sudah ada tetap tersimpan, tetapi run agent yang sedang menunggu jawaban dibatalkan dan check-in tidak dikirim selama izin belum diberikan lagi.",
               { reply_markup: withdrawConsentConfirmActions(token) },
             ).then(() => undefined),
+          runtime,
         );
         return;
       case "export":
-        await sendDataExport(ctx, ownerId);
+        await sendDataExport(ctx, ownerId, runtime);
         return;
       case "delete-all":
         await sendPendingPrompt(
@@ -3945,6 +4251,7 @@ export function createBot(
               "Ini menghapus tugas aktif dan selesai, riwayat, memori, sesi, check-in, run agent tertunda, profil, serta catatan pemakaian. Tindakan ini tidak bisa dibatalkan.",
               { reply_markup: deleteAllConfirmActions(token) },
             ).then(() => undefined),
+          runtime,
         );
         return;
     }
@@ -3953,8 +4260,10 @@ export function createBot(
   async function sendDataExport(
     ctx: Context,
     ownerId: string,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
     const snapshot = await dataControls.export(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) return;
     const body = `${JSON.stringify(snapshot, null, 2)}\n`;
     await ctx.replyWithDocument(
       new InputFile(
@@ -4003,9 +4312,9 @@ export function createBot(
   /**
    * Mengirim balasan sebagai beberapa bubble, dengan jeda kecil di antaranya.
    *
-   * Tiga bubble yang tiba serentak terbaca seperti notifikasi beruntun. Jedanya
-   * pendek dan berplafon: ini soal keterbacaan, bukan soal membuat percakapan
-   * terasa lebih lama.
+   * Beberapa bubble yang tiba serentak terbaca seperti notifikasi beruntun.
+   * Jedanya pendek dan berplafon: ini soal keterbacaan, bukan soal membuat
+   * percakapan terasa lebih lama.
    */
   async function sendReply(
     ctx: Context,
@@ -4013,6 +4322,7 @@ export function createBot(
     notes: MemoryItem[] = [],
     keyboard?: InlineKeyboard,
     onBubbleDelivered?: (text: string) => void,
+    runtime: ConversationRuntime = {},
   ): Promise<SentMessageRef | null> {
     const bubbles = splitReplyBubbles(text);
     if (bubbles.length === 0) return null;
@@ -4021,6 +4331,10 @@ export function createBot(
     let lastMessage: SentMessageRef | null = null;
     const delivered: string[] = [];
     for (const [index, bubble] of bubbles.entries()) {
+      if (!(await runtimeIsCurrent(runtime))) {
+        throw new ReplyInterruptedError(delivered.join("\n\n"));
+      }
+      if (index === 0) await runtime.progress?.responding?.();
       const last = index === bubbles.length - 1;
       const deliveredBubble = last ? withMemoryNotes(bubble, notes) : bubble;
       let sent;
@@ -4044,7 +4358,10 @@ export function createBot(
 
       if (!last) {
         await bestEffortTyping(ctx, logger);
-        await sleep(bubblePauseMs(bubbles[index + 1] ?? ""));
+        await interruptibleBubblePause(
+          bubblePauseMs(bubbles[index + 1] ?? ""),
+          runtime.signal,
+        );
       }
     }
     return lastMessage;
@@ -4054,7 +4371,12 @@ export function createBot(
   async function sendRunAnchor(
     ctx: Context,
     text: string,
+    runtime: ConversationRuntime = {},
   ): Promise<SentMessageRef> {
+    if (!(await runtimeIsCurrent(runtime))) {
+      throw new ReplyInterruptedError("");
+    }
+    await runtime.progress?.responding?.();
     const sent = await ctx.reply(text);
     return { chatId: sent.chat.id, messageId: sent.message_id };
   }
@@ -4236,7 +4558,9 @@ export function createBot(
     ctx: Context,
     ownerId: string,
     sensitive: ExtractedMemory | null,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
+    if (!(await runtimeIsCurrent(runtime))) return;
     if (!sensitive) {
       // Batch yang memuat bubble sebelum prompt agent tidak sah sebagai
       // jawaban. Jangan biarkan housekeeping memori membatalkan checkpoint
@@ -4250,6 +4574,10 @@ export function createBot(
       kind: "confirm-memory",
       memory: sensitive,
     });
+    if (!(await runtimeIsCurrent(runtime))) {
+      pending.take(ownerId, confirmationToken);
+      return;
+    }
     try {
       await ctx.reply(
         [
@@ -4275,19 +4603,27 @@ export function createBot(
     ctx: Context,
     ownerId: string,
     eligible: boolean,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
     if (!eligible || pending.peek(ownerId)) return;
+    if (!(await runtimeIsCurrent(runtime))) return;
 
     await ctx.reply(STYLE_QUESTION, { reply_markup: styleActions() });
     await profiles.markStyleAsked(ownerId);
     await history.append(ownerId, "harvy", STYLE_QUESTION);
   }
 
-  async function showMemories(ctx: Context, ownerId: string): Promise<void> {
+  async function showMemories(
+    ctx: Context,
+    ownerId: string,
+    runtime: ConversationRuntime = {},
+  ): Promise<void> {
+    if (!(await runtimeIsCurrent(runtime))) return;
     const [items, conversationContext] = await Promise.all([
       memories.list(ownerId),
       history.context(ownerId),
     ]);
+    if (!(await runtimeIsCurrent(runtime))) return;
     let portraitContext: HarvyContext = {
       summary: conversationContext.summary,
       // Potret tidak membaca raw turn. Compiler hanya memerlukan bentuk context
@@ -4302,7 +4638,10 @@ export function createBot(
           ownerId,
           MEMORY_PORTRAIT_QUERY,
           portraitContext,
-          { allowRetrieval: true },
+          {
+            allowRetrieval: true,
+            ...(runtime.signal ? { signal: runtime.signal } : {}),
+          },
         );
         portraitContext = compiled.context;
         logger.info(
@@ -4321,16 +4660,19 @@ export function createBot(
           { errorType: error instanceof Error ? error.name : "unknown" },
         );
       }
+      if (!(await runtimeIsCurrent(runtime))) return;
     }
 
     const hasEvidence = hasMemoryPortraitEvidence(portraitContext);
     let text = MEMORY_PORTRAIT_EMPTY;
     if (hasEvidence) {
       await bestEffortTyping(ctx, logger);
+      if (!(await runtimeIsCurrent(runtime))) return;
       try {
         const summary = await conversation.memoryPortrait(
           portraitContext,
           ownerId,
+          runtime.signal,
         );
         text = formatMemoryPortrait(summary);
       } catch (error) {
@@ -4343,6 +4685,7 @@ export function createBot(
       }
     }
 
+    if (!(await runtimeIsCurrent(runtime))) return;
     await ctx.reply(text, hasEvidence
       ? { reply_markup: memoryPortraitActions() }
       : {});
@@ -4352,6 +4695,7 @@ export function createBot(
   async function confirmMemoryWipe(
     ctx: Context,
     ownerId: string,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
     await sendPendingPrompt(
       ownerId,
@@ -4360,6 +4704,7 @@ export function createBot(
         ctx.reply(MEMORY_WIPE_PROMPT, {
           reply_markup: memoryWipeConfirmActions(token),
         }).then(() => undefined),
+      runtime,
     );
   }
 
@@ -4368,8 +4713,10 @@ export function createBot(
     ownerId: string,
     extracted: ExtractedTask,
     heading?: string,
-  ): Promise<void> {
+    runtime: ConversationRuntime = {},
+  ): Promise<boolean> {
     const profile = await profiles.load(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) return false;
     const timeZone = profile.timeZone ?? config.defaultTimezone;
     const reminderRejected =
       extracted.remindAt !== null &&
@@ -4386,6 +4733,18 @@ export function createBot(
       remindAt: reminderRejected ? null : extracted.remindAt,
       importance: extracted.importance,
     });
+    if (!(await runtimeIsCurrent(runtime))) {
+      try {
+        await tasks.remove(ownerId, task.id);
+      } catch (error) {
+        logger.error(
+          "stale_task_compensation_failed",
+          "Tugas dari giliran stale gagal dikompensasi sebelum delivery.",
+          error,
+        );
+      }
+      return false;
+    }
 
     const response = [
       ...(heading ? [heading, ""] : []),
@@ -4401,6 +4760,7 @@ export function createBot(
 
     await ctx.reply(response, { reply_markup: taskActions(task) });
     await history.append(ownerId, "harvy", response);
+    return true;
   }
 
   async function applyNewDue(
@@ -4409,15 +4769,18 @@ export function createBot(
     taskId: string,
     text: string,
     timeZone: string,
+    runtime: ConversationRuntime = {},
   ): Promise<void> {
     let dueAt: Date | null;
 
     try {
       dueAt = await conversation.understandDueDate(text, {
+        ...runtime,
         ownerId,
         timeZone,
       });
     } catch (error) {
+      if (!(await runtimeIsCurrent(runtime))) return;
       logger.error(
         "due_date_understanding_failed",
         "Pembacaan tenggat baru gagal.",
@@ -4427,6 +4790,7 @@ export function createBot(
       return;
     }
 
+    if (!(await runtimeIsCurrent(runtime))) return;
     if (!dueAt) {
       const response =
         "Aku belum nangkep waktunya. Coba tulis seperti “besok jam 7 malam” atau “senin depan”.";
@@ -4435,16 +4799,18 @@ export function createBot(
       return;
     }
 
-    await clearPending(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) return;
     const updated = await tasks.setDue(ownerId, taskId, dueAt);
 
     if (!updated) {
+      await clearPending(ownerId);
       const response = taskMissingNote();
       await ctx.reply(response);
       await history.append(ownerId, "harvy", response);
       return;
     }
 
+    await clearPending(ownerId);
     const response = [
       "Tenggatnya udah aku ubah.",
       "",
@@ -5350,7 +5716,19 @@ export function createBot(
     runtime: ConversationRuntime,
   ): Promise<boolean> {
     if (runtime.signal?.aborted) return false;
+    if (runtime.awaitCurrent && !(await runtime.awaitCurrent())) return false;
+    if (runtime.signal?.aborted) return false;
     return runtime.isCurrent ? await runtime.isCurrent() : true;
+  }
+
+  async function appendUserHistory(
+    ownerId: string,
+    text: string,
+    runtime: ConversationRuntime,
+  ): Promise<StoredConversationTurn | null> {
+    const stored = await history.append(ownerId, "user", text);
+    if (stored) runtime.markUserCommitted?.();
+    return stored;
   }
 
   function stageForButton(
@@ -5752,6 +6130,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(), ms);
     timer.unref?.();
+  });
+}
+
+function interruptibleBubblePause(
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = setTimeout(done, ms);
+    timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
+
+    function done(): void {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
   });
 }
 

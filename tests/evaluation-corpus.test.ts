@@ -3,7 +3,11 @@ import { describe, it } from "node:test";
 import type { Understanding } from "../src/ai/understand.js";
 import { immediateUnderstandingRoute } from "../src/bot/understanding-route.js";
 import { sessionAppliesToMessage } from "../src/core/session-policy.js";
-import { CONVERSATION_EVAL_CASES } from "../scripts/eval-corpus.js";
+import {
+  CONVERSATION_EVAL_CASES,
+  TURN_BOUNDARY_EVAL_CASES,
+  TURN_INTERRUPTION_EVAL_CASES,
+} from "../scripts/eval-corpus.js";
 
 describe("corpus evaluasi percakapan", () => {
   it("memuat 42 skenario sintetis lintas jalur utama", () => {
@@ -60,6 +64,31 @@ describe("corpus evaluasi percakapan", () => {
     assert.equal(
       byId.get("session-explicit-done")?.expectedSessionSignal,
       "done",
+    );
+  });
+
+  it("memuat skenario boundary dan empat hubungan interupsi", () => {
+    assert.ok(TURN_BOUNDARY_EVAL_CASES.length >= 14);
+    const boundaryIds = new Set(
+      TURN_BOUNDARY_EVAL_CASES.map((testCase) => testCase.id),
+    );
+    assert.equal(boundaryIds.has("boundary-user-burst-open"), true);
+    assert.equal(boundaryIds.has("boundary-quick-calculation"), true);
+    assert.equal(
+      boundaryIds.has("boundary-quick-fact-no-punctuation"),
+      true,
+    );
+    assert.equal(boundaryIds.has("boundary-full-narrative-burst"), true);
+    assert.equal(boundaryIds.has("boundary-contextual-closed-response"), true);
+    assert.equal(boundaryIds.has("boundary-immediate-danger"), true);
+
+    assert.deepEqual(
+      new Set(
+        TURN_INTERRUPTION_EVAL_CASES.map(
+          (testCase) => testCase.expectedRelation,
+        ),
+      ),
+      new Set(["addition", "correction", "redirect", "independent"]),
     );
   });
 });

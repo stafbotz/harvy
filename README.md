@@ -38,7 +38,7 @@ berikutnya, dan tidak memaksa setiap pesan menjadi tugas.
 | Chat pribadi | Telegram, aktif |
 | Chat grup | WhatsApp, beta dan opt-in |
 | Telegram grup | Belum tersedia |
-| WhatsApp pribadi | Belum tersedia |
+| WhatsApp pribadi | Beta lokal, opt-in dan default-off |
 | Runtime | Node.js 22.16.0 atau lebih baru |
 | Bahasa utama | Bahasa Indonesia sehari-hari, dengan dukungan code-mix terbatas |
 | Penyimpanan | Berkas lokal, satu proses |
@@ -224,13 +224,15 @@ menandai giliran <code>urgent</code> untuk memotong jeda itu; pengenalan bahaya
 tidak bergantung pada daftar kata lokal. Balasan tetap menjaga urutan terhadap
 balasan yang sedang aktif.
 
-## WhatsApp grup
+## WhatsApp
 
-Mode WhatsApp adalah jalur terpisah dari chat pribadi dan **mati secara bawaan**.
-Untuk beta lokal, tambahkan konfigurasi berikut ke <code>.env</code>:
+Socket WhatsApp **mati secara bawaan**. Chat grup dan pribadi berbagi socket
+Baileys, tetapi ingress pribadi mempunyai sakelar default-off tersendiri. Untuk
+beta lokal grup saja, tambahkan konfigurasi berikut ke <code>.env</code>:
 
 ~~~dotenv
 WHATSAPP_ENABLED=true
+WHATSAPP_PRIVATE_ENABLED=false
 WHATSAPP_PAIRING_MODE=qr
 WHATSAPP_ACCOUNTS=[{"id":"utama","phoneNumber":"6281234567890"}]
 ~~~
@@ -246,6 +248,21 @@ WHATSAPP_ACCOUNTS=[{"id":"utama","phoneNumber":"6281234567890"},{"id":"kelas","p
 mengisinya dengan nomor telepon atau JID. Satu grup tetap terikat pada satu
 account ID dan tidak dipindahkan otomatis ketika socket tersebut gagal atau
 dibatasi.
+
+### Perilaku pribadi
+
+Ubah <code>WHATSAPP_PRIVATE_ENABLED=true</code> hanya bila chat pribadi memang
+ingin dibuka. Saat nilainya <code>false</code> atau tidak diisi, pesan pribadi
+dibuang sebelum handler dan Harvy tetap melayani grup. Saat aktif, pengguna
+menulis seperti di chat pribadi Telegram; kontak pertama harus membalas
+<code>SETUJU</code> sebelum teks diproses sebagai percakapan. Core conversation,
+context memory, history, safety review, usage, dan funding memakai scope
+WhatsApp terpisah. Perintah teks yang tersedia mencakup
+<code>/penggunaan</code>, <code>/izin</code>, <code>/tarik-izin</code>, dan
+<code>/memori</code>. <code>/hapus-data</code> menghapus seluruh data scope
+WhatsApp setelah frasa konfirmasi exact. Ekspor file, edit memori, dan surface
+yang bergantung pada tombol/callback Telegram belum seluruhnya tersedia; lihat
+status WhatsApp untuk batas terverifikasi.
 
 ### Perilaku grup
 

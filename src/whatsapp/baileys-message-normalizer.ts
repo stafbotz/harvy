@@ -25,6 +25,35 @@ export interface WhatsAppPrivateMessage {
   at: string;
 }
 
+export interface WhatsAppPrivateReply {
+  text: string;
+  /** Dipanggil adapter hanya setelah socket mengakui send. */
+  onDelivered?(delivery?: WhatsAppPrivateDelivery): Promise<void>;
+  /** Dipanggil ketika reply dibuat tetapi tidak mencapai boundary send. */
+  onDeliveryFailed?(delivery?: WhatsAppPrivateDelivery): Promise<void>;
+}
+
+export type WhatsAppPrivateReplyResult = WhatsAppPrivateReply | string | null;
+
+export interface WhatsAppPrivateDelivery {
+  text: string;
+  bubbleCount: number;
+  complete: boolean;
+}
+
+export interface WhatsAppPrivateMessageRef {
+  messageId: string | null;
+}
+
+/** Socket-scoped transport; setiap operasi memeriksa generation akun. */
+export interface WhatsAppPrivateTransport {
+  isCurrent(): boolean;
+  send(text: string): Promise<WhatsAppPrivateMessageRef>;
+  edit(reference: WhatsAppPrivateMessageRef, text: string): Promise<void>;
+  remove(reference: WhatsAppPrivateMessageRef): Promise<void>;
+  typing(): Promise<void>;
+}
+
 /**
  * Memperkecil event Baileys menjadi kontrak domain grup.
  *
@@ -99,7 +128,7 @@ export function normalizeBaileysGroupMessage(
   };
 }
 
-/** Command-only private ingress; ordinary private chat remains unsupported. */
+/** Ingress teks privat; pemrosesan tetap dikunci oleh flag transport. */
 export function normalizeBaileysPrivateMessage(
   raw: WAMessage,
   context: Pick<BaileysMessageContext, "accountId" | "selfJids">,

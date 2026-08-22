@@ -11,6 +11,7 @@ import {
   type WAMessage,
   type WASocket,
 } from "baileys";
+import type { GroupMessage } from "../src/domain/group.js";
 import {
   BaileysAccountManager,
   GROUP_INCOMING_QUOTE_CACHE_MAX_MESSAGES,
@@ -278,12 +279,18 @@ describe("armada akun Baileys", () => {
     await manager.stop();
   });
 
-  it("menjawab private command secara deterministik dan mendeduplikasi upsert", async () => {
+  it("menjawab pesan privat dan mendeduplikasi upsert", async () => {
     const privateMessages: string[] = [];
     const groupMessages: string[] = [];
+    let delivered = 0;
+    let deliveryFailed = 0;
     const sockets: FakeSocket[] = [];
     const manager = new BaileysAccountManager(
-      { ...config(), accounts: [config().accounts[0]!] },
+      {
+        ...config(),
+        privateEnabled: true,
+        accounts: [config().accounts[0]!],
+      },
       {
         ...noOpEvents(),
         onMessage: async (incoming) => {
@@ -291,7 +298,15 @@ describe("armada akun Baileys", () => {
         },
         onPrivateMessage: async (incoming) => {
           privateMessages.push(incoming.text);
-          return "*Penggunaan Harvy*\nSisa penggunaan: 68%";
+          return {
+            text: "*Penggunaan Harvy*\nSisa penggunaan: 68%",
+            onDelivered: async () => {
+              delivered += 1;
+            },
+            onDeliveryFailed: async () => {
+              deliveryFailed += 1;
+            },
+          };
         },
       },
       {
@@ -324,6 +339,116 @@ describe("armada akun Baileys", () => {
     assert.equal(socket.sentMessages.length, 1);
     assert.equal(socket.sentMessages[0]?.jid, "628777777777@s.whatsapp.net");
     assert.match(socket.sentMessages[0]?.text ?? "", /^\*Penggunaan Harvy\*/u);
+    assert.equal(delivered, 1);
+    assert.equal(deliveryFailed, 0);
+    await manager.stop();
+  });
+
+  it("mengabaikan chat pribadi saat flag mati tetapi tetap memproses grup", async () => {
+    const groupMessages: string[] = [];
+    let privateMessages = 0;
+    const sockets: FakeSocket[] = [];
+    const manager = new BaileysAccountManager(
+      { ...config(), accounts: [config().accounts[0]!] },
+      {
+        ...noOpEvents(),
+        onMessage: async (incoming) => {
+          groupMessages.push(incoming.messageId);
+        },
+        onPrivateMessage: async () => {
+          privateMessages += 1;
+          return "Balasan yang tidak boleh terkirim";
+        },
+      },
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.ev.emit("connection.update", { connection: "open" });
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [{
+        key: {
+          id: "private-diabaikan",
+          remoteJid: "628777777777@s.whatsapp.net",
+          fromMe: false,
+        },
+        messageTimestamp: 1_775_000_000,
+        message: { conversation: "halo pribadi" },
+      }],
+    });
+    socket.ev.emit("groups.upsert", [metadata()]);
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [incomingMessage("grup-tetap-jalan")],
+    });
+    await manager.drainEvents();
+
+    assert.deepEqual(groupMessages, ["grup-tetap-jalan"]);
+    assert.equal(privateMessages, 0);
+    assert.equal(socket.sentMessages.length, 0);
+    await manager.stop();
+  });
+
+  it("menyelesaikan reply privat sebagai gagal ketika socket menolak send", async () => {
+    let delivered = 0;
+    let deliveryFailed = 0;
+    const sockets: FakeSocket[] = [];
+    const manager = new BaileysAccountManager(
+      {
+        ...config(),
+        privateEnabled: true,
+        accounts: [config().accounts[0]!],
+      },
+      {
+        ...noOpEvents(),
+        onPrivateMessage: async () => ({
+          text: "Balasan privat",
+          onDelivered: async () => {
+            delivered += 1;
+          },
+          onDeliveryFailed: async () => {
+            deliveryFailed += 1;
+          },
+        }),
+      },
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.failSend = true;
+    socket.ev.emit("connection.update", { connection: "open" });
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [{
+        key: {
+          id: "private-send-gagal",
+          remoteJid: "628777777777@s.whatsapp.net",
+          fromMe: false,
+        },
+        messageTimestamp: 1_775_000_000,
+        message: { conversation: "halo" },
+      }],
+    });
+    await manager.drainEvents();
+
+    assert.equal(delivered, 0);
+    assert.equal(deliveryFailed, 1);
+    assert.equal(socket.sentMessages.length, 0);
     await manager.stop();
   });
 
@@ -596,6 +721,60 @@ describe("armada akun Baileys", () => {
     );
     assert.equal(socket.sentMessages.length, 1);
     await manager.drainEvents();
+    await manager.stop();
+  });
+
+  it("menghentikan continuation grup sebelum bubble berikutnya saat fence stale", async () => {
+    const sockets: FakeSocket[] = [];
+    const manager = new BaileysAccountManager(
+      { ...config(), accounts: [config().accounts[0]!] },
+      noOpEvents(),
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.ev.emit("connection.update", { connection: "open" });
+    await manager.drainEvents();
+    let current = true;
+    socket.onSend = () => {
+      current = false;
+    };
+    const incoming: GroupMessage = {
+      scope: { channel: "whatsapp", groupId: "120363000000@g.us" },
+      accountId: "utama",
+      messageId: "incoming-1",
+      participantId: "anggota@s.whatsapp.net",
+      participantAliases: ["anggota@s.whatsapp.net"],
+      participantName: "Anggota",
+      groupName: "Ruang tes",
+      text: "Harvy, jelaskan",
+      at: new Date().toISOString(),
+      mentionsHarvy: true,
+      repliesToHarvy: false,
+      isAdmin: false,
+    };
+
+    const delivery = await manager.sendReply(
+      incoming,
+      "Bubble satu.\n\nBubble dua?\n\nBubble tiga.",
+      () => current,
+    );
+
+    assert.deepEqual(socket.sentMessages.map((item) => item.text), [
+      "Bubble satu.",
+    ]);
+    assert.deepEqual(delivery, {
+      text: "Bubble satu.",
+      bubbleCount: 1,
+      complete: false,
+    });
     await manager.stop();
   });
 
@@ -2126,6 +2305,8 @@ class FakeSocket {
   groupMetadataCalls = 0;
   omitSentMessageId = false;
   ignoreRequestedMessageId = false;
+  failSend = false;
+  onSend?: (text: string) => void | Promise<void>;
   readonly sentMessages: Array<{
     jid: string;
     text: string;
@@ -2165,6 +2346,7 @@ class FakeSocket {
       content: { text?: string; edit?: { id?: string } },
       options?: { quoted?: WAMessage; messageId?: string },
     ) => {
+      if (this.failSend) throw new Error("simulated send failure");
       this.quotedRemoteJids.push(options?.quoted?.key.remoteJid ?? null);
       if (content.edit) this.editedMessageIds.push(content.edit.id ?? null);
       this.sentMessages.push({
@@ -2173,6 +2355,7 @@ class FakeSocket {
         quotedMessageId: options?.quoted?.key.id ?? null,
         requestedMessageId: options?.messageId ?? null,
       });
+      await this.onSend?.(content.text ?? "");
       const sent = incomingMessage(
         !this.ignoreRequestedMessageId && options?.messageId
           ? options.messageId
@@ -2192,6 +2375,7 @@ class FakeSocket {
 function config(): WhatsAppConfig {
   return {
     enabled: true,
+    privateEnabled: false,
     pairingMode: "qr",
     accounts: [
       { id: "utama", phoneNumber: "628123456789" },

@@ -44,6 +44,9 @@ import {
 import type {
   GroupIngressAssessment,
 } from "../ai/group-ingress.js";
+import type {
+  ConversationProgressLifecycle,
+} from "./conversation-progress.js";
 import { shouldHoldAmbientTurn } from "./group-turn-policy.js";
 import {
   GroupMemoryService,
@@ -277,14 +280,50 @@ const ALLOW_GROUP_RUNTIME_ADMISSION: GroupRuntimeAdmissionResolver =
 
 export type GroupNoticeTarget = Pick<GroupMessage, "scope" | "accountId">;
 
+export interface GroupReplyDeliveryResult {
+  /** Gabungan logical dari bubble yang benar-benar diakui transport. */
+  text: string;
+  bubbleCount: number;
+  complete: boolean;
+}
+
+/**
+ * Transport memakai error ini hanya ketika sebagian bubble sudah terkirim
+ * sebelum kegagalan transport. Core tetap dapat mencatat kenyataan delivery
+ * tanpa menganggap seluruh jawaban pernah sampai.
+ */
+export class GroupReplyPartialDeliveryError extends Error {
+  readonly name = "GroupReplyPartialDeliveryError";
+
+  constructor(
+    readonly delivery: GroupReplyDeliveryResult,
+    readonly deliveryCause: unknown,
+  ) {
+    super("Pengiriman balasan grup berhenti setelah sebagian bubble terkirim.");
+  }
+}
+
 export interface GroupTransport {
   sendNotice(
     target: GroupNoticeTarget,
     text: string,
     runtimeFence?: GroupActivationFence,
   ): Promise<void>;
-  sendReply(message: GroupMessage, text: string): Promise<void>;
+  sendReply(
+    message: GroupMessage,
+    text: string,
+    runtimeFence?: GroupActivationFence,
+  ): Promise<void | GroupReplyDeliveryResult>;
   sendTyping?(target: GroupNoticeTarget): Promise<void>;
+  createProgress?(
+    target: GroupNoticeTarget,
+    seed: string,
+    runtimeFence: GroupActivationFence,
+  ): ConversationProgressLifecycle;
+}
+
+interface GroupProgressSlot {
+  current: ConversationProgressLifecycle | null;
 }
 
 const ALLOW_GROUP_ACTIVATION_FENCE: GroupActivationFence = () => true;
@@ -740,12 +779,6 @@ export class GroupTurnService {
           ),
         )
       : Promise.resolve(null);
-    const preTyping =
-      queueBusy &&
-      directPriority;
-    if (preTyping && priorityMessage) {
-      this.trackPriorityTask(this.showTyping(priorityMessage));
-    }
     if (priorityEligible) {
       this.trackPriorityTask(preflight.then(() => undefined));
       this.trackPriorityTask(
@@ -775,7 +808,7 @@ export class GroupTurnService {
           observationState,
           message,
           await preflight,
-          preTyping,
+          false,
         );
       });
     } finally {
@@ -901,6 +934,31 @@ export class GroupTurnService {
     message: GroupMessage,
     preflight: GroupSafetyPreflight | null,
     typingAlreadyStarted: boolean,
+  ): Promise<GroupTurnOutcome> {
+    const progress: GroupProgressSlot = { current: null };
+    try {
+      return await this.processTurn(
+        scopeKey,
+        generation,
+        observation,
+        message,
+        preflight,
+        typingAlreadyStarted,
+        progress,
+      );
+    } finally {
+      await progress.current?.finish();
+    }
+  }
+
+  private async processTurn(
+    scopeKey: string,
+    generation: number,
+    observation: { value: number },
+    message: GroupMessage,
+    preflight: GroupSafetyPreflight | null,
+    typingAlreadyStarted: boolean,
+    progressSlot: GroupProgressSlot,
   ): Promise<GroupTurnOutcome> {
     const runtimeKey = groupRuntimeKey(scopeKey, message.accountId);
     // Adapter melakukan membership gate sedini mungkin, tetapi core tetap
@@ -1048,6 +1106,23 @@ export class GroupTurnService {
         message.text,
         memory?.harvyAliases ?? ["Harvy"],
       );
+    if (direct && !progressSlot.current && this.transport.createProgress) {
+      try {
+        progressSlot.current = this.transport.createProgress(
+          message,
+          message.messageId,
+          activationFence,
+        );
+        progressSlot.current.report({ phase: "reading", detail: "general" });
+      } catch (error) {
+        this.logger.debug(
+          "group_progress_creation_failed",
+          "Status kerja grup tidak dapat dibuat; giliran tetap diproses.",
+          { error },
+        );
+      }
+    }
+    const progress = progressSlot.current;
     if (direct) this.cancelPendingAmbient(runtimeKey);
     const memberMemories = direct
       ? await this.memories.memberMemories(
@@ -1093,6 +1168,7 @@ export class GroupTurnService {
         at: message.at,
         messageId: message.messageId,
       });
+      await progress?.responding?.();
       return this.deliver(
         scopeKey,
         generation,
@@ -1116,9 +1192,10 @@ export class GroupTurnService {
     let memoryUnderstanding: Understanding | null = null;
     let ambientPlan: GroupParticipationPlan | null = null;
     if (direct) {
-      if (!typingAlreadyStarted) {
+      if (!typingAlreadyStarted && !progress) {
         this.trackPriorityTask(this.showTyping(message));
       }
+      progress?.report({ phase: "checking", detail: "consistency" });
       const [ingressResult, understandingResult] = await Promise.all([
         preflight
           ? Promise.resolve(preflight.ingress)
@@ -1370,6 +1447,7 @@ export class GroupTurnService {
           this.clearRuntimeState(scopeKey, runtimeKey);
           return "inactive";
         }
+        await progress?.responding?.();
         const outcome = await this.deliver(
           scopeKey,
           generation,
@@ -1424,6 +1502,8 @@ export class GroupTurnService {
           conversationContext,
           riskAssessment,
           scopeKey,
+          undefined,
+          progress ?? undefined,
         );
       } catch (error) {
         this.logger.error(
@@ -1438,6 +1518,7 @@ export class GroupTurnService {
       }
     }
     if (needsConditionalReplyReview(riskAssessment.routing)) {
+      progress?.report({ phase: "checking", detail: "consistency" });
       const approved = await this.safety
         .reviewReply(
           message.text,
@@ -1522,6 +1603,7 @@ export class GroupTurnService {
       }
     }
 
+    await progress?.responding?.();
     return this.deliver(
       scopeKey,
       generation,
@@ -2354,15 +2436,86 @@ export class GroupTurnService {
       }
     }
 
+    const expectedObservation = message.ingressRevision ??
+      (this.observations.get(runtimeKey) ?? 0);
+    const deliveryFence = () =>
+      this.isCurrentGeneration(runtimeKey, generation) &&
+      (this.observations.get(runtimeKey) ?? 0) === expectedObservation;
+    let delivery: GroupReplyDeliveryResult = {
+      text: reply.trim(),
+      bubbleCount: 1,
+      complete: true,
+    };
+    let partialDeliveryFailure: unknown = null;
     try {
-      await this.transport.sendReply(message, reply.trim());
+      const reported = await this.transport.sendReply(
+        message,
+        reply.trim(),
+        deliveryFence,
+      );
+      if (reported) {
+        delivery = {
+          text: reported.text.trim(),
+          bubbleCount: Math.max(0, Math.trunc(reported.bubbleCount)),
+          complete: reported.complete === true,
+        };
+      }
     } catch (error) {
+      if (
+        error instanceof GroupReplyPartialDeliveryError &&
+        error.delivery.text.trim().length > 0
+      ) {
+        delivery = {
+          text: error.delivery.text.trim(),
+          bubbleCount: Math.max(
+            1,
+            Math.trunc(error.delivery.bubbleCount),
+          ),
+          complete: false,
+        };
+        partialDeliveryFailure = error.deliveryCause;
+      } else {
+        try {
+          await this.usageControl.discardUndelivered?.(scopeKey);
+        } catch (discardError) {
+          this.logger.warn(
+            "group_entitlement_discard_failed",
+            "Kandidat entitlement grup gagal dibatalkan setelah delivery gagal.",
+            { error: discardError },
+          );
+        }
+        await this.rollbackMemberMemories(
+          scopeKey,
+          message.accountId,
+          savedMemoryIdentities ?? participantIdentities(message),
+          savedMemories,
+        );
+        await this.rollbackRoomMemories(
+          scopeKey,
+          message.accountId,
+          savedRoomMemories,
+        );
+        this.removeMessageContext(scopeKey, message);
+        try {
+          await this.memories.rollbackIncoming(message);
+        } catch (rollbackError) {
+          this.logger.error(
+            "group_incoming_rollback_failed",
+            "Rollback pencatatan pesan grup gagal setelah pengiriman balasan gagal.",
+            rollbackError,
+            { accountId: message.accountId },
+          );
+        }
+        throw error;
+      }
+    }
+    if (!delivery.text) {
       try {
         await this.usageControl.discardUndelivered?.(scopeKey);
       } catch (discardError) {
         this.logger.warn(
           "group_entitlement_discard_failed",
-          "Kandidat entitlement grup gagal dibatalkan setelah delivery gagal.",
+          "Kandidat entitlement grup gagal dibatalkan karena tidak ada bubble yang terkirim.",
           { error: discardError },
         );
       }
@@ -2377,18 +2530,7 @@ export class GroupTurnService {
         message.accountId,
         savedRoomMemories,
       );
-      this.removeMessageContext(scopeKey, message);
-      try {
-        await this.memories.rollbackIncoming(message);
-      } catch (rollbackError) {
-        this.logger.error(
-          "group_incoming_rollback_failed",
-          "Rollback pencatatan pesan grup gagal setelah pengiriman balasan gagal.",
-          rollbackError,
-          { accountId: message.accountId },
-        );
-      }
-      throw error;
+      return "inactive";
     }
     try {
       await this.usageControl.markDelivered?.(scopeKey);
@@ -2399,6 +2541,40 @@ export class GroupTurnService {
         { error: settlementError },
       );
     }
+    if (!delivery.complete) {
+      // Mutasi yang disiapkan untuk respons final tidak boleh bertahan ketika
+      // continuation-nya dipotong, kecuali bubble yang terlihat sudah benar-
+      // benar mengakui write. Receipt delivery menang atas rencana final.
+      const writeAcknowledged = replyAcknowledgesMemoryWrite(delivery.text);
+      if (!writeAcknowledged) {
+        await this.rollbackMemberMemories(
+          scopeKey,
+          message.accountId,
+          savedMemoryIdentities ?? participantIdentities(message),
+          savedMemories,
+        );
+        await this.rollbackRoomMemories(
+          scopeKey,
+          message.accountId,
+          savedRoomMemories,
+        );
+      }
+    }
+    if (retainContext) {
+      this.pushTurn(scopeKey, {
+        role: "harvy",
+        // Pada giliran Harvy, participantId adalah orang yang ditanggapi.
+        participantId: message.participantId,
+        participantName: message.participantName,
+        text: delivery.text,
+        at: this.now().toISOString(),
+        messageId: message.messageId,
+        origin,
+      });
+    }
+    await this.memories.recordHarvyReply(scopeKey, message.accountId);
+    if (partialDeliveryFailure !== null) throw partialDeliveryFailure;
+    if (!delivery.complete) return "inactive";
     if (
       !(await this.isCurrentTurn(
         scopeKey,
@@ -2411,19 +2587,6 @@ export class GroupTurnService {
     if (memoryConsent) {
       this.setPendingMemoryConsent(scopeKey, memoryConsent);
     }
-    if (retainContext) {
-      this.pushTurn(scopeKey, {
-        role: "harvy",
-        // Pada giliran Harvy, participantId adalah orang yang ditanggapi.
-        participantId: message.participantId,
-        participantName: message.participantName,
-        text: reply.trim(),
-        at: this.now().toISOString(),
-        messageId: message.messageId,
-        origin,
-      });
-    }
-    await this.memories.recordHarvyReply(scopeKey, message.accountId);
     return "replied";
   }
 

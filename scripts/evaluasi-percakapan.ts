@@ -39,7 +39,11 @@ import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 import type { ConversationTurn } from "../src/domain/history.js";
 import {
   CONVERSATION_EVAL_CASES,
+  TURN_BOUNDARY_EVAL_CASES,
+  TURN_INTERRUPTION_EVAL_CASES,
   type ConversationEvalCase,
+  type TurnBoundaryEvalCase,
+  type TurnInterruptionEvalCase,
 } from "./eval-corpus.js";
 
 const all = process.argv.includes("--all");
@@ -59,7 +63,18 @@ const conversation = new Conversation(
 );
 
 const results = await mapConcurrent(selected, 3, evaluate);
-const failed = results.filter((result) => result.failures.length > 0);
+const boundaryResults = await mapConcurrent(
+  TURN_BOUNDARY_EVAL_CASES,
+  3,
+  evaluateBoundary,
+);
+const interruptionResults = await mapConcurrent(
+  TURN_INTERRUPTION_EVAL_CASES,
+  3,
+  evaluateInterruption,
+);
+const allResults = [...results, ...boundaryResults, ...interruptionResults];
+const failed = allResults.filter((result) => result.failures.length > 0);
 
 console.log(
   JSON.stringify(
@@ -70,10 +85,16 @@ console.log(
         allowFallback && config.ai.fallback !== null
           ? "primary-or-fallback"
           : "primary-only",
-      cases: results.length,
-      passed: results.length - failed.length,
+      cases: allResults.length,
+      conversationCases: results.length,
+      orchestrationCases: boundaryResults.length + interruptionResults.length,
+      passed: allResults.length - failed.length,
       failed: failed.length,
       results,
+      orchestration: {
+        boundary: boundaryResults,
+        interruption: interruptionResults,
+      },
     },
     null,
     2,
@@ -81,6 +102,69 @@ console.log(
 );
 
 if (failed.length > 0) process.exitCode = 1;
+
+async function evaluateBoundary(testCase: TurnBoundaryEvalCase) {
+  try {
+    const assessment = await conversation.assessTurnBoundary(
+      testCase.currentBatch,
+      "evaluation-boundary",
+      {
+        turns: (testCase.history ?? []).map((turn) => ({
+          ...turn,
+          at: "2026-08-22T00:00:00.000Z",
+        })),
+      },
+      testCase.signals,
+    );
+    return {
+      id: testCase.id,
+      kind: "turn-boundary" as const,
+      failures: testCase.expectedStates.includes(assessment.state)
+        ? []
+        : [
+          `boundary ${assessment.state}, diharapkan ${testCase.expectedStates.join("|")}`,
+        ],
+      state: assessment.state,
+      confidence: assessment.confidence,
+      continuationLikelihood: assessment.continuationLikelihood,
+      reasonClass: assessment.reasonClass,
+    };
+  } catch (error) {
+    return {
+      id: testCase.id,
+      kind: "turn-boundary" as const,
+      failures: [`assessment gagal (${errorKind(error)})`],
+      state: null,
+    };
+  }
+}
+
+async function evaluateInterruption(testCase: TurnInterruptionEvalCase) {
+  try {
+    const relation = await conversation.classifyTurnInterruption(
+      testCase.activeMessage,
+      testCase.incomingMessage,
+      "evaluation-interruption",
+    );
+    return {
+      id: testCase.id,
+      kind: "turn-interruption" as const,
+      failures: relation === testCase.expectedRelation
+        ? []
+        : [
+          `relation ${relation}, diharapkan ${testCase.expectedRelation}`,
+        ],
+      relation,
+    };
+  } catch (error) {
+    return {
+      id: testCase.id,
+      kind: "turn-interruption" as const,
+      failures: [`classification gagal (${errorKind(error)})`],
+      relation: null,
+    };
+  }
+}
 
 async function evaluate(testCase: ConversationEvalCase) {
   const turns: ConversationTurn[] = (testCase.history ?? []).map((turn) => ({
@@ -221,8 +305,14 @@ async function evaluate(testCase: ConversationEvalCase) {
   if (testCase.expectNoButtons && buttons.length > 0) {
     failures.push("tombol muncul ketika harus menyimak atau menunggu jawaban");
   }
-  if (bubbles.length > 3 && delivered.length <= 4_000) {
-    failures.push("lebih dari tiga bubble");
+  if (bubbles.length === 0) {
+    failures.push("rencana bubble kosong");
+  }
+  if (bubbles.some((bubble) => Array.from(bubble).length > 4_000)) {
+    failures.push("bubble melewati batas transport Telegram");
+  }
+  if (bubbles.length > 8 && Array.from(reply).length <= 4_000) {
+    failures.push("rentetan bubble ekstrem melewati guard anti-spam");
   }
   if (!testCase.allowCode && /(\*\*|__|\\frac|\$\$|^#{1,6}\s)/mu.test(delivered)) {
     failures.push("Markdown/LaTeX mentah");
@@ -289,6 +379,10 @@ async function evaluate(testCase: ConversationEvalCase) {
     sessionSignal,
     reply: delivered,
   };
+}
+
+function errorKind(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "unknown";
 }
 
 async function mapConcurrent<T, R>(

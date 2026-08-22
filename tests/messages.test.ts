@@ -34,12 +34,23 @@ describe("bubble balasan", () => {
     );
   });
 
-  it("membatasi balasan menjadi paling banyak tiga bubble", () => {
+  it("membiarkan empat beat natural tanpa aturan maksimal tiga", () => {
     assert.deepEqual(splitReplyBubbles("satu\n\ndua\n\ntiga\n\nempat"), [
       "satu",
       "dua",
-      "tiga\n\nempat",
+      "tiga",
+      "empat",
     ]);
+  });
+
+  it("menjaga penjelasan panjang yang koheren sebagai satu bubble", () => {
+    const explanation = [
+      "Pilihan pertama cocok kalau kamu ingin fondasi teori yang kuat dan ruang eksplorasi yang luas. Bagian ini menjelaskan alasan utamanya dengan cukup rinci supaya konteksnya tidak terputus.",
+      "Pilihan kedua lebih langsung ke praktik dan proyek. Perbedaannya baru terasa dari cara belajar, bukan sekadar nama jurusan atau kesan awal.",
+      "Jadi, keputusan akhirnya sebaiknya mengikuti cara belajar yang membuatmu konsisten. Kita bisa membandingkan kurikulumnya kalau kamu punya dua kampus spesifik.",
+    ].join("\n\n");
+
+    assert.deepEqual(splitReplyBubbles(explanation), [explanation]);
   });
 
   it("tidak memecah blok kode", () => {

@@ -1,11 +1,16 @@
 import {
-  classifyTurnBoundaryLocally,
-  guardTurnBoundary,
-  idleWindowMs,
+  assessmentIdleWindowMs,
+  assessTurnBoundaryLocally,
+  boundaryConfidenceBucket,
+  guardTurnBoundaryAssessment,
   INCOMPLETE_IDLE_MS,
   MULTI_BUBBLE_IDLE_MS,
+  normalizeTurnBoundaryAssessment,
   OPEN_IDLE_MS,
-  type TurnBoundaryState,
+  type TurnBoundaryAssessment,
+  type TurnBoundaryProposal,
+  type TurnBoundarySignals,
+  type TurnInterruptionRelation,
 } from "../core/turn-taking-policy.js";
 import { hasExplicitImmediateDangerSignal } from "../core/safety-policy.js";
 import { AdaptiveDebouncePolicy } from "../core/adaptive-debounce-policy.js";
@@ -16,7 +21,7 @@ import {
 } from "../observability/operational-logger.js";
 
 /**
- * Satu giliran percakapan boleh datang sebagai beberapa bubble Telegram.
+ * Satu giliran percakapan boleh datang sebagai beberapa bubble transport.
  *
  * Kebijakan lokal menangani bentuk yang jelas. Classifier murah hanya menjadi
  * fallback untuk ambiguitas; bubble baru membatalkan keputusan lama dan
@@ -37,6 +42,12 @@ export interface MessageBatch<T> {
   signal: AbortSignal;
   /** Guard generasi adapter; hasil lama tidak boleh dikirim atau commit. */
   isCurrent: () => boolean;
+  /** Menunggu assessment pesan baru sebelum efek/delivery berikutnya. */
+  awaitCurrent: () => Promise<boolean>;
+  /** Dipanggil sesudah user turn durable agar restart tidak menduplikasi teks. */
+  markUserCommitted: () => void;
+  /** Hubungan dengan run yang digantikan, bila ada. */
+  interruptionRelation: TurnInterruptionRelation | null;
 }
 
 export interface MessageBatchMetrics {
@@ -48,6 +59,10 @@ export interface MessageBatchMetrics {
   queueWaitMs: number;
   handlingLatencyMs: number;
   totalLatencyMs: number;
+  boundaryState?: TurnBoundaryAssessment["state"];
+  boundaryConfidence?: "low" | "medium" | "high";
+  adaptiveTimingUsed?: boolean;
+  interruptionRelation?: TurnInterruptionRelation | null;
 }
 
 interface BatchEntry<T> {
@@ -64,6 +79,20 @@ interface BatchEntry<T> {
   lastReceivedAt: number;
   settleTimer: ReturnType<typeof setTimeout> | null;
   deadlineTimer: ReturnType<typeof setTimeout> | null;
+  boundaryAssessment: TurnBoundaryAssessment | null;
+  adaptiveTimingUsed: boolean;
+  interruptionRelation: TurnInterruptionRelation | null;
+  supersededTurnIds: Set<string>;
+  pendingRelations: Set<Promise<void>>;
+}
+
+interface ActiveRun {
+  generation: number;
+  controller: AbortController;
+  text: string;
+  turnId: string;
+  userCommitted: boolean;
+  pendingRelations: Set<Promise<void>>;
 }
 
 const DEFAULT_SETTLE_MS = 650;
@@ -72,11 +101,9 @@ export class MessageBatcher<T> {
   private readonly entries = new Map<string, BatchEntry<T>>();
   private readonly chains = new Map<string, Promise<void>>();
   private readonly evaluations = new Map<string, Promise<void>>();
+  private readonly interruptionTasks = new Set<Promise<void>>();
   private readonly generations = new Map<string, number>();
-  private readonly activeRuns = new Map<
-    string,
-    { generation: number; controller: AbortController }
-  >();
+  private readonly activeRuns = new Map<string, ActiveRun>();
   private urgentHandler:
     | ((ownerId: string, batch: MessageBatch<T>) => Promise<void>)
     | undefined;
@@ -86,7 +113,8 @@ export class MessageBatcher<T> {
       text: string,
       ownerId?: string,
       turnId?: string,
-    ) => Promise<TurnBoundaryState>,
+      signals?: TurnBoundarySignals,
+    ) => Promise<TurnBoundaryProposal>,
     private readonly handle: (
       ownerId: string,
       batch: MessageBatch<T>,
@@ -99,7 +127,7 @@ export class MessageBatcher<T> {
       maxWaitMs,
     ),
     private readonly logger: OperationalLogger =
-      NOOP_OPERATIONAL_LOGGER.child("telegram.message-batcher"),
+      NOOP_OPERATIONAL_LOGGER.child("conversation.message-batcher"),
     private readonly observeTurn?: (
       metrics: MessageBatchMetrics,
     ) => Promise<void> | void,
@@ -111,6 +139,12 @@ export class MessageBatcher<T> {
       ),
       maxGapMs: Math.max(1, maxWaitMs),
     }),
+    private readonly classifyInterruption?: (
+      activeText: string,
+      incomingText: string,
+      ownerId: string,
+      turnId: string,
+    ) => Promise<TurnInterruptionRelation>,
   ) {}
 
   /**
@@ -128,7 +162,7 @@ export class MessageBatcher<T> {
   }
 
   /**
-   * Menampung bubble lalu langsung mengembalikan kendali ke adapter Telegram.
+   * Menampung bubble lalu langsung mengembalikan kendali ke adapter transport.
    *
    * grammY long-polling memproses update secara berurutan. Kalau metode ini
    * menunggu model atau balasan, update bubble berikutnya belum dapat masuk.
@@ -159,6 +193,11 @@ export class MessageBatcher<T> {
       lastReceivedAt: now,
       settleTimer: null,
       deadlineTimer: null,
+      boundaryAssessment: null,
+      adaptiveTimingUsed: false,
+      interruptionRelation: null,
+      supersededTurnIds: new Set<string>(),
+      pendingRelations: new Set<Promise<void>>(),
     };
 
     entry.chunks.push(text);
@@ -175,11 +214,12 @@ export class MessageBatcher<T> {
     }
     entry.revision += 1;
     entry.evaluationRequested = false;
+    entry.boundaryAssessment = null;
     entry.lastReceivedAt = now;
     this.entries.set(ownerId, entry);
     this.logger.debug(
       "bubble_enqueued",
-      "Bubble Telegram masuk ke penampung giliran.",
+      "Bubble masuk ke penampung giliran percakapan.",
       { bubbleCount: entry.chunks.length },
     );
 
@@ -190,10 +230,33 @@ export class MessageBatcher<T> {
       return;
     }
 
+    const active = this.activeRuns.get(ownerId);
+    let assessingInterruption = false;
+    if (
+      active &&
+      active.generation === this.generation(ownerId) &&
+      this.classifyInterruption
+    ) {
+      assessingInterruption = true;
+      this.startInterruptionAssessment(ownerId, active, entry);
+    }
+
     const adaptiveTiming = this.adaptiveDebounce.estimate(
       ownerId,
       this.settleMs,
     );
+    entry.adaptiveTimingUsed ||= adaptiveTiming.adaptive;
+    const local = assessTurnBoundaryLocally(entry.chunks.join("\n"));
+    if (local?.state === "complete" && !assessingInterruption) {
+      entry.boundaryAssessment = local;
+      this.scheduleDeadline(ownerId, entry, revision, 0);
+      return;
+    }
+    if (local?.state === "incomplete") {
+      entry.boundaryAssessment = local;
+      this.scheduleDeadline(ownerId, entry, revision, this.maxWaitMs);
+      return;
+    }
     entry.settleTimer = setTimeout(() => {
       entry.settleTimer = null;
       void this.evaluate(ownerId, revision).catch((error: unknown) => {
@@ -381,7 +444,8 @@ export class MessageBatcher<T> {
     while (
       this.entries.size > 0 ||
       this.chains.size > 0 ||
-      this.evaluations.size > 0
+      this.evaluations.size > 0 ||
+      this.interruptionTasks.size > 0
     ) {
       const owners = new Set([
         ...this.entries.keys(),
@@ -401,6 +465,9 @@ export class MessageBatcher<T> {
           }
         }),
       );
+      if (this.interruptionTasks.size > 0) {
+        await Promise.allSettled([...this.interruptionTasks]);
+      }
     }
   }
 
@@ -438,23 +505,46 @@ export class MessageBatcher<T> {
       evaluated.evaluationRequested = false;
 
       const text = evaluated.chunks.join("\n");
-      let state: TurnBoundaryState | null = evaluated.explicitImmediateDanger
-        ? "urgent"
-        : classifyTurnBoundaryLocally(text);
-      if (state === null) {
-        state = "complete";
+      const adaptiveTiming = this.adaptiveDebounce.estimate(
+        ownerId,
+        this.settleMs,
+      );
+      evaluated.adaptiveTimingUsed ||= adaptiveTiming.adaptive;
+      const signals: TurnBoundarySignals = {
+        bubbleCount: evaluated.chunks.length,
+        adaptiveTimingUsed: adaptiveTiming.adaptive,
+        learnedSettleMs: adaptiveTiming.settleMs,
+        rapidBurst: evaluated.chunks.length > 1 &&
+          Date.now() - evaluated.firstReceivedAt <=
+            Math.max(1_500, adaptiveTiming.settleMs * evaluated.chunks.length),
+      };
+      let assessment: TurnBoundaryAssessment | null =
+        evaluated.explicitImmediateDanger
+          ? normalizeTurnBoundaryAssessment("urgent")
+          : assessTurnBoundaryLocally(text);
+      if (assessment === null) {
+        // Gagal menilai ambiguitas harus memberi ruang kecil, bukan memotong
+        // pengguna seolah complete telah terbukti.
+        assessment = Object.freeze({
+          state: "open",
+          confidence: 0,
+          continuationLikelihood: 0.65,
+          reasonClass: "uncertain",
+        });
         try {
-          state = await this.classifyAmbiguous(
-            text,
-            ownerId,
-            evaluated.turnId,
+          assessment = normalizeTurnBoundaryAssessment(
+            await this.classifyAmbiguous(
+              text,
+              ownerId,
+              evaluated.turnId,
+              signals,
+            ),
           );
         } catch (error) {
-          // Keputusan ini hanya optimasi UX. Kalau fallback model gagal, pesan
-          // tetap harus diproses.
+          // Fail-safe timer tetap memastikan pesan akhirnya diproses.
           this.logger.warn(
             "turn_boundary_check_failed",
-            "Fallback batas bubble gagal; giliran diproses sekarang.",
+            "Assessment batas bubble gagal; giliran diberi ruang fail-safe.",
             { error },
           );
         }
@@ -462,25 +552,25 @@ export class MessageBatcher<T> {
 
       const current = this.entries.get(ownerId);
       if (current === evaluated && current.revision === targetRevision) {
-        const guarded = guardTurnBoundary(
+        const guarded = guardTurnBoundaryAssessment(
           text,
-          state,
+          assessment,
         );
-        if (guarded === "urgent") {
+        evaluated.boundaryAssessment = guarded;
+        if (guarded.state === "urgent") {
           evaluated.urgentBoundary = true;
           this.acknowledgeUrgent(ownerId, evaluated);
         }
-        const adaptiveTiming = this.adaptiveDebounce.estimate(
-          ownerId,
-          this.settleMs,
-        );
         const learnedSettleMs = adaptiveTiming.settleMs;
         const multiBubbleMs = adaptiveTiming.adaptive
-          ? Math.min(this.multiBubbleWaitMs, learnedSettleMs)
+          ? Math.min(
+              this.maxWaitMs,
+              Math.max(this.multiBubbleWaitMs, learnedSettleMs),
+            )
           : this.multiBubbleWaitMs;
         const waitMs = Math.min(
           this.maxWaitMs,
-          idleWindowMs(guarded, evaluated.chunks.length, {
+          assessmentIdleWindowMs(guarded, evaluated.chunks.length, {
             // Pembuka/narasi dan fragmen keras membawa makna, bukan sekadar
             // ritme ketik. Sampai telemetry membuktikan window yang lebih
             // pendek aman, adaptive profile hanya mengubah debounce awal dan
@@ -509,14 +599,6 @@ export class MessageBatcher<T> {
     clearTimers(entry);
     this.entries.delete(ownerId);
 
-    const batch = {
-      text: entry.chunks.join("\n"),
-      explicitImmediateDanger: entry.explicitImmediateDanger,
-      urgentBoundary: entry.urgentBoundary,
-      carrier: entry.carrier,
-      turnId: entry.turnId,
-      firstIngressSequence: entry.firstIngressSequence,
-    };
     const generation = this.generation(ownerId);
     const queuedAt = Date.now();
 
@@ -524,6 +606,7 @@ export class MessageBatcher<T> {
     // balasan lama sedang dibuat, tetapi konteksnya baru dibaca setelah giliran
     // sebelumnya selesai sehingga riwayat tidak saling menyalip.
     await this.enqueueAction(ownerId, async () => {
+      await this.awaitRelationTasks(entry.pendingRelations);
       const handlingStartedAt = Date.now();
       // `/start` atau `/bantuan` dapat datang ketika batch ini sudah masuk
       // chain tetapi belum mulai. Generasi baru membatalkannya tanpa memutus
@@ -542,15 +625,32 @@ export class MessageBatcher<T> {
         return;
       }
       const controller = new AbortController();
-      const active = { generation, controller };
+      const active: ActiveRun = {
+        generation,
+        controller,
+        text: entry.chunks.join("\n"),
+        turnId: entry.turnId,
+        userCommitted: false,
+        pendingRelations: new Set<Promise<void>>(),
+      };
       this.activeRuns.set(ownerId, active);
       const runtimeBatch: MessageBatch<T> = {
-        ...batch,
+        text: active.text,
+        explicitImmediateDanger: entry.explicitImmediateDanger,
+        urgentBoundary: entry.urgentBoundary,
+        carrier: entry.carrier,
+        turnId: entry.turnId,
+        firstIngressSequence: entry.firstIngressSequence,
         signal: controller.signal,
         isCurrent: () =>
           !controller.signal.aborted &&
           this.generation(ownerId) === generation &&
           this.activeRuns.get(ownerId) === active,
+        awaitCurrent: () => this.awaitActiveCurrent(ownerId, active),
+        markUserCommitted: () => {
+          active.userCommitted = true;
+        },
+        interruptionRelation: entry.interruptionRelation,
       };
       let outcome: MessageBatchMetrics["outcome"] = "completed";
       try {
@@ -573,10 +673,20 @@ export class MessageBatcher<T> {
           queueWaitMs: handlingStartedAt - queuedAt,
           handlingLatencyMs: endedAt - handlingStartedAt,
           totalLatencyMs: endedAt - entry.firstReceivedAt,
+          ...(entry.boundaryAssessment
+            ? {
+                boundaryState: entry.boundaryAssessment.state,
+                boundaryConfidence: boundaryConfidenceBucket(
+                  entry.boundaryAssessment.confidence,
+                ),
+              }
+            : {}),
+          adaptiveTimingUsed: entry.adaptiveTimingUsed,
+          interruptionRelation: entry.interruptionRelation,
         };
         this.logger.info(
-          "telegram_turn_completed",
-          "Giliran Telegram selesai diproses.",
+          "conversation_turn_completed",
+          "Giliran percakapan selesai diproses.",
           {
             bubbleCount: metrics.bubbleCount,
             batchWaitMs: metrics.batchWaitMs,
@@ -584,6 +694,10 @@ export class MessageBatcher<T> {
             handlingLatencyMs: metrics.handlingLatencyMs,
             durationMs: metrics.totalLatencyMs,
             outcome: metrics.outcome,
+            boundaryState: metrics.boundaryState,
+            boundaryConfidence: metrics.boundaryConfidence,
+            adaptiveTimingUsed: metrics.adaptiveTimingUsed,
+            interruptionRelation: metrics.interruptionRelation,
           },
         );
         this.notifyTurn(metrics);
@@ -647,6 +761,9 @@ export class MessageBatcher<T> {
       firstIngressSequence: entry.firstIngressSequence,
       signal: controller.signal,
       isCurrent: () => true,
+      awaitCurrent: async () => true,
+      markUserCommitted: () => undefined,
+      interruptionRelation: null,
     };
     void this.urgentHandler(ownerId, batch).catch((error: unknown) => {
       this.logger.error(
@@ -655,6 +772,92 @@ export class MessageBatcher<T> {
         error,
       );
     });
+  }
+
+  private startInterruptionAssessment(
+    ownerId: string,
+    active: ActiveRun,
+    entry: BatchEntry<T>,
+  ): void {
+    if (!this.classifyInterruption) return;
+    const incomingText = entry.chunks.join("\n");
+    let task!: Promise<void>;
+    task = (async () => {
+      let relation: TurnInterruptionRelation;
+      try {
+        relation = await this.classifyInterruption!(
+          active.text,
+          incomingText,
+          ownerId,
+          entry.turnId,
+        );
+      } catch (error) {
+        // Jika hubungan tidak dapat dinilai, hentikan output lama. Menganggap
+        // pesan baru sebagai redirect lebih aman daripada mengirim hasil stale.
+        relation = "redirect";
+        this.logger.warn(
+          "turn_interruption_check_failed",
+          "Hubungan pesan baru gagal dinilai; output lama dihentikan.",
+          { error },
+        );
+      }
+
+      entry.interruptionRelation = strongerRelation(
+        entry.interruptionRelation,
+        relation,
+      );
+      if (entry.interruptionRelation === "redirect") {
+        if (
+          entry.supersededTurnIds.has(active.turnId) &&
+          entry.chunks[0] === active.text
+        ) {
+          entry.chunks.shift();
+          entry.supersededTurnIds.delete(active.turnId);
+        }
+      } else if (
+        (entry.interruptionRelation === "addition" ||
+          entry.interruptionRelation === "correction") &&
+        !active.userCommitted &&
+        !entry.supersededTurnIds.has(active.turnId)
+      ) {
+        // Run yang dibatalkan sebelum user turn masuk history harus membawa
+        // teks awalnya ke logical turn pengganti, tepat satu kali.
+        entry.chunks.unshift(active.text);
+        entry.supersededTurnIds.add(active.turnId);
+      }
+
+      if (
+        entry.interruptionRelation !== "independent" &&
+        this.activeRuns.get(ownerId) === active &&
+        this.generation(ownerId) === active.generation
+      ) {
+        active.controller.abort();
+      }
+    })().finally(() => {
+      active.pendingRelations.delete(task);
+      entry.pendingRelations.delete(task);
+      this.interruptionTasks.delete(task);
+    });
+    active.pendingRelations.add(task);
+    entry.pendingRelations.add(task);
+    this.interruptionTasks.add(task);
+  }
+
+  private async awaitActiveCurrent(
+    ownerId: string,
+    active: ActiveRun,
+  ): Promise<boolean> {
+    if (active.controller.signal.aborted) return false;
+    await this.awaitRelationTasks(active.pendingRelations);
+    return !active.controller.signal.aborted &&
+      this.generation(ownerId) === active.generation &&
+      this.activeRuns.get(ownerId) === active;
+  }
+
+  private async awaitRelationTasks(tasks: Set<Promise<void>>): Promise<void> {
+    while (tasks.size > 0) {
+      await Promise.allSettled([...tasks]);
+    }
   }
 
   private async waitForIdle(ownerId: string): Promise<void> {
@@ -762,4 +965,18 @@ function clearTimers<T>(entry: BatchEntry<T>): void {
   if (entry.deadlineTimer) clearTimeout(entry.deadlineTimer);
   entry.settleTimer = null;
   entry.deadlineTimer = null;
+}
+
+function strongerRelation(
+  current: TurnInterruptionRelation | null,
+  incoming: TurnInterruptionRelation,
+): TurnInterruptionRelation {
+  if (!current) return incoming;
+  const priority: Record<TurnInterruptionRelation, number> = {
+    independent: 0,
+    addition: 1,
+    correction: 2,
+    redirect: 3,
+  };
+  return priority[incoming] > priority[current] ? incoming : current;
 }

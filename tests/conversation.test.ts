@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 import type { AiClient, ChatRequest } from "../src/ai/client.js";
 import {
   Conversation,
+  parseTurnBoundaryAssessment,
   parseTurnBoundaryDecision,
+  parseTurnInterruptionDecision,
   parseWaitDecision,
 } from "../src/ai/conversation.js";
 import { CALM_TRIAGE } from "../src/ai/safety.js";
@@ -353,6 +355,79 @@ describe("pemahaman pesan", () => {
 
     assert.equal(parseWaitDecision('{"state":"open"}'), true);
     assert.equal(parseWaitDecision('{"state":"urgent"}'), false);
+  });
+
+  it("memvalidasi confidence boundary dan hubungan interupsi closed-set", () => {
+    assert.deepEqual(
+      parseTurnBoundaryAssessment(JSON.stringify({
+        state: "open",
+        confidence: 0.91,
+        continuationLikelihood: 0.87,
+        reasonClass: "narrative-opening",
+      })),
+      {
+        state: "open",
+        confidence: 0.91,
+        continuationLikelihood: 0.87,
+        reasonClass: "narrative-opening",
+      },
+    );
+    assert.equal(
+      parseTurnBoundaryAssessment(JSON.stringify({
+        state: "open",
+        confidence: 0.91,
+        continuationLikelihood: 0.87,
+        reasonClass: "alasan bebas",
+      })),
+      null,
+    );
+    assert.equal(
+      parseTurnInterruptionDecision('{"relation":"correction"}'),
+      "correction",
+    );
+    assert.equal(
+      parseTurnInterruptionDecision('{"relation":"unknown"}'),
+      null,
+    );
+  });
+
+  it("mengirim current batch, konteks ringkas, dan timing content-free", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, JSON.stringify({
+        state: "complete",
+        confidence: 0.93,
+        continuationLikelihood: 0.08,
+        reasonClass: "closed-request",
+      })),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const assessment = await conversation.assessTurnBoundary(
+      "menurutmu pilih mana?",
+      "student",
+      {
+        turns: [{
+          role: "user",
+          text: "aku bingung antara informatika dan SI",
+          at: NOW,
+        }],
+      },
+      {
+        bubbleCount: 2,
+        adaptiveTimingUsed: true,
+        learnedSettleMs: 420,
+        rapidBurst: true,
+      },
+    );
+
+    assert.equal(assessment.state, "complete");
+    const input = requests[0]?.messages.at(-1)?.content ?? "";
+    assert.match(input, /<recent-turns>/u);
+    assert.match(input, /menurutmu pilih mana\?/u);
+    assert.match(input, /"bubbleCount":2/u);
+    assert.doesNotMatch(input, /reasoning|chain.of.thought/iu);
   });
 
   it("mengurai jawaban Ubah tenggat lewat kontrak tanggal khusus", async () => {

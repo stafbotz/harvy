@@ -9,10 +9,20 @@ import {
 } from "../observability/operational-logger.js";
 import { AdaptiveDebouncePolicy } from "../core/adaptive-debounce-policy.js";
 import { hasExplicitImmediateDangerSignal } from "../core/safety-policy.js";
+import {
+  assessmentIdleWindowMs,
+  assessTurnBoundaryLocally,
+  guardTurnBoundaryAssessment,
+  normalizeTurnBoundaryAssessment,
+  type TurnBoundaryProposal,
+  type TurnBoundarySignals,
+} from "../core/turn-taking-policy.js";
 
 interface PendingBatch {
   messages: GroupMessage[];
   firstEnqueuedAt: number;
+  lastEnqueuedAt: number;
+  revision: number;
   waiters: {
     resolve: () => void;
     reject: (error: unknown) => void;
@@ -42,6 +52,7 @@ export class GroupMessageBatcher {
   private readonly observationChains = new Map<string, Promise<void>>();
   private readonly lastParticipantByStream = new Map<string, string>();
   private readonly active = new Set<Promise<void>>();
+  private readonly boundaryTasks = new Set<Promise<void>>();
   private accepting = true;
 
   constructor(
@@ -65,6 +76,10 @@ export class GroupMessageBatcher {
     private readonly urgentPreflight?: (
       message: GroupMessage,
     ) => Promise<void>,
+    private readonly assessBoundary?: (
+      message: GroupMessage,
+      signals: TurnBoundarySignals,
+    ) => Promise<TurnBoundaryProposal>,
   ) {}
 
   async enqueue(message: GroupMessage): Promise<void> {
@@ -118,11 +133,15 @@ export class GroupMessageBatcher {
       const batch = existing ?? {
         messages: [],
         firstEnqueuedAt: enqueuedAt,
+        lastEnqueuedAt: enqueuedAt,
+        revision: 0,
         waiters: [],
         settleTimer: null,
         deadlineTimer: null,
       };
       batch.messages.push(message);
+      batch.lastEnqueuedAt = enqueuedAt;
+      batch.revision += 1;
       batch.waiters.push({ resolve, reject });
       this.logger.debug(
         "group_bubble_enqueued",
@@ -151,10 +170,6 @@ export class GroupMessageBatcher {
         timingKey,
         baseSettleMs,
       );
-      batch.settleTimer = setTimeout(() => {
-        this.flush(key, batch);
-      }, Math.max(1, Math.min(this.maxWaitMs, adaptiveTiming.settleMs)));
-      batch.settleTimer.unref();
       this.pending.set(key, batch);
 
       if (urgent) {
@@ -167,6 +182,31 @@ export class GroupMessageBatcher {
         batchCharacters(batch) >= Math.max(1, this.maxCharacters)
       ) {
         this.flush(key, batch);
+      } else if (this.assessBoundary) {
+        const local = assessTurnBoundaryLocally(
+          batch.messages.map((item) => item.text).join("\n"),
+        );
+        if (local?.state === "complete") {
+          this.flush(key, batch);
+        } else if (local?.state !== "incomplete") {
+          const revision = batch.revision;
+          batch.settleTimer = setTimeout(() => {
+            batch.settleTimer = null;
+            this.startBoundaryAssessment(
+              key,
+              batch,
+              revision,
+              adaptiveTiming.settleMs,
+              adaptiveTiming.adaptive,
+            );
+          }, Math.max(1, Math.min(this.maxWaitMs, adaptiveTiming.settleMs)));
+          batch.settleTimer.unref();
+        }
+      } else {
+        batch.settleTimer = setTimeout(() => {
+          this.flush(key, batch);
+        }, Math.max(1, Math.min(this.maxWaitMs, adaptiveTiming.settleMs)));
+        batch.settleTimer.unref();
       }
     });
   }
@@ -220,6 +260,9 @@ export class GroupMessageBatcher {
     while (this.observationTasks.size > 0) {
       await Promise.allSettled([...this.observationTasks]);
     }
+    while (this.boundaryTasks.size > 0) {
+      await Promise.allSettled([...this.boundaryTasks]);
+    }
     for (const [key, batch] of [...this.pending]) {
       this.pending.delete(key);
       this.clearTimers(batch);
@@ -235,6 +278,66 @@ export class GroupMessageBatcher {
     this.pending.delete(key);
     this.clearTimers(batch);
     this.start(key, batch);
+  }
+
+  private startBoundaryAssessment(
+    key: string,
+    batch: PendingBatch,
+    revision: number,
+    learnedSettleMs: number,
+    adaptiveTimingUsed: boolean,
+  ): void {
+    if (!this.assessBoundary) return;
+    const merged = mergeGroupMessages(batch.messages);
+    const task = this.assessBoundary(merged, {
+      bubbleCount: batch.messages.length,
+      adaptiveTimingUsed,
+      learnedSettleMs,
+      rapidBurst: batch.messages.length > 1 &&
+        Date.now() - batch.firstEnqueuedAt <=
+          Math.max(1_500, learnedSettleMs * batch.messages.length),
+    }).then((proposal) => {
+      if (
+        this.pending.get(key) !== batch ||
+        batch.revision !== revision
+      ) return;
+      const assessment = guardTurnBoundaryAssessment(
+        merged.text,
+        normalizeTurnBoundaryAssessment(proposal),
+      );
+      if (assessment.state === "urgent") {
+        this.startUrgentPreflight(merged);
+      }
+      const idleMs = Math.min(
+        this.maxWaitMs,
+        assessmentIdleWindowMs(assessment, batch.messages.length, {
+          openMs: this.maxWaitMs,
+          incompleteMs: this.maxWaitMs,
+          multiBubbleMs: this.maxWaitMs,
+        }),
+      );
+      const remaining = Math.max(
+        0,
+        idleMs - (Date.now() - batch.lastEnqueuedAt),
+      );
+      if (remaining === 0) {
+        this.flush(key, batch);
+        return;
+      }
+      batch.settleTimer = setTimeout(() => this.flush(key, batch), remaining);
+      batch.settleTimer.unref();
+    }).catch((error: unknown) => {
+      // Deadline max tetap hidup. Kegagalan semantic assessment tidak boleh
+      // membuat grup hilang, juga tidak boleh diasumsikan complete.
+      this.logger.warn(
+        "whatsapp_group_boundary_failed",
+        "Assessment batas giliran grup gagal; deadline fail-safe dipakai.",
+        { errorType: error instanceof Error ? error.name : "unknown" },
+      );
+    }).finally(() => {
+      this.boundaryTasks.delete(task);
+    });
+    this.boundaryTasks.add(task);
   }
 
   private start(key: string, batch: PendingBatch): void {

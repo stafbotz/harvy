@@ -69,12 +69,8 @@ import {
 } from "./core/control-plane-service.js";
 import { UsageLedgerService } from "./core/usage-ledger-service.js";
 import { EconomyService } from "./core/economy-service.js";
+import { EconomyCommandService } from "./core/economy-command-service.js";
 import { UserUsageSummaryService } from "./core/user-usage-summary-service.js";
-import {
-  parseUsageDashboardCommand,
-  renderUsageDashboard,
-  USAGE_COMMAND_TARGET_REJECTED,
-} from "./core/usage-dashboard-renderer.js";
 import {
   LocalPaymentGateway,
   UnavailablePaymentGateway,
@@ -102,7 +98,7 @@ import { FileMemoryKnowledgeRepository } from "./storage/file-memory-knowledge-r
 import { SqliteLongTermMemoryRepository } from "./storage/sqlite-long-term-memory-repository.js";
 import { FileTaskRepository } from "./storage/file-task-repository.js";
 import { BaileysAccountManager } from "./whatsapp/baileys-account-manager.js";
-import { whatsappPrivateOwnerId } from "./whatsapp/baileys-message-normalizer.js";
+import { WhatsAppPrivateConversation } from "./whatsapp/private-conversation.js";
 import { GroupMessageBatcher } from "./whatsapp/group-message-batcher.js";
 import qrCodeTerminal from "qrcode-terminal";
 import {
@@ -404,6 +400,29 @@ const bot = createBot(
   economy,
   usageDashboard,
 );
+const whatsappPrivate = config.whatsapp.enabled && config.whatsapp.privateEnabled
+  ? new WhatsAppPrivateConversation(
+      {
+        conversation,
+        history,
+        memories,
+        profiles,
+        sessions,
+        telemetry,
+        memoryContextCompiler,
+        economyCommands: new EconomyCommandService(economy, usageDashboard),
+        usageDashboard,
+        dataControls,
+      },
+      {
+        defaultTimezone: config.defaultTimezone,
+        termsUrl: config.termsUrl,
+        telemetryRetentionDays: config.telemetryRetentionDays,
+        operationalLogRetentionDays: config.operationalLog.retentionDays,
+      },
+      logger.child("whatsapp.private"),
+    )
+  : null;
 
 let groupTurns: GroupTurnService | null = null;
 let groupBatcher: GroupMessageBatcher | null = null;
@@ -437,15 +456,12 @@ const whatsapp = config.whatsapp.enabled
           await runManagedGroupTurn(controlPlane, groupTurns, message);
         }
       },
-      onPrivateMessage: async (message) => {
-        const command = parseUsageDashboardCommand(message.text);
-        if (command === null) return null;
-        if (command === "invalid") return USAGE_COMMAND_TARGET_REJECTED;
-        const summary = await usageDashboard.summary(
-          whatsappPrivateOwnerId(message.userId),
-        );
-        return renderUsageDashboard(summary, "whatsapp").text;
-      },
+      ...(whatsappPrivate
+        ? {
+            onPrivateMessage: (message, transport) =>
+              whatsappPrivate.ingest(message, transport),
+          }
+        : {}),
       onGroupActive: async (message, authorityFence) => {
         const scopeKey = groupScopeKey(message.scope);
         const cleanupCoordinator = groupAgentRunCleanup;
@@ -837,6 +853,21 @@ if (whatsapp && groupMemories) {
         );
       }
     },
+    (message, signals) =>
+      withUsageAttribution(
+        {
+          turnId: `whatsapp-group-boundary:${message.accountId}:${message.messageId}`,
+          subjectKind: "group",
+          channel: "whatsapp",
+          actorAliases: message.participantAliases,
+        },
+        () => conversation.assessTurnBoundary(
+          message.text,
+          groupScopeKey(message.scope),
+          undefined,
+          signals,
+        ),
+      ),
   );
   if (groupAgentRuns) {
     groupAgentRunCleanup = new GroupAgentRunCleanupService(
@@ -1015,6 +1046,8 @@ const shutdown = (
                 codingRuntime?.supervisor.stop();
                 whatsapp?.stopIngress();
                 await whatsapp?.drainEvents();
+                whatsappPrivate?.stopIngress();
+                await whatsappPrivate?.drain();
                 groupCodingIngress?.stopIngress();
                 groupAgentRunIngress?.stopIngress();
                 groupAgentRunWorker?.stop();
