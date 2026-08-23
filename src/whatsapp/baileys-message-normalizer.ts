@@ -23,14 +23,31 @@ export interface WhatsAppPrivateMessage {
   messageId: string;
   text: string;
   at: string;
+  quotedMessageId?: string | null;
+  document?: WhatsAppPrivateInboundDocument | null;
+}
+
+export interface WhatsAppPrivateInboundDocument {
+  fileName: string;
+  mimetype: string;
+  declaredBytes: number | null;
+  data: Buffer;
 }
 
 export interface WhatsAppPrivateReply {
   text: string;
+  document?: WhatsAppPrivateOutboundDocument;
   /** Dipanggil adapter hanya setelah socket mengakui send. */
   onDelivered?(delivery?: WhatsAppPrivateDelivery): Promise<void>;
   /** Dipanggil ketika reply dibuat tetapi tidak mencapai boundary send. */
   onDeliveryFailed?(delivery?: WhatsAppPrivateDelivery): Promise<void>;
+}
+
+export interface WhatsAppPrivateOutboundDocument {
+  fileName: string;
+  mimetype: string;
+  data: Buffer;
+  caption?: string;
 }
 
 export type WhatsAppPrivateReplyResult = WhatsAppPrivateReply | string | null;
@@ -39,6 +56,7 @@ export interface WhatsAppPrivateDelivery {
   text: string;
   bubbleCount: number;
   complete: boolean;
+  messageIds?: string[];
 }
 
 export interface WhatsAppPrivateMessageRef {
@@ -49,6 +67,7 @@ export interface WhatsAppPrivateMessageRef {
 export interface WhatsAppPrivateTransport {
   isCurrent(): boolean;
   send(text: string): Promise<WhatsAppPrivateMessageRef>;
+  sendDocument(document: WhatsAppPrivateOutboundDocument): Promise<WhatsAppPrivateMessageRef>;
   edit(reference: WhatsAppPrivateMessageRef, text: string): Promise<void>;
   remove(reference: WhatsAppPrivateMessageRef): Promise<void>;
   typing(): Promise<void>;
@@ -148,14 +167,21 @@ export function normalizeBaileysPrivateMessage(
   if (!userId || context.selfJids.some((jid) => normalizedJid(jid) === userId)) {
     return null;
   }
-  const text = messageText(extractMessageContent(raw.message));
-  if (!text) return null;
+  const content = extractMessageContent(raw.message);
+  const text = messageText(content) ?? "";
+  const descriptor = privateDocumentDescriptor(content);
+  const contextInfo = messageContextInfo(content);
+  if (!text && !descriptor) return null;
   return {
     accountId: context.accountId,
     userId,
     messageId: raw.key.id,
     text,
     at: timestampIso(raw.messageTimestamp),
+    quotedMessageId: contextInfo?.stanzaId ?? null,
+    document: descriptor
+      ? { ...descriptor, data: Buffer.alloc(0) }
+      : null,
   };
 }
 
@@ -203,6 +229,31 @@ function messageContextInfo(
         stanzaId?: string | null;
       })
     : undefined;
+}
+
+function privateDocumentDescriptor(
+  content: ReturnType<typeof extractMessageContent>,
+): Omit<WhatsAppPrivateInboundDocument, "data"> | null {
+  const document = content?.documentMessage;
+  if (!document) return null;
+  const fileName = (document.fileName ?? "project.zip")
+    .replace(/[\u0000-\u001f<>:"/\\|?*]/gu, "_")
+    .trim()
+    .slice(0, 160);
+  const mimetype = (document.mimetype ?? "application/octet-stream")
+    .trim()
+    .slice(0, 120);
+  const declared = document.fileLength == null
+    ? null
+    : toNumber(document.fileLength);
+  return {
+    fileName: fileName || "project.zip",
+    mimetype,
+    declaredBytes: declared !== null && Number.isSafeInteger(declared) &&
+        declared >= 0
+      ? declared
+      : null,
+  };
 }
 
 function timestampIso(value: WAMessage["messageTimestamp"]): string {

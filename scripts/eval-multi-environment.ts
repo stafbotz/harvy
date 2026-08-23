@@ -20,10 +20,12 @@ import {
 } from "../src/ai/safety.js";
 import {
   hasExplicitImmediateDangerSignal,
+  hasExplicitSupportTriageSignal,
   needsConditionalReplyReview,
   NO_RISK_HINT,
   parseRiskHint,
   withImmediateDangerHint,
+  withExplicitSupportHint,
 } from "../src/core/safety-policy.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
@@ -285,7 +287,10 @@ async function runMultiEnvironmentEval() {
                 understanding.safetySensitive,
               ) ?? NO_RISK_HINT
             : NO_RISK_HINT;
-          const riskHint = withImmediateDangerHint(parsedHint, immediateDanger);
+          const riskHint = withExplicitSupportHint(
+            withImmediateDangerHint(parsedHint, immediateDanger),
+            hasExplicitSupportTriageSignal(step.message),
+          );
           const assessed = understanding === null || riskHint.level !== "none"
             ? await withSmartRetry(
               () => conversation.triageRisk(step.message, scope.userId, harvyContext),

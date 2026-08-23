@@ -155,10 +155,31 @@ describe("normalisasi pesan Baileys", () => {
       messageId: "private-1",
       text: "/penggunaan",
       at: "2026-03-31T23:33:20.000Z",
+      quotedMessageId: null,
+      document: null,
     });
     assert.equal(
       whatsappPrivateOwnerId(normalized?.userId ?? ""),
       "whatsapp-user:628777777777@s.whatsapp.net",
+    );
+    assert.equal(
+      normalizeBaileysPrivateMessage(
+        message({
+          key: {
+            remoteJid: "628777777777@s.whatsapp.net",
+            fromMe: false,
+            id: "private-reply",
+          },
+          message: {
+            extendedTextMessage: {
+              text: "jawaban untuk pertanyaan tadi",
+              contextInfo: { stanzaId: "question-1" },
+            },
+          },
+        }),
+        { accountId: "utama", selfJids: ["628123456789@s.whatsapp.net"] },
+      )?.quotedMessageId,
+      "question-1",
     );
     assert.equal(
       normalizeBaileysPrivateMessage(

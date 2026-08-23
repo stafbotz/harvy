@@ -17,7 +17,7 @@ export interface AgentWorkerTask {
 export interface AgentWorkerContext {
   runId: string;
   scopeKind: "private";
-  channel: "telegram";
+  channel: "telegram" | "whatsapp";
   /** Berasal dari scope executor tepercaya, bukan input planner. */
   ownerId: string;
   signal: AbortSignal;
@@ -148,12 +148,12 @@ implements AgentCapabilityExecutor<ParallelDelegationInput> {
     input: ParallelDelegationInput,
     context: AgentExecutionContext,
   ): Promise<AgentExecutorResult> {
-    if (context.scope.kind !== "private" || context.scope.channel !== "telegram") {
+    if (context.scope.kind !== "private") {
       return {
         status: "error",
         summary: JSON.stringify({
           kind: "agent.delegate.parallel.result",
-          reason: "Delegasi hanya tersedia pada ruang privat Telegram.",
+          reason: "Delegasi hanya tersedia pada ruang privat Harvy.",
           results: [],
         }),
       };
@@ -183,7 +183,7 @@ implements AgentCapabilityExecutor<ParallelDelegationInput> {
             const output = await this.worker(task, {
               runId: context.runId,
               scopeKind: "private",
-              channel: "telegram",
+              channel: context.scope.channel,
               ownerId,
               signal: context.signal,
               runBudget: context.runBudget,

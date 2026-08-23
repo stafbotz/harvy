@@ -470,14 +470,14 @@ function privateScope(
 ):
   | { ok: true; value: PrivateAgentScope }
   | { ok: false; result: AgentExecutorResult } {
-  if (context.scope.kind !== "private" || context.scope.channel !== "telegram") {
+  if (context.scope.kind !== "private") {
     return {
       ok: false,
       result: {
         status: "error",
         summary: JSON.stringify({
           kind: "internal_tool.denied",
-          reason: "Tool internal hanya tersedia pada ruang privat Telegram.",
+          reason: "Tool internal hanya tersedia pada ruang privat Harvy.",
         }),
       },
     };

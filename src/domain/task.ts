@@ -1,3 +1,5 @@
+import type { ScheduledDeliveryAttempt } from "./scheduled-delivery.js";
+
 export type TaskImportance = 1 | 2 | 3;
 export type TaskStatus = "active" | "completed";
 
@@ -13,6 +15,8 @@ export interface StudentTask {
   completedAt: string | null;
   reminderAt: string | null;
   reminderSentAt: string | null;
+  /** Tidak ada berarti belum pernah dicoba; in_flight/unknown tidak diulang. */
+  reminderDelivery?: ScheduledDeliveryAttempt | null;
 }
 
 export interface NewTask {

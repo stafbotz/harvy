@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 import {
   DisconnectReason,
@@ -341,6 +342,100 @@ describe("armada akun Baileys", () => {
     assert.match(socket.sentMessages[0]?.text ?? "", /^\*Penggunaan Harvy\*/u);
     assert.equal(delivered, 1);
     assert.equal(deliveryFailed, 0);
+    await manager.stop();
+  });
+
+  it("mengembalikan receipt pesan privat proaktif dan mengedit anchor exact", async () => {
+    const sockets: FakeSocket[] = [];
+    const manager = new BaileysAccountManager(
+      { ...config(), accounts: [config().accounts[0]!] },
+      noOpEvents(),
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.ev.emit("connection.update", { connection: "open" });
+    await manager.drainEvents();
+
+    const sent = await manager.sendPrivateTextTracked(
+      "utama",
+      "628777777777@s.whatsapp.net",
+      "Anchor pekerjaan",
+    );
+    assert.deepEqual(sent.messageIds, ["out-Anchor pekerjaan"]);
+    const edited = await manager.editPrivateText(
+      "utama",
+      "628777777777@s.whatsapp.net",
+      sent.messageIds[0]!,
+      "Anchor selesai",
+    );
+    assert.equal(edited.messageId, sent.messageIds[0]);
+    assert.deepEqual(socket.editedMessageIds, ["out-Anchor pekerjaan"]);
+    await manager.stop();
+  });
+
+  it("mengunduh ZIP privat secara bounded sebelum menyerahkannya ke coding", async () => {
+    const sockets: FakeSocket[] = [];
+    const received: Buffer[] = [];
+    const manager = new BaileysAccountManager(
+      {
+        ...config(),
+        privateEnabled: true,
+        accounts: [config().accounts[0]!],
+      },
+      {
+        ...noOpEvents(),
+        onPrivateMessage: async (incoming) => {
+          if (incoming.document) received.push(incoming.document.data);
+          return null;
+        },
+      },
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+        downloadContent: async () => {
+          const stream = new PassThrough();
+          stream.end(Buffer.from("PK\u0003\u0004fixture-zip", "binary"));
+          return stream;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.ev.emit("connection.update", { connection: "open" });
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [{
+        key: {
+          id: "private-zip-1",
+          remoteJid: "628777777777@s.whatsapp.net",
+          fromMe: false,
+        },
+        messageTimestamp: 1_775_000_000,
+        message: {
+          documentMessage: {
+            fileName: "project.zip",
+            mimetype: "application/zip",
+            fileLength: 15,
+          },
+        },
+      } as WAMessage],
+    });
+    await manager.drainEvents();
+
+    assert.equal(received.length, 1);
+    assert.match(received[0]!.toString("binary"), /^PK/u);
     await manager.stop();
   });
 

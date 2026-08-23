@@ -54,7 +54,16 @@ export function formatTask(task: StudentTask, timeZone: string): string {
   const details = [IMPORTANCE_LABEL[task.importance], formatDue(task, timeZone)];
 
   if (task.reminderAt) {
-    details.push(`🔔 ${formatMoment(task.reminderAt, timeZone, "short")}`);
+    if (
+      task.reminderDelivery?.status === "unknown" ||
+      task.reminderDelivery?.status === "in_flight"
+    ) {
+      details.push("⚠️ kiriman pengingat tidak pasti; atur ulang bila masih perlu");
+    } else if (task.reminderSentAt || task.reminderDelivery?.status === "sent") {
+      details.push("🔔 pengingat sudah dikirim");
+    } else {
+      details.push(`🔔 ${formatMoment(task.reminderAt, timeZone, "short")}`);
+    }
   }
 
   return [`• ${task.title}`, `  ${details.join(" · ")}`].join("\n");
@@ -340,6 +349,9 @@ export function formatSession(
   const checkIn = session.checkIn
     ? session.checkIn.sentAt
       ? " · check-in sudah dikirim"
+      : session.checkIn.delivery?.status === "unknown" ||
+          session.checkIn.delivery?.status === "in_flight"
+        ? " · ⚠️ kiriman check-in tidak pasti; jadwalkan ulang bila masih perlu"
       : ` · check-in ${new Intl.DateTimeFormat("id-ID", {
           dateStyle: "short",
           timeStyle: "short",

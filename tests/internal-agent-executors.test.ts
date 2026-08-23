@@ -78,6 +78,33 @@ describe("internal agent executors", () => {
     assert.equal(missing.found, false);
   });
 
+  it("membaca state owner WhatsApp privat dengan executor yang sama", async () => {
+    const repository = new MemoryTaskRepository();
+    const tasks = new TaskService(repository, () => NOW);
+    await tasks.create({
+      ownerId: "whatsapp-user:test",
+      chatId: "wa",
+      title: "Kirim laporan",
+      dueAt: null,
+      remindAt: null,
+      importance: 2,
+    });
+    const executor = new TaskListActiveExecutor(tasks);
+    const validated = executor.validate({ limit: 20 });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const result = await executor.execute(
+      validated.value,
+      context("whatsapp-user:test", "whatsapp"),
+    );
+    const payload = JSON.parse(result.summary) as {
+      tasks: Array<{ title: string }>;
+    };
+    assert.equal(result.status, "ok");
+    assert.deepEqual(payload.tasks.map((task) => task.title), ["Kirim laporan"]);
+  });
+
   it("memberi jam deterministik dan agenda internal dengan zona pengguna", async () => {
     const taskRepository = new MemoryTaskRepository();
     const profileRepository = new MemoryProfileRepository();
@@ -468,11 +495,14 @@ describe("virtual terminal", () => {
   });
 });
 
-function context(ownerId: string): AgentExecutionContext {
+function context(
+  ownerId: string,
+  channel: "telegram" | "whatsapp" = "telegram",
+): AgentExecutionContext {
   return {
     runId: "run",
     step: 0,
-    scope: privateAgentScope("telegram", ownerId),
+    scope: privateAgentScope(channel, ownerId),
     idempotencyKey: "key",
     signal: new AbortController().signal,
     runBudget: new RunBudgetAccount(),

@@ -1,6 +1,6 @@
 # Status — Platform dan Operasi Runtime
 
-Refreshed: 22 Agustus 2026 pada provider-response boundary hardening.
+Refreshed: 23 Agustus 2026 pada restart, backup, dan provider-response recovery.
 Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 
 ## Keadaan saat ini
@@ -43,6 +43,10 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 - Respons tanpa terminal finish reason, content filter, reason asing, dan
   pasangan text/tool reason yang salah ditolak. Ledger menormalkan reason asing
   ke `other` dan membedakan `incomplete` dari `truncated` tanpa menyimpan isi.
+  Respons 2xx yang kehilangan terminal marker dicoba sekali lagi secara
+  berbatas melalui kunci berikutnya; `content_filter` dan reason terminal lain
+  tetap tidak di-retry. Provider live membuktikan satu recovery
+  `incomplete → accepted` tanpa menerima fragmen ambigu sebagai jawaban.
 - Repository telemetry v3 menambah turn record content-free yang ikut retensi,
   export, full deletion, flush, dan shutdown drain. Service menyediakan
   nearest-rank p50/p95 serta rate boundary/triage/review/fast-path per owner;
@@ -55,13 +59,27 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
   melewati recovery+conformance sebelum command kanal didaftarkan. Trust-domain
   sandbox, local-git, dan GitHub broker memakai service HMAC dari secret file;
   loopback insecure memerlukan flag development explicit.
+- `npm start` memakai supervisor satu-child dengan exponential backoff dan
+  crash-loop breaker. Shutdown normal dikirim melalui IPC lintas platform agar
+  aplikasi sempat menguras worker, menghentikan transport, dan melepas lock;
+  kill paksa hanya fallback setelah timeout. Klaim local runtime lock memakai
+  staging tersinkron lalu publikasi hard-link no-replace, sehingga proses tidak
+  menerbitkan authority file setengah tertulis. Lock milik PID mati direklamasi
+  otomatis secara fail-closed.
+- Backup lokal mengenkripsi seluruh archive dengan AES-256-GCM, mencatat hash
+  dan inventaris target logis, menolak symlink/traversal serta mutasi sumber,
+  dan hanya restore ke direktori baru. Verifikasi/restore mendekripsi sebagai
+  stream tanpa membuat archive plaintext sementara. Drill terbaru pada state
+  Harvy terkonfigurasi berhasil create→verify→restore 1.411 entry/3.942.048
+  byte dan membersihkan artifact uji.
 
 ## Batas dan defect aktif
 
 - Storage dan operational log hanya aman untuk satu proses; belum PostgreSQL,
   collector terpusat, alerting, immutable audit, atau deployment hardening.
-- Force stop/crash dapat meninggalkan runtime lock stale. Hapus hanya setelah
-  PID pemilik di payload diverifikasi sudah mati.
+- Crash masih dapat meninggalkan lock stale, tetapi startup berikutnya hanya
+  mereklamasinya setelah payload valid dan PID pemilik terbukti mati. Lock
+  malformed dari luar tetap gagal tertutup dan memerlukan pemeriksaan operator.
 - Native tool calling masih primary-only; compatibility fallback belum terbukti.
 - Capability explicit provider fallback sengaja ditolak sampai execution plan
   dapat dihitung ulang secara aman untuk provider/model fallback.
@@ -71,6 +89,9 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 - Turn summary belum menjadi dashboard agregat lintas owner. TTFR/final p50/p95
   tersedia pada service/repository, tetapi alert/SLO exporter dan pengukuran
   live lintas Telegram/WhatsApp belum dikalibrasi.
+- Drill backup memakai kunci acak in-memory dan menghapus hasilnya; belum ada
+  kunci backup durable, media eksternal/offline, jadwal retensi, atau bukti
+  restore lintas mesin. Ini belum boleh disebut backup operasional permanen.
 
 ## Bukti dan pointer
 
@@ -78,10 +99,12 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
   `src/transport/bounded-response-body.ts`, `src/core/secret-store.ts`,
   `src/core/local-runtime-lock.ts`,
   `src/core/telemetry-service.ts`, `src/core/coding-runtime-composition.ts`,
-  `src/observability/`, `scripts/dev-runner.ts`.
+  `src/observability/`, `src/operations/local-backup.ts`,
+  `src/operations/runtime-supervisor.ts`, `scripts/dev-runner.ts`.
 - Tes: `tests/client.test.ts`, `tests/ai-config.test.ts`,
   `tests/secret-store.test.ts`, `tests/key-pool.test.ts`,
   `tests/local-runtime-lock.test.ts`, `tests/operational-logger.test.ts`,
-  `tests/dev-runner.test.ts`, `tests/app-startup-shutdown.test.ts`.
+  `tests/dev-runner.test.ts`, `tests/app-startup-shutdown.test.ts`,
+  `tests/local-backup.test.ts`, `tests/runtime-supervisor.test.ts`.
 - Keputusan: ADR-003, ADR-010, ADR-025. Setup:
   `docs/engineering/DEVELOPMENT.md`.

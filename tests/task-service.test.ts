@@ -140,6 +140,82 @@ describe("TaskService", () => {
     // model, bukan permintaan pengguna.
     assert.equal(task.reminderAt, null);
   });
+
+  it("tidak mengulang pengingat ketika hasil transport tidak dapat dipastikan", async () => {
+    const repository = new MemoryRepository();
+    let now = new Date("2026-07-26T10:00:00.000Z");
+    const service = new TaskService(repository, () => now);
+    const task = await service.create({
+      ownerId: "student",
+      chatId: "chat",
+      title: "Minum obat",
+      dueAt: null,
+      remindAt: new Date("2026-07-26T11:00:00.000Z"),
+      importance: 2,
+    });
+    now = new Date("2026-07-26T11:00:00.000Z");
+    let attempts = 0;
+
+    await assert.rejects(
+      service.deliverReminder(task, async () => {
+        attempts += 1;
+        throw new Error("hasil send tidak diketahui");
+      }),
+      /tidak diketahui/u,
+    );
+    const stored = await service.find("student", task.id);
+    assert.equal(stored?.reminderDelivery?.status, "unknown");
+    assert.equal(stored?.reminderSentAt, null);
+    assert.equal((await service.dueReminders()).length, 0);
+    assert.equal(
+      await service.deliverReminder(task, async () => {
+        attempts += 1;
+      }),
+      false,
+    );
+    assert.equal(attempts, 1);
+  });
+
+  it("menyelesaikan delivery lama sebelum menyimpan jadwal baru pemilik yang sama", async () => {
+    const repository = new MemoryRepository();
+    let now = new Date("2026-07-26T10:00:00.000Z");
+    const service = new TaskService(repository, () => now);
+    const task = await service.create({
+      ownerId: "student",
+      chatId: "chat",
+      title: "Minum obat",
+      dueAt: null,
+      remindAt: new Date("2026-07-26T11:00:00.000Z"),
+      importance: 2,
+    });
+    now = new Date("2026-07-26T11:00:00.000Z");
+    let releaseDelivery!: () => void;
+    let deliveryStarted!: () => void;
+    const held = new Promise<void>((resolvePromise) => {
+      releaseDelivery = resolvePromise;
+    });
+    const started = new Promise<void>((resolvePromise) => {
+      deliveryStarted = resolvePromise;
+    });
+
+    const delivery = service.deliverReminder(task, async () => {
+      deliveryStarted();
+      await held;
+    });
+    await started;
+    const rescheduled = service.setReminder(
+      "student",
+      task.id,
+      new Date("2026-07-27T11:00:00.000Z"),
+    );
+    releaseDelivery();
+
+    assert.equal(await delivery, true);
+    const updated = await rescheduled;
+    assert.equal(updated?.reminderAt, "2026-07-27T11:00:00.000Z");
+    assert.equal(updated?.reminderSentAt, null);
+    assert.equal(updated?.reminderDelivery, null);
+  });
 });
 
 class MemoryRepository implements TaskRepository {
@@ -193,6 +269,7 @@ class MemoryRepository implements TaskRepository {
         task.status === "active" &&
         task.reminderAt !== null &&
         task.reminderSentAt === null &&
+        task.reminderDelivery == null &&
         new Date(task.reminderAt).getTime() <= now.getTime(),
     );
   }

@@ -196,7 +196,7 @@ describe("giliran grup", () => {
     ]);
   });
 
-  it("menyimpan memori biasa hanya untuk anggota lokal dan menempelkannya pada balasan", async () => {
+  it("meminta izin untuk memori biasa implisit lalu menyimpannya hanya bagi anggota", async () => {
     const runtime = createRuntime({
       memoryExtractor: {
         understand: async () => understanding({
@@ -216,9 +216,23 @@ describe("giliran grup", () => {
     assert.equal(await runtime.turns.handle(incoming), "replied");
     assert.match(
       runtime.replies[0] ?? "",
-      /Yang ini juga aku ingat untuk percakapan di grup ini 📍/iu,
+      /belum menyimpan.*ya, simpan memori ini/isu,
     );
     assert.doesNotMatch(runtime.replies[0] ?? "", /warna favoritku biru/iu);
+    assert.deepEqual(
+      await runtime.memories.memberMemories(
+        "whatsapp:grup@g.us",
+        ["anggota-a"],
+      ),
+      [],
+    );
+    await runtime.turns.handle(message({
+      messageId: "izin-biru",
+      participantId: "anggota-a",
+      participantAliases: ["anggota-a"],
+      mentionsHarvy: true,
+      text: "ya, simpan memori ini",
+    }));
     assert.equal(
       (await runtime.memories.memberMemories(
         "whatsapp:grup@g.us",
@@ -259,7 +273,7 @@ describe("giliran grup", () => {
       ),
       [],
     );
-    assert.match(runtime.replies[0] ?? "", /belum kusimpan/iu);
+    assert.match(runtime.replies[0] ?? "", /belum menyimpan/iu);
     assert.match(runtime.replies[0] ?? "", /ya, simpan memori ini/iu);
 
     await runtime.turns.handle(
@@ -450,7 +464,10 @@ describe("giliran grup", () => {
         understand: async () => understanding({
           kind: "profile",
           content: "Nama panggilannya Nara",
-        }),
+        }, "remember", memorySemantic(
+          "Harvy, ingat ya nama panggilanku Nara",
+          "nama panggilanku Nara",
+        )),
       },
       sendReply: async () => ({
         text: "Sudah kusimpan.",
@@ -465,6 +482,7 @@ describe("giliran grup", () => {
         participantId: "anggota-a",
         participantAliases: ["anggota-a"],
         mentionsHarvy: true,
+        text: "Harvy, ingat ya nama panggilanku Nara",
       })),
       "inactive",
     );
@@ -483,7 +501,10 @@ describe("giliran grup", () => {
         understand: async () => understanding({
           kind: "profile",
           content: "Nama panggilannya Nara",
-        }),
+        }, "remember", memorySemantic(
+          "Harvy, ingat ya nama panggilanku Nara",
+          "nama panggilanku Nara",
+        )),
       },
       sendReply: async () => ({
         text: "Aku dengar bagian itu.",
@@ -498,6 +519,7 @@ describe("giliran grup", () => {
         participantId: "anggota-a",
         participantAliases: ["anggota-a"],
         mentionsHarvy: true,
+        text: "Harvy, ingat ya nama panggilanku Nara",
       })),
       "inactive",
     );
@@ -2359,7 +2381,7 @@ describe("giliran grup", () => {
     );
   });
 
-  it("classifier privacy durable hanya berjalan saat ada kandidat dan gagal tertutup", async () => {
+  it("classifier privacy tidak menjadi authority durable bagi kandidat implisit", async () => {
     let privacyCalls = 0;
     const runtime = createRuntime({
       memoryExtractor: {
@@ -2396,7 +2418,7 @@ describe("giliran grup", () => {
       mentionsHarvy: true,
     }));
 
-    assert.equal(privacyCalls, 1);
+    assert.equal(privacyCalls, 0);
     assert.deepEqual(
       await runtime.memories.memberMemories(
         "whatsapp:grup@g.us",
@@ -2404,7 +2426,7 @@ describe("giliran grup", () => {
       ),
       [],
     );
-    assert.match(runtime.replies.at(-1) ?? "", /belum kusimpan/iu);
+    assert.match(runtime.replies.at(-1) ?? "", /belum menyimpan/iu);
   });
 
   it("menolak semua model call ketika authority ingress tidak terbukti", async () => {

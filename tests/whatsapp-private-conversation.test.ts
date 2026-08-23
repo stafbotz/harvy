@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { HarvyContext } from "../src/ai/context.js";
-import type { ConversationRuntime } from "../src/ai/conversation.js";
+import type { Conversation, ConversationRuntime } from "../src/ai/conversation.js";
 import type { RiskTriage } from "../src/ai/safety.js";
 import type { Understanding } from "../src/ai/understand.js";
 import { NO_RISK_HINT } from "../src/core/safety-policy.js";
 import type { UserProfile } from "../src/domain/profile.js";
 import type { ConversationTurn } from "../src/domain/history.js";
 import type { MemoryItem } from "../src/domain/memory.js";
+import type { StudentTask } from "../src/domain/task.js";
+import type { ActiveSession } from "../src/domain/session.js";
+import { AgentRunService } from "../src/core/agent-run-service.js";
+import { FileAgentRunRepository } from
+  "../src/storage/file-agent-run-repository.js";
+import { privateAgentScope, scopeKey } from "../src/harness/scope.js";
+import type { AgentRunCheckpoint } from "../src/harness/agent-harness.js";
 import type {
   WhatsAppPrivateMessage,
   WhatsAppPrivateTransport,
@@ -20,6 +30,78 @@ import {
 } from "../src/whatsapp/private-conversation.js";
 
 describe("WhatsAppPrivateConversation", () => {
+  it("aritmetika sederhana memberi hasil exact tanpa model di WhatsApp", async () => {
+    const harness = createHarness(true);
+    const response = await harness.service.handle(
+      message("berapa setengah ditambah seperempat?", "hitung-exact"),
+    ) as WhatsAppPrivateReply;
+
+    assert.equal(response.text, "Hasilnya 3/4.");
+    assert.equal(harness.understandCalls, 0);
+  });
+
+  it("pengingat kosong mengumpulkan isi dan waktu tanpa balasan model", async () => {
+    let replyCalls = 0;
+    const harness = createHarness(true, {
+      understand: async () => ({
+        intent: "request",
+        taskAction: null,
+        memoryAction: null,
+        riskHint: NO_RISK_HINT,
+        safetySensitive: false,
+        needsStepByStep: false,
+        routingAssessment: null,
+        task: null,
+        memories: [],
+        suggestedActions: [],
+        actionGoal: null,
+        controlAction: null,
+        sessionSignal: null,
+        semanticOperation: null,
+      }),
+      reply: async () => {
+        replyCalls += 1;
+        return "jangan dipakai";
+      },
+    });
+
+    const response = await harness.service.handle(
+      message("buat pengingat dong", "reminder-kosong"),
+    ) as WhatsAppPrivateReply;
+
+    assert.equal(replyCalls, 0);
+    assert.match(response.text, /apa.*kapan/iu);
+    assert.equal(harness.tasks.length, 0);
+  });
+
+  it("mengubah zona waktu natural dengan capability yang sama seperti Telegram", async () => {
+    const harness = createHarness(true, {
+      understand: async () => ({
+        intent: "control",
+        taskAction: null,
+        memoryAction: null,
+        riskHint: NO_RISK_HINT,
+        safetySensitive: false,
+        needsStepByStep: false,
+        routingAssessment: null,
+        task: null,
+        memories: [],
+        suggestedActions: [],
+        actionGoal: null,
+        controlAction: "timezone",
+        sessionSignal: null,
+        semanticOperation: null,
+      }),
+    });
+
+    const response = await harness.service.handle(
+      message("ubah zona waktuku ke WITA", "zona-natural"),
+    ) as WhatsAppPrivateReply;
+
+    assert.equal(harness.timeZone, "Asia/Makassar");
+    assert.match(response.text, /WITA|Asia\/Makassar/iu);
+  });
+
   it("menahan pesan pertama sampai consent lalu memakai pipeline WhatsApp", async () => {
     const harness = createHarness(false);
     const first = await harness.service.handle(message(
@@ -167,17 +249,17 @@ describe("WhatsAppPrivateConversation", () => {
     assert.match(String(casualReply), /SETUJU/u);
   });
 
-  it("menjelaskan batas fitur WhatsApp tanpa mengklaim surface Telegram", async () => {
+  it("menjelaskan capability privat yang sama dengan surface teks WhatsApp", async () => {
     const harness = createHarness(false);
     const detail = String(await harness.service.handle(message(
       "/izin",
       "izin-detail",
     )));
 
-    assert.doesNotMatch(detail, /pekerjaan planning yang berjalan di latar/iu);
-    assert.doesNotMatch(detail, /Kalau kamu memilih sesi atau check-in/iu);
-    assert.match(detail, /mengekspor file data belum tersedia/iu);
-    assert.match(detail, /\/hapus-data/u);
+    assert.match(detail, /pekerjaan planning yang berjalan di latar/iu);
+    assert.match(detail, /sesi atau check-in/iu);
+    assert.match(detail, /mengekspor data yang boleh kamu lihat/iu);
+    assert.match(detail, /balas SETUJU/iu);
   });
 
   it("tidak mengakui usage atau history balasan ketika delivery gagal", async () => {
@@ -250,6 +332,7 @@ describe("WhatsAppPrivateConversation", () => {
         }
         return { messageId: `sent-${sent.length}` };
       },
+      sendDocument: async () => ({ messageId: "document-1" }),
       edit: async () => undefined,
       remove: async () => undefined,
       typing: async () => undefined,
@@ -455,6 +538,283 @@ describe("WhatsAppPrivateConversation", () => {
     assert.equal(harness.consent, false);
     assert.equal(harness.understandCalls, 0);
   });
+
+  it("mengirim ekspor data sebagai dokumen JSON, bukan memotongnya di chat", async () => {
+    const harness = createHarness(true);
+    const result = await harness.service.handle(message(
+      "/ekspor",
+      "export-data",
+    )) as WhatsAppPrivateReply;
+
+    assert.match(result.text, /berkas JSON/iu);
+    assert.equal(result.document?.fileName, "harvy-data.json");
+    assert.equal(result.document?.mimetype, "application/json");
+    assert.match(result.document?.data.toString("utf8") ?? "", /whatsapp-user/iu);
+  });
+
+  it("menyimpan tugas natural lalu mengelolanya lewat surface teks WhatsApp", async () => {
+    const text = "ingatkan aku mengumpulkan laporan besok";
+    const harness = createHarness(true, {
+      understand: async () => ({
+        intent: "task",
+        taskAction: "save",
+        memoryAction: null,
+        riskHint: NO_RISK_HINT,
+        safetySensitive: false,
+        needsStepByStep: false,
+        routingAssessment: null,
+        task: {
+          title: "Mengumpulkan laporan",
+          dueAt: new Date("2026-08-24T12:00:00.000Z"),
+          remindAt: null,
+          importance: 2,
+        },
+        memories: [],
+        suggestedActions: [],
+        actionGoal: null,
+        controlAction: null,
+        sessionSignal: null,
+        semanticOperation: {
+          version: 1,
+          domain: "task",
+          operation: "save",
+          target: "mengumpulkan laporan",
+          subject: "self",
+          reference: "none",
+          explicitness: "explicit",
+          evidence: text,
+          confidence: 0.99,
+        },
+      }),
+    });
+
+    const saved = await harness.service.handle(message(text, "task-natural")) as
+      WhatsAppPrivateReply;
+    assert.match(saved.text, /Mengumpulkan laporan/u);
+    assert.equal(harness.tasks.length, 1);
+    assert.match(harness.tasks[0]!.chatId, /^whatsapp-private:/u);
+    await saved.onDelivered?.();
+
+    const listed = await harness.service.handle(message("/tugas", "task-list"));
+    assert.match(String(listed), /task-1/u);
+    const completed = await harness.service.handle(message(
+      "/selesai task-1",
+      "task-done",
+    ));
+    assert.match(String(completed), /Selesai|Beres|Kelar/u);
+    assert.equal(harness.tasks[0]!.status, "completed");
+    assert.equal(harness.replyMessages.length, 0);
+  });
+
+  it("menjalankan sesi dan menjadwalkan check-in lewat WhatsApp privat", async () => {
+    const harness = createHarness(true);
+    const started = await harness.service.handle(message(
+      "/sesi mulai fokus menyelesaikan pendahuluan",
+      "session-start",
+    ));
+    assert.match(String(started), /Sesi dimulai/u);
+    assert.equal(harness.activeSession?.kind, "focus");
+    assert.match(harness.activeSession?.chatId ?? "", /^whatsapp-private:/u);
+
+    const scheduled = await harness.service.handle(message(
+      "/checkin 30 menit lagi",
+      "session-checkin",
+    ));
+    assert.match(String(scheduled), /bertanya sekali/u);
+    assert.equal(
+      harness.activeSession?.checkIn?.at,
+      "2026-08-24T12:00:00.000Z",
+    );
+
+    const stopped = await harness.service.handle(message(
+      "/sesi berhenti",
+      "session-stop",
+    ));
+    assert.match(String(stopped), /berhenti/u);
+    assert.equal(harness.activeSession, null);
+  });
+
+  it("menahan memori sensitif sampai izin eksplisit terlihat", async () => {
+    const sensitiveText = "Aku punya kondisi kesehatan yang perlu kamu ingat";
+    const harness = createHarness(true, {
+      memoryPrivacy: true,
+      understand: async () => ({
+        intent: "smalltalk",
+        taskAction: null,
+        memoryAction: null,
+        riskHint: NO_RISK_HINT,
+        safetySensitive: false,
+        needsStepByStep: false,
+        routingAssessment: null,
+        task: null,
+        memories: [{ kind: "personal", content: "Punya kondisi kesehatan" }],
+        suggestedActions: [],
+        actionGoal: null,
+        controlAction: null,
+        sessionSignal: null,
+        semanticOperation: null,
+      }),
+    });
+
+    const response = await harness.service.handle(message(
+      sensitiveText,
+      "memory-sensitive",
+    )) as WhatsAppPrivateReply;
+    assert.match(response.text, /SIMPAN MEMORI/u);
+    assert.equal(harness.memoryCount, 1);
+    await response.onDelivered?.();
+
+    const confirmed = await harness.service.handle(message(
+      "SIMPAN MEMORI",
+      "memory-sensitive-confirm",
+    ));
+    assert.match(String(confirmed), /izinmu/u);
+    assert.equal(harness.memoryCount, 2);
+  });
+
+  it("menahan memori biasa implisit meski classifier model menilainya aman", async () => {
+    const harness = createHarness(true, {
+      memoryPrivacy: false,
+      understand: async () => ({
+        intent: "smalltalk",
+        taskAction: null,
+        memoryAction: null,
+        riskHint: NO_RISK_HINT,
+        safetySensitive: false,
+        needsStepByStep: false,
+        routingAssessment: null,
+        task: null,
+        memories: [{ kind: "preference", content: "Lebih suka jawaban bertahap" }],
+        suggestedActions: [],
+        actionGoal: null,
+        controlAction: null,
+        sessionSignal: null,
+        semanticOperation: null,
+      }),
+      reply: async () => "Aku simpan preferensimu ya.",
+    });
+
+    const response = await harness.service.handle(message(
+      "aku lebih suka jawaban bertahap",
+      "memory-ordinary",
+    )) as WhatsAppPrivateReply;
+    assert.equal(harness.memoryCount, 1);
+    assert.doesNotMatch(response.text, /Aku simpan preferensimu/iu);
+    assert.match(response.text, /SIMPAN MEMORI/u);
+    await response.onDelivered?.();
+
+    const confirmed = await harness.service.handle(message(
+      "SIMPAN MEMORI",
+      "memory-ordinary-confirm",
+    ));
+    assert.match(String(confirmed), /izinmu/u);
+    assert.equal(harness.memoryCount, 2);
+  });
+
+  it("menjalankan AgentRun durable dan mengirim hasil proaktif di WhatsApp", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-wa-private-agent-"));
+    const agentRuns = new AgentRunService(
+      new FileAgentRunRepository(join(root, "agent-runs.json")),
+    );
+    const sent: string[] = [];
+    const edited: string[] = [];
+    const ownerId = "whatsapp-user:628777777777@s.whatsapp.net";
+    const request = "Tolong buatkan rencana langkah demi langkah untuk ujian.";
+    const agent: Conversation["agent"] = async (
+      messageText,
+      _mode,
+      _context,
+      runtime,
+    ) => ({
+      status: "completed",
+      reply: "Rencana ujian yang sudah memakai state live.",
+      checkpoint: agentCheckpoint(
+        runtime?.runId ?? "missing-run-id",
+        ownerId,
+        messageText,
+      ),
+      trace: [],
+    });
+    const harness = createHarness(true, {
+      agent,
+      agentRuns,
+      proactive: {
+        send: async (_accountId, _userId, text) => {
+          sent.push(text);
+        },
+        sendTracked: async (_accountId, _userId, text) => {
+          sent.push(text);
+          return { messageIds: [`wa-out-${sent.length}`] };
+        },
+        editTracked: async (_accountId, _userId, messageId, text) => {
+          edited.push(text);
+          return { messageId };
+        },
+      },
+    });
+
+    const anchor = await harness.service.handle(message(request, "agent-start")) as
+      WhatsAppPrivateReply;
+    assert.match(anchor.text, /Pekerjaan|Antrean|Menyusun/iu);
+    await anchor.onDelivered?.({
+      text: anchor.text,
+      bubbleCount: 1,
+      complete: true,
+      messageIds: ["wa-anchor-1"],
+    });
+
+    await waitUntil(async () =>
+      (await agentRuns.loadActive("whatsapp", ownerId))?.status === "completed"
+    );
+    const completed = await agentRuns.loadActive("whatsapp", ownerId);
+    assert.equal(completed?.anchor.messageId, "wa-anchor-1");
+    assert.equal(completed?.receipts[0]?.effect, "whatsapp.message.send");
+    assert.deepEqual(sent, ["Rencana ujian yang sudah memakai state live."]);
+    assert.match(edited.at(-1) ?? "", /Selesai/iu);
+    assert.equal(
+      harness.history.at(-1)?.text,
+      "Rencana ujian yang sudah memakai state live.",
+    );
+    await harness.service.drain();
+  });
+
+  it("mengimpor ZIP project melalui authority privat WhatsApp yang tepercaya", async () => {
+    let uploaded = Buffer.alloc(0);
+    let actorChannel = "";
+    const codingRuntime = {
+      issuePrivateActor: (source: { channel: string }) => {
+        actorChannel = source.channel;
+        return { actor: "trusted" };
+      },
+      application: {
+        uploadZip: async (_actor: unknown, data: Buffer) => {
+          uploaded = Buffer.from(data);
+          return {
+            workspaceKey: "workspace:wa",
+            projectId: "project-wa",
+            projectRevision: 1,
+          };
+        },
+      },
+      privateGitHub: null,
+    } as unknown as NonNullable<
+      WhatsAppPrivateConversationDependencies["codingRuntime"]
+    >;
+    const harness = createHarness(true, { codingRuntime });
+    const response = await harness.service.handle({
+      ...message("", "zip-upload"),
+      document: {
+        fileName: "project.zip",
+        mimetype: "application/zip",
+        declaredBytes: 7,
+        data: Buffer.from("PK fixture", "utf8"),
+      },
+    });
+
+    assert.match(String(response), /Project ZIP sudah diimpor/u);
+    assert.equal(actorChannel, "whatsapp");
+    assert.equal(uploaded.toString("utf8"), "PK fixture");
+  });
 });
 
 function createHarness(
@@ -472,6 +832,7 @@ function createHarness(
       context: HarvyContext,
     ) => Promise<Understanding | null>;
     triageRisk?: () => Promise<RiskTriage>;
+    memoryPrivacy?: boolean;
     economyHandle?: (
       ownerId: string,
       input: {
@@ -479,6 +840,12 @@ function createHarness(
         semanticOperation: Understanding["semanticOperation"];
       },
     ) => Promise<string | null>;
+    agent?: Conversation["agent"];
+    agentRuns?: AgentRunService;
+    proactive?: NonNullable<WhatsAppPrivateConversationDependencies["proactive"]>;
+    codingRuntime?: NonNullable<
+      WhatsAppPrivateConversationDependencies["codingRuntime"]
+    >;
   } = {},
 ): {
   service: WhatsAppPrivateConversation;
@@ -495,6 +862,9 @@ function createHarness(
   replyMessages: string[];
   understandContexts: HarvyContext[];
   turnOutcomes: string[];
+  tasks: StudentTask[];
+  readonly activeSession: ActiveSession | null;
+  readonly timeZone: string | null;
 } {
   let consent = initialConsent;
   let understandCalls = 0;
@@ -509,6 +879,9 @@ function createHarness(
   const replyMessages: string[] = [];
   const understandContexts: HarvyContext[] = [];
   const turnOutcomes: string[] = [];
+  const taskItems: StudentTask[] = [];
+  let activeSession: ActiveSession | null = null;
+  let storedTimeZone: string | null = null;
   const memoryItems: MemoryItem[] = [{
     id: "memory-1",
     ownerId: "whatsapp-user:628777777777@s.whatsapp.net",
@@ -524,7 +897,7 @@ function createHarness(
     onboardedAt: consent ? "2026-08-22T00:00:00.000Z" : null,
     stylePreference: null,
     styleAskedAt: null,
-    timeZone: null,
+    timeZone: storedTimeZone,
     quietHours: null,
     quietHoursSetAt: null,
     consentWithdrawnAt: consent ? null : "2026-08-22T00:00:00.000Z",
@@ -590,6 +963,9 @@ function createHarness(
       },
       reviewReply: async () => true,
       deterministicTimeReply: () => "Sekarang waktu uji.",
+      understandDueDate: async () => new Date("2026-08-24T12:00:00.000Z"),
+      assessMemoryPrivacy: async () => options.memoryPrivacy ?? false,
+      ...(options.agent ? { agent: options.agent } : {}),
     },
     history: {
       context: async () => ({ summary: null, turns: [...history] }),
@@ -623,6 +999,24 @@ function createHarness(
         memoryItems.splice(0, memoryItems.length);
         return count;
       },
+      remember: async (input: {
+        ownerId: string;
+        kind: MemoryItem["kind"];
+        content: string;
+      }) => {
+        const item: MemoryItem = {
+          id: `memory-${memoryItems.length + 1}`,
+          ownerId: input.ownerId,
+          kind: input.kind,
+          content: input.content,
+          createdAt: "2026-08-22T00:00:00.000Z",
+          lastUsedAt: null,
+          expiresAt: null,
+        };
+        memoryItems.push(item);
+        return item;
+      },
+      markUsed: async () => undefined,
       allow: () => undefined,
       suspend: () => {
         memoriesSuspended += 1;
@@ -639,9 +1033,114 @@ function createHarness(
         consent = false;
         return profile();
       },
+      rememberStyle: async () => profile(),
+      setTimeZone: async (_ownerId: string, timeZone: string) => {
+        storedTimeZone = timeZone;
+        return profile();
+      },
+      setQuietHours: async () => profile(),
     },
     sessions: {
-      active: async () => null,
+      active: async () => activeSession,
+      start: async (input: {
+        ownerId: string;
+        chatId: string;
+        kind: ActiveSession["kind"];
+        goal: string;
+      }) => {
+        activeSession = {
+          id: "session-wa-1",
+          ownerId: input.ownerId,
+          chatId: input.chatId,
+          kind: input.kind,
+          goal: input.goal,
+          stage: input.kind === "tutor" ? "assess" : "act",
+          taskId: null,
+          checkIn: null,
+          createdAt: "2026-08-22T00:00:00.000Z",
+          updatedAt: "2026-08-22T00:00:00.000Z",
+          expiresAt: "2026-08-30T00:00:00.000Z",
+        };
+        return activeSession;
+      },
+      progress: async (_ownerId: string, signal: string | null) => {
+        if (!activeSession) return null;
+        if (signal === "done" || signal === "cancel") {
+          activeSession = null;
+          return null;
+        }
+        return activeSession;
+      },
+      scheduleCheckIn: async (_ownerId: string, at: Date) => {
+        if (!activeSession) return null;
+        activeSession = {
+          ...activeSession,
+          checkIn: { at: at.toISOString(), sentAt: null },
+        };
+        return activeSession;
+      },
+      stop: async () => {
+        const stopped = activeSession;
+        activeSession = null;
+        return stopped;
+      },
+      deliverCheckIn: async () => false,
+    },
+    tasks: {
+      create: async (input: {
+        ownerId: string;
+        chatId: string;
+        title: string;
+        dueAt: Date | null;
+        remindAt: Date | null;
+        importance: 1 | 2 | 3;
+      }) => {
+        const task: StudentTask = {
+          id: `task-${taskItems.length + 1}`,
+          ownerId: input.ownerId,
+          chatId: input.chatId,
+          title: input.title,
+          dueAt: input.dueAt?.toISOString() ?? null,
+          importance: input.importance,
+          status: "active",
+          createdAt: "2026-08-22T00:00:00.000Z",
+          completedAt: null,
+          reminderAt: input.remindAt?.toISOString() ?? null,
+          reminderSentAt: null,
+        };
+        taskItems.push(task);
+        return task;
+      },
+      listActive: async () => taskItems.filter((task) => task.status === "active"),
+      find: async (_ownerId: string, id: string) =>
+        taskItems.find((task) => task.id === id) ?? null,
+      complete: async (_ownerId: string, id: string) => {
+        const index = taskItems.findIndex((task) => task.id === id);
+        if (index < 0) return null;
+        taskItems[index] = {
+          ...taskItems[index]!,
+          status: "completed",
+          completedAt: "2026-08-22T01:00:00.000Z",
+        };
+        return taskItems[index]!;
+      },
+      remove: async (_ownerId: string, id: string) => {
+        const index = taskItems.findIndex((task) => task.id === id);
+        return index < 0 ? null : taskItems.splice(index, 1)[0] ?? null;
+      },
+      setDue: async (_ownerId: string, id: string, at: Date | null) => {
+        const task = taskItems.find((candidate) => candidate.id === id);
+        if (!task) return null;
+        task.dueAt = at?.toISOString() ?? null;
+        return task;
+      },
+      setReminder: async (_ownerId: string, id: string, at: Date) => {
+        const task = taskItems.find((candidate) => candidate.id === id);
+        if (!task) return null;
+        task.reminderAt = at.toISOString();
+        return task;
+      },
+      deliverReminder: async () => false,
     },
     telemetry: {
       allow: async () => undefined,
@@ -664,6 +1163,11 @@ function createHarness(
       },
     },
     dataControls: {
+      export: async (ownerId: string) => ({
+        version: 4,
+        exportedAt: "2026-08-22T00:00:00.000Z",
+        ownerId,
+      }),
       deleteAll: async () => {
         deletedAll += 1;
         consent = false;
@@ -671,6 +1175,9 @@ function createHarness(
         memoryItems.splice(0, memoryItems.length);
       },
     },
+    ...(options.agentRuns ? { agentRuns: options.agentRuns } : {}),
+    ...(options.proactive ? { proactive: options.proactive } : {}),
+    ...(options.codingRuntime ? { codingRuntime: options.codingRuntime } : {}),
     economyCommands: {
       handle: async (
         ownerId: string,
@@ -722,6 +1229,13 @@ function createHarness(
     replyMessages,
     understandContexts,
     turnOutcomes,
+    tasks: taskItems,
+    get activeSession() {
+      return activeSession;
+    },
+    get timeZone() {
+      return storedTimeZone;
+    },
   };
 }
 
@@ -766,4 +1280,41 @@ function message(text: string, messageId: string): WhatsAppPrivateMessage {
     text,
     at: "2026-08-22T00:00:00.000Z",
   };
+}
+
+function agentCheckpoint(
+  runId: string,
+  ownerId: string,
+  request: string,
+): AgentRunCheckpoint {
+  const startedAt = new Date();
+  return {
+    version: 1,
+    runId,
+    scopeKey: scopeKey(privateAgentScope("whatsapp", ownerId)),
+    capabilityHash: "a".repeat(16),
+    callableHash: "b".repeat(64),
+    request,
+    startedAt: startedAt.toISOString(),
+    deadlineAt: new Date(startedAt.getTime() + 9 * 60_000).toISOString(),
+    maxSteps: 6,
+    step: 0,
+    observations: [],
+    userInputs: [],
+    seenActionDigests: [],
+    pending: null,
+    pendingInput: null,
+  };
+}
+
+async function waitUntil(
+  predicate: () => Promise<boolean>,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail("Kondisi async tidak tercapai sebelum timeout.");
 }

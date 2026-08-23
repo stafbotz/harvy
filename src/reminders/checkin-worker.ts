@@ -21,7 +21,7 @@ export interface WorkerHandle {
  * menunggu dan akan dikirim pada putaran pertama setelah jam tenang selesai.
  */
 export function startCheckInWorker(
-  bot: HarvyBot,
+  bot: Pick<HarvyBot, "sendCheckIn">,
   sessions: SessionService,
   profiles: ProfileService,
   telemetry: TelemetryService,

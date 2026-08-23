@@ -76,6 +76,29 @@ describe("SpecialistDelegationExecutor", () => {
     assert.equal(summary.handoff.workProduct, "Trade-off yang terlewat.");
   });
 
+  it("memanggil specialist yang sama pada WhatsApp privat", async () => {
+    let ownerId = "";
+    const executor = new SpecialistDelegationExecutor(
+      async (_request, workerContext) => {
+        ownerId = workerContext.ownerId;
+        return handoff();
+      },
+      ["challenger"],
+      () => ({ decision: "allow" }),
+    );
+    const validated = executor.validate({ role: "challenger", brief: brief() });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+    const waContext: AgentExecutionContext = {
+      ...context(),
+      scope: privateAgentScope("whatsapp", "whatsapp-user:test"),
+    };
+
+    const result = await executor.execute(validated.value, waContext);
+    assert.equal(result.status, "ok");
+    assert.equal(ownerId, "whatsapp-user:test");
+  });
+
   it("menolak brief lintas run sebelum memanggil worker", async () => {
     let calls = 0;
     const executor = new SpecialistDelegationExecutor(async () => {

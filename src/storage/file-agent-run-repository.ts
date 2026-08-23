@@ -716,7 +716,9 @@ function validateActiveCollections(run: ActiveAgentRun): void {
       typeof receipt.receiptId !== "string" ||
       receiptIds.has(receipt.receiptId) ||
       typeof receipt.effectId !== "string" ||
-      receipt.effect !== "telegram.message.send" ||
+      receipt.effect !== (run.channel === "whatsapp"
+        ? "whatsapp.message.send"
+        : "telegram.message.send") ||
       (receipt.purpose !== "question" && receipt.purpose !== "final") ||
       !Number.isInteger(receipt.instructionRevision) ||
       receipt.instructionRevision <= 0 ||
@@ -732,7 +734,7 @@ function validateActiveCollections(run: ActiveAgentRun): void {
   }
   if (
     !run.anchor ||
-    run.anchor.platform !== "telegram" ||
+    run.anchor.platform !== run.channel ||
     typeof run.anchor.chatId !== "string" ||
     run.anchor.chatId.length === 0 ||
     (run.anchor.messageId !== null && typeof run.anchor.messageId !== "string") ||

@@ -66,6 +66,7 @@ import {
   explicitMemoryRememberAuthority,
   normalizeMemoryWriteEmoji,
   replyAcknowledgesMemoryWrite,
+  withoutUnconfirmedMemoryWriteClaims,
 } from "../core/memory-explicit-consent.js";
 import type { MemoryService } from "../core/memory-service.js";
 import {
@@ -87,11 +88,13 @@ import {
 } from "../core/run-mailbox-policy.js";
 import {
   hasExplicitImmediateDangerSignal,
+  hasExplicitSupportTriageSignal,
   needsConditionalReplyReview,
   NO_RISK_HINT,
   parseRiskHint,
   safetyEffectPermissions,
   withImmediateDangerHint,
+  withExplicitSupportHint,
 } from "../core/safety-policy.js";
 import {
   ActiveSessionError,
@@ -109,6 +112,8 @@ import {
 } from "../core/telemetry-service.js";
 import {
   INDONESIAN_TIME_ZONES,
+  explicitIndonesianTimeZoneChange,
+  explicitQuietHoursChange,
   isInQuietHours,
   parseQuietHours,
 } from "../core/time-policy.js";
@@ -204,6 +209,8 @@ import {
 } from "./onboarding.js";
 import { PendingStore, type Pending } from "./pending.js";
 import {
+  deterministicArithmeticReply,
+  deterministicEmptyReminderReply,
   deterministicQuickChatReply,
   isNarrowPendingAnswer,
 } from "./fast-path-policy.js";
@@ -1906,13 +1913,17 @@ export function createBot(
       }
     }
 
-    const quickReply =
-      !waitingAtStart &&
-      !activeSession &&
-      context.turns.length === 0 &&
-      !context.summary
-        ? deterministicQuickChatReply(text)
+    const arithmeticReply =
+      !waitingAtStart && !activeSession && !immediateDanger && !urgentBoundary
+        ? deterministicArithmeticReply(text)
         : null;
+    const quickReply = arithmeticReply ??
+      (!waitingAtStart &&
+          !activeSession &&
+          context.turns.length === 0 &&
+          !context.summary
+        ? deterministicQuickChatReply(text)
+        : null);
     if (quickReply) {
       await noteTurnSignal(ownerId, "deterministic-fast-path");
       await appendUserHistory(ownerId, text, runtime);
@@ -1989,9 +2000,12 @@ export function createBot(
           understanding.safetySensitive,
         ) ?? NO_RISK_HINT
       : NO_RISK_HINT;
-    const riskHint = withImmediateDangerHint(
-      parsedHint,
-      immediateDanger || urgentBoundary,
+    const riskHint = withExplicitSupportHint(
+      withImmediateDangerHint(
+        parsedHint,
+        immediateDanger || urgentBoundary,
+      ),
+      hasExplicitSupportTriageSignal(text),
     );
     // Retrieval follows the one mechanical understanding pass so activation is
     // semantic and multilingual. Safety-signalled turns keep the recent-only
@@ -2267,10 +2281,28 @@ export function createBot(
       if (proposedRoute.kind !== "conversation" && !proposedRouteAllowed) {
         await noteTurnSignal(ownerId, "safe-action-blocked");
       }
+      const deterministicTimeControl = proposedRoute.kind === "control" &&
+        (proposedRoute.action === "timezone" ||
+          proposedRoute.action === "quiet-hours");
       const route =
-        proposedRouteAllowed && !requiresLiveState && !requiresAgentPlanning
+        proposedRouteAllowed &&
+          (!requiresLiveState || deterministicTimeControl) &&
+          !requiresAgentPlanning
           ? proposedRoute
           : ({ kind: "conversation" } as const);
+
+      const emptyReminderReply = route.kind === "conversation"
+        ? deterministicEmptyReminderReply(text, understanding)
+        : null;
+      if (emptyReminderReply) {
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await appendUserHistory(ownerId, text, runtime);
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await ctx.reply(emptyReminderReply);
+        await history.append(ownerId, "harvy", emptyReminderReply);
+        void history.compact(ownerId);
+        return;
+      }
 
       if (route.kind === "memory-control") {
         if (!(await runtimeIsCurrent(runtime))) return;
@@ -2339,7 +2371,7 @@ export function createBot(
         if (!(await runtimeIsCurrent(runtime))) return;
         await clearPending(ownerId);
         if (!(await runtimeIsCurrent(runtime))) return;
-        await showControl(ctx, ownerId, route.action, runtime);
+        await showControl(ctx, ownerId, route.action, runtime, text);
         return;
       }
 
@@ -2422,22 +2454,12 @@ export function createBot(
             // candidate credential membayar classifier privasi kedua.
             .filter(({ memory }) =>
               !containsForbiddenMemorySecret(memory.content));
-      // Hanya turn dengan kandidat durable yang membayar classifier ini. Hasil
-      // policy dan commit harus ada sebelum model diberi izin menyusun kalimat
-      // "aku ingat"; kata atau emoji dari model tidak pernah menjadi authority.
-      const sensitiveByModel = await assessMemorySensitivity(
-        ownerId,
-        memoryCandidates.map(({ memory }) => memory),
-        runtime,
-      );
-      if (!(await runtimeIsCurrent(runtime))) {
-        await telemetry.discardUndelivered?.(ownerId, currentTurnId());
-        return;
-      }
+      // Classifier model tidak lagi menjadi authority privasi. Kandidat yang
+      // tidak berada di bawah perintah simpan eksplisit selalu menunggu izin;
+      // false-negative dua model dengan bias serupa tidak dapat menulis data.
       const remembered = await storeOrdinaryMemories(
         ownerId,
         memoryCandidates,
-        sensitiveByModel,
       );
       if (!(await runtimeIsCurrent(runtime))) {
         await rollbackOrdinaryMemories(ownerId, remembered.saved);
@@ -2676,6 +2698,15 @@ export function createBot(
         remembered.acknowledgements.length > 0
       ) {
         reply = normalizeMemoryWriteEmoji(reply);
+      }
+      if (
+        reply &&
+        remembered.acknowledgements.length === 0 &&
+        remembered.sensitive !== null &&
+        replyAcknowledgesMemoryWrite(reply)
+      ) {
+        reply = withoutUnconfirmedMemoryWriteClaims(reply) ||
+          "Aku dengar yang kamu ceritakan.";
       }
       if (
         reply &&
@@ -4370,6 +4401,7 @@ export function createBot(
     ownerId: string,
     action: ControlAction,
     runtime: ConversationRuntime = {},
+    sourceText = "",
   ): Promise<void> {
     if (!(await runtimeIsCurrent(runtime))) return;
     switch (action) {
@@ -4380,19 +4412,29 @@ export function createBot(
         );
         return;
       case "timezone": {
-        const profile = await profiles.load(ownerId);
+        const requestedZone = sourceText
+          ? explicitIndonesianTimeZoneChange(sourceText)
+          : null;
+        const profile = requestedZone
+          ? await profiles.setTimeZone(ownerId, requestedZone)
+          : await profiles.load(ownerId);
         if (!(await runtimeIsCurrent(runtime))) return;
         await ctx.reply(
-          `Pengaturan waktu saat ini:\n\n${formatTimeSettings(profile)}`,
+          `${requestedZone ? "Zona waktu tersimpan." : "Pengaturan waktu saat ini:"}\n\n${formatTimeSettings(profile)}`,
           { reply_markup: timezoneActions() },
         );
         return;
       }
       case "quiet-hours": {
-        const profile = await profiles.load(ownerId);
+        const requestedQuietHours = sourceText
+          ? explicitQuietHoursChange(sourceText)
+          : null;
+        const profile = requestedQuietHours
+          ? await profiles.setQuietHours(ownerId, requestedQuietHours)
+          : await profiles.load(ownerId);
         if (!(await runtimeIsCurrent(runtime))) return;
         await ctx.reply(
-          `Pengaturan waktu saat ini:\n\n${formatTimeSettings(profile)}`,
+          `${requestedQuietHours ? "Jam tenang tersimpan." : "Pengaturan waktu saat ini:"}\n\n${formatTimeSettings(profile)}`,
           { reply_markup: quietHoursActions() },
         );
         return;
@@ -4576,44 +4618,18 @@ export function createBot(
     await ctx.reply(memoryNoteLines(items));
   }
 
-  async function assessMemorySensitivity(
-    ownerId: string,
-    items: readonly ExtractedMemory[],
-    runtime: ConversationRuntime,
-  ): Promise<boolean> {
-    if (items.length === 0) return false;
-    if (items.some((item) => isSensitiveMemory(item))) return true;
-
-    try {
-      // Null/parse error gagal tertutup ke consent, bukan penyimpanan otomatis.
-      return (await conversation.assessMemoryPrivacy(
-        items,
-        ownerId,
-        runtime.signal,
-      )) ?? true;
-    } catch (error) {
-      logger.error(
-        "memory_privacy_failed",
-        "Penilaian privasi kandidat memori gagal.",
-        error,
-      );
-      return true;
-    }
-  }
-
   /**
-   * Menyimpan memori biasa dan menyisihkan yang sensitif untuk ditawarkan.
+   * Menyimpan memori yang memang diminta eksplisit dan menyisihkan kandidat
+   * implisit untuk ditawarkan.
    *
-   * Yang biasa disimpan tanpa bertanya, tetapi tidak diam-diam: setiap
-   * penyimpanan diumumkan di balasan yang sama berikut jalan keluarnya, sesuai
-   * Pasal 4 nomor 2. Yang sensitif implicit disisihkan untuk consent bertoken;
-   * yang diminta eksplisit hanya lewat setelah authority item-scoped dibentuk
-   * adapter tepercaya — Pasal 4 nomor 3.
+   * Beta belum mempunyai pengukuran false-negative classifier yang layak untuk
+   * menjamin data sensitif. Karena itu tidak ada kandidat implisit yang boleh
+   * menjadi durable. Perintah simpan eksplisit hanya lewat setelah authority
+   * item-scoped dibentuk adapter tepercaya — Pasal 4 nomor 3.
    */
   async function storeOrdinaryMemories(
     ownerId: string,
     items: AuthorizedMemoryCandidate[],
-    sensitiveByModel = false,
   ): Promise<StoredMemoryBatch> {
     const saved: MemoryItem[] = [];
     const explicitlyRemembered: MemoryItem[] = [];
@@ -4623,9 +4639,9 @@ export function createBot(
     try {
       for (const authorized of items) {
         const item = authorized.memory;
-        const isSensitive = isSensitiveMemory(item, sensitiveByModel);
-        if (isSensitive && !authorized.explicitConsent) {
-          sensitive ??= { ...item, sensitivity: "personal" };
+        const isSensitive = isSensitiveMemory(item);
+        if (!authorized.explicitConsent) {
+          sensitive ??= { ...item };
           continue;
         }
 

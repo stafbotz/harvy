@@ -2,10 +2,13 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import makeWASocket, {
   DisconnectReason,
+  downloadContentFromMessage,
+  extractMessageContent,
   isJidGroup,
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   proto,
+  toNumber,
   useMultiFileAuthState,
   type BaileysEventMap,
   type GroupMetadata,
@@ -102,6 +105,7 @@ export interface BaileysAccountManagerDependencies {
   now?: () => Date;
   logger?: OperationalLogger;
   metadataTimeoutMs?: number;
+  downloadContent?: typeof downloadContentFromMessage;
 }
 
 export interface GroupRunDeliveryActorExpectation {
@@ -183,6 +187,7 @@ export class BaileysAccountManager
   private readonly now: () => Date;
   private readonly logger: OperationalLogger;
   private readonly metadataTimeoutMs: number;
+  private readonly downloadContent: typeof downloadContentFromMessage;
   private acceptingEvents = true;
   private stopping = false;
 
@@ -201,6 +206,8 @@ export class BaileysAccountManager
       NOOP_OPERATIONAL_LOGGER.child("whatsapp.account-manager");
     this.metadataTimeoutMs =
       dependencies.metadataTimeoutMs ?? DEFAULT_METADATA_TIMEOUT_MS;
+    this.downloadContent =
+      dependencies.downloadContent ?? downloadContentFromMessage;
 
     for (const account of config.accounts) {
       this.accounts.set(account.id, {
@@ -494,6 +501,88 @@ export class BaileysAccountManager
       delivered.push(segment.text);
     }
     return groupReplyDelivery(delivered, true);
+  }
+
+  /**
+   * Outbound privat untuk reminder, check-in, dan completion background.
+   * Target selalu berasal dari chatId yang dibentuk ingress tepercaya; caller
+   * tidak boleh membentuk userId dari keluaran model.
+   */
+  async sendPrivateText(
+    accountId: string,
+    userId: string,
+    text: string,
+  ): Promise<void> {
+    await this.sendPrivateTextTracked(accountId, userId, text);
+  }
+
+  async sendPrivateTextTracked(
+    accountId: string,
+    userId: string,
+    text: string,
+  ): Promise<{ messageIds: string[] }> {
+    const runtime = this.accounts.get(accountId);
+    const socket = runtime?.socket ?? null;
+    if (
+      !runtime || runtime.stopping || runtime.status !== "open" || !socket
+    ) {
+      throw new Error(`Akun WhatsApp ${accountId} tidak tersambung.`);
+    }
+    const generation = runtime.generation;
+    return this.enqueueGroupOperation(
+      runtime,
+      `private:${userId}`,
+      async () => {
+        const transport = this.privateTransport(
+          runtime,
+          socket,
+          generation,
+          userId,
+        );
+        const plan = planResponsePresentation(text, {
+          maxSegmentCharacters: 12_000,
+        });
+        const messageIds: string[] = [];
+        for (const segment of plan.segments) {
+          const sent = await transport.send(segment.text);
+          if (!sent.messageId) {
+            throw new Error("Pengiriman WhatsApp privat tidak menghasilkan ID pesan.");
+          }
+          messageIds.push(sent.messageId);
+        }
+        return { messageIds };
+      },
+    );
+  }
+
+  async editPrivateText(
+    accountId: string,
+    userId: string,
+    messageId: string,
+    text: string,
+  ): Promise<{ messageId: string }> {
+    const runtime = this.accounts.get(accountId);
+    const socket = runtime?.socket ?? null;
+    if (
+      !runtime || runtime.stopping || runtime.status !== "open" || !socket
+    ) {
+      throw new Error(`Akun WhatsApp ${accountId} tidak tersambung.`);
+    }
+    const generation = runtime.generation;
+    return this.enqueueGroupOperation(
+      runtime,
+      `private:${userId}`,
+      async () => {
+        const transport = this.privateTransport(
+          runtime,
+          socket,
+          generation,
+          userId,
+        );
+        await transport.edit({ messageId }, text);
+        return { messageId };
+      },
+    );
   }
 
   /**
@@ -1365,11 +1454,36 @@ export class BaileysAccountManager
             runtime,
             `private:${normalized.userId}`,
             async () => {
+              let hydrated = normalized;
+              if (normalized.document) {
+                try {
+                  hydrated = {
+                    ...normalized,
+                    document: {
+                      ...normalized.document,
+                      data: await downloadBoundedPrivateDocument(
+                        raw,
+                        this.downloadContent,
+                      ),
+                    },
+                  };
+                } catch (error) {
+                  this.logger.warn(
+                    "whatsapp_private_document_rejected",
+                    "Dokumen privat WhatsApp ditolak sebelum callback.",
+                    {
+                      accountId: runtime.config.id,
+                      errorType: error instanceof Error ? error.name : "unknown",
+                    },
+                  );
+                  return;
+                }
+              }
               const task = this.handlePrivateMessage(
                 runtime,
                 socket,
                 generation,
-                normalized,
+                hydrated,
               );
               // Callback ingress privat harus kembali cepat agar bubble baru
               // dapat menginterupsi model/delivery yang sedang berjalan.
@@ -1518,6 +1632,9 @@ export class BaileysAccountManager
           await transport.send(segment.text);
           delivered.push(segment.text);
         }
+        if (prepared?.document) {
+          await transport.sendDocument(prepared.document);
+        }
       } catch (error) {
         await this.privateDeliveryFailed(prepared ?? undefined, {
           text: delivered.join("\n\n"),
@@ -1529,7 +1646,7 @@ export class BaileysAccountManager
       try {
         await prepared?.onDelivered?.({
           text: delivered.join("\n\n"),
-          bubbleCount: delivered.length,
+          bubbleCount: delivered.length + (prepared?.document ? 1 : 0),
           complete: true,
         });
       } catch (error) {
@@ -1584,6 +1701,16 @@ export class BaileysAccountManager
       send: async (text) => {
         assertCurrent();
         const sent = await socket.sendMessage(userId, { text: text.trim() });
+        return { messageId: sent?.key.id ?? null };
+      },
+      sendDocument: async (document) => {
+        assertCurrent();
+        const sent = await socket.sendMessage(userId, {
+          document: document.data,
+          fileName: document.fileName,
+          mimetype: document.mimetype,
+          ...(document.caption ? { caption: document.caption } : {}),
+        });
         return { messageId: sent?.key.id ?? null };
       },
       edit: async (reference, text) => {
@@ -2153,6 +2280,45 @@ function groupRunDeliveryNotCommitted(
 
 function groupNoticeRuntimeUnavailable(): Error {
   return new Error("Authority notice grup tidak aktif atau berubah.");
+}
+
+const MAX_PRIVATE_DOCUMENT_BYTES = 32 * 1024 * 1024;
+
+async function downloadBoundedPrivateDocument(
+  raw: WAMessage,
+  downloadContent: typeof downloadContentFromMessage,
+): Promise<Buffer> {
+  const document = extractMessageContent(raw.message)?.documentMessage;
+  if (!document) throw new Error("Dokumen WhatsApp tidak tersedia.");
+  const fileName = document.fileName?.toLocaleLowerCase("en-US") ?? "";
+  const mimetype = document.mimetype?.toLocaleLowerCase("en-US") ?? "";
+  if (!fileName.endsWith(".zip") && mimetype !== "application/zip") {
+    throw new Error("Hanya ZIP project yang diterima.");
+  }
+  const declared = document.fileLength == null
+    ? null
+    : toNumber(document.fileLength);
+  if (
+    declared !== null &&
+    (!Number.isSafeInteger(declared) || declared < 1 ||
+      declared > MAX_PRIVATE_DOCUMENT_BYTES)
+  ) {
+    throw new Error("Ukuran dokumen WhatsApp tidak sah atau terlalu besar.");
+  }
+  const stream = await downloadContent(document, "document");
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > MAX_PRIVATE_DOCUMENT_BYTES) {
+      stream.destroy();
+      throw new Error("Dokumen WhatsApp melewati batas 32 MiB.");
+    }
+    chunks.push(buffer);
+  }
+  if (total < 1) throw new Error("Dokumen WhatsApp kosong.");
+  return Buffer.concat(chunks, total);
 }
 
 function groupReplyDelivery(

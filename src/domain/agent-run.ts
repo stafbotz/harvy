@@ -180,7 +180,7 @@ export interface ActiveAgentRunEvent {
 }
 
 export interface AgentRunAnchor {
-  platform: "telegram";
+  platform: AgentChannel;
   chatId: string;
   messageId: string | null;
   updatedAt: string;
@@ -216,7 +216,7 @@ export interface PendingAgentRunEffect {
 export interface AgentRunEffectReceipt {
   receiptId: string;
   effectId: string;
-  effect: "telegram.message.send";
+  effect: "telegram.message.send" | "whatsapp.message.send";
   purpose: AgentRunEffectPurpose;
   instructionRevision: number;
   status: "committed" | "unknown";

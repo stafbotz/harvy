@@ -183,8 +183,8 @@ implements AgentCapabilityExecutor<SpecialistRequest> {
     input: SpecialistRequest,
     context: AgentExecutionContext,
   ): Promise<AgentExecutorResult> {
-    if (context.scope.kind !== "private" || context.scope.channel !== "telegram") {
-      return failure(input.role, "Specialist hanya tersedia pada ruang privat Telegram.");
+    if (context.scope.kind !== "private") {
+      return failure(input.role, "Specialist hanya tersedia pada ruang privat Harvy.");
     }
     if (input.brief.originalRequestRef !== context.runId) {
       return failure(input.role, "WorkBrief tidak terikat ke run aktif.");

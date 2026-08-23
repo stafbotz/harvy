@@ -194,21 +194,19 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   menggantikan pembungkus itu, dan ia **wajib ikut setiap kali** `context.turns`
   tidak kosong. Memori dan ringkasan tetap di dalam `<konteks>`; keduanya memang
   catatan, dan tidak ada bentuk chat yang wajar untuk mereka.
-- **Memori sensitif memerlukan authority pengguna yang item-spesifik.** Bila
-  informasi personal hanya diceritakan, jenis `personal` atau classifier
-  `memory-privacy` yang menandai kandidat sensitif wajib lewat tombol izin
-  bertoken. Perintah user turn untuk mengingat item tersebut sudah merupakan
-  jawaban pengguna dan tidak boleh memicu consent kedua. Sinyal model
+- **Semua memori implicit memerlukan authority pengguna yang item-spesifik.**
+  Kandidat yang hanya muncul dari cerita—biasa maupun sensitif—wajib lewat
+  prompt izin bertoken; model ekstraksi dan classifier `memory-privacy` bukan
+  authority write. Perintah user turn untuk mengingat item tersebut sudah
+  merupakan jawaban pengguna dan tidak boleh memicu consent kedua. Sinyal model
   `memoryAction: "remember"` tidak cukup: adapter juga wajib membuktikan bentuk
   perintah pada raw user turn dan mencocokkan klausa itu ke exact candidate.
   Negasi, retrieval, reminder, signal tanpa kecocokan, user/turn/scope lain,
   serta candidate lain tidak mendapat authority. Password, OTP, PIN, token,
   API key, dan credential sejenis selalu ditolak lagi di service sebelum
   primary write atau derivation. Classifier implicit yang invalid, timeout,
-  atau error tetap gagal tertutup sebagai sensitif. Bila ekstraksi dan
-  classifier sama-sama salah menilai cerita implicit sebagai biasa, jalur
-  otomatis masih dapat terlewati; ini keterbatasan yang wajib disebut jujur.
-  Jenis biasa wajib diumumkan secara natural. Urutannya code-owned: authority
+  atau error tetap gagal tertutup, tetapi hasil “biasa” juga tidak mengizinkan
+  auto-write. Urutannya code-owned: authority
   dan policy → primary commit → receipt `saved|updated|already-known` → wording
   percakapan → delivery. Kata atau emoji model bukan bukti commit. Bila
   delivery gagal sebelum acknowledgement terlihat, catatan yang baru ditulis
@@ -1140,12 +1138,12 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   kanal+grup+anggota, tidak boleh masuk state privat/grup lain, dan hanya boleh
   dipakai saat anggota itu berbicara. `contextPrivacy` bukan consent authority
   memori durable. Setelah direct menghasilkan kandidat, classifier
-  `memory-privacy` khusus kandidat menentukan sensitivitas; jenis personal,
-  hasil sensitive, port/parse null, timeout, atau error tidak boleh otomatis
-  tersimpan. Tidak ada kandidat berarti tidak ada call privacy. Memori biasa
-  boleh ditulis lalu diakui secara natural pada balasan yang sama tanpa dump
-  per-item; kegagalan kirim wajib rollback. Usulan sensitif implicit hanya boleh disimpan sesudah
-  anggota yang sama mengonfirmasi pending 10 menit dalam scope yang sama.
+  `memory-privacy` khusus kandidat hanya membantu policy/prompt dan tidak
+  menentukan authority write; jenis personal, hasil biasa/sensitive,
+  parse null, timeout, atau error sama-sama tidak boleh otomatis tersimpan.
+  Tidak ada kandidat berarti tidak ada call privacy. Semua usulan implicit
+  hanya boleh disimpan sesudah anggota yang sama mengonfirmasi pending 10 menit
+  dalam scope yang sama.
   Perintah explicit remember boleh menjadi consent hanya bila signal
   understanding dan guard lokal cocok pada candidate, anggota, turn, dan grup
   yang sama; ia tidak berlaku untuk candidate lain atau shared room memory.

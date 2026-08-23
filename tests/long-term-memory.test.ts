@@ -22,6 +22,9 @@ import type {
   LearningEventPayload,
   ProcedureDraft,
 } from "../src/domain/long-term-memory.js";
+import type { AgentRunResult } from "../src/harness/agent-harness.js";
+import { privateAgentScope, scopeKey } from "../src/harness/scope.js";
+import { RunBudgetAccount } from "../src/core/run-budget.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -98,6 +101,57 @@ describe("durable episodic archive", () => {
 });
 
 describe("evidence-backed learning", () => {
+  it("mempelajari run WhatsApp privat pada namespace owner kanal itu", async () => {
+    const directory = await temporaryDirectory();
+    const repository = new SqliteLongTermMemoryRepository(
+      join(directory, "long-term.sqlite"),
+    );
+    const service = new LongTermMemoryService(repository, tickingClock());
+    const ownerId = "whatsapp-user:test";
+    const scope = privateAgentScope("whatsapp", ownerId);
+    const startedAt = "2026-08-21T00:00:00.000Z";
+    const result: AgentRunResult = {
+      status: "completed",
+      reply: "Selesai.",
+      checkpoint: {
+        version: 2,
+        runId: "run-whatsapp",
+        scopeKey: scopeKey(scope),
+        capabilityHash: "capability-hash",
+        callableHash: "callable-hash",
+        request: "susun agenda matematika",
+        startedAt,
+        deadlineAt: "2026-08-21T00:01:00.000Z",
+        maxSteps: 6,
+        step: 1,
+        observations: [{
+          step: 0,
+          capabilityId: "calendar.agenda",
+          status: "ok",
+          summary: "{}",
+        }],
+        userInputs: [],
+        seenActionDigests: [],
+        pending: null,
+        pendingInput: null,
+        runBudget: new RunBudgetAccount().checkpoint(),
+      },
+      trace: [],
+    };
+
+    await service.observeAgentRun(
+      { scope, request: "susun agenda matematika" },
+      result,
+    );
+    await service.drain();
+    const snapshot = await service.snapshotPrivateOwner(ownerId);
+    assert.equal(snapshot.procedures.length, 1);
+    assert.deepEqual(snapshot.procedures[0]?.toolRequirements, ["calendar.agenda"]);
+    service.stop();
+    await service.drain();
+    service.close();
+  });
+
   it("mempromosikan procedure secara idempoten lalu mendegradasikannya setelah failure berulang", async () => {
     const directory = await temporaryDirectory();
     const repository = new SqliteLongTermMemoryRepository(

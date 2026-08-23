@@ -19,11 +19,13 @@ import {
   FOLLOW_UP_COOLDOWN_MS,
   decideSafetyRouting,
   hasExplicitImmediateDangerSignal,
+  hasExplicitSupportTriageSignal,
   needsConditionalReplyReview,
   parseRiskHint,
   safetyEffectPermissions,
   shouldRaiseProfessionalHelp,
   worthRecording,
+  withExplicitSupportHint,
 } from "../src/core/safety-policy.js";
 
 const NOW = new Date("2026-07-27T10:00:00.000Z");
@@ -87,6 +89,30 @@ describe("sinyal darurat lokal", () => {
 });
 
 describe("triase risiko", () => {
+  it("merutekan kehilangan langsung ke classifier dukungan, bukan ke bahaya", () => {
+    for (const message of [
+      "aku baru putus dan masih pengin cerita",
+      "saya baru kehilangan orang yang penting",
+    ]) {
+      assert.equal(hasExplicitSupportTriageSignal(message), true, message);
+    }
+    for (const message of [
+      "temanku cerita dia baru putus",
+      "contoh dialog aku baru putus",
+      "apa arti putus hubungan?",
+      "aku baru kehilangan kunci motor",
+    ]) {
+      assert.equal(hasExplicitSupportTriageSignal(message), false, message);
+    }
+    assert.deepEqual(
+      withExplicitSupportHint(
+        { level: "none", confidence: 1 },
+        true,
+      ),
+      { level: "possible", category: "acute_distress", confidence: 1 },
+    );
+  });
+
   it("membaca RiskHint terstruktur tanpa mencampur sensitivitas privasi", () => {
     assert.deepEqual(
       parseRiskHint({

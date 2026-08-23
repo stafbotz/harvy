@@ -127,6 +127,37 @@ describe("routing hasil pemahaman di adapter bot", () => {
     );
   });
 
+  it("memulihkan pengaturan waktu eksplisit tanpa melonggarkan kontrol data", () => {
+    assert.deepEqual(
+      immediateUnderstandingRoute(sample({
+        intent: "control",
+        controlAction: "timezone",
+      }), "ubah zona waktuku ke WITA"),
+      { kind: "control", action: "timezone" },
+    );
+    assert.deepEqual(
+      immediateUnderstandingRoute(sample({
+        intent: "control",
+        controlAction: "quiet-hours",
+      }), "atur jam tenangku 21.30-06.00"),
+      { kind: "control", action: "quiet-hours" },
+    );
+    assert.deepEqual(
+      immediateUnderstandingRoute(sample({
+        intent: "control",
+        controlAction: "timezone",
+      }), "bagaimana cara mengubah zona waktuku ke WITA?"),
+      { kind: "conversation" },
+    );
+    assert.deepEqual(
+      immediateUnderstandingRoute(sample({
+        intent: "control",
+        controlAction: "delete-all",
+      }), "hapus semua dataku"),
+      { kind: "conversation" },
+    );
+  });
+
   it("hanya menawarkan tugas yang tersirat pada cerita pengguna", () => {
     const extractedTask = task("Belajar untuk ulangan biologi");
     assert.equal(taskToOffer(sample({

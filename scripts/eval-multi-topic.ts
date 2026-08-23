@@ -5,10 +5,12 @@ import {
 } from "../src/ai/safety.js";
 import {
   hasExplicitImmediateDangerSignal,
+  hasExplicitSupportTriageSignal,
   needsConditionalReplyReview,
   NO_RISK_HINT,
   parseRiskHint,
   withImmediateDangerHint,
+  withExplicitSupportHint,
 } from "../src/core/safety-policy.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
@@ -116,7 +118,10 @@ async function runMultiTopicEval() {
         ? parseRiskHint(understanding.riskHint, understanding.safetySensitive) ??
           NO_RISK_HINT
         : NO_RISK_HINT;
-      const riskHint = withImmediateDangerHint(parsedHint, immediateDanger);
+      const riskHint = withExplicitSupportHint(
+        withImmediateDangerHint(parsedHint, immediateDanger),
+        hasExplicitSupportTriageSignal(testCase.message),
+      );
       const assessed = understanding === null || riskHint.level !== "none"
         ? await conversation.triageRisk(testCase.message, ownerId, context)
         : undefined;

@@ -242,7 +242,7 @@ export class AgentRunService {
         ],
         receipts: [],
         anchor: {
-          platform: "telegram",
+          platform: input.channel,
           chatId: boundedRequiredText(
             input.chatId,
             100,
@@ -837,7 +837,7 @@ export class AgentRunService {
           receipts: appendBounded(prepared.receipts, {
             receiptId: this.makeId(),
             effectId,
-            effect: "telegram.message.send",
+            effect: privateMessageSendEffect(prepared.channel),
             purpose: "question",
             instructionRevision: input.inputRevision,
             status: "committed",
@@ -946,7 +946,7 @@ export class AgentRunService {
           receipts: appendBounded(prepared.receipts, {
             receiptId: this.makeId(),
             effectId,
-            effect: "telegram.message.send",
+            effect: privateMessageSendEffect(prepared.channel),
             purpose: "final",
             instructionRevision: input.inputRevision,
             status: "committed",
@@ -1100,7 +1100,7 @@ export class AgentRunService {
           receipts: appendBounded(current.receipts, {
             receiptId: this.makeId(),
             effectId: effect.effectId,
-            effect: "telegram.message.send",
+            effect: privateMessageSendEffect(current.channel),
             purpose: effect.purpose,
             instructionRevision: effect.instructionRevision,
             status: "unknown",
@@ -1208,7 +1208,7 @@ export class AgentRunService {
             receipts: appendBounded(current.receipts, {
               receiptId: this.makeId(),
               effectId: current.pendingEffect.effectId,
-              effect: "telegram.message.send",
+              effect: privateMessageSendEffect(current.channel),
               purpose,
               instructionRevision: current.pendingEffect.instructionRevision,
               status: "unknown",
@@ -1587,7 +1587,7 @@ export class AgentRunService {
         receipts: appendBounded(prepared.receipts, {
           receiptId: this.makeId(),
           effectId,
-          effect: "telegram.message.send",
+          effect: privateMessageSendEffect(prepared.channel),
           purpose,
           instructionRevision: prepared.instructionRevision,
           status: "unknown",
@@ -1744,6 +1744,14 @@ function isTerminalActiveRun(run: ActiveAgentRun): boolean {
     run.status === "failed" ||
     run.status === "cancelled"
   );
+}
+
+function privateMessageSendEffect(
+  channel: AgentChannel,
+): "telegram.message.send" | "whatsapp.message.send" {
+  return channel === "whatsapp"
+    ? "whatsapp.message.send"
+    : "telegram.message.send";
 }
 
 function withoutRevision(run: ActiveAgentRun): NewActiveAgentRun {

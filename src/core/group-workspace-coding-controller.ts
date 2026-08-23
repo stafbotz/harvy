@@ -614,7 +614,7 @@ export class GroupWorkspaceCodingController {
         text: [
           "Link Workspace perlu konfirmasi di chat privat Harvy.",
           `Kode konfirmasi: ${result.request.requestId}`,
-          "Di Telegram privat, pilih Workspace lalu gunakan /project group-confirm <kode>.",
+          "Di chat privat Harvy (Telegram atau WhatsApp), gunakan /project group-confirm <kode>.",
           "Setelah dikonfirmasi, ulangi @Harvy hubungkan workspace di grup ini.",
         ].join("\n"),
       });

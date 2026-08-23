@@ -71,6 +71,7 @@ export class FileTaskRepository implements TaskRepository {
         task.status === "active" &&
         task.reminderAt !== null &&
         task.reminderSentAt === null &&
+        task.reminderDelivery == null &&
         new Date(task.reminderAt).getTime() <= now.getTime(),
     );
   }

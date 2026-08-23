@@ -59,6 +59,7 @@ import {
   explicitMemoryRememberAuthority,
   normalizeMemoryWriteEmoji,
   replyAcknowledgesMemoryWrite,
+  withoutUnconfirmedMemoryWriteClaims,
 } from "./memory-explicit-consent.js";
 import { containsForbiddenMemorySecret } from "./memory-policy.js";
 import {
@@ -1577,6 +1578,14 @@ export class GroupTurnService {
       reply = GROUP_MEMORY_SECRET_REJECTION;
     } else {
       if (
+        memoryCandidates.consent &&
+        savedMemories.length === 0 &&
+        replyAcknowledgesMemoryWrite(reply)
+      ) {
+        reply = withoutUnconfirmedMemoryWriteClaims(reply) ||
+          "Aku dengar yang kamu ceritakan.";
+      }
+      if (
         savedMemories.length > 0 ||
         memoryCandidates.explicitDuplicateContent
       ) {
@@ -1599,7 +1608,7 @@ export class GroupTurnService {
         );
       }
       if (memoryCandidates.consent) {
-        reply = withSensitiveMemoryConsentNote(reply);
+        reply = withGroupMemoryConsentNote(reply);
       }
     }
 
@@ -1696,28 +1705,6 @@ export class GroupTurnService {
       };
     }
 
-    let sensitive = candidates.some(
-      ({ candidate }) => candidate.kind === "personal",
-    );
-    if (!sensitive) {
-      try {
-        // Classifier ini hanya melihat kandidat durable, bukan raw context.
-        // Port hilang, parse error, dan outage semuanya gagal tertutup.
-        sensitive =
-          (await this.memoryExtractor?.assessMemoryPrivacy?.(
-            candidates.map(({ candidate }) => candidate),
-            scopeKey,
-          )) ?? true;
-      } catch (error) {
-        sensitive = true;
-        this.logger.warn(
-          "group_member_memory_privacy_failed",
-          "Penilaian privasi kandidat memori grup gagal; consent diwajibkan.",
-          { error },
-        );
-      }
-    }
-
     for (const { candidate, explicitConsent } of candidates) {
       try {
         const result = await this.memories.rememberParticipantMemory(
@@ -1727,7 +1714,13 @@ export class GroupTurnService {
           {
             kind: candidate.kind,
             content: candidate.content,
-            sensitivity: sensitive ? "sensitive" : "ordinary",
+            // Grup mempunyai audience lebih luas daripada chat privat. Tidak
+            // ada kandidat percakapan implisit yang boleh ditulis berdasarkan
+            // penilaian model saja; semuanya masuk jalur consent anggota.
+            sensitivity:
+              !explicitConsent || candidate.kind === "personal"
+                ? "sensitive"
+                : "ordinary",
             consent: explicitConsent ? "explicit" : "notice",
             source: explicitConsent ? "explicit" : "conversation",
           },
@@ -4255,11 +4248,11 @@ function withGroupMemoryNotes(
   ].join("\n");
 }
 
-function withSensitiveMemoryConsentNote(reply: string): string {
+function withGroupMemoryConsentNote(reply: string): string {
   return [
     reply.trim(),
     "",
-    "Satu hal tadi tampak pribadi, jadi belum kusimpan. Kalau kamu memang ingin menyimpannya hanya untuk dirimu di grup ini, balas dalam 10 menit dengan “ya, simpan memori ini”.",
+    "Aku belum menyimpan hal itu. Kalau kamu memang ingin menyimpannya hanya untuk dirimu di grup ini, balas dalam 10 menit dengan “ya, simpan memori ini”.",
   ].join("\n");
 }
 

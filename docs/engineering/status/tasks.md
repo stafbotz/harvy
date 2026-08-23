@@ -1,8 +1,7 @@
 # Status — Tasks, Sessions, dan Waktu
 
-Refreshed: 22 Agustus 2026 pada semantic task/session authority; service dan
-adapter teruji otomatis, sebagian besar jalur terbaru belum diuji Telegram
-nyata.
+Refreshed: 23 Agustus 2026 pada delivery fence dan parity kanal privat; service
+dan adapter teruji otomatis, sedangkan delivery kanal nyata belum lengkap.
 
 ## Keadaan saat ini
 
@@ -22,15 +21,28 @@ nyata.
 - Zona WIB/WITA/WIT, fallback IANA lama, jam tenang, status sesi, serta agenda
   internal Harvy tersedia. Agenda eksternal tidak ada.
 - Harvy dapat menyusun draf bantuan manusia tetapi tidak mengirimkannya.
+- Mutasi task dan worker delivery diserialkan pada antrean owner yang sama.
+  Reschedule, complete, cancel, dan remove tidak dapat saling menimpa dengan
+  commit delivery yang sedang berjalan.
+- Sebelum send, worker menyimpan intent delivery `in_flight`. Crash atau hasil
+  send ambigu tidak di-retry otomatis, sehingga satu jadwal tidak sengaja
+  mengirim duplikat. Status itu tampil sebagai delivery yang belum dapat
+  dipastikan; pengguna dapat menjadwalkan ulang untuk membuat intent baru.
 
 ## Batas dan defect aktif
 
-- Reminder dan check-in mempunyai jendela at-least-once: crash setelah delivery
-  tetapi sebelum commit dapat menyebabkan retry.
-- Worker terbaru, timezone/quiet-hours, tutoring penuh, dan check-in belum diuji
-  end-to-end lewat Telegram.
-- Kualitas semantic task/session lintas bahasa baru dibuktikan fixture otomatis,
-  bukan provider live.
+- Fence sekarang memilih at-most-once, bukan at-least-once: duplikat ditahan,
+  tetapi crash setelah persist intent dan sebelum receipt dapat membuat satu
+  reminder tidak terkirim atau tetap berstatus ambigu. Belum ada reconciliation
+  receipt eksternal yang dapat membedakan keduanya.
+- Task/reminder, session/check-in, timezone, dan quiet-hours tersedia pada
+  Telegram privat serta WhatsApp privat. Worker terbaru dan tutoring penuh
+  belum diuji end-to-end melalui pengguna nyata pada kedua kanal.
+- Diagnostic provider live membaca tenggat natural `besok jam 7 malam`, dan
+  evaluasi provider penuh lulus untuk save-task, reminder kosong, timezone,
+  jawaban singkat sesi, serta selesai sesi eksplisit. Ini belum membuktikan
+  delivery reminder/check-in pada transport akun nyata atau kualitas lintas
+  bahasa yang luas.
 - `calendar.agenda` hanya membaca task/reminder/check-in Harvy untuk 1–31 hari;
   tidak terhubung ke Google/Outlook/device calendar dan tidak dapat memutasi
   event eksternal.

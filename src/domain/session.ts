@@ -1,3 +1,5 @@
+import type { ScheduledDeliveryAttempt } from "./scheduled-delivery.js";
+
 /**
  * Satu pekerjaan yang sedang dibawa Harvy lintas giliran.
  *
@@ -35,6 +37,8 @@ export interface SessionCheckIn {
   at: string;
   /** Terisi setelah pesan benar-benar dikirim. */
   sentAt: string | null;
+  /** Fence durable agar crash pada batas send tidak membuat check-in ganda. */
+  delivery?: ScheduledDeliveryAttempt | null;
 }
 
 export interface ActiveSession {

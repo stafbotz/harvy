@@ -29,7 +29,13 @@ import {
   parseDueDate,
   parseUnderstanding,
 } from "../src/ai/understand.js";
+import {
+  resolveModel,
+  resolveModelRoute,
+} from "../src/ai/model-policy.js";
+import { resolveModelProfileById } from "../src/ai/model-profile.js";
 import { loadConfig } from "../src/config.js";
+import { DEFAULT_EXECUTION_POLICY } from "../src/core/execution-policy.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 
 type DiagnosticPath = "understanding" | "due" | "boundary";
@@ -60,9 +66,30 @@ if (!message) {
 
 const config = loadConfig();
 const client = await createInstrumentedAiClient(config, "probe", allowFallback);
-
-const model =
-  config.ai.mode === "testing" ? config.ai.testingModel : config.ai.models.cheap;
+const modelRoute = path === "understanding"
+  ? resolveModelRoute("mechanical", config.ai)
+  : {
+      tier: "cheap" as const,
+      modelId: resolveModel("cheap", config.ai),
+    };
+const model = modelRoute.modelId;
+const maxTokens = path === "boundary"
+  ? TURN_BOUNDARY_MAX_TOKENS
+  : UNDERSTANDING_MAX_TOKENS;
+const execution = DEFAULT_EXECUTION_POLICY.decide({
+  tier: modelRoute.tier,
+  role: path === "boundary" ? "classifier" : "extractor",
+  ...(path === "understanding"
+    ? {
+        cognitiveRole: "mechanical" as const,
+        difficulty: "mechanical" as const,
+      }
+    : {}),
+  workClass: "mechanical",
+  profile: resolveModelProfileById(model, config.ai),
+  maxOutputTokens: maxTokens,
+  deadlineMs: path === "boundary" ? TURN_BOUNDARY_TIMEOUT_MS : 30_000,
+});
 
 console.log(`Mode    : ${config.ai.mode}`);
 console.log(`Model   : ${model}`);
@@ -85,17 +112,15 @@ try {
     temperature: 0,
     // Harus sama dengan jalur sungguhan. Angka yang lebih kecil membuat skrip
     // ini melaporkan kegagalan yang tidak terjadi pada jalur Harvy.
-    maxTokens:
-      path === "boundary"
-        ? TURN_BOUNDARY_MAX_TOKENS
-        : UNDERSTANDING_MAX_TOKENS,
+    maxTokens,
+    execution,
     ...(path === "boundary"
       ? { timeoutMs: TURN_BOUNDARY_TIMEOUT_MS, maxAttempts: 1 }
       : {}),
     json: true,
     usage: {
       ownerId: "probe-private",
-      tier: "cheap",
+      tier: modelRoute.tier,
       purpose:
         path === "boundary"
           ? "turn-boundary"

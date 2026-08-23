@@ -95,22 +95,14 @@ describe("capability catalog", () => {
     assert.match(installedEntry?.description ?? "", /WorkBrief/u);
   });
 
-  it("menyatakan gap kanal privat tanpa membuat katalog kedua", () => {
+  it("memberi kontrak kemampuan privat yang sama pada Telegram dan WhatsApp", () => {
     const catalog = createHarvyCapabilityCatalog();
     const telegram = catalog.snapshot(privateAgentScope("telegram", "1"));
     const whatsapp = catalog.snapshot(privateAgentScope("whatsapp", "1"));
 
-    assert.equal(
-      telegram.entries.find((entry) => entry.id === "task.manage")?.available,
-      true,
-    );
-    assert.equal(
-      whatsapp.entries.find((entry) => entry.id === "task.manage")?.available,
-      false,
-    );
-    assert.equal(
-      whatsapp.entries.find((entry) => entry.id === "memory.scoped")?.available,
-      false,
+    assert.deepEqual(
+      telegram.entries.map(({ id, available }) => ({ id, available })),
+      whatsapp.entries.map(({ id, available }) => ({ id, available })),
     );
   });
 

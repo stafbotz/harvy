@@ -253,7 +253,7 @@ export class SessionService {
       const updated = this.touch(
         {
           ...session,
-          checkIn: { at: at.toISOString(), sentAt: null },
+          checkIn: { at: at.toISOString(), sentAt: null, delivery: null },
           expiresAt,
         },
         false,
@@ -265,32 +265,6 @@ export class SessionService {
 
   async dueCheckIns(now = this.now()): Promise<ActiveSession[]> {
     return this.dueCheckInSource.listDueCheckIns(now);
-  }
-
-  async markCheckInSent(
-    session: ActiveSession,
-  ): Promise<ActiveSession | null> {
-    return this.exclusiveOwner(session.ownerId, async () => {
-      const current = await this.loadActive(session.ownerId);
-      if (
-        !current ||
-        current.id !== session.id ||
-        !current.checkIn ||
-        current.checkIn.sentAt
-      ) {
-        return null;
-      }
-
-      const updated = this.touch({
-        ...current,
-        checkIn: {
-          ...current.checkIn,
-          sentAt: this.now().toISOString(),
-        },
-      });
-      await this.repository.save(updated);
-      return updated;
-    });
   }
 
   async deliverCheckIn(
@@ -305,17 +279,54 @@ export class SessionService {
         current.id !== candidate.id ||
         !current.checkIn ||
         current.checkIn.sentAt !== null ||
+        current.checkIn.delivery != null ||
         current.checkIn.at !== candidate.checkIn?.at
       ) {
         return false;
       }
 
-      await deliver(current);
-      await this.repository.save({
+      const preparedAt = this.now().toISOString();
+      const prepared: ActiveSession = {
         ...current,
         checkIn: {
           ...current.checkIn,
-          sentAt: this.now().toISOString(),
+          delivery: {
+            effectId: randomUUID(),
+            status: "in_flight",
+            preparedAt,
+            completedAt: null,
+          },
+        },
+      };
+      await this.repository.save(prepared);
+      try {
+        await deliver(prepared);
+      } catch (error) {
+        const completedAt = this.now().toISOString();
+        await this.repository.save({
+          ...prepared,
+          checkIn: {
+            ...prepared.checkIn!,
+            delivery: {
+              ...prepared.checkIn!.delivery!,
+              status: "unknown",
+              completedAt,
+            },
+          },
+        }).catch(() => undefined);
+        throw error;
+      }
+      const completedAt = this.now().toISOString();
+      await this.repository.save({
+        ...prepared,
+        checkIn: {
+          ...prepared.checkIn!,
+          sentAt: completedAt,
+          delivery: {
+            ...prepared.checkIn!.delivery!,
+            status: "sent",
+            completedAt,
+          },
         },
       });
       return true;

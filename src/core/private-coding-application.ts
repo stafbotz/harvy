@@ -186,9 +186,9 @@ export class PrivateCodingApplication {
     }
     const requestId = groupLinkRequestId(requestIdInput);
     const resolved = await this.resolveActor(actor);
-    if (resolved.principal.channel !== "telegram") {
-      throw new Error("Konfirmasi link grup hanya tersedia di Workspace-private Telegram.");
-    }
+    // Kedua kanal privat membentuk actor dari ingress tepercaya dan memakai
+    // audience workspace-private yang sama. Kanal bukan authority tambahan;
+    // membership+ACL current di bawah tetap menjadi pagar sebenarnya.
     return this.exclusive(resolved.principal.principalKey, async () => {
       const session = await this.session(resolved.principal);
       assertNoForeground(session);

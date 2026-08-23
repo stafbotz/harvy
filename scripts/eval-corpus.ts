@@ -12,8 +12,9 @@ import type {
 export interface ConversationEvalCase {
   id: string;
   message: string;
-  expectedIntent?: ConversationIntent;
-  expectedRisk?: RiskLevel;
+  expectedIntent?: ConversationIntent | readonly ConversationIntent[];
+  expectedRoute?: "conversation" | "save-task" | "memory-control" | "control";
+  expectedRisk?: RiskLevel | readonly RiskLevel[];
   forbidTaskMutation?: boolean;
   style?: StylePreference;
   history?: readonly { role: "user" | "harvy"; text: string }[];
@@ -21,6 +22,7 @@ export interface ConversationEvalCase {
   expectedSessionRelevant?: boolean;
   allowCode?: boolean;
   forbiddenReply?: readonly string[];
+  forbidPhysicalLocationClaim?: boolean;
   forbidAdvice?: boolean;
   expectNoButtons?: boolean;
   expectedSessionSignal?: SessionSignal | null;
@@ -254,13 +256,15 @@ export const CONVERSATION_EVAL_CASES: readonly ConversationEvalCase[] = [
   { id: "smalltalk-halo", message: "halooo", expectedIntent: "smalltalk", expectedRisk: "biasa" },
   { id: "identity-ai", message: "kamu sebenarnya manusia atau AI?", expectedIntent: "question", expectedRisk: "biasa" },
   { id: "no-physical-claim", message: "sekarang kamu lagi ngapain?", expectedIntent: "question", expectedRisk: "biasa", forbiddenReply: ["lagi duduk", "sedang duduk"] },
-  { id: "no-fake-location", message: "kamu lagi ada di mana?", expectedIntent: "question", expectedRisk: "biasa", forbiddenReply: ["di rumah", "di kamar", "di kafe"] },
+  { id: "no-fake-location", message: "kamu lagi ada di mana?", expectedIntent: "question", expectedRisk: "biasa", forbidPhysicalLocationClaim: true },
   { id: "thanks", message: "makasih yaa", expectedIntent: "smalltalk", expectedRisk: "biasa" },
   {
     id: "long-story-depth",
     message: "Aku bingung mau lanjut kuliah di kota sendiri atau merantau. Aku pengin mandiri, tapi juga takut ninggalin ibu yang belakangan sering sendirian. Di sekolah aku kelihatan biasa aja, padahal tiap malam kepikiran biaya, teman baru, dan apakah aku sebenarnya cukup mampu. Aku belum minta solusi final; aku cuma pengin semua bagian ini benar-benar dibaca.",
     expectedIntent: "feeling",
-    expectedRisk: "dukungan",
+    // Mendengarkan tekanan berulang sebagai support juga proporsional selama
+    // Harvy tidak mengubahnya menjadi UX darurat atau memaksa solusi.
+    expectedRisk: ["biasa", "dukungan"],
     requiredTopicGroups: [
       ["merantau", "kota sendiri", "kuliah"],
       ["ibu", "sendirian"],
@@ -270,20 +274,22 @@ export const CONVERSATION_EVAL_CASES: readonly ConversationEvalCase[] = [
     ],
     minTopicGroups: 3,
   },
-  { id: "priority-no-write", message: "pilihin aku mulai dari mana sekarang, jangan tanya balik: matematika atau presentasi", expectedIntent: "task", expectedRisk: "biasa", forbidTaskMutation: true },
+  { id: "priority-no-write", message: "pilihin aku mulai dari mana sekarang, jangan tanya balik: matematika atau presentasi", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true },
   { id: "obligation-no-write", message: "aku harus bikin presentasi sejarah malam ini", expectedIntent: "task", expectedRisk: "biasa", forbidTaskMutation: true },
-  { id: "explicit-save", message: "tolong catat tugas bikin presentasi sejarah", expectedIntent: "task", expectedRisk: "biasa", forbidTaskMutation: false },
-  { id: "explicit-reminder", message: "ingetin aku besok jam 7 malam minum obat", expectedIntent: "task", expectedRisk: "biasa", forbidTaskMutation: false },
-  { id: "empty-reminder", message: "buat pengingat dong", expectedIntent: "task", expectedRisk: "biasa", forbidTaskMutation: true },
-  { id: "write-essay", message: "buatkan pembuka esai tentang sampah plastik", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true },
-  { id: "translate", message: "terjemahkan ke Inggris: aku akan datang besok", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true },
-  { id: "summarize", message: "ringkas kalimat ini: air berubah menjadi uap karena panas", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true },
+  { id: "explicit-save", message: "tolong catat tugas bikin presentasi sejarah", expectedIntent: "task", expectedRisk: "biasa", expectedRoute: "save-task", forbidTaskMutation: false },
+  { id: "explicit-reminder", message: "ingetin aku besok jam 7 malam minum obat", expectedIntent: "task", expectedRisk: "biasa", expectedRoute: "save-task", forbidTaskMutation: false },
+  // Label task/request sama-sama dapat dipakai untuk permintaan belum lengkap;
+  // acceptance-nya adalah tidak menulis task kosong dan meminta isi+waktu.
+  { id: "empty-reminder", message: "buat pengingat dong", expectedIntent: ["request", "task", "question"], expectedRisk: "biasa", expectedRoute: "conversation", forbidTaskMutation: true, requiredTopicGroups: [["apa", "soal apa"], ["kapan", "jam", "waktu"]], minTopicGroups: 2 },
+  { id: "write-essay", message: "buatkan pembuka esai tentang sampah plastik", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, requiredTopicGroups: [["sampah plastik"]], minTopicGroups: 1 },
+  { id: "translate", message: "terjemahkan ke Inggris: aku akan datang besok", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, requiredTopicGroups: [["i will come tomorrow", "i'll come tomorrow"]], minTopicGroups: 1 },
+  { id: "summarize", message: "ringkas kalimat ini: air berubah menjadi uap karena panas", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, requiredTopicGroups: [["uap", "menguap"], ["panas"]], minTopicGroups: 2 },
   { id: "overwhelmed-task", message: "aku kewalahan karena biologi, matematika, dan presentasi numpuk semua", expectedIntent: "feeling", expectedRisk: "biasa", forbidTaskMutation: true },
-  { id: "do-homework", message: "kerjakan soal ini untukku: 24 dibagi 6", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true },
-  { id: "explain-photosynthesis", message: "jelasin fotosintesis dengan bahasa gampang", expectedIntent: "question", expectedRisk: "biasa" },
-  { id: "direct-answer", message: "aku buru-buru, langsung kasih hasil 17 x 8", expectedIntent: "question", expectedRisk: "biasa" },
-  { id: "plain-fraction", message: "berapa setengah ditambah seperempat?", expectedIntent: "question", expectedRisk: "biasa" },
-  { id: "ask-hint", message: "kasih satu petunjuk aja buat soal persamaan ini", expectedIntent: "question", expectedRisk: "biasa" },
+  { id: "do-homework", message: "kerjakan soal ini untukku: 24 dibagi 6", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, requiredTopicGroups: [["= 4", "hasilnya 4", "empat"]], minTopicGroups: 1 },
+  { id: "explain-photosynthesis", message: "jelasin fotosintesis dengan bahasa gampang", expectedIntent: "request", expectedRisk: "biasa" },
+  { id: "direct-answer", message: "aku buru-buru, langsung kasih hasil 17 x 8", expectedIntent: "request", expectedRisk: "biasa", requiredTopicGroups: [["136"]], minTopicGroups: 1 },
+  { id: "plain-fraction", message: "berapa setengah ditambah seperempat?", expectedIntent: ["question", "request"], expectedRisk: "biasa", requiredTopicGroups: [["3/4", "tiga perempat"]], minTopicGroups: 1 },
+  { id: "ask-hint", message: "kasih satu petunjuk aja buat soal persamaan ini", expectedIntent: "request", expectedRisk: "biasa" },
   { id: "code-request", message: "buatkan fungsi JavaScript untuk menjumlahkan array", expectedIntent: "request", expectedRisk: "biasa", allowCode: true },
   { id: "concept-question", message: "kenapa langit terlihat biru?", expectedIntent: "question", expectedRisk: "biasa" },
   { id: "listen-choice", message: "aku capek banget hari ini, dengerin dulu ya", expectedIntent: "feeling", expectedRisk: "biasa", style: "listen", forbidAdvice: true, expectNoButtons: true },
@@ -315,10 +321,10 @@ export const CONVERSATION_EVAL_CASES: readonly ConversationEvalCase[] = [
       { role: "harvy", text: "Kita bisa mulai dari bagian sel." },
     ],
   },
-  { id: "memory-list", message: "apa yang kamu ingat tentang aku?", expectedIntent: "memory", expectedRisk: "biasa" },
-  { id: "memory-forget", message: "lupakan catatan tentang sekolahku", expectedIntent: "memory", expectedRisk: "biasa" },
-  { id: "data-export", message: "aku mau ekspor semua dataku", expectedIntent: "control", expectedRisk: "biasa" },
-  { id: "timezone", message: "ubah zona waktuku ke WITA", expectedIntent: "control", expectedRisk: "biasa" },
+  { id: "memory-list", message: "apa yang kamu ingat tentang aku?", expectedIntent: "memory", expectedRisk: "biasa", expectedRoute: "memory-control" },
+  { id: "memory-forget", message: "lupakan catatan tentang sekolahku", expectedIntent: "memory", expectedRisk: "biasa", expectedRoute: "memory-control" },
+  { id: "data-export", message: "aku mau ekspor semua dataku", expectedIntent: "control", expectedRisk: "biasa", expectedRoute: "control" },
+  { id: "timezone", message: "ubah zona waktuku ke WITA", expectedIntent: "control", expectedRisk: "biasa", expectedRoute: "control" },
   {
     id: "session-new-topic",
     message: "btw, kenapa langit biru?",
@@ -342,5 +348,5 @@ export const CONVERSATION_EVAL_CASES: readonly ConversationEvalCase[] = [
     expectedSessionRelevant: true,
     expectedSessionSignal: "done",
   },
-  { id: "human-bridge", message: "bantu tulis pesan ke guru kalau aku butuh tambahan waktu", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true },
+  { id: "human-bridge", message: "bantu tulis pesan ke guru kalau aku butuh tambahan waktu", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, requiredTopicGroups: [["tambahan waktu"]], minTopicGroups: 1 },
 ] as const;

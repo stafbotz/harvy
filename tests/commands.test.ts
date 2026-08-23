@@ -50,16 +50,35 @@ describe("katalog command user-facing", () => {
     assert.match(renderCommandCategory("coding", ON, "telegram") ?? "", /\/publish/u);
   });
 
-  it("memberi WhatsApp menu teks yang sesuai tanpa command Telegram-only", () => {
+  it("memberi WhatsApp privat kemampuan personal dan coding yang setara", () => {
     const names = userCommandCatalog(OFF, "whatsapp").map((item) => item.command);
-    for (const name of ["menu", "penggunaan", "memori", "izin", "tarik-izin", "hapus-data", "bantuan"]) {
+    for (const name of [
+      "menu",
+      "tugas",
+      "penggunaan",
+      "dukung",
+      "memori",
+      "sesi",
+      "checkin",
+      "ekspor",
+      "zona",
+      "jam-tenang",
+      "izin",
+      "tarik-izin",
+      "hapus-data",
+      "bantuan",
+    ]) {
       assert.ok(names.includes(name), name);
     }
-    assert.ok(!names.includes("tugas"));
-    assert.ok(!names.includes("dukung"));
     const help = renderHelpMessage(OFF, "whatsapp");
     assert.doesNotMatch(help, /\/project|\/publish/u);
-    assert.doesNotMatch(help, /ingatkan aku|Tugas,/u);
+    assert.match(help, /ingatkan aku|Tugas,/u);
+
+    const codingNames = userCommandCatalog(ON, "whatsapp")
+      .map((item) => item.command);
+    for (const name of ["project", "code", "code_status", "code_cancel", "github", "publish"]) {
+      assert.ok(codingNames.includes(name), name);
+    }
   });
 
   it("tidak mengekspos command internal/operator", () => {

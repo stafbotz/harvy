@@ -99,7 +99,10 @@ import { FileMemoryKnowledgeRepository } from "./storage/file-memory-knowledge-r
 import { SqliteLongTermMemoryRepository } from "./storage/sqlite-long-term-memory-repository.js";
 import { FileTaskRepository } from "./storage/file-task-repository.js";
 import { BaileysAccountManager } from "./whatsapp/baileys-account-manager.js";
-import { WhatsAppPrivateConversation } from "./whatsapp/private-conversation.js";
+import {
+  parseWhatsAppPrivateChatId,
+  WhatsAppPrivateConversation,
+} from "./whatsapp/private-conversation.js";
 import { GroupMessageBatcher } from "./whatsapp/group-message-batcher.js";
 import qrCodeTerminal from "qrcode-terminal";
 import {
@@ -413,6 +416,7 @@ const bot = createBot(
   economy,
   usageDashboard,
 );
+let whatsapp: BaileysAccountManager | null = null;
 const whatsappPrivate = config.whatsapp.enabled && config.whatsapp.privateEnabled
   ? new WhatsAppPrivateConversation(
       {
@@ -421,11 +425,39 @@ const whatsappPrivate = config.whatsapp.enabled && config.whatsapp.privateEnable
         memories,
         profiles,
         sessions,
+        tasks,
         telemetry,
         memoryContextCompiler,
         economyCommands: new EconomyCommandService(economy, usageDashboard),
         usageDashboard,
         dataControls,
+        agentRuns,
+        codingRuntime,
+        proactive: {
+          send: async (accountId, userId, text) => {
+            if (!whatsapp) {
+              throw new Error("Transport WhatsApp privat belum tersedia.");
+            }
+            await whatsapp.sendPrivateText(accountId, userId, text);
+          },
+          sendTracked: async (accountId, userId, text) => {
+            if (!whatsapp) {
+              throw new Error("Transport WhatsApp privat belum tersedia.");
+            }
+            return whatsapp.sendPrivateTextTracked(accountId, userId, text);
+          },
+          editTracked: async (accountId, userId, messageId, text) => {
+            if (!whatsapp) {
+              throw new Error("Transport WhatsApp privat belum tersedia.");
+            }
+            return whatsapp.editPrivateText(
+              accountId,
+              userId,
+              messageId,
+              text,
+            );
+          },
+        },
       },
       {
         defaultTimezone: config.defaultTimezone,
@@ -461,7 +493,7 @@ const groupAgentRunRuntimeAdmission = async (
   const mode = enrollment.groupRuntimeMode ?? "direct_only";
   return mode !== "disabled" && mode !== "paused";
 };
-const whatsapp = config.whatsapp.enabled
+whatsapp = config.whatsapp.enabled
   ? new BaileysAccountManager(config.whatsapp, {
       onMessage: async (message) => {
         if (groupBatcher) await groupBatcher.enqueue(message);
@@ -592,6 +624,19 @@ const whatsapp = config.whatsapp.enabled
           .then((run) => {
             if (run) groupAgentRunWorker?.interrupt(run.runId);
           });
+      },
+      onStatus: (accountId, status) => {
+        if (status !== "open") return;
+        void whatsappPrivate?.resumeAgentRuns(accountId).catch(
+          (error: unknown) => {
+            logger.error(
+              "whatsapp_private_active_run_recovery_failed",
+              "Pemulihan active AgentRun WhatsApp gagal setelah akun tersambung.",
+              error,
+              { accountId },
+            );
+          },
+        );
       },
       onPairingCode: (accountId, code) => {
         if (
@@ -957,15 +1002,42 @@ const SHUTDOWN_GRACE_MS = 60_000;
 const GROUP_RETENTION_INTERVAL_MS = 60 * 60 * 1_000;
 const GROUP_RUN_RESUME_INTERVAL_MS = 60_000;
 
+const scheduledPrivateDelivery = {
+  sendReminder: async (candidate: Parameters<typeof bot.sendReminder>[0]) => {
+    const target = parseWhatsAppPrivateChatId(candidate.chatId);
+    if (!target) return bot.sendReminder(candidate);
+    if (!whatsappPrivate || !whatsapp) {
+      throw new Error("Runtime WhatsApp privat untuk reminder tidak tersedia.");
+    }
+    return whatsappPrivate.sendScheduledReminder(
+      candidate,
+      (accountId, userId, text) =>
+        whatsapp!.sendPrivateText(accountId, userId, text),
+    );
+  },
+  sendCheckIn: async (candidate: Parameters<typeof bot.sendCheckIn>[0]) => {
+    const target = parseWhatsAppPrivateChatId(candidate.chatId);
+    if (!target) return bot.sendCheckIn(candidate);
+    if (!whatsappPrivate || !whatsapp) {
+      throw new Error("Runtime WhatsApp privat untuk check-in tidak tersedia.");
+    }
+    return whatsappPrivate.sendScheduledCheckIn(
+      candidate,
+      (accountId, userId, text) =>
+        whatsapp!.sendPrivateText(accountId, userId, text),
+    );
+  },
+};
+
 const reminders = startReminderWorker(
-  bot,
+  scheduledPrivateDelivery,
   tasks,
   profiles,
   config,
   logger.child("worker.reminder"),
 );
 const checkIns = startCheckInWorker(
-  bot,
+  scheduledPrivateDelivery,
   sessions,
   profiles,
   telemetry,
@@ -1453,7 +1525,8 @@ function installDevShutdownControl(
   onShutdown: (reason: DevShutdownReason) => void,
 ): () => void {
   if (
-    process.env.HARVY_DEV_RUNNER !== "1" ||
+    (process.env.HARVY_DEV_RUNNER !== "1" &&
+      process.env.HARVY_RUNTIME_SUPERVISOR !== "1") ||
     typeof process.send !== "function"
   ) {
     return () => undefined;

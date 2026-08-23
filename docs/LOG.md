@@ -41,6 +41,41 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-23 — Parity privat, delivery fence, dan verifikasi latest build
+
+Scope: adapter Telegram/WhatsApp privat, capability dan executor agent, task/
+session delivery, consent memori, lifecycle runtime, backup lokal, evaluator
+percakapan, acceptance harness, konfigurasi, tes, invariant, dan status.
+
+Changed: WhatsApp privat sekarang mempunyai capability personal dan coding yang
+sama dengan Telegram privat melalui UX teks kanalnya, tanpa membekukan WhatsApp
+grup. Task/reminder/session/check-in, data control, Workspace ZIP, CodingRun,
+GitHub, serta AgentRun durable dirangkai pada adapter privat. Reminder/check-in
+beralih ke delivery intent at-most-once yang menahan duplikat dan mengekspos
+hasil ambigu; semua memori implicit lintas kanal memerlukan izin item-spesifik.
+Supervisor restart berbatas, runtime lock reclaim, backup lokal terenkripsi,
+dan acceptance harness akun tester WhatsApp ditambahkan. Evaluator kini menilai
+outcome tugas nyata, mengisolasi kegagalan provider, dan memakai recovery
+terminal-marker yang bounded.
+
+Verified: `npm run check` PASS; `npm test` PASS 1.708/1.708 dalam 210 suite;
+eval provider nyata PASS 60/60 (42 percakapan + 18 boundary/interruption), tanpa
+fallback/provider/execution failure; smoke build final mencapai
+`application_ready` lalu IPC `shutdown_completed`, exit bersih, tanpa proses
+Node atau runtime lock tersisa. Drill backup state terkonfigurasi PASS
+create→verify→restore 1.411 entry/3.942.048 byte, terenkripsi tanpa archive
+plaintext, lalu artifact uji dihapus. Preflight WhatsApp privat gagal tertutup
+sebelum koneksi karena konfirmasi operator belum diberikan.
+
+Not verified: percakapan pengguna nyata pada latest build Telegram/WhatsApp,
+WhatsApp grup latest build, dogfood tujuh hari, tiga wawancara, dua nomor
+WhatsApp, reconnect/receipt transport nyata, backup eksternal/lintas mesin,
+multi-process storage, sandbox Linux non-root, atau GitHub App/push/PR nyata.
+
+Next: pair akun Harvy dan akun tester WhatsApp yang terpisah, sediakan sesi
+tester Telegram, jalankan acceptance serta dogfood tujuh hari, lakukan tiga
+wawancara, dan buat kunci+salinan backup eksternal sebelum peluncuran publik.
+
 ## 2026-08-22 — Hardening boundary provider, BYOK, dan GitHub broker
 
 Scope: HTTP response boundary chat/embedding/GitHub, konfigurasi origin AI,
@@ -357,31 +392,3 @@ masih single-service; horizontal safety dan procedural memory belum selesai.
 Next: jalankan empat acceptance pada infrastruktur nonkritis exact, terbitkan
 receipt sandbox dari host yang sama, lalu kerjakan distributed lease/outbox/
 reconciler hanya setelah bukti live P0/P1 lulus.
-
-## 2026-08-15 — GroupAgentRun menjadi reachable dan startup dapat dibatalkan
-
-Scope: composition WhatsApp GroupAgentRun, checkpoint/delivery repository,
-startup/shutdown runtime, konfigurasi lokal, status, dan ADR-037.
-
-Changed: bubble GroupAgentRun authorized kini dipisahkan sebelum batch chat dan
-masuk ke guarded controller, executor/processor, worker durable, usage, serta
-Baileys delivery fence. Claim/final/question memakai repository dan receipt
-nyata; watermark jawaban dibaca setelah question delivery, startup/periodic
-resume serta stop/drain dirangkai, dan flag tetap opt-in. Transisi repository
-sekarang mengizinkan pengikatan question ID pada checkpoint sampling yang sama.
-Control IPC dipasang sebelum network startup Telegram; dev-stop mengabort
-request startup, mencegah polling terlambat menjadi ready, dan melepas lock.
-`.env` lokal dikonfigurasi dengan state GroupAgentRun terpisah.
-
-Verified: suite terarah PASS 40/40; `npm test` PASS 1.348/1.348 dalam 169 suite;
-`npm run check` dan `npm run context:check` PASS (5.125 byte, estimasi 1.282
-token); smoke dev mencapai `application_ready`→`shutdown_completed`, exit 0,
-tanpa `runtime_failed` atau lock tersisa; `git diff --check` PASS selain
-peringatan line-ending.
-
-Not verified: GroupAgentRun/notice/reconnect/fault delivery di WhatsApp nyata,
-provider live, multi-process storage/outbox, runner Linux terisolasi, daemon
-local-git, atau GitHub App broker nyata. Coding/GitHub tetap fail-closed.
-
-Next: lakukan acceptance WhatsApp dengan akun/grup uji nonkritis; provision
-backend isolated-linux dan GitHub App terpisah sebelum membuka surface coding.

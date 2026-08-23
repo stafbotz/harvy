@@ -26,10 +26,12 @@ import {
 } from "../src/ai/safety.js";
 import {
   hasExplicitImmediateDangerSignal,
+  hasExplicitSupportTriageSignal,
   needsConditionalReplyReview,
   NO_RISK_HINT,
   parseRiskHint,
   withImmediateDangerHint,
+  withExplicitSupportHint,
 } from "../src/core/safety-policy.js";
 import {
   normalizeTelegramText,
@@ -146,7 +148,10 @@ const parsedHint = understanding
   ? parseRiskHint(understanding.riskHint, understanding.safetySensitive) ??
     NO_RISK_HINT
   : NO_RISK_HINT;
-const riskHint = withImmediateDangerHint(parsedHint, immediateDanger);
+const riskHint = withExplicitSupportHint(
+  withImmediateDangerHint(parsedHint, immediateDanger),
+  hasExplicitSupportTriageSignal(message),
+);
 const assessedRisk = understanding === null || riskHint.level !== "none"
   ? await conversation.triageRisk(message, "probe-private", context)
   : undefined;

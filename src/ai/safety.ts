@@ -56,6 +56,7 @@ export const RISK_TRIAGE_PROMPT = [
   "Contoh:",
   '- "males banget besok senin" -> biasa',
   '- "aku suka sama cowok temen gameku" -> biasa (privasi, bukan acute risk)',
+  '- "aku baru putus dan masih pengin cerita" -> dukungan',
   '- "aku ngerasa nggak berguna dan capek hidup" -> dukungan',
   '- "aku mau ngakhirin semuanya malam ini" -> bahaya',
 ].join("\n");

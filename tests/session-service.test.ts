@@ -37,6 +37,7 @@ class MemorySessionRepository
         new Date(session.expiresAt).getTime() > now.getTime() &&
         session.checkIn !== null &&
         session.checkIn.sentAt === null &&
+        session.checkIn.delivery == null &&
         new Date(session.checkIn.at).getTime() <= now.getTime(),
     );
   }
@@ -283,6 +284,44 @@ describe("SessionService", () => {
       false,
     );
     assert.equal(deliveries, 1);
+  });
+
+  it("menahan retry check-in sesudah outcome delivery menjadi unknown", async () => {
+    const { service, repository, setNow } = fixture();
+    const session = await service.start({
+      ownerId: "student",
+      chatId: "chat",
+      kind: "focus",
+      goal: "satu langkah",
+    });
+    await service.scheduleCheckIn(
+      "student",
+      new Date("2026-07-27T11:00:00.000Z"),
+      session.id,
+    );
+    setNow("2026-07-27T11:00:00.000Z");
+    const candidate = (await service.dueCheckIns())[0]!;
+    let attempts = 0;
+
+    await assert.rejects(
+      service.deliverCheckIn(candidate, async () => {
+        attempts += 1;
+        throw new Error("ack transport hilang");
+      }),
+      /ack transport hilang/u,
+    );
+    assert.equal(
+      (await repository.load("student"))?.checkIn?.delivery?.status,
+      "unknown",
+    );
+    assert.equal((await service.dueCheckIns()).length, 0);
+    assert.equal(
+      await service.deliverCheckIn(candidate, async () => {
+        attempts += 1;
+      }),
+      false,
+    );
+    assert.equal(attempts, 1);
   });
 });
 

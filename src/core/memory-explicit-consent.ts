@@ -117,6 +117,20 @@ export function normalizeMemoryWriteEmoji(text: string): string {
   );
 }
 
+/**
+ * Menghapus kalimat yang mengaku melakukan write tanpa receipt code-owned.
+ * Prompt tetap menjadi pagar pertama, tetapi keluaran model tidak pernah
+ * menjadi bukti bahwa data benar-benar disimpan.
+ */
+export function withoutUnconfirmedMemoryWriteClaims(text: string): string {
+  const pieces = text.match(/[^.!?\n]+[.!?]?|\n+/gu) ?? [text];
+  return pieces
+    .filter((piece) => /^\n+$/u.test(piece) || !replyAcknowledgesMemoryWrite(piece))
+    .join("")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
 function hasConcreteMemoryContent(value: string): boolean {
   const terms = meaningfulTerms(value);
   return value.length >= 2 && terms.size >= 1;

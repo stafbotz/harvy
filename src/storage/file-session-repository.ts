@@ -68,6 +68,7 @@ export class FileSessionRepository
         new Date(session.expiresAt).getTime() > moment &&
         session.checkIn !== null &&
         session.checkIn.sentAt === null &&
+        session.checkIn.delivery == null &&
         new Date(session.checkIn.at).getTime() <= moment,
     );
   }

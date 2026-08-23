@@ -91,7 +91,8 @@ export class DataControlService {
       this.history.archiveSnapshot(ownerId),
       this.longTerm?.snapshotPrivateOwner(ownerId) ?? Promise.resolve(null),
       this.sessions.active(ownerId),
-      this.agentRuns?.export("telegram", ownerId) ?? Promise.resolve(null),
+      this.agentRuns?.export(privateOwnerChannel(ownerId), ownerId) ??
+        Promise.resolve(null),
       this.telemetry.summary(ownerId),
       this.telemetry.export(ownerId),
     ]);
@@ -134,7 +135,7 @@ export class DataControlService {
     // sebelum panggilan model. Dengan begitu pekerjaan latar yang terlambat
     // tidak dapat mengirim data lagi sesudah penghapusan dimulai.
     await this.telemetry.forget(ownerId);
-    await this.agentRuns?.forget("telegram", ownerId);
+    await this.agentRuns?.forget(privateOwnerChannel(ownerId), ownerId);
     await this.sessions.forget(ownerId);
     await this.tasks.removeAll(ownerId);
     await this.history.forget(ownerId, true);
@@ -161,4 +162,8 @@ export class DataControlService {
       );
     }
   }
+}
+
+function privateOwnerChannel(ownerId: string): "telegram" | "whatsapp" {
+  return ownerId.startsWith("whatsapp-user:") ? "whatsapp" : "telegram";
 }

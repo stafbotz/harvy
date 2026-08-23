@@ -1,7 +1,7 @@
 # Status — WhatsApp
 
-Refreshed: 22 Agustus 2026 pada WhatsApp privat default-off. Angka gerbang penuh
-terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
+Refreshed: 23 Agustus 2026 pada parity kemampuan WhatsApp privat. Angka gerbang
+penuh terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
 
 ## Keadaan saat ini
 
@@ -12,14 +12,20 @@ terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
   dari `WHATSAPP_ENABLED`. Default-nya `false`; transport membuang ingress
   privat sebelum normalisasi/callback saat flag mati, sementara ingress grup
   tetap berjalan.
+- Telegram privat dan WhatsApp privat adalah dua surface produk dengan kontrak
+  kemampuan yang sama, bukan versi “lengkap” dan “ringan”. Capability catalog
+  mengaktifkan task, reminder, sesi, pembacaan state internal, terminal virtual,
+  dan delegasi pada kedua kanal. Perbedaan tombol Telegram dan perintah teks
+  WhatsApp adalah perbedaan UX, bukan pengurangan capability.
 - Saat aktif, teks privat memakai `WhatsAppPrivateConversation`: owner scope
   WhatsApp terpisah dari Telegram, pesan pertama ditahan hanya di RAM sampai
   pengguna membalas `SETUJU`, lalu core conversation, profile, recent/retrieved
   memory context, history, selective safety review, telemetry, funding, dan
-  `/penggunaan` dipakai dengan atribusi kanal WhatsApp. `/izin`,
-  `/tarik-izin`, lihat/hapus memori, serta `/hapus-data` dengan konfirmasi exact
-  mempunyai perintah teks tertutup. Kontrol lihat/hapus tetap dapat dipakai
-  tanpa consent AI aktif.
+  `/penggunaan` dipakai dengan atribusi kanal WhatsApp. Task/reminder,
+  sesi/check-in, zona waktu/jam tenang/gaya, `/izin`, `/tarik-izin`, ekspor,
+  lihat/hapus memori, serta `/hapus-data` dengan konfirmasi exact mempunyai
+  perintah teks tertutup. Kontrol lihat/hapus/ekspor tetap dapat dipakai tanpa
+  consent AI aktif.
 - `/menu` dan `/bantuan` mempunyai renderer teks berbeda dari satu katalog
   user-facing yang sama dengan Telegram, tetapi hanya memuat command WhatsApp
   yang benar-benar tersedia. Free-text account/menu memakai bounded
@@ -200,6 +206,11 @@ terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
   quote correction, duplicate replay, status quote, emergency routing, dan
   admin cancel; harness sengaja berakhir non-sukses bila scope participant,
   crash/reconnect, waiting input, atau workspace publish belum dijalankan.
+- `npm run acceptance:whatsapp-private` memakai akun tester terpisah yang sudah
+  paired, dua konfirmasi environment explicit, dan output tanpa JID/nomor/isi
+  pesan/path auth. Ia menguji consent, menu parity, task+reminder, sesi+check-in,
+  memori berizin, interupsi, multi-bubble, ekspor, Workspace ZIP, AgentRun, lalu
+  menghapus seluruh data akun uji sebelum boleh menyatakan lulus.
 - `WHATSAPP_ACCOUNTS` mendukung beberapa alias account satu proses, masing-masing
   dengan auth folder, socket, cache, reconnect, generation, dan queue sendiri.
 - Satu nomor nyata pernah QR/login/`open` dan membalas satu jalur dasar.
@@ -208,14 +219,18 @@ terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
 
 - Notice/privacy terbaru, memory member/room, timing ambient, removal, safety,
   dan shutdown belum diuji end-to-end di grup nyata.
-- WhatsApp privat baru dibuktikan otomatis dengan fake transport; onboarding,
-  consent, model reply, selective safety, memory context, semantic interruption,
-  progress edit/delete, multi-bubble delivery, reconnect, dan opt-out belum
-  diuji end-to-end pada akun WhatsApp nyata.
-- Paritas saat ini adalah chat teks alami dan pagar core. Tombol/callback,
-  ekspor file/edit memori, document ZIP, task/reminder, session/check-in,
-  active AgentRun, dan private coding milik surface Telegram belum tersedia
-  pada adapter WhatsApp privat.
+- WhatsApp privat sudah mempunyai parity otomatis untuk percakapan, task dan
+  reminder, sesi dan check-in, memori/safety/kontrol data, ekspor, Workspace
+  ZIP, private coding, GitHub, dan active AgentRun durable. Namun acceptance
+  akun nyata belum dapat dijalankan karena akun Harvy lokal belum paired dan
+  belum ada akun tester khusus yang terpisah; reconnect, delivery receipt, dan
+  kualitas UX live tetap belum terbukti.
+- Preflight acceptance latest build gagal tertutup sebelum koneksi atau send
+  dengan kode konfirmasi operator yang belum diberikan. Kegagalan ini adalah
+  bukti harness menjaga scope, bukan bukti fitur WhatsApp lulus live.
+- WhatsApp memakai perintah teks untuk sebagian kontrol yang di Telegram berupa
+  tombol/callback. Ini sengaja bukan bentuk UI yang identik, tetapi operasi dan
+  authority akhirnya harus tetap setara.
 - Dua nomor nyata sekaligus belum diuji. Tidak ada failover atau rebind otomatis
   antar-account.
 - Pending confirmation dan authority epoch grup tidak durable lintas restart.

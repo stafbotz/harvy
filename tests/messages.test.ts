@@ -6,6 +6,8 @@ import {
   checkInOutcomeActions,
   dataControlActions,
   deleteAllConfirmActions,
+  formatSession,
+  formatTask,
   MAX_BUBBLE_PAUSE_MS,
   memoryConsentActions,
   memoryPortraitActions,
@@ -20,9 +22,11 @@ import {
 import {
   normalizeMemoryWriteEmoji,
   replyAcknowledgesMemoryWrite,
+  withoutUnconfirmedMemoryWriteClaims,
 } from "../src/core/memory-explicit-consent.js";
 import type { MemoryItem } from "../src/domain/memory.js";
 import type { ActiveSession } from "../src/domain/session.js";
+import type { StudentTask } from "../src/domain/task.js";
 
 describe("bubble balasan", () => {
   it("memisahkan paragraf alami menjadi bubble pendek", () => {
@@ -133,6 +137,19 @@ describe("catatan memori pada balasan", () => {
     );
   });
 
+  it("membuang klaim write tanpa receipt sambil mempertahankan isi lain", () => {
+    assert.equal(
+      withoutUnconfirmedMemoryWriteClaims(
+        "Aku paham kenapa itu melelahkan. Aku simpan pilihanmu ya. Kita bisa mulai pelan-pelan.",
+      ),
+      "Aku paham kenapa itu melelahkan. Kita bisa mulai pelan-pelan.",
+    );
+    assert.equal(
+      withoutUnconfirmedMemoryWriteClaims("💭 Aku masih inget dulu kamu memilih UI."),
+      "💭 Aku masih inget dulu kamu memilih UI.",
+    );
+  });
+
   it("menawarkan satu tombol Ubah pada potret, bukan tombol per-item", () => {
     const keyboard = memoryPortraitActions();
     const buttons = keyboard.inline_keyboard.flat();
@@ -162,6 +179,40 @@ describe("catatan memori pada balasan", () => {
 });
 
 describe("tombol fitur Harvy Loop", () => {
+  it("menampilkan outcome pengiriman yang tidak pasti tanpa menjanjikan retry", () => {
+    const uncertain = {
+      effectId: "effect-1",
+      status: "unknown" as const,
+      preparedAt: "2026-08-23T10:00:00.000Z",
+      completedAt: "2026-08-23T10:00:01.000Z",
+    };
+    const task: StudentTask = {
+      id: "task-1",
+      ownerId: "student",
+      chatId: "chat",
+      title: "Kumpulkan laporan",
+      dueAt: null,
+      importance: 2,
+      status: "active",
+      createdAt: "2026-08-23T09:00:00.000Z",
+      completedAt: null,
+      reminderAt: "2026-08-23T10:00:00.000Z",
+      reminderSentAt: null,
+      reminderDelivery: uncertain,
+    };
+    const active = {
+      ...session("focus"),
+      checkIn: {
+        at: "2026-08-23T10:00:00.000Z",
+        sentAt: null,
+        delivery: uncertain,
+      },
+    };
+
+    assert.match(formatTask(task, "Asia/Jakarta"), /tidak pasti.*atur ulang/iu);
+    assert.match(formatSession(active, "Asia/Jakarta"), /tidak pasti.*jadwalkan ulang/iu);
+  });
+
   it("membentuk callback adaptif dari kode dan maksimal 64 byte", () => {
     const keyboard = adaptiveActionButtons({
       token: "abc12345",

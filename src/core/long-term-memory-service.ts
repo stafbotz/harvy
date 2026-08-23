@@ -994,7 +994,7 @@ function procedureDraftFromRun(
 function learningNamespaceForAgentScope(
   scope: AgentScope,
 ): MemoryKnowledgeNamespace | null {
-  if (scope.kind === "private" && scope.channel === "telegram") {
+  if (scope.kind === "private") {
     return privateMemoryNamespace(scope.userId);
   }
   // Group/workspace promotion needs the authoritative product mapping rather

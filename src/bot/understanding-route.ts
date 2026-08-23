@@ -9,6 +9,10 @@ import {
   type SemanticOperationName,
   type SemanticReference,
 } from "../domain/semantic-operation.js";
+import {
+  explicitQuietHoursChange,
+  explicitIndonesianTimeZoneChange,
+} from "../core/time-policy.js";
 
 export type ImmediateUnderstandingRoute =
   | { kind: "memory-control"; action: "list" | "edit" }
@@ -150,14 +154,25 @@ function controlAuthorized(
   semantic: Understanding["semanticOperation"],
 ): boolean {
   const readOnly = action === "data" || action === "active-session";
-  return semanticOperationAuthorized(message, semantic, {
+  if (semanticOperationAuthorized(message, semantic, {
     domain: "data",
     operations: [CONTROL_OPERATIONS[action]],
     minConfidence: readOnly ? 0.75 : 0.85,
     explicitness: readOnly
       ? ["explicit", "contextual"]
       : ["explicit"],
-  });
+  })) return true;
+
+  // Dua pengaturan reversible mempunyai fallback lokal sempit agar kegagalan
+  // extractor tidak mengubah permintaan eksplisit menjadi janji palsu. Aksi
+  // privacy/destructive tetap wajib melewati proposal semantic + konfirmasi.
+  if (action === "timezone") {
+    return explicitIndonesianTimeZoneChange(message) !== null;
+  }
+  if (action === "quiet-hours") {
+    return explicitQuietHoursChange(message) !== null;
+  }
+  return false;
 }
 
 function isMemoryControl(

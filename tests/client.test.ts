@@ -1049,6 +1049,114 @@ describe("AiClient", () => {
     );
   });
 
+  it("mencoba kunci berikutnya ketika respons 2xx kehilangan finish_reason", async () => {
+    const authorizations: string[] = [];
+    globalThis.fetch = async (_input, init) => {
+      authorizations.push(
+        String((init?.headers as Record<string, string>).authorization),
+      );
+      return authorizations.length === 1
+        ? new Response(JSON.stringify({
+            choices: [{ message: { content: "teks tanpa terminal" } }],
+          }), { status: 200 })
+        : chatResponse("respons terminal");
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["satu", "dua"]),
+    });
+
+    assert.equal(
+      await client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+      }),
+      "respons terminal",
+    );
+    assert.deepEqual(authorizations, ["Bearer satu", "Bearer dua"]);
+  });
+
+  it("memberi satu recovery bounded setelah semua kunci kehilangan finish_reason", async () => {
+    const authorizations: string[] = [];
+    globalThis.fetch = async (_input, init) => {
+      authorizations.push(
+        String((init?.headers as Record<string, string>).authorization),
+      );
+      return authorizations.length < 3
+        ? new Response(JSON.stringify({
+            choices: [{ message: { content: "teks tanpa terminal" } }],
+          }), { status: 200 })
+        : chatResponse("pulih pada recovery bounded");
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["satu", "dua"]),
+    });
+
+    assert.equal(
+      await client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+      }),
+      "pulih pada recovery bounded",
+    );
+    assert.deepEqual(authorizations, [
+      "Bearer satu",
+      "Bearer dua",
+      "Bearer satu",
+    ]);
+  });
+
+  it("menghormati maxAttempts eksplisit pada finish_reason yang hilang", async () => {
+    let fetches = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "teks tanpa terminal" } }],
+      }), { status: 200 });
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["satu", "dua"]),
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxAttempts: 1,
+      }),
+      /finish_reason=missing/u,
+    );
+    assert.equal(fetches, 1);
+  });
+
+  it("tidak merotasi kunci untuk content_filter", async () => {
+    let fetches = 0;
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return new Response(JSON.stringify({
+        choices: [{
+          message: { content: "teks parsial" },
+          finish_reason: "content_filter",
+        }],
+      }), { status: 200 });
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["satu", "dua"]),
+    });
+
+    await assert.rejects(
+      () => client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+      }),
+      /tidak lengkap atau ditolak/u,
+    );
+    assert.equal(fetches, 1);
+  });
+
   it("menolak tool call yang mengaku finish_reason stop", async () => {
     globalThis.fetch = async () => {
       const response = await nativeToolResponse(

@@ -1,6 +1,6 @@
 # Harvy — Keputusan Proyek dan Backlog
 
-Terakhir diperbarui: 22 Agustus 2026.
+Terakhir diperbarui: 23 Agustus 2026.
 
 ## Identitas dan produk
 
@@ -26,9 +26,9 @@ Terakhir diperbarui: 22 Agustus 2026.
   bertipe, context budget, dan kernel agent berbatas untuk seluruh kanal.
   Model hanya mengusulkan tindakan; kode, kebijakan, persetujuan, dan executor
   yang menentukan apa yang sungguh dijalankan. Katalog yang sama tidak boleh
-  menyamarkan adapter yang belum ada: Telegram grup tetap belum tersedia;
-  WhatsApp privat baru tersedia sebagai beta lokal opt-in dengan batas yang
-  dicatat eksplisit di status kanal.
+  menyamarkan adapter yang belum ada: Telegram grup tetap belum tersedia.
+  Telegram privat dan WhatsApp privat mempunyai kontrak capability yang sama;
+  perbedaan tombol dan command adalah UX kanal, bukan kelas produk berbeda.
 
 Pengguna yang dituju adalah pelajar Indonesia, terutama Gen Z dan Gen Alpha.
 Ini memengaruhi pilihan kanal, gaya bahasa, dan tingkat perlindungan: sebagian
@@ -47,10 +47,10 @@ jujur, tidak manipulatif, dan menghormati kendali pengguna.
 
 | Pengalaman | Kanal | Status |
 |---|---|---|
-| Harvy pribadi | Telegram | Dikerjakan sekarang |
+| Harvy pribadi | Telegram | Kanal produk aktif; latest build mencapai polling live, tetapi acceptance pengguna nyata tujuh hari belum selesai |
 | Harvy di grup | Telegram | Nanti; belum dimulai |
-| Harvy di grup | WhatsApp melalui Baileys | Fondasi beta lokal; satu nomor tersambung dan membalas grup nyata, ambient/direct teruji otomatis dan sintetis, perilaku lengkap belum diuji di grup nyata |
-| Harvy pribadi | WhatsApp melalui Baileys | Beta lokal opt-in dan default-off; chat teks memakai core conversation, consent, safety, context, history, dan usage yang sama, tetapi surface tombol/fitur khusus Telegram belum seluruhnya dipindahkan dan belum diuji live |
+| Harvy di grup | WhatsApp melalui Baileys | Kanal produk beta lokal; tidak dibekukan. Satu bukti grup nyata lama ada, tetapi latest build belum menjalani acceptance lengkap |
+| Harvy pribadi | WhatsApp melalui Baileys | Kanal produk beta lokal opt-in; capability personal/coding setara Telegram secara otomatis, tetapi akun lokal belum paired dan acceptance akun nyata belum dijalankan |
 | Visualisasi | Web | Setelah alur chat terbukti perlu |
 
 WhatsApp dirancang untuk dapat memakai **banyak nomor Harvy**. Setiap nomor
@@ -259,7 +259,13 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   [`ADR-010`](decisions/ADR-010-log-operasional-produksi.md).
 - [ ] Collector terpusat, dashboard health, alert berdasarkan fingerprint,
   dan hardening ACL/enkripsi log untuk deployment multi-instance.
-- Deployment dan backup.
+- [x] Supervisor runtime lokal dengan restart berbatas, crash-loop breaker, IPC
+  graceful shutdown, atomic runtime lock, dan recovery lock PID mati.
+- [x] Archive backup lokal terenkripsi+authenticated, verifikasi, serta restore
+  ke direktori baru; drill state terkonfigurasi berhasil tanpa plaintext
+  sementara.
+- [ ] Deployment production, kunci backup durable, salinan eksternal/offline,
+  jadwal retensi, alerting, dan restore drill lintas mesin.
 - [x] Kebijakan routing model dan konfigurasi tiga tingkatan. Lihat
   [`decisions/ADR-003-routing-model.md`](decisions/ADR-003-routing-model.md).
 - [x] Percakapan generatif dan pemahaman pesan di luar closed set diproses
@@ -521,10 +527,11 @@ target toughest live, fallback provider, tokenizer calibration, dan finalizer
 terminal umum tetap terbuka. Lihat ADR-025, ADR-026, ADR-028, ADR-029, dan
 ADR-040.
 
-Fondasi Phase D untuk active run sekarang tersedia khusus orkestrasi eksplisit
-Telegram privat. Ia belum berarti coding sandbox, artifact pipeline, app
-connectors, atau orkestrasi lintas kanal sudah aktif; batas detailnya ada pada
-ADR-027.
+Fondasi Phase D untuk active run sekarang tersedia bagi orkestrasi eksplisit
+Telegram privat dan WhatsApp privat, termasuk checkpoint/anchor durable lintas
+restart. Ia belum berarti connector aplikasi eksternal tersedia; coding,
+sandbox, local-git, dan GitHub tetap mempunyai activation gate deployment
+masing-masing. Batas detailnya ada pada ADR-027.
 
 ## Komponen sistem
 

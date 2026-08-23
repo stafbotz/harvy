@@ -15,38 +15,41 @@ export class TaskService {
   ) {}
 
   async create(input: NewTask): Promise<StudentTask> {
-    const title = input.title.trim();
-    if (!title) {
-      throw new Error("Judul tugas tidak boleh kosong.");
-    }
+    return this.exclusiveOwner(input.ownerId, async () => {
+      const title = input.title.trim();
+      if (!title) {
+        throw new Error("Judul tugas tidak boleh kosong.");
+      }
 
-    const now = this.now();
-    const createdAt = now.toISOString();
+      const now = this.now();
+      const createdAt = now.toISOString();
 
-    // Pengingat yang waktunya sudah lewat berarti salah baca, bukan permintaan
-    // pengguna. Memasangnya akan membuat Harvy menegur pada detik yang sama
-    // dengan pencatatan.
-    const remindAt =
-      input.remindAt && input.remindAt.getTime() > now.getTime()
-        ? input.remindAt
-        : null;
+      // Pengingat yang waktunya sudah lewat berarti salah baca, bukan permintaan
+      // pengguna. Memasangnya akan membuat Harvy menegur pada detik yang sama
+      // dengan pencatatan.
+      const remindAt =
+        input.remindAt && input.remindAt.getTime() > now.getTime()
+          ? input.remindAt
+          : null;
 
-    const task: StudentTask = {
-      id: randomUUID().replaceAll("-", "").slice(0, 8),
-      ownerId: input.ownerId,
-      chatId: input.chatId,
-      title,
-      dueAt: input.dueAt?.toISOString() ?? null,
-      importance: input.importance,
-      status: "active",
-      createdAt,
-      completedAt: null,
-      reminderAt: remindAt?.toISOString() ?? null,
-      reminderSentAt: null,
-    };
+      const task: StudentTask = {
+        id: randomUUID().replaceAll("-", "").slice(0, 8),
+        ownerId: input.ownerId,
+        chatId: input.chatId,
+        title,
+        dueAt: input.dueAt?.toISOString() ?? null,
+        importance: input.importance,
+        status: "active",
+        createdAt,
+        completedAt: null,
+        reminderAt: remindAt?.toISOString() ?? null,
+        reminderSentAt: null,
+        reminderDelivery: null,
+      };
 
-    await this.repository.save(task);
-    return task;
+      await this.repository.save(task);
+      return task;
+    });
   }
 
   async listActive(ownerId: string): Promise<StudentTask[]> {
@@ -59,16 +62,18 @@ export class TaskService {
   }
 
   async complete(ownerId: string, id: string): Promise<StudentTask | null> {
-    const task = await this.repository.findById(ownerId, id);
-    if (!task || task.status === "completed") return null;
+    return this.exclusiveOwner(ownerId, async () => {
+      const task = await this.repository.findById(ownerId, id);
+      if (!task || task.status === "completed") return null;
 
-    const completed = {
-      ...task,
-      status: "completed" as const,
-      completedAt: this.now().toISOString(),
-    };
-    await this.repository.save(completed);
-    return completed;
+      const completed = {
+        ...task,
+        status: "completed" as const,
+        completedAt: this.now().toISOString(),
+      };
+      await this.repository.save(completed);
+      return completed;
+    });
   }
 
   async find(ownerId: string, id: string): Promise<StudentTask | null> {
@@ -80,20 +85,24 @@ export class TaskService {
     id: string,
     dueAt: Date | null,
   ): Promise<StudentTask | null> {
-    const task = await this.repository.findById(ownerId, id);
-    if (!task || task.status === "completed") return null;
+    return this.exclusiveOwner(ownerId, async () => {
+      const task = await this.repository.findById(ownerId, id);
+      if (!task || task.status === "completed") return null;
 
-    const updated = { ...task, dueAt: dueAt?.toISOString() ?? null };
-    await this.repository.save(updated);
-    return updated;
+      const updated = { ...task, dueAt: dueAt?.toISOString() ?? null };
+      await this.repository.save(updated);
+      return updated;
+    });
   }
 
   /** Membatalkan tugas sepenuhnya, bukan menandainya selesai. */
   async remove(ownerId: string, id: string): Promise<StudentTask | null> {
-    const task = await this.repository.findById(ownerId, id);
-    if (!task) return null;
+    return this.exclusiveOwner(ownerId, async () => {
+      const task = await this.repository.findById(ownerId, id);
+      if (!task) return null;
 
-    return (await this.repository.remove(ownerId, id)) ? task : null;
+      return (await this.repository.remove(ownerId, id)) ? task : null;
+    });
   }
 
   async removeAll(ownerId: string): Promise<number> {
@@ -107,41 +116,27 @@ export class TaskService {
     id: string,
     reminderAt: Date,
   ): Promise<StudentTask | null> {
-    const task = await this.repository.findById(ownerId, id);
-    if (!task || task.status === "completed") return null;
+    return this.exclusiveOwner(ownerId, async () => {
+      const task = await this.repository.findById(ownerId, id);
+      if (!task || task.status === "completed") return null;
 
-    const updated = {
-      ...task,
-      reminderAt: reminderAt.toISOString(),
-      reminderSentAt: null,
-    };
-    await this.repository.save(updated);
-    return updated;
+      const updated = {
+        ...task,
+        reminderAt: reminderAt.toISOString(),
+        reminderSentAt: null,
+        reminderDelivery: null,
+      };
+      await this.repository.save(updated);
+      return updated;
+    });
   }
 
   async dueReminders(now = this.now()): Promise<StudentTask[]> {
     return this.repository.listDueReminders(now);
   }
 
-  async markReminderSent(task: StudentTask): Promise<void> {
-    const current = await this.repository.findById(task.ownerId, task.id);
-    if (
-      !current ||
-      current.status !== "active" ||
-      current.reminderAt !== task.reminderAt ||
-      current.reminderSentAt !== null
-    ) {
-      return;
-    }
-
-    await this.repository.save({
-      ...current,
-      reminderSentAt: this.now().toISOString(),
-    });
-  }
-
   /**
-   * Mengunci pengiriman terhadap penghapusan seluruh tugas pemilik yang sama.
+   * Mengunci pengiriman terhadap seluruh mutasi tugas pemilik yang sama.
    *
    * Kalau penghapusan menang antrean, snapshot lama tidak dikirim. Kalau
    * pengiriman menang, penghapusan menunggu lalu membuang hasil akhirnya.
@@ -159,15 +154,48 @@ export class TaskService {
         !current ||
         current.status !== "active" ||
         current.reminderAt !== candidate.reminderAt ||
-        current.reminderSentAt !== null
+        current.reminderSentAt !== null ||
+        current.reminderDelivery != null
       ) {
         return false;
       }
 
-      await deliver(current);
-      await this.repository.save({
+      const preparedAt = this.now().toISOString();
+      const prepared: StudentTask = {
         ...current,
-        reminderSentAt: this.now().toISOString(),
+        reminderDelivery: {
+          effectId: randomUUID(),
+          status: "in_flight",
+          preparedAt,
+          completedAt: null,
+        },
+      };
+      // Commit intent sebelum I/O. Jika proses mati sesudah titik ini, record
+      // tidak masuk due list lagi dan Harvy tidak mengirim duplikat.
+      await this.repository.save(prepared);
+      try {
+        await deliver(prepared);
+      } catch (error) {
+        const completedAt = this.now().toISOString();
+        await this.repository.save({
+          ...prepared,
+          reminderDelivery: {
+            ...prepared.reminderDelivery!,
+            status: "unknown",
+            completedAt,
+          },
+        }).catch(() => undefined);
+        throw error;
+      }
+      const completedAt = this.now().toISOString();
+      await this.repository.save({
+        ...prepared,
+        reminderSentAt: completedAt,
+        reminderDelivery: {
+          ...prepared.reminderDelivery!,
+          status: "sent",
+          completedAt,
+        },
       });
       return true;
     });

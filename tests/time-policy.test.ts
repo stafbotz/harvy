@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  explicitIndonesianTimeZoneChange,
+  explicitQuietHoursChange,
   isInQuietHours,
   isValidQuietHours,
   isValidTimeZone,
   localMinuteOfDay,
+  parseIndonesianTimeZone,
   parseQuietHours,
 } from "../src/core/time-policy.js";
 
@@ -19,6 +22,33 @@ describe("zona waktu pengguna", () => {
   it("memvalidasi nama zona waktu IANA", () => {
     assert.equal(isValidTimeZone("Asia/Jakarta"), true);
     assert.equal(isValidTimeZone("Waktu/Karanganku"), false);
+  });
+
+  it("membaca alias di dalam kalimat tanpa mencampur WIT dan WITA", () => {
+    assert.equal(
+      parseIndonesianTimeZone("ubah zona waktuku ke WITA"),
+      "Asia/Makassar",
+    );
+    assert.equal(parseIndonesianTimeZone("pakai Asia/Jayapura"), "Asia/Jayapura");
+    assert.equal(parseIndonesianTimeZone("WIB atau WITA?"), null);
+  });
+
+  it("memberi authority lokal hanya pada permintaan perubahan langsung", () => {
+    assert.equal(
+      explicitIndonesianTimeZoneChange("ubah zona waktuku ke WITA"),
+      "Asia/Makassar",
+    );
+    assert.equal(
+      explicitIndonesianTimeZoneChange("aku mau ganti timezoneku ke WIB"),
+      "Asia/Jakarta",
+    );
+    for (const message of [
+      "bagaimana cara mengubah zona waktuku ke WITA?",
+      "WITA itu apa?",
+      "temanku memakai zona waktu WITA",
+    ]) {
+      assert.equal(explicitIndonesianTimeZoneChange(message), null, message);
+    }
   });
 });
 
@@ -69,5 +99,16 @@ describe("jam tenang", () => {
       endMinute: 6 * 60,
     });
     assert.equal(parseQuietHours("25.00-06.00"), null);
+  });
+
+  it("membedakan perintah langsung dari pertanyaan tentang jam tenang", () => {
+    assert.deepEqual(
+      explicitQuietHoursChange("atur jam tenangku 21.30-06.00"),
+      { startMinute: 21 * 60 + 30, endMinute: 6 * 60 },
+    );
+    assert.equal(
+      explicitQuietHoursChange("bagaimana cara atur jam tenang 21.30-06.00?"),
+      null,
+    );
   });
 });

@@ -1,13 +1,16 @@
 # Status — Telegram Privat
 
-Refreshed: 22 Agustus 2026 pada orchestration percakapan semantic-first dan
-interruptible. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; bukti
-Telegram live belum diperbarui.
+Refreshed: 23 Agustus 2026 pada latest-build runtime smoke dan parity privat.
+Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; acceptance pengguna
+Telegram nyata belum diperbarui.
 
 ## Keadaan saat ini
 
 - Surface utama adalah chat pribadi Telegram dengan percakapan biasa dan
   tombol; `/start`, `/menu`, `/tugas`, dan `/bantuan` hanya pelengkap.
+- Telegram privat dan WhatsApp privat memakai kontrak capability yang sama;
+  Telegram mempertahankan tombol/callback untuk UX kanal, bukan hak fitur yang
+  sengaja ditahan dari WhatsApp.
 - Onboarding menahan pesan pertama sampai consent, mempertahankan urutan bubble,
   dan menyediakan jalur safety tanpa consent. Bubble setelah pesan pertama
   tidak dikirim ke model atau dinilai safety sebelum consent. Setelah consent,
@@ -95,7 +98,12 @@ Telegram live belum diperbarui.
 ## Batas dan defect aktif
 
 - Perbaikan batching, naturalness, waktu, onboarding, tombol, preference, dan
-  Agent Runtime terbaru belum diuji ulang end-to-end lewat Telegram.
+  Agent Runtime terbaru lulus tes adapter serta eval provider, tetapi belum
+  diuji ulang sebagai percakapan end-to-end oleh pengguna Telegram nyata.
+- Latest build sudah mencapai `application_ready` dengan polling Telegram aktif
+  setelah recovery, lalu berhenti melalui IPC dengan `shutdown_completed` dan
+  lock terlepas. Preflight Bot API `getMe` juga berhasil. Ini membuktikan
+  credential/transport dan lifecycle startup, bukan percakapan user→Harvy.
 - Runtime hanya chat pribadi; Telegram grup belum menjadi surface produk.
 - Antrean percakapan dan pesan pra-consent masih in-memory. Crash atau force
   stop dapat kehilangan giliran chat yang belum selesai. Active work

@@ -487,6 +487,31 @@ describe("parallel delegation executor", () => {
     assert.equal(payload.succeeded, 3);
   });
 
+  it("menjalankan delegasi yang sama pada WhatsApp privat", async () => {
+    const owners: string[] = [];
+    const channels: string[] = [];
+    const executor = new ParallelDelegationExecutor(async (_task, context) => {
+      owners.push(context.ownerId);
+      channels.push(context.channel);
+      return "ok";
+    });
+    const input = executor.validate({ tasks: [
+      { id: "satu", instruction: "bandingkan opsi", tier: "cheap" },
+      { id: "dua", instruction: "cek risiko", tier: "efficient" },
+    ] });
+    assert.equal(input.ok, true);
+    if (!input.ok) return;
+    const waContext: AgentExecutionContext = {
+      ...executionContext(),
+      scope: privateAgentScope("whatsapp", "whatsapp-user:test"),
+    };
+
+    const result = await executor.execute(input.value, waContext);
+    assert.equal(result.status, "ok");
+    assert.deepEqual(owners, ["whatsapp-user:test", "whatsapp-user:test"]);
+    assert.deepEqual(channels, ["whatsapp", "whatsapp"]);
+  });
+
   it("mengikuti batas concurrency worker milik RunBudget", async () => {
     let active = 0;
     let maximum = 0;

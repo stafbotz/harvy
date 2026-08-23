@@ -6,6 +6,18 @@ export const INDONESIAN_TIME_ZONES = [
   "Asia/Jayapura",
 ] as const;
 
+const TIME_ZONE_ALIASES = Object.freeze({
+  wib: INDONESIAN_TIME_ZONES[0],
+  "asia/jakarta": INDONESIAN_TIME_ZONES[0],
+  wita: INDONESIAN_TIME_ZONES[1],
+  "asia/makassar": INDONESIAN_TIME_ZONES[1],
+  wit: INDONESIAN_TIME_ZONES[2],
+  "asia/jayapura": INDONESIAN_TIME_ZONES[2],
+} satisfies Readonly<Record<string, string>>);
+
+const DIRECT_TIME_ZONE_CHANGE = /^(?:(?:harvy[\s,]+)?(?:tolong\s+)?|(?:aku|saya|gue|gua|i)\s+(?:mau|ingin|pengen|want\s+to)\s+)(?:ubah(?:kan)?|ganti(?:kan)?|atur(?:kan)?|set|pakai|gunakan|pindah(?:kan)?|switch|change)\b/iu;
+const TIME_ZONE_CONTEXT = /\b(?:zona\s+waktu(?:ku|mu)?|time\s*zone|timezone(?:ku|mu)?|waktu(?:ku|mu)?)\b/iu;
+
 export function isValidTimeZone(value: string): boolean {
   try {
     new Intl.DateTimeFormat("id-ID", { timeZone: value }).format(new Date());
@@ -13,6 +25,43 @@ export function isValidTimeZone(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Membaca satu zona waktu Indonesia dari teks tanpa memberi izin mutasi.
+ * Beberapa zona yang saling bertentangan sengaja gagal tertutup.
+ */
+export function parseIndonesianTimeZone(text: string): string | null {
+  const normalized = text.normalize("NFKC").toLocaleLowerCase("id-ID");
+  const matches = new Set<string>();
+  for (const [alias, zone] of Object.entries(TIME_ZONE_ALIASES)) {
+    const escaped = alias.replaceAll("/", "\\/");
+    const pattern = alias.includes("/")
+      ? new RegExp(`(?:^|\\s)${escaped}(?=\\s|$|[.,!?])`, "u")
+      : new RegExp(`\\b${escaped}\\b`, "u");
+    if (pattern.test(normalized)) matches.add(zone);
+  }
+  return matches.size === 1 ? [...matches][0] ?? null : null;
+}
+
+/**
+ * Fallback authority berpresisi tinggi untuk kegagalan compiler semantic.
+ * Ia hanya menerima permintaan langsung yang diawali verba perubahan, bukan
+ * pertanyaan tentang cara mengubah zona atau penyebutan zona semata.
+ */
+export function explicitIndonesianTimeZoneChange(
+  text: string,
+): string | null {
+  const normalized = text
+    .normalize("NFKC")
+    .toLocaleLowerCase("id-ID")
+    .trim()
+    .replaceAll(/\s+/gu, " ");
+  const zone = parseIndonesianTimeZone(normalized);
+  return zone && DIRECT_TIME_ZONE_CHANGE.test(normalized) &&
+      TIME_ZONE_CONTEXT.test(normalized)
+    ? zone
+    : null;
 }
 
 /** Menilai jam tenang memakai jam dinding pengguna, bukan zona proses. */
@@ -95,4 +144,20 @@ export function parseQuietHours(text: string): QuietHours | null {
     endMinute: endHour * 60 + endMinute,
   };
   return isValidQuietHours(quietHours) ? quietHours : null;
+}
+
+/** Authority lokal sempit untuk perubahan jam tenang reversible. */
+export function explicitQuietHoursChange(text: string): QuietHours | null {
+  const quietHours = parseQuietHours(text);
+  if (!quietHours) return null;
+  const normalized = text
+    .normalize("NFKC")
+    .toLocaleLowerCase("id-ID")
+    .trim()
+    .replaceAll(/\s+/gu, " ");
+  return /^(?:(?:harvy[\s,]+)?(?:tolong\s+)?|(?:aku|saya|gue|gua|i)\s+(?:mau|ingin|pengen|want\s+to)\s+)(?:ubah(?:kan)?|ganti(?:kan)?|atur(?:kan)?|set|pakai|gunakan|change)\b/iu.test(
+      normalized,
+    ) && /\b(?:jam\s+tenang(?:ku|mu)?|quiet\s+hours?)\b/iu.test(normalized)
+    ? quietHours
+    : null;
 }

@@ -60,6 +60,50 @@ import { privateAgentScope, scopeKey } from "../src/harness/scope.js";
 import { FileAgentRunRepository } from "../src/storage/file-agent-run-repository.js";
 
 describe("alur adapter Telegram", () => {
+  it("mengubah zona waktu dari bahasa natural ketika extractor kehilangan semantic operation", async () => {
+    let currentProfile = profile();
+    let understandCalls = 0;
+    let setTimeZoneCalls = 0;
+    const profileService = {
+      needsOnboarding: async () => false,
+      load: async () => currentProfile,
+      setTimeZone: async (_ownerId: string, timeZone: string) => {
+        setTimeZoneCalls += 1;
+        currentProfile = { ...currentProfile, timeZone };
+        return currentProfile;
+      },
+    } as unknown as ProfileService;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => {
+          understandCalls += 1;
+          return understanding({
+            intent: "control",
+            controlAction: "timezone",
+            semanticOperation: null,
+          });
+        },
+        triageRisk: async () => CALM_TRIAGE,
+      } as unknown as Conversation,
+      {} as TaskService,
+      { profiles: profileService },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("ubah zona waktuku ke WITA", 1),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(
+      currentProfile.timeZone,
+      "Asia/Makassar",
+    );
+    assert.equal(understandCalls, 1);
+    assert.equal(setTimeZoneCalls, 1);
+    assert.match(harness.sent.at(-1) ?? "", /Zona waktu tersimpan/iu);
+  });
+
   it("menyatukan /memori, pertanyaan natural, dan Data & izin pada satu potret", async () => {
     const memory = memoryItem("memory-portrait", "Sekarang kelas 12");
     let portraitCalls = 0;
@@ -419,10 +463,10 @@ describe("alur adapter Telegram", () => {
     assert.doesNotMatch(harness.sent.at(-1) ?? "", /💭/u);
   });
 
-  it("membahas correction secara natural tanpa mewajibkan emoji", async () => {
+  it("menahan correction implisit sampai izin tanpa mewajibkan emoji", async () => {
     const inputs: NewMemory[] = [];
     const naturalReply =
-      "Ohh, berarti aku salah nangkep sebelumnya. Yang benar kamu lebih produktif pagi. Aku perbaiki.";
+      "Ohh, berarti aku salah nangkep sebelumnya. Yang benar kamu lebih produktif pagi.";
     const harness = basicHarness(
       {
         classifyTurnBoundary: async () => "complete",
@@ -444,10 +488,7 @@ describe("alur adapter Telegram", () => {
           _raiseHelp: unknown,
           runtime: ConversationRuntime,
         ) => {
-          assert.equal(
-            runtime.memoryAcknowledgements?.[0]?.operation,
-            "updated",
-          );
+          assert.deepEqual(runtime.memoryAcknowledgements, []);
           return naturalReply;
         },
       } as unknown as Conversation,
@@ -471,9 +512,10 @@ describe("alur adapter Telegram", () => {
     );
     await harness.bot.drainPending();
 
-    assert.equal(inputs[0]?.correction, true);
-    assert.equal(harness.sent.at(-1), naturalReply);
-    assert.doesNotMatch(harness.sent.at(-1) ?? "", /[📍💭]/u);
+    assert.equal(inputs.length, 0);
+    assert.ok(harness.sent.includes(naturalReply));
+    assert.match(harness.sent.at(-1) ?? "", /Boleh aku inget/iu);
+    assert.doesNotMatch(harness.sent.join("\n"), /[📍💭]/u);
   });
 
   it("tidak membiarkan 💭 menjadi penanda save baru", async () => {
@@ -515,7 +557,7 @@ describe("alur adapter Telegram", () => {
     assert.doesNotMatch(harness.sent.at(-1) ?? "", /💭/u);
   });
 
-  it("menyatukan beberapa write dalam satu jawaban, bukan log per item", async () => {
+  it("menahan kandidat implisit dan membuang klaim write tanpa receipt", async () => {
     const inputs: NewMemory[] = [];
     const naturalReply =
       "Oke, dua hal itu aku inget biar nanti kamu nggak perlu ngulang.";
@@ -552,11 +594,12 @@ describe("alur adapter Telegram", () => {
     );
     await harness.bot.drainPending();
 
-    assert.equal(inputs.length, 2);
-    assert.equal(harness.sent.at(-1), naturalReply);
+    assert.equal(inputs.length, 0);
+    assert.equal(harness.sent.includes(naturalReply), false);
+    assert.match(harness.sent.at(-1) ?? "", /Boleh aku inget/iu);
     assert.doesNotMatch(
-      harness.sent.at(-1) ?? "",
-      /(?:•|Nama panggilan Hafizh|Lebih nyaman belajar pagi|[📍💭])/u,
+      harness.sent.join("\n"),
+      /(?:dua hal itu aku inget|[📍💭])/u,
     );
   });
 
@@ -1452,6 +1495,48 @@ describe("alur adapter Telegram", () => {
     assert.ok(harness.sent.includes("Sama-sama."));
   });
 
+  it("aritmetika sederhana memberi hasil exact tanpa model di Telegram", async () => {
+    let understandingCalls = 0;
+    let replies = 0;
+    const harness = basicHarness({
+      understand: async () => {
+        understandingCalls += 1;
+        return understanding();
+      },
+      reply: async () => {
+        replies += 1;
+        return "jangan dipakai";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(
+      messageUpdate("kerjakan soal ini untukku: 24 dibagi 6"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(understandingCalls, 0);
+    assert.equal(replies, 0);
+    assert.equal(harness.sent.at(-1), "Hasilnya 4.");
+  });
+
+  it("pengingat kosong mengumpulkan isi dan waktu tanpa menulis task", async () => {
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      understand: async () => understanding({ intent: "request" }),
+      reply: async () => {
+        replyCalls += 1;
+        return "jangan dipakai";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate("buat pengingat dong"));
+    await harness.bot.drainPending();
+
+    assert.equal(replyCalls, 0);
+    assert.match(harness.sent.at(-1) ?? "", /apa.*kapan/iu);
+  });
+
   it("nilai waktu pending melewati understanding dan triase umum", async () => {
     let understandingCalls = 0;
     let triageCalls = 0;
@@ -1657,7 +1742,14 @@ describe("alur adapter Telegram", () => {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
         understand: async () => understanding({
+          memoryAction: "remember",
           memories: [{ kind: "profile", content: "Sekolah di SMAN Baru" }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "ingat ya, ralat, aku sudah pindah sekolah ke SMAN Baru",
+            "aku sudah pindah sekolah ke SMAN Baru",
+          ),
         }),
         assessMemoryPrivacy: async () => false,
         reply: async () => "Oke, aku catat sekolahmu yang baru.",
@@ -1700,7 +1792,7 @@ describe("alur adapter Telegram", () => {
     );
 
     await harness.bot.handleUpdate(
-      messageUpdate("Ralat, aku sudah pindah sekolah ke SMAN Baru"),
+      messageUpdate("ingat ya, ralat, aku sudah pindah sekolah ke SMAN Baru"),
     );
     await harness.bot.drainPending();
 
@@ -1765,15 +1857,14 @@ describe("alur adapter Telegram", () => {
     await harness.bot.drainPending();
 
     assert.equal(triageCalls, 0);
-    assert.equal(privacyCalls, 1);
+    assert.equal(privacyCalls, 0);
     assert.equal(saved, 0);
     assert.ok(harness.sent.some((text) => text.includes("Boleh aku inget")));
   });
 
-  it("tidak menulis memori bila turn dibatalkan saat classifier privasi berjalan", async () => {
-    const privacyStarted = deferredVoid();
-    const releasePrivacy = deferredVoid();
+  it("tidak memberi classifier model authority atas memori implisit", async () => {
     let remembers = 0;
+    let privacyCalls = 0;
     const harness = basicHarness(
       {
         classifyTurnBoundary: async () => "complete",
@@ -1781,8 +1872,7 @@ describe("alur adapter Telegram", () => {
           memories: [{ kind: "preference", content: "Suka warna biru" }],
         }),
         assessMemoryPrivacy: async () => {
-          privacyStarted.resolve();
-          await releasePrivacy.promise;
+          privacyCalls += 1;
           return false;
         },
         reply: async () => "Aku ingat.",
@@ -1801,12 +1891,11 @@ describe("alur adapter Telegram", () => {
     );
 
     await harness.bot.handleUpdate(messageUpdate("warna favoritku biru", 1));
-    await privacyStarted.promise;
-    await harness.bot.handleUpdate(commandUpdate("/bantuan", 2));
-    releasePrivacy.resolve();
     await harness.bot.drainPending();
 
+    assert.equal(privacyCalls, 0);
     assert.equal(remembers, 0);
+    assert.match(harness.sent.at(-1) ?? "", /Boleh aku inget/iu);
   });
 
   it("tidak kehilangan bubble yang datang ketika persetujuan sedang ditulis", async () => {
@@ -2263,7 +2352,14 @@ describe("alur adapter Telegram", () => {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
         understand: async () => understanding({
+          memoryAction: "remember",
           memories: [{ kind: "preference", content: "Suka warna biru" }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            "ingat ya aku suka warna biru",
+            "aku suka warna biru",
+          ),
         }),
         assessMemoryPrivacy: async () => false,
         reply: async () =>
@@ -2289,7 +2385,7 @@ describe("alur adapter Telegram", () => {
       },
     );
 
-    await harness.bot.handleUpdate(messageUpdate("aku suka warna biru"));
+    await harness.bot.handleUpdate(messageUpdate("ingat ya aku suka warna biru"));
     await harness.bot.drainPending();
 
     assert.equal(stored.size, 1);

@@ -207,10 +207,19 @@ describe("PrivateCodingApplication end-to-end", () => {
     await fixture.stop();
   });
 
-  it("owner Telegram menyetujui exact request link untuk principal WhatsApp", async () => {
+  it("owner WhatsApp privat menyetujui exact request link untuk principal grup", async () => {
     const fixture = await createFixture(new DeterministicWorker());
+    const whatsappOwner = fixture.actors.issue({
+      principal: workspacePrincipal(
+        "private-coding-e2e-principal-secret-32",
+        "whatsapp",
+        "private-coding-owner-wa",
+      ),
+      interactionId: "whatsapp-private-e2e",
+      audience: "workspace-private",
+    });
     const selected = await fixture.application.createWorkspace(
-      fixture.actor,
+      whatsappOwner,
       "Workspace lintas kanal",
     );
     const whatsappPrincipal = workspacePrincipal(
@@ -244,7 +253,7 @@ describe("PrivateCodingApplication end-to-end", () => {
     }, null)).status, "saved");
 
     assert.deepEqual(
-      await fixture.application.confirmGroupWorkspaceLink(fixture.actor, requestId),
+      await fixture.application.confirmGroupWorkspaceLink(whatsappOwner, requestId),
       { status: "approved", role: "admin" },
     );
     const membership = await fixture.authority.resolveScope(
@@ -258,7 +267,7 @@ describe("PrivateCodingApplication end-to-end", () => {
     assert.equal(request?.grantedMembershipId, membership?.membershipId);
     assert.equal(request?.approvedAclEpoch, membership?.aclEpoch);
     assert.deepEqual(
-      await fixture.application.confirmGroupWorkspaceLink(fixture.actor, requestId),
+      await fixture.application.confirmGroupWorkspaceLink(whatsappOwner, requestId),
       { status: "already-approved", role: "admin" },
     );
     await fixture.stop();
@@ -372,6 +381,7 @@ async function createFixture(
   application.start();
   return {
     actor,
+    actors,
     application,
     projects,
     localGit,

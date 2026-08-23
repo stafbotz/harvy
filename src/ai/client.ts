@@ -664,16 +664,20 @@ export class AiClient {
     preferFallbackOnTransportFailure: boolean,
     state: LogicalRequestState,
   ): Promise<CompletionResult> {
-    const attempts = Math.max(
+    const keyAttempts = Math.max(
       1,
       Math.min(
         request.maxAttempts ?? provider.keys.size,
         provider.keys.size,
       ),
     );
-    let lastError: unknown;
+    // Missing finish metadata kadang terjadi pada respons HTTP 200 yang valid
+    // secara transport. Setelah seluruh key mendapat giliran, permintaan umum
+    // memperoleh satu recovery bounded. `maxAttempts` eksplisit tetap keras
+    // untuk classifier berdeadline pendek seperti turn boundary.
+    let incompleteRecoveryAttempts = request.maxAttempts === undefined ? 1 : 0;
 
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
+    for (let attempt = 0;; attempt += 1) {
       try {
         return await this.send(
           provider,
@@ -681,7 +685,12 @@ export class AiClient {
           state,
         );
       } catch (error) {
-        lastError = error;
+        const keyRotationAvailable = attempt + 1 < keyAttempts;
+        const boundedIncompleteRecovery =
+          !keyRotationAvailable &&
+          incompleteRecoveryAttempts > 0 &&
+          isMissingTerminalMarker(error);
+        if (boundedIncompleteRecovery) incompleteRecoveryAttempts -= 1;
         const retrying =
           !request.signal?.aborted &&
           isRetryable(error) &&
@@ -689,7 +698,7 @@ export class AiClient {
             preferFallbackOnTransportFailure &&
             isProviderWideFailure(error)
           ) &&
-          attempt + 1 < attempts;
+          (keyRotationAvailable || boundedIncompleteRecovery);
         if (retrying) {
           this.logger.warn(
             "ai_request_retrying",
@@ -697,7 +706,8 @@ export class AiClient {
             {
               ...this.safeRequestFields(provider, request),
               attempt: attempt + 1,
-              maxAttempts: attempts,
+              maxAttempts: keyAttempts +
+                (request.maxAttempts === undefined ? 1 : 0),
               errorType:
                 error instanceof Error ? error.name : typeof error,
               status: error instanceof AiError ? error.status : undefined,
@@ -708,10 +718,6 @@ export class AiClient {
         throw error;
       }
     }
-
-    throw lastError instanceof Error
-      ? lastError
-      : new AiError("Permintaan ke model gagal.");
   }
 
   private async send(
@@ -2104,8 +2110,13 @@ function isUnsupportedOption(error: unknown): boolean {
   );
 }
 
-/** Timeout, pembatasan laju, dan galat server layak dicoba dengan kunci lain. */
+/**
+ * Timeout, pembatasan laju, galat server, dan respons 2xx tanpa terminal marker
+ * layak dicoba dengan kunci lain. Marker yang menyatakan penolakan seperti
+ * content_filter tetap terminal agar retry tidak mengakali kebijakan provider.
+ */
 function isRetryable(error: unknown): boolean {
+  if (isMissingTerminalMarker(error)) return true;
   if (error instanceof AiError && error.status !== undefined) {
     return error.status === 408 || error.status === 429 || error.status >= 500;
   }
@@ -2116,6 +2127,12 @@ function isRetryable(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "AbortError" || error instanceof TypeError)
   );
+}
+
+function isMissingTerminalMarker(error: unknown): boolean {
+  return error instanceof AiResponseError &&
+    error.reason === "incomplete" &&
+    error.finishReason === null;
 }
 
 function isProviderWideFailure(error: unknown): boolean {

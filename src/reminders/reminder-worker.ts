@@ -9,7 +9,7 @@ import {
 } from "../observability/operational-logger.js";
 
 export function startReminderWorker(
-  bot: HarvyBot,
+  bot: Pick<HarvyBot, "sendReminder">,
   tasks: TaskService,
   profiles: ProfileService,
   config: AppConfig,
@@ -35,7 +35,8 @@ export function startReminderWorker(
           if (isInQuietHours(new Date(), timeZone, profile.quietHours)) {
             return;
           }
-          await bot.sendReminder(task);
+          const sent = await bot.sendReminder(task);
+          if (!sent) return;
           logger.info(
             "reminder_sent",
             "Satu pengingat berhasil dikirim.",

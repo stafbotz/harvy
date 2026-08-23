@@ -1,7 +1,7 @@
 # Status — Memory dan Data
 
-Verified: 22 Agustus 2026 pada working tree long-term memory, explicit remember,
-acknowledgement kontekstual, dan UX `/memori`;
+Refreshed: 23 Agustus 2026 pada explicit/implicit consent lintas kanal,
+long-term memory, acknowledgement kontekstual, dan UX `/memori`;
 archive SQLite, outbox learning, user model, procedural/error memory,
 persistent embedding index, compiler konteks, lifecycle, kontrol data, serta
 renderer Telegram teruji otomatis. Baca untuk memory, history, compaction,
@@ -23,14 +23,18 @@ learning, storage, atau kontrol data yang bukan policy safety.
 - Kandidat faktual melewati policy dan primary commit sebelum acknowledgement
   balasan disusun. Receipt code-owned membedakan `saved`, `updated`, dan
   `already-known`; model hanya memilih bahasa percakapannya dan kata/emoji tidak
-  pernah menjadi bukti write. Acknowledgement menyatu dengan jawaban utama,
+  pernah menjadi bukti write. Kandidat implicit pada kedua kanal privat maupun
+  direct WhatsApp grup selalu menunggu izin item-spesifik sebelum primary
+  commit; classifier privacy bukan authority penyimpanan. Acknowledgement
+  menyatu dengan jawaban utama,
   mengikuti konteks, dan tidak menjadi notifikasi record kedua. `📍` opsional
   hanya untuk save/update, sedangkan `💭` opsional hanya untuk recall; beberapa
   write tidak dicetak sebagai rentetan log. Parser lokal hanya membentuk
   slot/graph untuk pola yang didukung; koreksi menutup interval lama,
   kontradiksi tanpa koreksi menjadi `uncertain`, dan nilai yang berulang
-  membentuk interval baru. Personal/sensitif yang hanya diceritakan tetap
-  memerlukan consent bertoken dan inferred sensitive tidak disimpan otomatis.
+  membentuk interval baru. Seluruh kandidat yang hanya diceritakan tetap
+  memerlukan consent bertoken; label biasa maupun sensitif tidak mengizinkan
+  penyimpanan otomatis.
   Jika user turn secara eksplisit memerintahkan Harvy mengingat satu item,
   kombinasi `memoryAction: "remember"` dan `SemanticOperation` exact tervalidasi;
   code mengikat evidence+target ke raw turn dan memberi consent hanya kepada
@@ -104,9 +108,9 @@ learning, storage, atau kontrol data yang bukan policy safety.
 - Namespace private, group-member/group-room, dan project dipisahkan secara
   fisik dan divalidasi fail-closed. Runtime long-term semantic/learning Phase
   E/F kini dapat menyusun recent/retrieved context untuk Telegram dan WhatsApp
-  privat dengan owner scope terpisah. Adapter WhatsApp menyediakan lihat/hapus
-  memori lewat perintah teks, tetapi extraction/confirmation memori baru dan
-  seluruh surface kontrol Telegram belum ported. Group member memory tetap
+  privat dengan owner scope terpisah. Adapter WhatsApp menyediakan lihat,
+  hapus, ekspor, extraction, prompt konfirmasi, dan full deletion lewat
+  perintah teks. Group member memory tetap
   memakai service terpisah yang mengikat explicit remember pada
   anggota+turn+grup, sedangkan shared room dan project memory tetap memakai
   authority masing-masing dan tidak mewarisi consent itu.
@@ -125,20 +129,22 @@ learning, storage, atau kontrol data yang bukan policy safety.
   memerlukan full owner deletion atau migrasi storage sebelum write berikutnya.
 - Extractor learning runtime saat ini deterministic dan konservatif: user model
   berasal dari primary memory yang sudah lolos policy, sedangkan procedure dari
-  observable Telegram private AgentRun. Synthesis workflow kompleks, explicit
-  user acceptance pasca-delivery, runtime group/project, skill promotion, dan
-  connector/multimodal producer belum dirangkai. Namespace/data model sudah
-  generic, tetapi mapping authority lintas channel tidak ditebak.
+  observable AgentRun Telegram atau WhatsApp privat. Synthesis workflow
+  kompleks, explicit user acceptance pasca-delivery, runtime group/project,
+  skill promotion, dan connector/multimodal producer belum dirangkai.
+  Namespace/data model sudah generic, tetapi mapping authority lintas channel
+  tidak ditebak.
 - Potret menerima status dan validity dari Context Pack, tetapi bentuk evidence
   terpilih saat ini tidak membawa nilai confidence dan stability user-model
   secara terpisah. Target forget topikal juga hanya dapat menghapus primary
   source yang cocok secara lexical/alias; detail episode-only tanpa primary
   source memerlukan permintaan yang lebih spesifik atau hapus semua ingatan.
-- Pada cerita implicit, dua model masih dapat sama-sama salah menilai isi
-  sensitif sebagai biasa. Consent, notice, export, dan forget membatasi dampak,
-  tetapi bukan pengganti klasifikasi yang sempurna. Guard explicit remember
-  juga sengaja konservatif setelah evidence semantik: parafrasa candidate yang
-  tidak dapat dicocokkan gagal tertutup tanpa write, bukan menebak izin.
+- Pada cerita implicit, extractor atau classifier masih dapat salah membentuk,
+  melewatkan, atau terlalu sering menawarkan kandidat. Kesalahan itu tidak
+  memberi authority write karena semua kandidat implicit menunggu izin, tetapi
+  kualitas prompt consent tetap perlu diukur. Guard explicit remember sengaja
+  konservatif setelah evidence semantik: parafrasa candidate yang tidak dapat
+  dicocokkan gagal tertutup tanpa write, bukan menebak izin.
   Episode merupakan ringkasan model; provenance membuktikan source/coverage,
   bukan kebenaran klaim.
 

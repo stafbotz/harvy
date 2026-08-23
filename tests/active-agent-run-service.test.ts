@@ -12,6 +12,47 @@ import { privateAgentScope, scopeKey } from "../src/harness/scope.js";
 import { FileAgentRunRepository } from "../src/storage/file-agent-run-repository.js";
 
 describe("active AgentRun Phase D", () => {
+  it("mengikat anchor dan receipt WhatsApp ke kanal WhatsApp lintas restart", async () => {
+    const file = await temporaryFile();
+    const service = serviceAt(file);
+    const input = {
+      ...startInput(),
+      channel: "whatsapp" as const,
+      ownerId: "whatsapp-user:628777777777@s.whatsapp.net",
+      chatId:
+        "whatsapp-private:dXRhbWE:NjI4Nzc3Nzc3Nzc3QHMud2hhdHNhcHAubmV0",
+    };
+    const started = await service.startActive(input);
+    assert.equal(started.status, "started");
+    if (started.status !== "started") return;
+    assert.equal(started.run.anchor.platform, "whatsapp");
+
+    await service.beginActiveAttempt(
+      "whatsapp",
+      input.ownerId,
+      started.run.runId,
+    );
+    const completed = await service.commitActiveFinal(
+      {
+        channel: "whatsapp",
+        ownerId: input.ownerId,
+        runId: started.run.runId,
+        inputRevision: 1,
+        checkpoint: makeCheckpoint(started.run.runId, {
+          scopeKey: scopeKey(privateAgentScope("whatsapp", input.ownerId)),
+        }),
+        reply: "Rencana selesai.",
+      },
+      async () => ({ externalId: "wa-message-1" }),
+    );
+
+    assert.equal(completed.receipts[0]?.effect, "whatsapp.message.send");
+    const recovered = await serviceAt(file).loadActive("whatsapp", input.ownerId);
+    assert.equal(recovered?.status, "completed");
+    assert.equal(recovered?.anchor.platform, "whatsapp");
+    assert.equal(recovered?.receipts[0]?.effect, "whatsapp.message.send");
+  });
+
   it("memulihkan active state lintas instance dan menolak foreground kedua", async () => {
     const file = await temporaryFile();
     const service = serviceAt(file);

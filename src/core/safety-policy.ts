@@ -106,6 +106,19 @@ export function withImmediateDangerHint(
   };
 }
 
+/** Sinyal lokal hanya meminta triase; model khusus tetap menentukan hasilnya. */
+export function withExplicitSupportHint(
+  hint: RiskHint,
+  explicitSupport: boolean,
+): RiskHint {
+  if (!explicitSupport || hint.level !== "none") return hint;
+  return {
+    level: "possible",
+    category: "acute_distress",
+    confidence: 1,
+  };
+}
+
 export type RiskDisposition = "calm" | "support" | "danger" | "unavailable";
 
 export interface SafetyRoutingDecision {
@@ -241,6 +254,23 @@ const THREAT_FROM_OTHER = /^(?:harvy\s+)?(?:tolong\s+)?ada\s+(?:orang|seseorang|
 const DIRECT_THREAT_FROM_OTHER = /^(?:harvy\s+)?(?:tolong\s+)?(?:orang\s+itu|seseorang|dia|mereka)\s+(?:mau|akan|ingin)\s+(?:membunuh|bunuh|melukai|menyerang)\s+(?:aku|saya|gue|gua)\s+(?:sekarang|saat\s+ini|malam\s+ini|hari\s+ini|sebentar\s+lagi)\b/iu;
 const ACTIVE_ATTACK_FROM_OTHER = /^(?:harvy\s+)?(?:tolong\s+)?(?:orang\s+itu|seseorang|dia|mereka)\s+(?:sedang|lagi)\s+(?:mencekik|memukul|melukai|menyerang|menculik)\s+(?:aku|saya|gue|gua)(?:\s+(?:sekarang|saat\s+ini))?$/iu;
 const IMMEDIATE_PREFIX_SELF_HARM = /^(?:harvy\s+)?(?:tolong\s+)?(?:sekarang|saat\s+ini)\s+(?:(?:aku|saya|gue|gua)\s+)?(?:mau|ingin|pengen|akan|bakal)\s+(?:untuk\s+)?(?:bunuh\s+diri|mati|mengakhiri\s+hidup(?:ku)?|menyakiti\s+diri(?:ku)?|melukai\s+diri(?:ku)?)\b/iu;
+const RECENT_BREAKUP = /\b(?:aku|saya|gue|gua)\s+(?:baru(?:\s+saja)?|habis)\s+(?:putus|diputusin|berpisah)\b/iu;
+const RECENT_BEREAVEMENT = /\b(?:aku|saya|gue|gua)(?:\s+baru(?:\s+saja)?|\s+habis)?\s+(?:kehilangan\s+(?:orang|seseorang|ibu|ayah|mama|bapak|kakak|adik|pasangan|pacar|sahabat|teman|anggota\s+keluarga)|ditinggal\s+(?:meninggal|selamanya))\b/iu;
+
+/**
+ * Memastikan kehilangan yang dinyatakan langsung masuk ke triase dukungan.
+ * Ini bukan disposition: kutipan/cerita orang lain ditolak, lalu classifier
+ * safety khusus tetap boleh menilai hasil akhirnya biasa atau dukungan.
+ */
+export function hasExplicitSupportTriageSignal(message: string): boolean {
+  const normalized = normalizeDangerText(message.normalize("NFKC"));
+  if (
+    /\b(?:contoh|kutipan|dialog|cerpen|novel|film|berita|teman(?:ku)?\s+(?:bilang|cerita))\b/iu.test(
+      normalized,
+    )
+  ) return false;
+  return RECENT_BREAKUP.test(normalized) || RECENT_BEREAVEMENT.test(normalized);
+}
 
 /**
  * Sinyal lokal berpresisi tinggi untuk acknowledgment darurat sebelum debounce.

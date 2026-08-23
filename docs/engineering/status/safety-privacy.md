@@ -1,9 +1,9 @@
 # Status — Safety dan Privacy
 
-Verified: 9 Agustus 2026 pada working tree Phase B di atas `b5e54c6`;
-`npm run check` dan `npm run context:check` PASS; `npm test` PASS 755 test / 100
-suite, 0 gagal. Untuk perubahan di area ini, baca bagian Constitution dan
-invariant yang relevan sebelum mengubah kontraknya.
+Refreshed: 23 Agustus 2026 pada consent memori implicit lintas kanal dan probe
+model nyata. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`. Untuk
+perubahan di area ini, baca bagian Constitution dan invariant yang relevan
+sebelum mengubah kontraknya.
 
 ## Keadaan saat ini
 
@@ -31,9 +31,11 @@ invariant yang relevan sebelum mengubah kontraknya.
   state percakapan umum hanya pada calm yang pasti.
 - Acute triage tidak lagi menilai privacy. Pada grup, `contextPrivacy` terpisah
   hanya mengizinkan raw rolling context; null/sensitive no-retain tanpa UX
-  support. Classifier `memory-privacy` hanya dipanggil untuk kandidat memori
-  privat atau grup; jenis personal, hasil sensitif, parse invalid, timeout,
-  atau error semuanya meminta consent.
+  support. Model ekstraksi dan classifier `memory-privacy` boleh membantu
+  membentuk kandidat/prompt, tetapi tidak lagi menjadi authority write:
+  seluruh kandidat implicit pada Telegram privat, WhatsApp privat, dan direct
+  WhatsApp grup menunggu izin item-spesifik. Perintah explicit remember tetap
+  harus dibuktikan dari raw turn dan exact candidate; credential selalu ditolak.
 - Jawaban pending berbentuk tanggal/waktu/durasi/pilihan dari closed set serta
   acknowledgment dingin yang sempit mempunyai fast path setelah emergency
   preflight negatif. Edit memori, konfirmasi destruktif, dan `agent-input`
@@ -69,11 +71,16 @@ invariant yang relevan sebelum mengubah kontraknya.
 
 ## Batas dan defect aktif
 
-- Salah klasifikasi ekstraksi dan classifier privacy pada memory sensitif masih
-  dapat terjadi; jangan mengklaim consent pre-save selalu terjamin.
-- Corpus safety/percakapan terbaru belum dijalankan penuh terhadap model nyata;
-  false-positive/false-negative belum diukur, dan jalur safety belum diuji
-  ulang end-to-end lewat Telegram.
+- Salah klasifikasi ekstraksi/privacy masih dapat melewatkan kandidat yang
+  seharusnya ditawarkan atau meminta izin secara berlebihan, tetapi tidak lagi
+  dapat mengotorisasi penyimpanan implicit. Jangan mengklaim deteksi sensitivitas
+  sempurna atau bahwa semua fakta penting pasti menjadi kandidat.
+- Evaluasi provider nyata terbaru lulus 60/60: 42 kasus percakapan dan 18 kasus
+  boundary/interruption tanpa fallback atau kegagalan provider. Di dalamnya,
+  cerita biasa/putus cinta tetap pada dukungan proporsional, sedangkan self-harm
+  dan kekerasan akut masuk jalur bahaya. Corpus ini adalah sampel regresi, bukan
+  pengukuran false-positive/false-negative yang terkalibrasi; jalur safety juga
+  belum diuji ulang end-to-end lewat akun Telegram/WhatsApp nyata.
 - Emergency preflight bersifat closed-set pada batching Telegram privat dan
   WhatsApp grup; jangan menganggap hasil negatif sebagai bukti aman. Grup baru
   tetap harus menyelesaikan notice sebelum ACK/model.

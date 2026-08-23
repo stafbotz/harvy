@@ -15,6 +15,7 @@ describe("kebijakan sesi semantic", () => {
       true,
     );
     assert.equal(sessionAppliesToMessage(active, "42"), true);
+    assert.equal(sessionAppliesToMessage(active, "karena klorofil"), true);
     for (const message of [
       "continue with the previous exercise",
       "mangga teraskeun latihan tadi",
@@ -84,6 +85,43 @@ describe("kebijakan sesi semantic", () => {
         sessionSemantic(message, "stuck", "contextual"),
       ),
       "stuck",
+    );
+  });
+
+  it("memulihkan selesai sesi eksplisit tanpa mempercayai label model", () => {
+    assert.equal(
+      sessionAppliesToMessage(session(), "udah selesai sesi fotosintesisnya"),
+      true,
+    );
+    assert.equal(
+      authorizedSessionSignal(
+        "udah selesai sesi fotosintesisnya",
+        null,
+        session(),
+        null,
+      ),
+      "done",
+    );
+    for (const message of [
+      "sesi fotosintesisnya belum selesai",
+      "jangan hentikan sesi fotosintesis",
+      "selesai makan malam",
+    ]) {
+      assert.equal(
+        authorizedSessionSignal(message, null, session(), null),
+        null,
+        message,
+      );
+    }
+    const notDone = "sesi fotosintesisnya belum selesai";
+    assert.equal(
+      authorizedSessionSignal(
+        notDone,
+        "done",
+        session(),
+        sessionSemantic(notDone, "done", "explicit"),
+      ),
+      null,
     );
   });
 });
