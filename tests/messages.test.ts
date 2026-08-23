@@ -259,6 +259,24 @@ describe("tombol fitur Harvy Loop", () => {
     assert.equal(labels.length, 3);
   });
 
+  it("selalu menyediakan berhenti pada sesi fokus, termasuk setelah check-in dijadwalkan", () => {
+    const keyboard = sessionActions({
+      ...session("focus"),
+      checkIn: {
+        at: "2026-08-23T12:30:00.000Z",
+        sentAt: null,
+        delivery: null,
+      },
+    });
+    const buttons = keyboard.inline_keyboard.flat();
+    const stop = buttons.find((button) => button.text === "Berhenti");
+    assert.ok(stop);
+    assert.equal(
+      "callback_data" in stop ? stop.callback_data : "",
+      "session:session123.stop",
+    );
+  });
+
   it("membentuk callback sesi, hasil check-in, dan kontrol data yang pendek", () => {
     const keyboards = [
       sessionActions(session("focus")),

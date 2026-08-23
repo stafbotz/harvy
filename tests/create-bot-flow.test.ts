@@ -603,6 +603,88 @@ describe("alur adapter Telegram", () => {
     );
   });
 
+  it("menawarkan preferensi durable yang jelas ketika extractor model melewatkannya", async () => {
+    let saves = 0;
+    const message =
+      "Mulai sekarang, aku lebih suka semua jawaban memakai langkah pendek dan bernomor.";
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        // Simulasikan kesalahan yang ditemukan live: model menaikkan preferensi
+        // implicit menjadi perintah remember explicit. Kode harus tetap meminta
+        // consent karena kalimat pengguna sendiri tidak memakai verba simpan.
+        understand: async () => understanding({
+          intent: "memory",
+          memoryAction: "remember",
+          memories: [{
+            kind: "preference",
+            content: "Lebih suka semua jawaban memakai langkah pendek dan bernomor.",
+          }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            message,
+            "semua jawaban memakai langkah pendek dan bernomor",
+          ),
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Oke, aku akan menjawab lebih terstruktur.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async () => {
+            saves += 1;
+            return null;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(message));
+    await harness.bot.drainPending();
+
+    assert.equal(saves, 0);
+    assert.match(harness.sent.at(-1) ?? "", /Boleh aku inget/iu);
+    assert.ok(findCallback(harness.telegramCalls, "memsave:"));
+  });
+
+  it("permintaan langkah kecil mengalahkan task offer dan pelanggaran pertanyaan model", async () => {
+    const message =
+      "Aku kewalahan dengan audit acceptance. Bantu aku mulai satu langkah kecil.";
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "feeling",
+          taskAction: "offer",
+          suggestedActions: [],
+          actionGoal: null,
+          task: {
+            title: "Audit acceptance",
+            dueAt: null,
+            remindAt: null,
+            importance: 2,
+          },
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        // Pertanyaan ini melanggar arahan planned-action. Tombol yang diminta
+        // eksplisit tetap tidak boleh hilang karenanya.
+        reply: async () => "Kita bisa mengecilkannya. Kamu siap mulai?",
+      } as unknown as Conversation,
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(message));
+    await harness.bot.drainPending();
+
+    const flow = findCallback(harness.telegramCalls, "flow:");
+    assert.ok(flow?.endsWith(".start_small"));
+    assert.equal(findCallbacks(harness.telegramCalls, "save:").length, 0);
+    assert.doesNotMatch(harness.sent.join("\n"), /Mau aku catat/iu);
+  });
+
   it("membolehkan recall lama dengan atau tanpa 💭 tanpa membuat memory baru", async () => {
     for (const recalledReply of [
       "💭 Aku masih inget dulu kamu sempat mempertimbangkan UI.",
@@ -1158,6 +1240,61 @@ describe("alur adapter Telegram", () => {
 
     assert.equal(triageCalls, 0);
     assert.ok(sent.includes(PRE_CONSENT_SAFETY));
+  });
+
+  it("/menu sebelum consent membuka onboarding tanpa diputar ulang sesudahnya", async () => {
+    let consented = false;
+    let modelCalls = 0;
+    const forbidden = (): never => {
+      modelCalls += 1;
+      throw new Error("navigasi onboarding tidak boleh memakai model");
+    };
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => forbidden(),
+        triageRisk: async () => forbidden(),
+        understand: async () => forbidden(),
+        reply: async () => forbidden(),
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        profiles: {
+          needsOnboarding: async () => !consented,
+          acceptConsent: async () => {
+            consented = true;
+            return profile();
+          },
+          load: async () => profile(),
+        } as unknown as ProfileService,
+        telemetry: {
+          allow: async () => undefined,
+          beginTurn: async () => undefined,
+          event: async () => undefined,
+          noteTurnSignal: async () => undefined,
+          recordTurn: async () => undefined,
+          drain: async () => undefined,
+        } as unknown as TelemetryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(commandUpdate("/menu", 1));
+    await harness.bot.drainPending();
+    assert.equal(harness.sent[0], "👋");
+    assert.equal(harness.sent.some((text) => /^Menu Harvy/u.test(text)), false);
+
+    await harness.bot.handleUpdate(callbackUpdate("consent:yes", 2));
+    await harness.bot.drainPending();
+    assert.equal(consented, true);
+    assert.ok(harness.sent.includes("😉"));
+    assert.equal(harness.sent.some((text) => /^Menu Harvy/u.test(text)), false);
+
+    await harness.bot.handleUpdate(commandUpdate("/menu", 3));
+    await harness.bot.drainPending();
+    assert.equal(
+      harness.sent.filter((text) => /^Menu Harvy/u.test(text)).length,
+      1,
+    );
+    assert.equal(modelCalls, 0);
   });
 
   it("menahan pesan pengguna consent sebelumnya sampai menyetujui versi aktif", async () => {
@@ -3000,29 +3137,57 @@ describe("alur adapter Telegram", () => {
     assert.equal(harness.sent.some((text) => text.includes("catatan tentangmu")), false);
   });
 
-  it("permintaan planning eksplisit tetap memakai root ambitious saat intent model salah", async () => {
+  it("planning eksplisit tetap memakai root ambitious meski sesi terkait masih aktif", async () => {
     let agentCalls = 0;
     let replyCalls = 0;
-    const harness = basicHarness({
-      classifyTurnBoundary: async () => "complete",
-      triageRisk: async () => CALM_TRIAGE,
-      understand: async () => understanding({ intent: "task" }),
-      agent: async (
-        _message: string,
-        mode: string,
-        _context: HarvyContext,
-        runtime: { intent?: string },
-      ) => {
-        agentCalls += 1;
-        assert.equal(mode, "orchestrate");
-        assert.equal(runtime.intent, "request");
-        return { status: "completed", reply: "Rencana gabungan selesai." };
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "task" }),
+        agent: async (
+          _message: string,
+          mode: string,
+          _context: HarvyContext,
+          runtime: { intent?: string },
+        ) => {
+          agentCalls += 1;
+          assert.equal(mode, "orchestrate");
+          assert.equal(runtime.intent, "request");
+          return { status: "completed", reply: "Rencana gabungan selesai." };
+        },
+        reply: async () => {
+          replyCalls += 1;
+          return "jalur lama";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        sessions: {
+          active: async () => ({
+            ...activeTutor(),
+            kind: "focus",
+            goal: "Menyusun rencana belajar ujian",
+            stage: "act",
+          }),
+          progressAfterDelivery: async (
+            _ownerId: string,
+            _signal: unknown,
+            _sessionId: string,
+            deliver: (session: ActiveSession) => Promise<void>,
+          ) => {
+            const session = {
+              ...activeTutor(),
+              kind: "focus" as const,
+              goal: "Menyusun rencana belajar ujian",
+              stage: "act" as const,
+            };
+            await deliver(session);
+            return session;
+          },
+        } as unknown as SessionService,
       },
-      reply: async () => {
-        replyCalls += 1;
-        return "jalur lama";
-      },
-    } as unknown as Conversation);
+    );
 
     await harness.bot.handleUpdate(
       messageUpdate("tolong buatkan rencana belajar langkah demi langkah"),
@@ -4014,7 +4179,9 @@ describe("alur adapter Telegram", () => {
     const menu = harness.sent.at(-1) ?? "";
     assert.match(menu, /^Menu Harvy/u);
     assert.match(menu, /Penggunaan & paket/u);
+    assert.match(menu, /Pengaturan/u);
     assert.ok(findCallback(harness.telegramCalls, "menu:usage"));
+    assert.ok(findCallback(harness.telegramCalls, "menu:settings"));
 
     await harness.bot.handleUpdate(callbackUpdate("menu:usage", 2));
     await harness.bot.drainPending();
@@ -4024,7 +4191,29 @@ describe("alur adapter Telegram", () => {
     );
     assert.ok(categoryEdit);
 
-    await harness.bot.handleUpdate(commandUpdate("/bantuan", 3));
+    await harness.bot.handleUpdate(callbackUpdate("menu:settings", 3));
+    await harness.bot.drainPending();
+    const settingsEdit = harness.telegramCalls.find((call) =>
+      call.method === "editMessageText" &&
+      /^Pengaturan/u.test((call.payload as { text?: string }).text ?? "")
+    );
+    assert.ok(settingsEdit);
+    const settingsCallbacks = (
+      (settingsEdit.payload as {
+        reply_markup?: {
+          inline_keyboard?: Array<Array<{ callback_data?: string }>>;
+        };
+      }).reply_markup?.inline_keyboard ?? []
+    ).flat().map((button) => button.callback_data);
+    for (const callback of [
+      "control:export",
+      "control:timezone",
+      "control:delete-all",
+    ]) {
+      assert.ok(settingsCallbacks.includes(callback), callback);
+    }
+
+    await harness.bot.handleUpdate(commandUpdate("/bantuan", 4));
     await harness.bot.drainPending();
     const help = harness.sent.at(-1) ?? "";
     assert.match(help, /Contoh:/u);
@@ -4303,10 +4492,75 @@ describe("work lane active AgentRun Telegram", () => {
       const completed = await runs.loadActive("telegram", "123");
       assert.equal(completed?.receipts.at(-1)?.status, "committed");
       assert.ok(harness.sent.includes("Rencana durable selesai."));
+      await waitFor(() =>
+        harness.telegramCalls.some((call) => call.method === "unpinChatMessage")
+      );
+      const pin = harness.telegramCalls.find((call) =>
+        call.method === "pinChatMessage"
+      );
+      const unpin = harness.telegramCalls.find((call) =>
+        call.method === "unpinChatMessage"
+      );
+      assert.ok(pin);
+      assert.ok(unpin);
+      assert.equal(
+        (pin.payload as { message_id?: unknown }).message_id,
+        (unpin.payload as { message_id?: unknown }).message_id,
+      );
     } finally {
       release.resolve();
       await harness.bot.drainPending();
     }
+  });
+
+  it("tidak menggandakan Run Anchor Telegram bila edit dan delete sama-sama gagal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-active-run-anchor-fail-"));
+    const runs = new AgentRunService(
+      new FileAgentRunRepository(join(root, "agent-runs.json")),
+    );
+    const request = "tolong buatkan rencana audit langkah demi langkah";
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "request" }),
+        agent: async (
+          _message: string,
+          _mode: string,
+          _context: HarvyContext,
+          runtime: { runId?: string },
+        ) => {
+          assert.ok(runtime.runId);
+          return {
+            status: "completed",
+            reply: "Rencana audit selesai.",
+            checkpoint: activeCheckpoint("123", runtime.runId, request),
+            trace: [],
+          };
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        agentRuns: runs,
+        failTelegramCall: (method) =>
+          method === "editMessageText" || method === "deleteMessage",
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(request, 1));
+    await waitForAsync(async () =>
+      (await runs.loadActive("telegram", "123"))?.status === "completed"
+    );
+    await harness.bot.drainPending();
+
+    const statusCreates = harness.telegramCalls.filter((call) =>
+      call.method === "sendMessage" && /^📌\s/u.test(
+        String((call.payload as { text?: unknown }).text ?? ""),
+      )
+    );
+    assert.equal(statusCreates.length, 1);
+    assert.ok(harness.telegramCalls.some((call) => call.method === "deleteMessage"));
+    assert.ok(harness.telegramCalls.some((call) => call.method === "unpinChatMessage"));
   });
 
   it("me-replan koreksi terikat dan tidak memublikasikan hasil revisi basi", async () => {
@@ -4918,6 +5172,7 @@ function installFakeTelegram(
   calls: TelegramCall[] = [],
   failSend?: (text: string) => boolean,
   onSend?: (text: string) => Promise<void> | void,
+  failTelegramCall?: (method: string, payload: unknown) => boolean,
 ): void {
   bot.botInfo = {
     id: 999,
@@ -4936,6 +5191,9 @@ function installFakeTelegram(
   };
   bot.api.config.use((async (_previous, method, payload) => {
     calls.push({ method, payload });
+    if (failTelegramCall?.(method, payload)) {
+      throw new Error("Telegram operation gagal");
+    }
     if (method === "sendMessage") {
       const body = payload as { chat_id: number; text: string };
       if (failSend?.(body.text)) throw new Error("Telegram gagal");
@@ -4970,6 +5228,7 @@ function basicHarness(
     telegramCalls?: TelegramCall[];
     failSend?: (text: string) => boolean;
     onSend?: (text: string) => Promise<void> | void;
+    failTelegramCall?: (method: string, payload: unknown) => boolean;
     usageDashboard?: Pick<UserUsageSummaryService, "summary">;
     economy?: EconomyService;
   } = {},
@@ -5027,6 +5286,7 @@ function basicHarness(
     telegramCalls,
     overrides.failSend,
     overrides.onSend,
+    overrides.failTelegramCall,
   );
   return { bot, sent, turns, telegramCalls };
 }

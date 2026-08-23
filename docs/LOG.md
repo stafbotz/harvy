@@ -54,27 +54,105 @@ GitHub, serta AgentRun durable dirangkai pada adapter privat. Reminder/check-in
 beralih ke delivery intent at-most-once yang menahan duplikat dan mengekspos
 hasil ambigu; semua memori implicit lintas kanal memerlukan izin item-spesifik.
 Supervisor restart berbatas, runtime lock reclaim, backup lokal terenkripsi,
-dan acceptance harness akun tester WhatsApp ditambahkan. Evaluator kini menilai
-outcome tugas nyata, mengisolasi kegagalan provider, dan memakai recovery
-terminal-marker yang bounded.
+dan acceptance harness akun tester WhatsApp ditambahkan. Pairing lokal untuk
+akun Telegram tester serta dua peran WhatsApp kini dikelola dari tab Kanal pengujian
+Harvy Console; mode `console:setup` dapat hidup sebelum token runtime tersedia.
+Token bot dan session Telegram dipisah dalam vault terenkripsi, QR hanya berada
+di memori dan dirender ke sesi operator, 2FA tidak dipersistenkan, dua role
+WhatsApp divalidasi berbeda, dan revoke memakai logout-first. Runner privat
+menyalakan build pada state sementara, berinteraksi lewat akun nyata, membuat
+receipt content-free, melakukan cleanup produk, lalu graceful drain. Evaluator
+kini menilai outcome tugas nyata, mengisolasi kegagalan provider, dan memakai
+recovery terminal-marker yang bounded. Console dan runner acceptance juga
+memegang lock credential lintas proses yang sama agar pairing, revoke, dan
+percakapan live tidak memutasi session secara bersamaan; commit token bot dan
+session tester Telegram diserialisasi pula di dalam proses, dan callback QR/
+session setelah cancel dipagari sebelum dapat mempersistenkan state lama.
+Console Kanal pengujian sekarang menampilkan boundary produk utama versus acceptance
+secara eksplisit: sisi utama hanya membawa boolean/jumlah konfigurasi dan tidak
+mengklaim session tertaut, sedangkan empat credential uji mempunyai checklist
+serta flow identitas sendiri. Crash renderer akibat ID QR/cancel Telegram yang
+tidak konsisten ditutup dengan kontrak DOM; UI pairing juga dirapikan untuk
+hierarki desktop/mobile dan error internal tidak lagi ditampilkan mentah.
+Pairing WhatsApp QR nyata kemudian membuktikan defect lain: Baileys 7 rc14
+menyimpan identitas, account signature, dan signal identity pair-success namun
+flag lama `registered` tetap `false`, sehingga Console menampilkan session sah
+sebagai belum dipasangkan dan runner akan menolaknya. Satu validator credential
+sekarang dipakai oleh Console, runtime utama, revoke, guard beda-identitas, dan
+seluruh runner WhatsApp; state `me`-only tetap gagal tertutup. Setelah pairing
+lengkap, Console kini berpindah dari state setup ke surface operasional yang
+tenang: ringkasan kesiapan dan dua alur tester → Harvy terlihat di depan,
+sedangkan seluruh input, QR, boundary teknis, rotasi token, dan pencabutan sesi
+berada dalam pengaturan tertutup. Status `siap diuji` sengaja tidak diklaim
+sebagai bukti reconnect atau pengiriman live. Percobaan live kemudian menemukan
+dead-end ketika perangkat WhatsApp sudah dicabut dari ponsel: Console kini
+menerima `loggedOut` sebagai bukti pencabutan, membersihkan credential lokal
+yatim, dan membuka QR pengganti dalam satu alur logout-first. Close jaringan
+biasa tetap gagal tertutup. Direct console output Signal yang membawa material
+ratchet dipagari, dan runner managed sekarang menunggu runtime ready, memakai
+import `tsx` absolut, menerima pasangan PN/LID, serta menyimpan receipt tahap
+saat gagal. Runner kemudian dipagari oleh readiness socket WhatsApp `open`,
+trace lifecycle content-free, burst collector multi-bubble, ack transport,
+shutdown parent yang lebih panjang daripada grace child, dan cleanup Windows
+retry-bounded. Race linked-device yang dapat mengirim edit/unpin sebelum event
+create anchor ditutup dengan korelasi target bubble exact dari create maupun
+edit; target ganda tetap ditolak. Harness sekarang fail-fast sesudah tahap
+pertama gagal agar respons tertunda tidak mencemari skenario berikutnya, tetapi
+full data cleanup tetap dijalankan. Menu shared sekarang menyebut sesi/check-in yang memang tersedia,
+bukan menyembunyikannya di `/bantuan`. Run Anchor privat kini satu surface
+mutable yang dipin saat aktif, diedit dengan ID yang sama, lalu dilepas pada
+terminal; transient progress dan hasil final tetap surface berbeda. Permintaan
+exact-step dengan field eksplisit sekarang diturunkan menjadi kontrak struktur
+code-owned dan native final schema; free-text final tidak tersedia pada pass
+tersebut, satu repair bounded diizinkan, dan kode merender hasilnya.
 
-Verified: `npm run check` PASS; `npm test` PASS 1.708/1.708 dalam 210 suite;
+Verified: `npm run check` PASS; `npm test` PASS 1.762/1.762 dalam 219 suite;
+tes terarah Console/channel setup/live-acceptance/lock PASS 19/19; smoke setup
+localhost membuktikan session `setupOnly`, endpoint kanal 200, dashboard 404,
+response tanpa token, instance kedua ditolak `LOCAL_DATA_LOCKED`, serta shutdown
+melepas proses dan lock; `npm run context:check` PASS; dependency
+audit production PASS tanpa vulnerability; preflight Telegram acceptance gagal
+tertutup sebelum koneksi/send saat acknowledgement kosong;
 eval provider nyata PASS 60/60 (42 percakapan + 18 boundary/interruption), tanpa
 fallback/provider/execution failure; smoke build final mencapai
 `application_ready` lalu IPC `shutdown_completed`, exit bersih, tanpa proses
 Node atau runtime lock tersisa. Drill backup state terkonfigurasi PASS
 create→verify→restore 1.411 entry/3.942.048 byte, terenkripsi tanpa archive
 plaintext, lalu artifact uji dihapus. Preflight WhatsApp privat gagal tertutup
-sebelum koneksi karena konfirmasi operator belum diberikan.
+sebelum koneksi karena konfirmasi operator belum diberikan. Smoke Microsoft
+Edge headless nyata membuktikan login, render/API tanpa exception, status kanal
+final, dan layout desktop/mobile; setelah timeout harness dibuat toleran beban,
+empat pengulangan PASS dan tidak menyisakan profile atau screenshot sementara.
+Pairing WhatsApp A Harvy uji menghasilkan material pair-success durable nyata;
+audit content-free berikutnya membuktikan keempat credential acceptance siap;
+WhatsApp utama dan Harvy uji juga siap serta identitasnya berbeda. Smoke Edge
+state empat-dari-empat membuktikan surface siap, pengaturan tertutup, aksi
+Kelola yang membuka serta memfokuskan kanal tepat, form/pairing tersembunyi,
+dan layout desktop/mobile tanpa overflow. Tes regresi credential/Console/Baileys/
+live-acceptance terarah PASS 68/68. Regresi recovery baru PASS 23/23 dan smoke
+Edge membuktikan error → panel pulihkan → QR pengganti. Sesudah rotasi tester
+dan handshake peer-session, probe WhatsApp privat lulus end-to-end. Acceptance
+latest build terakhir kemudian lulus melalui akun nyata pada kedua kanal:
+Telegram privat 8/8 tahap dan WhatsApp privat managed 10/10 tahap. Telegram
+planning selesai sekitar 22 detik dengan satu Anchor editable+pin/unpin dan
+hasil 3/3 langkah bertindakan, berbukti, serta berkriteria lulus. WhatsApp
+planning selesai sekitar 19 detik dengan Anchor yang sama-sama mutable, satu
+transient surface terhapus, dan kualitas 3/3/3; keseluruhan run melihat 17
+ingress `notify`, 29/29 delivery berhasil, ack `delivered`, cleanup produk
+lulus, 0 restart/crash-loop/shutdown-timeout, shutdown bersih, dan isolated
+state terhapus. Kedua receipt content-free dan tidak membawa identifier akun.
+Tes kontrak output dan parity terarah awal PASS 201/201; regresi akhir lintas
+Agent Runtime, WhatsApp privat, live acceptance, dan topologi bubble PASS 90/90.
 
-Not verified: percakapan pengguna nyata pada latest build Telegram/WhatsApp,
-WhatsApp grup latest build, dogfood tujuh hari, tiga wawancara, dua nomor
-WhatsApp, reconnect/receipt transport nyata, backup eksternal/lintas mesin,
+Not verified: WhatsApp grup latest build, reconnect/interupsi burst/CodingRun/
+GitHub WhatsApp privat, interruption/reconnect Telegram, dogfood tujuh hari,
+tiga wawancara,
+backup eksternal/lintas mesin,
 multi-process storage, sandbox Linux non-root, atau GitHub App/push/PR nyata.
 
-Next: pair akun Harvy dan akun tester WhatsApp yang terpisah, sediakan sesi
-tester Telegram, jalankan acceptance serta dogfood tujuh hari, lakukan tiga
-wawancara, dan buat kunci+salinan backup eksternal sebelum peluncuran publik.
+Next: mulai dogfood tujuh hari pada tiga surface produk, lakukan tiga wawancara,
+uji reconnect dan CodingRun/GitHub WhatsApp privat, lalu buat kunci+salinan
+backup eksternal sebelum peluncuran publik.
 
 ## 2026-08-22 — Hardening boundary provider, BYOK, dan GitHub broker
 
@@ -323,72 +401,3 @@ dengan peringatan konversi line-ending Windows saja.
 
 Not verified: `npm run check`, `npm test`, dan acceptance live tidak dijalankan
 ulang karena tidak ada perubahan kode atau perilaku runtime.
-
-## 2026-08-20 — Coding input target dan publish privat exact
-
-Scope: CodingRun/coordinator/worker, private coding session, private GitHub
-application, provider profile/smoke, startup harness, tes integrasi, dan status.
-
-Changed: `waiting_input` CodingRun kini membawa pertanyaan durable terikat
-instruction revision; reply Anchor tepercaya menjadi ChangeSet sedangkan batas
-action internal tetap checkpoint `running`. Session privat mempertahankan
-project revision pada jeda nonterminal. Publish privat menjalankan branch,
-exact push, dan draft PR melalui tiga confirmation terpisah; offer menjadi basi
-setelah ACL epoch berubah. Body Markdown PR menerima newline/tab tetapi tetap
-menolak control character lain. Profile
-`google-ai-studio/gemini-3.5-flash-lite` pada endpoint resmi dipromosikan
-code-owned setelah wire exact lulus; custom gateway dan active fallback tidak
-mewarisi capability itu.
-
-Verified: `npm run check` PASS; `npm test` PASS 1.413/1.413 dalam 183 suite, 0
-gagal; `npm run context:check` PASS; `git diff --check` PASS selain peringatan
-line-ending Windows. Acceptance otomatis membuktikan ZIP→CodingRun→validator→
-local commit, pertanyaan target, urutan private confirmation, dan rejection
-sebelum transport saat authority berubah. `npm run acceptance:provider` PASS
-live pada 20 Agustus 2026 dengan digest
-`4d4c4f299b84b5a1767c96a54e6591a53c06a90807aba16d78a04fe4967d7d5c`:
-effort, native tool, thought signature+replay, stop/length, local pressure gate,
-timeout, dan retry teramati; fallback dinonaktifkan.
-
-Not verified: hostile suite pada Linux nyata, GitHub App/repository live,
-WhatsApp grup nyata, provider fallback, dan critic `toughest` live. Guard
-berhenti tanpa efek dengan
-`SANDBOX_ACCEPTANCE_REQUIRES_LINUX_HOST`,
-`GITHUB_LIVE_ACCEPTANCE_REQUIRES_CREATE_NONCRITICAL_DRAFT_PR`, dan
-`WHATSAPP_LIVE_ACCEPTANCE_REQUIRES_RUN_NONCRITICAL_WHATSAPP_GROUP`.
-
-Next: jalankan acceptance nonkritis exact pada infrastruktur/credential live,
-tanpa membuka runtime default-off sebelum bukti conformance tersedia.
-
-## 2026-08-15 — Coding production vertical slice dan trust-domain service
-
-Scope: isolated sandbox, Workspace/CodingRun private+group composition,
-local-git, GitHub App broker, startup recovery, validator escalation, TTFR,
-deployment contract, acceptance harness, dan status arsitektur.
-
-Changed: Harvy kini mempunyai service rootless OCI terpisah dengan
-network-off/quota/seccomp/no-host-mount, 15-scenario hostile harness dan exact
-conformance receipt gate; AI coding writer iterative, production validators,
-Run Anchor, trusted private ingress, stale revision/cancel fencing, dan ZIP→Git
-commit acceptance otomatis; credential-free local-git dengan atomic ref CAS;
-credential-owning GitHub App broker dengan installation/archive/exact
-non-force push/draft PR/reconciliation; startup/shutdown supervisor production;
-validator-driven one-shot `toughest`; TTFR/final p50/p95; serta group-coding
-ingress, private Workspace handoff, audience-safe delivery, dan authority-loss
-lifecycle fence. Seluruh runtime tetap opt-in dan fail-closed.
-
-Verified: `npm run check` PASS; `npm run context:check` PASS; `npm test` PASS
-1.399/1.399 dalam 181 suite, 0 gagal; suite perbaikan ZIP/Workspace/HTTP
-trust-domain PASS 23/23; `git diff --check` PASS selain peringatan line-ending.
-Acceptance guard sandbox, GitHub, provider, dan WhatsApp semuanya berhenti
-sebelum efek dengan reason code eksplisit.
-
-Not verified: hostile suite pada Linux nyata (host ini Windows tanpa OCI/WSL),
-GitHub branch/push/draft PR live (App+repo uji+confirmation tidak tersedia),
-provider continuation exact (profile aktif compatibility), dan WhatsApp grup
-live (confirmation+akun/grup uji tidak tersedia). Store selain lease SQLite
-masih single-service; horizontal safety dan procedural memory belum selesai.
-
-Next: jalankan empat acceptance pada infrastruktur nonkritis exact, terbitkan
-receipt sandbox dari host yang sama, lalu kerjakan distributed lease/outbox/
-reconciler hanya setelah bukti live P0/P1 lulus.

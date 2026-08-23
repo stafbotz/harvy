@@ -8,6 +8,9 @@ import makeWASocket, {
   type WAMessage,
   type WASocket,
 } from "baileys";
+import { isWhatsAppCredentialReady } from "../src/whatsapp/auth-credential.js";
+import { installThirdPartyConsoleSecretGuard } from
+  "../src/observability/third-party-console-guard.js";
 
 const CONFIRMATION = "RUN_NONCRITICAL_WHATSAPP_GROUP";
 const DEFAULT_STAGE_TIMEOUT_MS = 45_000;
@@ -38,10 +41,11 @@ function loadEnvironment(): void {
 }
 
 async function main(): Promise<void> {
+  installThirdPartyConsoleSecretGuard();
   loadEnvironment();
   const config = await acceptanceConfig(process.env);
   const { state, saveCreds } = await useMultiFileAuthState(config.authFolder);
-  if (!state.creds.registered) {
+  if (!isWhatsAppCredentialReady(state.creds)) {
     throw blocked("WHATSAPP_LIVE_ACCEPTANCE_TESTER_NOT_PAIRED");
   }
   const logger = silentBaileysLogger();

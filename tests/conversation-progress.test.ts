@@ -5,6 +5,7 @@ import {
   capabilityProgressEvent,
   executionProgressEvent,
   interruptionProgressEvent,
+  isRenderedConversationProgress,
   parsePublicProgressFocus,
   publicFocusProgressEvent,
   renderConversationProgress,
@@ -14,6 +15,18 @@ import {
 import type { ExecutionPlan } from "../src/core/execution-policy.js";
 
 describe("status kerja percakapan", () => {
+  it("membedakan status transient dari jawaban akhir", () => {
+    const rendered = renderConversationProgress({
+      phase: "thinking",
+      detail: "general",
+    });
+    assert.equal(isRenderedConversationProgress(rendered), true);
+    assert.equal(
+      isRenderedConversationProgress("Aku sudah selesai menyusun jawabannya."),
+      false,
+    );
+  });
+
   it("tidak berkedip untuk respons yang selesai di dalam grace period", async () => {
     const operations: string[] = [];
     const progress = new TransientConversationProgress(

@@ -109,16 +109,26 @@ describe("WhatsAppPrivateConversation", () => {
       "pesan-1",
     ));
 
-    assert.equal(typeof first, "string");
-    assert.match(String(first), /balas SETUJU/i);
+    assert.equal(typeof first, "object");
+    const onboarding = first as WhatsAppPrivateReply;
+    assert.equal(onboarding.presentationBubbles?.[0], "👋");
+    assert.equal(
+      onboarding.presentationBubbles?.join("\n\n"),
+      onboarding.text,
+    );
+    assert.match(onboarding.text, /balas SETUJU/i);
     assert.equal(harness.understandCalls, 0);
     assert.equal(harness.history.length, 0);
 
     const accepted = await harness.service.handle(message("SETUJU", "pesan-2"));
     assert.equal(typeof accepted, "object");
     const reply = accepted as WhatsAppPrivateReply;
-    assert.match(reply.text, /Aku baca pesanmu yang tadi/i);
+    assert.match(reply.text, /Aku lanjutkan pesanmu yang tadi/i);
     assert.match(reply.text, /Jawaban privat WhatsApp/u);
+    assert.deepEqual(reply.presentationBubbles?.slice(0, 2), [
+      "😉",
+      "Oke, kita mulai. Aku lanjutkan pesanmu yang tadi.",
+    ]);
     assert.equal(harness.consent, true);
     assert.equal(harness.understandCalls, 1);
     assert.deepEqual(harness.replyChannels, ["whatsapp"]);
@@ -246,7 +256,24 @@ describe("WhatsAppPrivateConversation", () => {
 
     assert.equal(harness.consent, false);
     assert.equal(harness.understandCalls, 0);
-    assert.match(String(casualReply), /SETUJU/u);
+    assert.match(privateReplyText(casualReply), /SETUJU/u);
+  });
+
+  it("tidak menahan atau memutar ulang command navigasi setelah consent", async () => {
+    const harness = createHarness(false);
+
+    const onboarding = await harness.service.handle(message("/menu", "nav-1"));
+    assert.match(privateReplyText(onboarding), /balas SETUJU/iu);
+    assert.equal(harness.understandCalls, 0);
+
+    const accepted = await harness.service.handle(message("SETUJU", "nav-2"));
+    const acceptedText = privateReplyText(accepted);
+    assert.match(acceptedText, /Tulis aja apa yang ada di kepalamu/iu);
+    assert.doesNotMatch(acceptedText, /Menu Harvy/iu);
+    assert.equal(harness.understandCalls, 0);
+
+    const menu = await harness.service.handle(message("/menu", "nav-3"));
+    assert.match(privateReplyText(menu), /Menu Harvy/iu);
   });
 
   it("menjelaskan capability privat yang sama dengan surface teks WhatsApp", async () => {
@@ -634,6 +661,38 @@ describe("WhatsAppPrivateConversation", () => {
     assert.equal(harness.activeSession, null);
   });
 
+  it("planning eksplisit tidak diturunkan menjadi reply sesi biasa di WhatsApp", async () => {
+    let agentCalls = 0;
+    const harness = createHarness(true, {
+      agent: async (_text, mode, _context, runtime) => {
+        agentCalls += 1;
+        assert.equal(mode, "orchestrate");
+        assert.equal(runtime?.channel, "whatsapp");
+        return {
+          status: "completed",
+          reply: "Rencana mendalam dari Agent Runtime.",
+          checkpoint: {} as never,
+          trace: [],
+        };
+      },
+      reply: async () => {
+        throw new Error("planning explicit tidak boleh memakai reply sesi biasa");
+      },
+    });
+    await harness.service.handle(message(
+      "/sesi mulai fokus menyusun rencana belajar ujian",
+      "session-plan-start",
+    ));
+
+    const planned = await harness.service.handle(message(
+      "Tolong buatkan rencana belajar ujian langkah demi langkah.",
+      "session-plan-request",
+    ));
+
+    assert.equal(agentCalls, 1);
+    assert.match(privateReplyText(planned), /Agent Runtime/u);
+  });
+
   it("menahan memori sensitif sampai izin eksplisit terlihat", async () => {
     const sensitiveText = "Aku punya kondisi kesehatan yang perlu kamu ingat";
     const harness = createHarness(true, {
@@ -711,6 +770,20 @@ describe("WhatsAppPrivateConversation", () => {
     assert.equal(harness.memoryCount, 2);
   });
 
+  it("menawarkan preferensi durable yang jelas ketika extractor model melewatkannya", async () => {
+    const harness = createHarness(true, {
+      reply: async () => "Oke, aku akan menjawab lebih terstruktur.",
+    });
+
+    const response = await harness.service.handle(message(
+      "Mulai sekarang, aku lebih suka semua jawaban memakai langkah pendek dan bernomor.",
+      "memory-local-fallback",
+    )) as WhatsAppPrivateReply;
+
+    assert.match(response.text, /SIMPAN MEMORI|JANGAN SIMPAN/iu);
+    assert.equal(harness.memoryCount, 1, "kandidat belum boleh ditulis");
+  });
+
   it("menjalankan AgentRun durable dan mengirim hasil proaktif di WhatsApp", async () => {
     const root = await mkdtemp(join(tmpdir(), "harvy-wa-private-agent-"));
     const agentRuns = new AgentRunService(
@@ -718,6 +791,8 @@ describe("WhatsAppPrivateConversation", () => {
     );
     const sent: string[] = [];
     const edited: string[] = [];
+    const removed: string[] = [];
+    const pinStates: boolean[] = [];
     const ownerId = "whatsapp-user:628777777777@s.whatsapp.net";
     const request = "Tolong buatkan rencana langkah demi langkah untuk ujian.";
     const agent: Conversation["agent"] = async (
@@ -750,12 +825,19 @@ describe("WhatsAppPrivateConversation", () => {
           edited.push(text);
           return { messageId };
         },
+        removeTracked: async (_accountId, _userId, messageId) => {
+          removed.push(messageId);
+        },
+        setPinned: async (_accountId, _userId, _messageId, pinned) => {
+          pinStates.push(pinned);
+        },
       },
     });
 
     const anchor = await harness.service.handle(message(request, "agent-start")) as
       WhatsAppPrivateReply;
     assert.match(anchor.text, /Pekerjaan|Antrean|Menyusun/iu);
+    assert.deepEqual(anchor.presentationBubbles, [anchor.text]);
     await anchor.onDelivered?.({
       text: anchor.text,
       bubbleCount: 1,
@@ -771,11 +853,72 @@ describe("WhatsAppPrivateConversation", () => {
     assert.equal(completed?.receipts[0]?.effect, "whatsapp.message.send");
     assert.deepEqual(sent, ["Rencana ujian yang sudah memakai state live."]);
     assert.match(edited.at(-1) ?? "", /Selesai/iu);
+    assert.deepEqual(removed, []);
+    assert.deepEqual(pinStates, [true, false]);
     assert.equal(
       harness.history.at(-1)?.text,
       "Rencana ujian yang sudah memakai state live.",
     );
     await harness.service.drain();
+  });
+
+  it("tidak menggandakan Run Anchor bila edit dan penghapusan lama sama-sama gagal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-wa-private-anchor-fail-"));
+    const agentRuns = new AgentRunService(
+      new FileAgentRunRepository(join(root, "agent-runs.json")),
+    );
+    const ownerId = "whatsapp-user:628777777777@s.whatsapp.net";
+    const request = "Tolong buatkan rencana audit langkah demi langkah.";
+    let replacementSends = 0;
+    let removeAttempts = 0;
+    const pinStates: boolean[] = [];
+    const harness = createHarness(true, {
+      agentRuns,
+      agent: async (messageText, _mode, _context, runtime) => ({
+        status: "completed",
+        reply: "Rencana audit selesai tanpa menggandakan anchor.",
+        checkpoint: agentCheckpoint(
+          runtime?.runId ?? "missing-run-id",
+          ownerId,
+          messageText,
+        ),
+        trace: [],
+      }),
+      proactive: {
+        send: async () => undefined,
+        sendTracked: async (_accountId, _userId, text) => {
+          if (/^📌\s/u.test(text)) replacementSends += 1;
+          return { messageIds: ["tracked-message"] };
+        },
+        editTracked: async () => {
+          throw new Error("simulated edit failure");
+        },
+        removeTracked: async () => {
+          removeAttempts += 1;
+          throw new Error("simulated remove failure");
+        },
+        setPinned: async (_accountId, _userId, _messageId, pinned) => {
+          pinStates.push(pinned);
+        },
+      },
+    });
+
+    const anchor = await harness.service.handle(message(request, "anchor-fail")) as
+      WhatsAppPrivateReply;
+    await anchor.onDelivered?.({
+      text: anchor.text,
+      bubbleCount: 1,
+      complete: true,
+      messageIds: ["original-anchor"],
+    });
+    await waitUntil(async () =>
+      (await agentRuns.loadActive("whatsapp", ownerId))?.status === "completed"
+    );
+    await harness.service.drain();
+
+    assert.ok(removeAttempts >= 1);
+    assert.equal(replacementSends, 0);
+    assert.deepEqual(pinStates, [true, false]);
   });
 
   it("mengimpor ZIP project melalui authority privat WhatsApp yang tepercaya", async () => {
@@ -1280,6 +1423,17 @@ function message(text: string, messageId: string): WhatsAppPrivateMessage {
     text,
     at: "2026-08-22T00:00:00.000Z",
   };
+}
+
+function privateReplyText(result: unknown): string {
+  if (typeof result === "string") return result;
+  if (
+    result && typeof result === "object" && "text" in result &&
+    typeof result.text === "string"
+  ) {
+    return result.text;
+  }
+  return "";
 }
 
 function agentCheckpoint(

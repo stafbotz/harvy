@@ -2,6 +2,19 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 const CONTROL_READY = "harvy-dev-control-ready";
 const CONTROL_SHUTDOWN = "harvy-dev-shutdown";
+const CHANNEL_READY = "harvy-runtime-channel-ready";
+const ACCEPTANCE_TRACE = "harvy-live-acceptance-trace";
+const PRIVATE_TRACE_STAGES = new Set([
+  "private-upsert-notify",
+  "private-upsert-append",
+  "private-candidate",
+  "private-normalized",
+  "private-handler-returned",
+  "private-pipeline-failed",
+  "private-delivery-attempted",
+  "private-delivery-succeeded",
+  "private-delivery-failed",
+] as const);
 
 export interface RuntimeSupervisorOptions {
   entry: string;
@@ -19,6 +32,20 @@ export interface RuntimeSupervisorOptions {
 
 export type RuntimeSupervisorEvent =
   | { type: "child-started"; attempt: number }
+  | { type: "child-ready"; attempt: number }
+  | {
+      type: "channel-ready";
+      attempt: number;
+      channel: "whatsapp";
+      accountId: string;
+    }
+  | {
+      type: "acceptance-trace";
+      attempt: number;
+      channel: "whatsapp";
+      accountId: string;
+      stage: string;
+    }
   | {
       type: "child-restart-scheduled";
       attempt: number;
@@ -169,13 +196,34 @@ export function superviseRuntime(
         child !== launched ||
         typeof message !== "object" ||
         message === null ||
-        !("type" in message) ||
-        message.type !== CONTROL_READY
+        !("type" in message)
       ) {
         return;
       }
-      childControlReady = true;
-      if (stopping) requestChildShutdown(launched);
+      if (message.type === CONTROL_READY) {
+        childControlReady = true;
+        options.onEvent?.({ type: "child-ready", attempt });
+        if (stopping) requestChildShutdown(launched);
+        return;
+      }
+      if (isChannelReadyMessage(message)) {
+        options.onEvent?.({
+          type: "channel-ready",
+          attempt,
+          channel: message.channel,
+          accountId: message.accountId,
+        });
+        return;
+      }
+      if (isAcceptanceTraceMessage(message)) {
+        options.onEvent?.({
+          type: "acceptance-trace",
+          attempt,
+          channel: message.channel,
+          accountId: message.accountId,
+          stage: message.stage,
+        });
+      }
     });
     let closed = false;
     const conclude = (
@@ -200,6 +248,42 @@ export function superviseRuntime(
   if (stopping) finish(0);
   else launch();
   return result;
+}
+
+function isAcceptanceTraceMessage(message: object & { type: unknown }): message is {
+  type: typeof ACCEPTANCE_TRACE;
+  channel: "whatsapp";
+  accountId: string;
+  stage: string;
+} {
+  return message.type === ACCEPTANCE_TRACE &&
+    "channel" in message &&
+    message.channel === "whatsapp" &&
+    "accountId" in message &&
+    typeof message.accountId === "string" &&
+    /^[a-z][a-z0-9_-]{0,31}$/iu.test(message.accountId) &&
+    "stage" in message &&
+    typeof message.stage === "string" &&
+    PRIVATE_TRACE_STAGES.has(
+      message.stage as typeof PRIVATE_TRACE_STAGES extends Set<infer T> ? T : never,
+    );
+}
+
+function isChannelReadyMessage(message: object & { type: unknown }): message is {
+  type: typeof CHANNEL_READY;
+  channel: "whatsapp";
+  accountId: string;
+} {
+  if (
+    message.type !== CHANNEL_READY ||
+    !("channel" in message) ||
+    message.channel !== "whatsapp" ||
+    !("accountId" in message) ||
+    typeof message.accountId !== "string"
+  ) {
+    return false;
+  }
+  return /^[a-z][a-z0-9_-]{0,31}$/iu.test(message.accountId);
 }
 
 function positive(value: number | undefined, fallback: number, name: string): number {

@@ -14,7 +14,7 @@ interface LockPayload {
   version: 1;
   pid: number;
   token: string;
-  role: "runtime" | "probe" | "evaluation" | "backup";
+  role: "runtime" | "probe" | "evaluation" | "backup" | "setup";
   startedAt: string;
 }
 
@@ -168,7 +168,8 @@ function parseLock(raw: string): LockPayload | null {
       Number.isSafeInteger(value.pid) && value.pid! > 0 &&
       typeof value.token === "string" &&
       (value.role === "runtime" || value.role === "probe" ||
-        value.role === "evaluation" || value.role === "backup") &&
+        value.role === "evaluation" || value.role === "backup" ||
+        value.role === "setup") &&
       typeof value.startedAt === "string"
       ? value as LockPayload
       : null;

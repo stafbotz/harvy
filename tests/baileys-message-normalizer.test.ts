@@ -5,9 +5,36 @@ import {
   normalizeBaileysGroupMessage,
   normalizeBaileysPrivateMessage,
   whatsappPrivateOwnerId,
+  whatsAppPrivatePresentationBubbles,
 } from "../src/whatsapp/baileys-message-normalizer.js";
 
 describe("normalisasi pesan Baileys", () => {
+  it("mempertahankan bubble eksplisit surface code-owned tanpa memecah ulang", () => {
+    const bubbles = ["👋", "Haloo, aku Harvy.", "Kalau kamu oke, balas SETUJU."];
+
+    assert.deepEqual(
+      whatsAppPrivatePresentationBubbles(
+        { text: bubbles.join("\n\n"), presentationBubbles: bubbles },
+        12_000,
+      ),
+      bubbles,
+    );
+  });
+
+  it("menolak metadata bubble eksplisit yang tidak sama dengan logical reply", () => {
+    assert.throws(
+      () =>
+        whatsAppPrivatePresentationBubbles(
+          {
+            text: "Pesan sebenarnya",
+            presentationBubbles: ["Pesan yang berbeda"],
+          },
+          12_000,
+        ),
+      /tidak cocok/iu,
+    );
+  });
+
   it("membaca teks, participant LID/PN, mention metadata, dan admin", () => {
     let adminCandidates: readonly string[] = [];
     const normalized = normalizeBaileysGroupMessage(

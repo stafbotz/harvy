@@ -32,7 +32,11 @@ export interface CommandCategoryDefinition {
 }
 
 const CATEGORIES: readonly CommandCategoryDefinition[] = [
-  { id: "tasks", label: "Tugas", summary: "lihat pekerjaan dan pengingat" },
+  {
+    id: "tasks",
+    label: "Tugas & sesi",
+    summary: "lihat pekerjaan, pengingat, sesi, dan check-in",
+  },
   { id: "usage", label: "Penggunaan & paket", summary: "kapasitas, pembaruan, dan dukungan" },
   { id: "memory", label: "Memori & data", summary: "lihat atau kendalikan data pribadimu" },
   { id: "coding", label: "Coding", summary: "workspace dan pekerjaan coding" },
@@ -277,6 +281,11 @@ export function commandCategories(
   const active = new Set(
     userCommandCatalog(options, channel).map((command) => command.category),
   );
+  // Telegram membuka kontrol pengaturan lewat tombol native, bukan kumpulan
+  // slash command. Capability itu tetap harus terlihat di /menu; menurunkan
+  // kategori hanya karena transport kontrolnya berbeda membuat Telegram
+  // tampak lebih miskin daripada WhatsApp padahal operasinya tersedia.
+  if (channel === "telegram") active.add("settings");
   return CATEGORIES.filter((category) => active.has(category.id)).map(
     (category) => ({ ...category }),
   );
@@ -312,6 +321,14 @@ export function renderCommandCategory(
   const commands = userCommandCatalog(options, channel).filter(
     (command) => command.category === category.id,
   );
+  if (channel === "telegram" && category.id === "settings") {
+    return [
+      category.label,
+      category.summary,
+      "",
+      "Gunakan tombol di bawah untuk mengatur memori dan data, gaya respons, zona waktu, jam tenang, serta izin AI.",
+    ].join("\n");
+  }
   return [
     category.label,
     category.summary,

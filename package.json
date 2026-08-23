@@ -21,6 +21,13 @@
     "acceptance:provider": "tsx scripts/provider-live-smoke.ts",
     "acceptance:whatsapp": "tsx scripts/whatsapp-live-acceptance.ts",
     "acceptance:whatsapp-private": "tsx scripts/whatsapp-private-live-acceptance.ts",
+    "setup:telegram-tester": "npm run console:setup",
+    "setup:whatsapp-harvy": "npm run console:setup",
+    "setup:whatsapp-tester": "npm run console:setup",
+    "console:setup": "tsx scripts/channel-setup-console.ts",
+    "test:console-browser": "tsx scripts/console-browser-smoke.ts",
+    "acceptance:telegram-private": "npm run build --silent && tsx scripts/telegram-private-live-acceptance.ts",
+    "acceptance:whatsapp-private:managed": "npm run build --silent && tsx scripts/run-whatsapp-private-live-acceptance.ts",
     "backup:create": "tsx scripts/local-backup.ts create",
     "backup:verify": "tsx scripts/local-backup.ts verify",
     "backup:restore": "tsx scripts/local-backup.ts restore",
@@ -36,7 +43,8 @@
   "dependencies": {
     "baileys": "7.0.0-rc14",
     "grammy": "^1.45.1",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "0.12.0",
+    "teleproto": "1.228.5"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

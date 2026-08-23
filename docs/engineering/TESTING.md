@@ -1012,6 +1012,10 @@ pengguna nyata sebelum seluruh langkah dasar lulus.
    berstatus `open`, bukan menampilkan QR kedua. Log Baileys mentah seperti
    `logging in...` sengaja tidak diteruskan lagi. Pastikan QR tidak masuk berkas
    log dan restart proses memakai auth yang sama tanpa pairing ulang.
+   Jangan memakai flag `registered` sendirian sebagai oracle keberhasilan QR;
+   pada Baileys 7 rc14 flag itu dapat tetap `false` setelah pair-success sah.
+   Validator Harvy harus menerima material pair-success lengkap dan tetap
+   menolak state `me`-only.
    `APP_ENV=production` maupun stdout non-TTY harus menolak menampilkannya.
    Mode `code` diuji terpisah hanya bila perlu karena kegagalan pairing-code
    upstream Baileys masih terbuka.

@@ -1,8 +1,8 @@
 # Status — Telegram Privat
 
-Refreshed: 23 Agustus 2026 pada latest-build runtime smoke dan parity privat.
-Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; acceptance pengguna
-Telegram nyata belum diperbarui.
+Refreshed: 23 Agustus 2026 pada acceptance akun Telegram tester nyata terhadap
+latest build. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; baseline
+privat lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
 
 ## Keadaan saat ini
 
@@ -11,6 +11,12 @@ Telegram nyata belum diperbarui.
 - Telegram privat dan WhatsApp privat memakai kontrak capability yang sama;
   Telegram mempertahankan tombol/callback untuk UX kanal, bukan hak fitur yang
   sengaja ditahan dari WhatsApp.
+- Harness pengguna nyata kini tersedia melalui akun tester MTProto terpisah.
+  Pairing QR menyimpan `api_id`, `api_hash`, session pengguna, dan token bot uji
+  di vault lokal terenkripsi; acceptance menyalakan build dalam state sementara,
+  menghasilkan receipt content-free, lalu memakai kontrol produk untuk cleanup.
+  Pairing dan run penuh sudah dilakukan pada 23 Agustus 2026; credential uji
+  tetap terpisah dari bot utama.
 - Onboarding menahan pesan pertama sampai consent, mempertahankan urutan bubble,
   dan menyediakan jalur safety tanpa consent. Bubble setelah pesan pertama
   tidak dikirim ke model atau dinilai safety sebelum consent. Setelah consent,
@@ -97,9 +103,16 @@ Telegram nyata belum diperbarui.
 
 ## Batas dan defect aktif
 
-- Perbaikan batching, naturalness, waktu, onboarding, tombol, preference, dan
-  Agent Runtime terbaru lulus tes adapter serta eval provider, tetapi belum
-  diuji ulang sebagai percakapan end-to-end oleh pengguna Telegram nyata.
+- Acceptance akun tester nyata pada 23 Agustus 2026 menjalankan latest build
+  dan lulus 8/8 tahap: onboarding+menu capability, task+reminder, timezone+
+  sesi+check-in, penolakan consent memori implicit, planning runtime durable,
+  safety nonkrisis tersimulasi, ekspor dokumen, serta cleanup data. Tahap
+  planning selesai dalam sekitar 22 detik dengan tepat satu Run Anchor yang
+  diedit in-place, dipin saat aktif, dilepas pada terminal, dan satu bubble
+  hasil terpisah. Evaluator kegunaan menerima tepat tiga langkah; ketiganya
+  masing-masing memuat tindakan, bukti, dan kriteria lulus tanpa carry-over
+  skenario safety. Runtime shutdown bersih dan receipt tidak membawa isi pesan
+  atau identifier akun. Ini baseline acceptance, bukan dogfood tujuh hari.
 - Latest build sudah mencapai `application_ready` dengan polling Telegram aktif
   setelah recovery, lalu berhenti melalui IPC dengan `shutdown_completed` dan
   lock terlepas. Preflight Bot API `getMe` juga berhasil. Ini membuktikan
@@ -117,9 +130,11 @@ Telegram nyata belum diperbarui.
 - Emergency preflight closed-set Telegram belum mencakup command/callback dan
   bukan pengganti triase; false negative tetap mungkin. WhatsApp grup memakai
   matcher yang sama melalui jalur terpisah ADR-024.
-- Adaptive profile, semantic boundary, progress, shared presentation, dan
-  interruption baru teruji otomatis; kualitas timing/status/bubble aktual
-  belum diuji end-to-end lewat Telegram.
+- Baseline live sudah membuktikan onboarding multi-bubble, tombol sesi,
+  task/reminder, memory-consent, safety route, ekspor, serta topologi Run Anchor.
+  Adaptive timing pada rangkaian bubble bebas, interruption/correction saat
+  provider aktif, reconnect transport, dan kualitas penggunaan harian masih
+  baru teruji otomatis atau belum masuk baseline live.
 - Metrik turn mempunyai TTFR dan final terpisah untuk delivery yang
   diinstrumentasi, tetapi coverage command/callback/durable run serta dashboard
   agregat belum lengkap dan belum dikalibrasi live.
@@ -127,21 +142,23 @@ Telegram nyata belum diperbarui.
   provider exact, GitHub App remote, Telegram upload/callback, dan draft PR
   belum diuji end-to-end live pada deployment ini; runtime tetap default-off.
 - Work lane baru satu foreground dan belum mempunyai job queue kedua,
-  replacement policy, pin/archive Anchor, storage multi-instance, atau receipt
+  replacement policy, archive Anchor, storage multi-instance, atau receipt
   selain outbound Telegram.
-- Ada bukti live lama untuk onboarding/task/tombol dasar, tetapi bukti lama
-  tidak membuktikan build terbaru.
-- Kualitas klasifikasi `SemanticOperation` lintas bahasa baru dibuktikan oleh
-  schema/policy dan fixture otomatis, belum oleh provider atau akun Telegram
-  live.
+- Latest build kini mempunyai bukti baseline live untuk operasi Indonesia yang
+  dipakai acceptance. Kualitas `SemanticOperation` lintas bahasa dan parafrasa
+  luas tetap baru dibuktikan schema/policy, fixture, serta eval provider.
 
 ## Bukti dan pointer
 
-- Kode: `src/bot/`, `src/ai/conversation.ts`, `src/app.ts`.
+- Kode: `src/bot/`, `src/ai/conversation.ts`, `src/app.ts`,
+  `src/operations/live-acceptance.ts`, dan
+  `scripts/telegram-private-live-acceptance.ts`.
 - Tes: `tests/create-bot.test.ts`, `tests/conversation.test.ts`,
   `tests/message-batcher.test.ts`, `tests/create-bot-flow.test.ts`,
   `tests/turn-taking-policy.test.ts`, `tests/conversation-progress.test.ts`,
   `tests/response-presentation.test.ts`, `tests/onboarding.test.ts`, dan
-  `tests/private-coding-application-e2e.test.ts`.
+  `tests/private-coding-application-e2e.test.ts`, serta
+  `tests/live-acceptance.test.ts` untuk boundary vault/runtime (bukan bukti
+  transport live).
 - Keputusan: ADR-002, ADR-004, ADR-007, ADR-008, ADR-021, ADR-023, ADR-027,
   ADR-044.

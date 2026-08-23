@@ -34,6 +34,7 @@ import {
 } from "../bot/fast-path-policy.js";
 import {
   CONSENT_ACCEPTED,
+  CONSENT_ACCEPTED_EMOJI,
   CONSENT_ACCEPTED_HELD,
   HOLD_LIMIT_REACHED,
   HOLD_REMINDER,
@@ -42,6 +43,7 @@ import {
   PRE_CONSENT_UNCERTAIN,
   consentDetail,
   introBubbles,
+  isOnboardingEntryCommand,
 } from "../bot/onboarding.js";
 import { normalizeTelegramText } from "../bot/messages.js";
 import { MessageBatcher, type MessageBatch } from "../bot/message-batcher.js";
@@ -64,7 +66,10 @@ import {
   containsForbiddenMemorySecret,
   isSensitiveMemory,
 } from "../core/memory-policy.js";
-import { deriveMemoryMetadata } from "../core/memory-candidate.js";
+import {
+  deriveMemoryMetadata,
+  inferDurablePreferenceCandidate,
+} from "../core/memory-candidate.js";
 import {
   explicitMemoryRememberAuthority,
   normalizeMemoryWriteEmoji,
@@ -107,7 +112,7 @@ import {
   TransientConversationProgress,
 } from "../core/conversation-progress.js";
 import {
-  planResponsePresentation,
+  presentationPauseMs,
 } from "../core/response-presentation.js";
 import {
   parseUsageDashboardCommand,
@@ -122,7 +127,10 @@ import type {
   WhatsAppPrivateReplyResult,
   WhatsAppPrivateTransport,
 } from "./baileys-message-normalizer.js";
-import { whatsappPrivateOwnerId } from "./baileys-message-normalizer.js";
+import {
+  whatsappPrivateOwnerId,
+  whatsAppPrivatePresentationBubbles,
+} from "./baileys-message-normalizer.js";
 import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
@@ -255,6 +263,17 @@ export interface WhatsAppPrivateConversationDependencies {
       messageId: string,
       text: string,
     ): Promise<{ messageId: string }>;
+    removeTracked(
+      accountId: string,
+      userId: string,
+      messageId: string,
+    ): Promise<void>;
+    setPinned(
+      accountId: string,
+      userId: string,
+      messageId: string,
+      pinned: boolean,
+    ): Promise<void>;
   };
 }
 
@@ -271,6 +290,7 @@ const MAX_PRIVATE_REPLY_CHARACTERS = 12_000;
 
 interface ComposedPrivateReply {
   text: string;
+  presentationBubbles?: readonly string[];
   document?: WhatsAppPrivateOutboundDocument;
   storeHistory: boolean;
   onDelivered?: (delivery?: WhatsAppPrivateDelivery) => Promise<void>;
@@ -518,8 +538,9 @@ export class WhatsAppPrivateConversation {
             run.runId,
             messageId,
           );
+          await this.setActiveRunAnchorPinned(run, true);
         } else {
-          await this.updateActiveRunAnchor(run);
+          await this.updateActiveRunAnchor(run, true);
         }
         if (
           run.status === "queued" ||
@@ -805,7 +826,10 @@ export class WhatsAppPrivateConversation {
     };
   }
 
-  private async updateActiveRunAnchor(run: ActiveAgentRun): Promise<void> {
+  private async updateActiveRunAnchor(
+    run: ActiveAgentRun,
+    ensurePinned = false,
+  ): Promise<void> {
     const agentRuns = this.dependencies.agentRuns;
     const proactive = this.dependencies.proactive;
     const target = parseWhatsAppPrivateChatId(run.anchor.chatId);
@@ -818,13 +842,39 @@ export class WhatsAppPrivateConversation {
           run.anchor.messageId,
           renderRunAnchor(run),
         );
+        if (isTerminalActiveRun(run)) {
+          await this.setActiveRunAnchorPinned(run, false);
+        } else if (ensurePinned) {
+          await this.setActiveRunAnchorPinned(run, true);
+        }
         return;
       } catch (error) {
         this.logger.warn(
           "whatsapp_private_active_run_anchor_edit_failed",
-          "Run Anchor WhatsApp gagal diedit; anchor pengganti akan dikirim.",
+          "Run Anchor WhatsApp gagal diedit; anchor lama harus dihapus sebelum pengganti dikirim.",
           { errorType: error instanceof Error ? error.name : "unknown" },
         );
+        try {
+          await proactive.removeTracked(
+            target.accountId,
+            target.userId,
+            run.anchor.messageId,
+          );
+        } catch (removeError) {
+          if (isTerminalActiveRun(run)) {
+            await this.setActiveRunAnchorPinned(run, false);
+          }
+          this.logger.warn(
+            "whatsapp_private_active_run_anchor_replace_blocked",
+            "Anchor pengganti tidak dikirim karena anchor lama belum berhasil dihapus.",
+            {
+              errorType: removeError instanceof Error
+                ? removeError.name
+                : "unknown",
+            },
+          );
+          return;
+        }
       }
     }
     const sent = await proactive.sendTracked(
@@ -834,12 +884,43 @@ export class WhatsAppPrivateConversation {
     );
     const messageId = sent.messageIds.at(-1);
     if (!messageId) throw new Error("Anchor pengganti tidak menghasilkan ID pesan.");
-    await agentRuns.attachActiveAnchor(
+    const attached = await agentRuns.attachActiveAnchor(
       "whatsapp",
       run.ownerId,
       run.runId,
       messageId,
     );
+    if (!isTerminalActiveRun(attached)) {
+      await this.setActiveRunAnchorPinned(attached, true);
+    }
+  }
+
+  private async setActiveRunAnchorPinned(
+    run: ActiveAgentRun,
+    pinned: boolean,
+  ): Promise<void> {
+    const proactive = this.dependencies.proactive;
+    const target = parseWhatsAppPrivateChatId(run.anchor.chatId);
+    const messageId = run.anchor.messageId;
+    if (!proactive || !target || !messageId) return;
+    try {
+      await proactive.setPinned(
+        target.accountId,
+        target.userId,
+        messageId,
+        pinned,
+      );
+    } catch (error) {
+      this.logger.warn(
+        pinned
+          ? "whatsapp_private_active_run_anchor_pin_failed"
+          : "whatsapp_private_active_run_anchor_unpin_failed",
+        pinned
+          ? "Run Anchor WhatsApp gagal disematkan."
+          : "Run Anchor WhatsApp terminal gagal dilepas dari sematan.",
+        { errorType: error instanceof Error ? error.name : "unknown" },
+      );
+    }
   }
 
   private abortActiveAgentWork(ownerId: string, runId?: string): void {
@@ -1125,15 +1206,19 @@ export class WhatsAppPrivateConversation {
     const prepared = typeof result === "string" ? { text: result } : result;
     const clean = prepared?.text.trim() ?? "";
     if (!prepared || !clean) return;
-    const plan = planResponsePresentation(clean, {
-      maxSegmentCharacters: MAX_PRIVATE_REPLY_CHARACTERS,
-    });
+    const bubbles = whatsAppPrivatePresentationBubbles(
+      prepared,
+      MAX_PRIVATE_REPLY_CHARACTERS,
+    );
     const delivered: string[] = [];
     const messageIds: string[] = [];
     try {
-      for (const [index, segment] of plan.segments.entries()) {
+      for (const [index, bubble] of bubbles.entries()) {
         if (index > 0) {
-          await interruptiblePrivatePause(segment.pauseBeforeMs, runtime.signal);
+          await interruptiblePrivatePause(
+            presentationPauseMs(bubble),
+            runtime.signal,
+          );
         }
         if (
           !(await privateRuntimeIsCurrent(runtime)) ||
@@ -1142,9 +1227,9 @@ export class WhatsAppPrivateConversation {
           throw new PrivateTurnSupersededError();
         }
         if (index === 0) await runtime.progress?.responding?.();
-        const sent = await transport.send(segment.text);
+        const sent = await transport.send(bubble);
         if (sent.messageId) messageIds.push(sent.messageId);
-        delivered.push(segment.text);
+        delivered.push(bubble);
       }
       if (prepared.document) {
         if (
@@ -1283,9 +1368,16 @@ export class WhatsAppPrivateConversation {
         return this.acceptConsent(ownerId, message);
       }
       const onboarding = await this.beginOnboarding(ownerId, text);
-      return message.document
-        ? `${onboarding}\n\nSetelah menyetujui, kirim ulang file ZIP supaya berkas tidak ditahan sebelum izin.`
-        : onboarding;
+      if (!message.document) return onboarding;
+      const documentNotice =
+        "Setelah menyetujui, kirim ulang file ZIP supaya berkas tidak ditahan sebelum izin.";
+      return {
+        text: [onboarding.text, documentNotice].filter(Boolean).join("\n\n"),
+        presentationBubbles: [
+          ...(onboarding.presentationBubbles ?? []),
+          documentNotice,
+        ],
+      };
     }
 
     if (message.document) {
@@ -1962,8 +2054,12 @@ export class WhatsAppPrivateConversation {
     ].join("\n");
   }
 
-  private async beginOnboarding(ownerId: string, text: string): Promise<string> {
-    const heldSuccessfully = this.held.hold(ownerId, text);
+  private async beginOnboarding(
+    ownerId: string,
+    text: string,
+  ): Promise<WhatsAppPrivateReply> {
+    const shouldHold = Boolean(text.trim()) && !isOnboardingEntryCommand(text);
+    const heldSuccessfully = shouldHold && this.held.hold(ownerId, text);
     const first = this.held.markIntroduced(ownerId);
     const replies: string[] = [];
 
@@ -1979,10 +2075,16 @@ export class WhatsAppPrivateConversation {
 
     if (first) {
       replies.push(
-        ...introBubbles(null, heldSuccessfully, this.options.termsUrl),
+        ...introBubbles(
+          null,
+          shouldHold && heldSuccessfully,
+          this.options.termsUrl,
+        ),
         "Kalau kamu oke, balas SETUJU. Untuk penjelasan lebih rinci, balas INFO.",
       );
-    } else if (!heldSuccessfully && this.held.markLimitWarned(ownerId)) {
+    } else if (
+      shouldHold && !heldSuccessfully && this.held.markLimitWarned(ownerId)
+    ) {
       replies.push(whatsAppTextCopy(HOLD_LIMIT_REACHED));
     } else if (this.held.markReminded(ownerId)) {
       replies.push([
@@ -1992,7 +2094,10 @@ export class WhatsAppPrivateConversation {
       ].join("\n"));
     }
 
-    return replies.join("\n\n");
+    return {
+      text: replies.join("\n\n"),
+      presentationBubbles: replies,
+    };
   }
 
   private async assessPreConsentRisk(
@@ -2026,13 +2131,17 @@ export class WhatsAppPrivateConversation {
 
     const waiting = this.held.takeBatch(ownerId);
     this.held.clear(ownerId);
-    if (!waiting.text) return CONSENT_ACCEPTED;
+    if (!waiting.text) {
+      const bubbles = [CONSENT_ACCEPTED_EMOJI, CONSENT_ACCEPTED];
+      return { text: bubbles.join("\n\n"), presentationBubbles: bubbles };
+    }
 
-    return this.runConversationTurn(
+    const response = await this.runConversationTurn(
       ownerId,
       { ...message, text: waiting.text },
-      CONSENT_ACCEPTED_HELD,
+      "",
     );
+    return prependConsentAcceptedPresentation(response);
   }
 
   private async showMemories(ownerId: string): Promise<WhatsAppPrivateReply> {
@@ -2121,6 +2230,9 @@ export class WhatsAppPrivateConversation {
             settleUsage: true,
             recordLifecycle: !runtime.isCurrent,
             storeHistory: response.storeHistory,
+            ...(!prefix && response.presentationBubbles
+              ? { presentationBubbles: response.presentationBubbles }
+              : {}),
             ...(response.onDelivered
               ? { onDelivered: response.onDelivered }
               : {}),
@@ -2546,7 +2658,9 @@ export class WhatsAppPrivateConversation {
       const planningMode = globalRoute === "orchestrate"
         ? "orchestrate"
         : "tools";
-      const useAgent = !engagedSession &&
+      // Sesi adalah konteks lunak, bukan alasan menurunkan permintaan planning
+      // explicit ke reply biasa. Ini juga menjaga parity dengan Telegram.
+      const useAgent = (!engagedSession || requiresAgentPlanning) &&
         (globalRoute === "specialized" || globalRoute === "orchestrate") &&
         Boolean(this.dependencies.conversation.agent);
       let reply: string;
@@ -2670,6 +2784,9 @@ export class WhatsAppPrivateConversation {
       : null;
     return {
       text: guarded,
+      ...(activeRunLaunch
+        ? { presentationBubbles: [guarded] }
+        : {}),
       storeHistory: activeRunLaunch === null,
       onDelivered: async (delivery) => {
         if (remembered.sensitive) {
@@ -2695,6 +2812,7 @@ export class WhatsAppPrivateConversation {
               activeRunLaunch.runId,
               messageId,
             );
+            await this.setActiveRunAnchorPinned(attached, true);
             this.launchActiveAgentWork(attached);
           } catch (error) {
             this.logger.error(
@@ -2752,7 +2870,17 @@ export class WhatsAppPrivateConversation {
     storedUserTurn: StoredConversationTurn | null,
     runtime: ConversationRuntime,
   ): Promise<WhatsAppMemoryBatch> {
-    const candidates = understanding.memories
+    const proposedMemories: ExtractedMemory[] = [...understanding.memories];
+    const inferredPreference = inferDurablePreferenceCandidate(text);
+    if (
+      inferredPreference && !proposedMemories.some((memory) =>
+        memory.content.toLocaleLowerCase("id-ID") ===
+          inferredPreference.content.toLocaleLowerCase("id-ID")
+      )
+    ) {
+      proposedMemories.push(inferredPreference);
+    }
+    const candidates = proposedMemories
       .map((memory) => ({
         ...memory,
         ...deriveMemoryMetadata(memory.kind, memory.content, text),
@@ -2967,6 +3095,7 @@ export class WhatsAppPrivateConversation {
     settleUsage: boolean;
     recordLifecycle: boolean;
     storeHistory: boolean;
+    presentationBubbles?: readonly string[];
     document?: WhatsAppPrivateOutboundDocument;
     interaction?: {
       domain: SemanticDomain;
@@ -2978,6 +3107,9 @@ export class WhatsAppPrivateConversation {
     let finalized = false;
     return {
       text: input.outboundText,
+      ...(input.presentationBubbles
+        ? { presentationBubbles: input.presentationBubbles }
+        : {}),
       ...(input.document ? { document: input.document } : {}),
       onDelivered: async (delivery) => {
         if (finalized) return;
@@ -3576,6 +3708,51 @@ function whatsAppTextCopy(text: string): string {
       "Kalau kamu oke, kita mulai.",
       "Kalau kamu oke, balas SETUJU dan kita mulai.",
     );
+}
+
+function prependConsentAcceptedPresentation(
+  response: WhatsAppPrivateReply,
+): WhatsAppPrivateReply {
+  const prefix = [CONSENT_ACCEPTED_EMOJI, CONSENT_ACCEPTED_HELD];
+  const responseBubbles = whatsAppPrivatePresentationBubbles(
+    response,
+    MAX_PRIVATE_REPLY_CHARACTERS,
+  );
+  const adaptDelivery = (
+    delivery: WhatsAppPrivateDelivery | undefined,
+    complete: boolean,
+  ): WhatsAppPrivateDelivery => {
+    const deliveredAfterPrefix = Math.max(0, (delivery?.bubbleCount ?? 0) - prefix.length);
+    const deliveredTextBubbles = Math.min(
+      deliveredAfterPrefix,
+      responseBubbles.length,
+    );
+    return {
+      text: responseBubbles.slice(0, deliveredTextBubbles).join("\n\n"),
+      bubbleCount: deliveredAfterPrefix,
+      complete,
+      ...(delivery?.messageIds
+        ? { messageIds: delivery.messageIds.slice(prefix.length) }
+        : {}),
+    };
+  };
+  return {
+    ...response,
+    text: [...prefix, response.text.trim()].join("\n\n"),
+    presentationBubbles: [...prefix, ...responseBubbles],
+    ...(response.onDelivered
+      ? {
+          onDelivered: (delivery?: WhatsAppPrivateDelivery) =>
+            response.onDelivered!(adaptDelivery(delivery, true)),
+        }
+      : {}),
+    ...(response.onDeliveryFailed
+      ? {
+          onDeliveryFailed: (delivery?: WhatsAppPrivateDelivery) =>
+            response.onDeliveryFailed!(adaptDelivery(delivery, false)),
+        }
+      : {}),
+  };
 }
 
 function boundedDelivery(

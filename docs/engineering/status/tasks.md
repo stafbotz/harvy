@@ -1,7 +1,8 @@
 # Status — Tasks, Sessions, dan Waktu
 
-Refreshed: 23 Agustus 2026 pada delivery fence dan parity kanal privat; service
-dan adapter teruji otomatis, sedangkan delivery kanal nyata belum lengkap.
+Refreshed: 23 Agustus 2026 pada delivery fence, parity kanal privat, dan
+acceptance akun Telegram/WhatsApp nyata. Scheduling baseline terbukti live;
+delivery jatuh-tempo setelah crash tetap belum diuji.
 
 ## Keadaan saat ini
 
@@ -35,14 +36,17 @@ dan adapter teruji otomatis, sedangkan delivery kanal nyata belum lengkap.
   tetapi crash setelah persist intent dan sebelum receipt dapat membuat satu
   reminder tidak terkirim atau tetap berstatus ambigu. Belum ada reconciliation
   receipt eksternal yang dapat membedakan keduanya.
-- Task/reminder, session/check-in, timezone, dan quiet-hours tersedia pada
-  Telegram privat serta WhatsApp privat. Worker terbaru dan tutoring penuh
-  belum diuji end-to-end melalui pengguna nyata pada kedua kanal.
+- Acceptance akun nyata latest build pada Telegram dan WhatsApp privat sudah
+  membuktikan pembuatan task natural, penjadwalan reminder, perubahan timezone,
+  start/stop sesi, serta penjadwalan check-in dari kanal sampai state produk dan
+  balasan. Ia belum menunggu reminder/check-in benar-benar jatuh tempo, belum
+  melakukan crash di antara intent dan receipt, dan belum menguji tutoring
+  penuh atau quiet-hours end-to-end pada kedua transport.
 - Diagnostic provider live membaca tenggat natural `besok jam 7 malam`, dan
   evaluasi provider penuh lulus untuk save-task, reminder kosong, timezone,
-  jawaban singkat sesi, serta selesai sesi eksplisit. Ini belum membuktikan
-  delivery reminder/check-in pada transport akun nyata atau kualitas lintas
-  bahasa yang luas.
+  jawaban singkat sesi, serta selesai sesi eksplisit. Bersama acceptance live,
+  ini masih belum membuktikan delivery jatuh-tempo/recovery receipt atau
+  kualitas lintas bahasa yang luas.
 - `calendar.agenda` hanya membaca task/reminder/check-in Harvy untuk 1–31 hari;
   tidak terhubung ke Google/Outlook/device calendar dan tidak dapat memutasi
   event eksternal.

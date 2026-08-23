@@ -286,6 +286,13 @@ export function renderConversationProgress(
   return `${status}...\n💭 ${note}`;
 }
 
+/** Hanya untuk membedakan surface status transient dari jawaban user-facing. */
+export function isRenderedConversationProgress(text: string): boolean {
+  return /^(?:Memikirkan|Mencari|Membaca|Membandingkan|Menghitung|Memeriksa|Menyesuaikan|Beralih|Menyusun jawaban)\.\.\.\n💭\s/u.test(
+    text.trim(),
+  );
+}
+
 /**
  * Memvalidasi output model sebagai frasa semantic kecil. Field yang rusak
  * dibuang seluruhnya agar renderer jatuh ke fallback, bukan merangkai separuh

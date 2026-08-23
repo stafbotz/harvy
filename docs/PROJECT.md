@@ -47,10 +47,10 @@ jujur, tidak manipulatif, dan menghormati kendali pengguna.
 
 | Pengalaman | Kanal | Status |
 |---|---|---|
-| Harvy pribadi | Telegram | Kanal produk aktif; latest build mencapai polling live, tetapi acceptance pengguna nyata tujuh hari belum selesai |
+| Harvy pribadi | Telegram | Kanal produk aktif; baseline latest build lulus 8/8 lewat akun tester nyata, tetapi dogfood pengguna nyata tujuh hari belum selesai |
 | Harvy di grup | Telegram | Nanti; belum dimulai |
 | Harvy di grup | WhatsApp melalui Baileys | Kanal produk beta lokal; tidak dibekukan. Satu bukti grup nyata lama ada, tetapi latest build belum menjalani acceptance lengkap |
-| Harvy pribadi | WhatsApp melalui Baileys | Kanal produk beta lokal opt-in; capability personal/coding setara Telegram secara otomatis, tetapi akun lokal belum paired dan acceptance akun nyata belum dijalankan |
+| Harvy pribadi | WhatsApp melalui Baileys | Kanal produk beta lokal opt-in; capability personal/coding setara Telegram, dua akun uji sudah paired, dan baseline managed latest build lulus 10/10; reconnect serta CodingRun/GitHub live belum selesai |
 | Visualisasi | Web | Setelah alur chat terbukti perlu |
 
 WhatsApp dirancang untuk dapat memakai **banyak nomor Harvy**. Setiap nomor
@@ -103,11 +103,13 @@ Auth state beta memakai adapter multi-file Baileys di folder yang diabaikan
 Git. Bentuk itu memadai untuk pengembangan lokal tetapi bukan penyimpanan
 produksi: auth linked-device adalah kredensial jangka panjang dan kelak wajib
 dipindah ke database terenkripsi dengan single writer, kontrol akses, backup,
-dan audit yang sesuai. Pairing awal memakai QR yang dirender lokal di terminal
-interaktif sebagai default pengembangan; `APP_ENV=production` dan stdout
-noninteraktif tidak pernah menampilkannya. Pairing code tetap tersedia secara
-eksplisit pada jalur operator lokal, tetapi tidak menjadi default karena
-kegagalan upstream Baileys masih dapat menutup koneksi sebelum code diterima.
+dan audit yang sesuai. Akun live acceptance dipasangkan melalui Harvy Console
+loopback; QR hanya hidup sementara di memori dan tidak masuk status/audit.
+Runtime WhatsApp umum masih mempunyai fallback QR terminal interaktif pada
+development; `APP_ENV=production` dan stdout noninteraktif tidak pernah
+menampilkannya. Pairing code tetap tersedia secara eksplisit pada jalur
+operator lokal, tetapi tidak menjadi default karena kegagalan upstream Baileys
+masih dapat menutup koneksi sebelum code diterima.
 
 ## Posisi dan pembeda
 
@@ -443,12 +445,12 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   private, output allowlist, publish handoff private, dan authority lifecycle
   fence; reachability tetap opt-in dan belum live-accepted.
   Lihat `ADR-037`.
-- [x] Memori terstruktur per pengguna yang dapat dilihat dan dihapus. Memori
-  biasa disimpan otomatis disertai pemberitahuan, memori sensitif hanya dengan
-  izin. Lihat `ADR-006`. Pengenalan sensitivitas saat ini bergantung pada jenis
-  ekstraksi dan triase model; salah klasifikasi serentak keduanya masih
-  keterbatasan terbuka di `STATUS.md`, sehingga kata “hanya” di sini adalah
-  kontrak produk yang belum dijamin sempurna oleh implementasi.
+- [x] Memori terstruktur per pengguna yang dapat dilihat dan dihapus. Seluruh
+  kandidat implicit—biasa maupun sensitif—memerlukan izin item-spesifik;
+  perintah explicit remember harus dibuktikan dari raw turn dan credential
+  selalu ditolak. Salah klasifikasi model masih dapat melewatkan atau terlalu
+  sering menawarkan kandidat, tetapi tidak lagi menjadi authority write.
+  Lihat `ADR-006` dan `ADR-044`.
 - [x] Pemeriksaan keselamatan sebagai lapisan tersendiri: triase risiko tiga
   tingkat, arahan yang melarang menolak lalu menutup, dan pemeriksaan balasan
   sebelum dikirim. Penanganan pengguna di bawah 18 tahun berjalan tanpa pernah

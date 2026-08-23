@@ -1,8 +1,33 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { deriveMemoryMetadata } from "../src/core/memory-candidate.js";
+import {
+  deriveMemoryMetadata,
+  inferDurablePreferenceCandidate,
+} from "../src/core/memory-candidate.js";
 
 describe("deriveMemoryMetadata", () => {
+  it("membentuk kandidat lokal hanya untuk preferensi lintas giliran yang jelas", () => {
+    assert.deepEqual(
+      inferDurablePreferenceCandidate(
+        "Mulai sekarang, aku lebih suka semua jawaban memakai langkah pendek dan bernomor.",
+      ),
+      {
+        kind: "preference",
+        content: "Lebih suka semua jawaban memakai langkah pendek dan bernomor.",
+      },
+    );
+    assert.equal(
+      inferDurablePreferenceCandidate("Aku lebih suka jawaban ini singkat."),
+      null,
+    );
+    assert.equal(
+      inferDurablePreferenceCandidate(
+        "Tolong simpan: aku lebih suka semua jawaban singkat.",
+      ),
+      null,
+    );
+  });
+
   it("mengikat koreksi sekolah ke slot dan graph relation yang sama", () => {
     assert.deepEqual(
       deriveMemoryMetadata(

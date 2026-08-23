@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   DisconnectReason,
   initAuthCreds,
+  proto,
   type AuthenticationState,
   type BaileysEventEmitter,
   type BaileysEventMap,
@@ -285,6 +286,7 @@ describe("armada akun Baileys", () => {
     const groupMessages: string[] = [];
     let delivered = 0;
     let deliveryFailed = 0;
+    const lifecycle: string[] = [];
     const sockets: FakeSocket[] = [];
     const manager = new BaileysAccountManager(
       {
@@ -309,6 +311,7 @@ describe("armada akun Baileys", () => {
             },
           };
         },
+        onPrivateLifecycle: (_accountId, stage) => lifecycle.push(stage),
       },
       {
         loadAuthState: authLoader([]),
@@ -342,10 +345,73 @@ describe("armada akun Baileys", () => {
     assert.match(socket.sentMessages[0]?.text ?? "", /^\*Penggunaan Harvy\*/u);
     assert.equal(delivered, 1);
     assert.equal(deliveryFailed, 0);
+    assert.deepEqual(lifecycle, [
+      "private-upsert-notify",
+      "private-candidate",
+      "private-normalized",
+      "private-upsert-notify",
+      "private-candidate",
+      "private-normalized",
+      "private-handler-returned",
+      "private-delivery-attempted",
+      "private-delivery-succeeded",
+    ]);
     await manager.stop();
   });
 
-  it("mengembalikan receipt pesan privat proaktif dan mengedit anchor exact", async () => {
+  it("menganggap pair-success QR siap walau flag registered Baileys tetap false", async () => {
+    const creds = initAuthCreds();
+    creds.me = {
+      id: "628123456789:3@s.whatsapp.net",
+      lid: "12345:3@lid",
+      name: "~",
+    };
+    creds.account = {
+      details: Buffer.from([1]),
+      accountSignatureKey: Buffer.from([2]),
+      accountSignature: Buffer.from([3]),
+      deviceSignature: Buffer.from([4]),
+    };
+    creds.signalIdentities = [{
+      identifier: { name: "628123456789", deviceId: 3 },
+      identifierKey: Buffer.from([5]),
+    }];
+    const state = {
+      creds,
+      keys: {
+        get: async () => ({}),
+        set: async () => undefined,
+        clear: async () => undefined,
+      },
+    } as unknown as AuthenticationState;
+    const sockets: FakeSocket[] = [];
+    const manager = new BaileysAccountManager(
+      {
+        ...config(),
+        pairingMode: "code",
+        accounts: [config().accounts[0]!],
+      },
+      noOpEvents(),
+      {
+        loadAuthState: async () => ({ state, saveCreds: async () => undefined }),
+        createSocket: (value) => {
+          const socket = new FakeSocket(value, sockets.length);
+          sockets.push(socket);
+          return socket.value;
+        },
+      },
+    );
+
+    await manager.start();
+    sockets[0]!.ev.emit("connection.update", { connection: "connecting" });
+    await nextTurn();
+
+    assert.equal(creds.registered, false);
+    assert.equal(sockets[0]!.pairingRequests, 0);
+    await manager.stop();
+  });
+
+  it("mengelola exact anchor privat lewat edit, hapus, pin, dan unpin", async () => {
     const sockets: FakeSocket[] = [];
     const manager = new BaileysAccountManager(
       { ...config(), accounts: [config().accounts[0]!] },
@@ -378,6 +444,36 @@ describe("armada akun Baileys", () => {
     );
     assert.equal(edited.messageId, sent.messageIds[0]);
     assert.deepEqual(socket.editedMessageIds, ["out-Anchor pekerjaan"]);
+    await manager.setPrivateMessagePinned(
+      "utama",
+      "628777777777@s.whatsapp.net",
+      sent.messageIds[0]!,
+      true,
+    );
+    await manager.setPrivateMessagePinned(
+      "utama",
+      "628777777777@s.whatsapp.net",
+      sent.messageIds[0]!,
+      false,
+    );
+    assert.deepEqual(socket.pinOperations, [
+      {
+        messageId: "out-Anchor pekerjaan",
+        type: proto.PinInChat.Type.PIN_FOR_ALL,
+        time: 604_800,
+      },
+      {
+        messageId: "out-Anchor pekerjaan",
+        type: proto.PinInChat.Type.UNPIN_FOR_ALL,
+        time: null,
+      },
+    ]);
+    await manager.removePrivateText(
+      "utama",
+      "628777777777@s.whatsapp.net",
+      sent.messageIds[0]!,
+    );
+    assert.deepEqual(socket.deletedMessageIds, ["out-Anchor pekerjaan"]);
     await manager.stop();
   });
 
@@ -2410,6 +2506,12 @@ class FakeSocket {
   }> = [];
   readonly quotedRemoteJids: Array<string | null> = [];
   readonly editedMessageIds: Array<string | null> = [];
+  readonly deletedMessageIds: Array<string | null> = [];
+  readonly pinOperations: Array<{
+    messageId: string | null;
+    type: number | null;
+    time: number | null;
+  }> = [];
   groupMetadataImpl: () => Promise<GroupMetadata> =
     async () => metadata();
 
@@ -2438,12 +2540,27 @@ class FakeSocket {
     },
     sendMessage: async (
       jid: string,
-      content: { text?: string; edit?: { id?: string } },
+      content: {
+        text?: string;
+        edit?: { id?: string };
+        delete?: { id?: string };
+        pin?: { id?: string };
+        type?: number | null;
+        time?: number;
+      },
       options?: { quoted?: WAMessage; messageId?: string },
     ) => {
       if (this.failSend) throw new Error("simulated send failure");
       this.quotedRemoteJids.push(options?.quoted?.key.remoteJid ?? null);
       if (content.edit) this.editedMessageIds.push(content.edit.id ?? null);
+      if (content.delete) this.deletedMessageIds.push(content.delete.id ?? null);
+      if (content.pin) {
+        this.pinOperations.push({
+          messageId: content.pin.id ?? null,
+          type: content.type ?? null,
+          time: content.time ?? null,
+        });
+      }
       this.sentMessages.push({
         jid,
         text: content.text ?? "",

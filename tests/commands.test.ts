@@ -27,9 +27,14 @@ describe("katalog command user-facing", () => {
     const help = renderHelpMessage(OFF, "telegram");
     assert.match(menu, /Menu Harvy/u);
     assert.match(menu, /Penggunaan & paket/u);
+    assert.match(menu, /Pengaturan/u);
     assert.match(help, /Contoh:/u);
     assert.match(help, /\/menu/u);
     assert.notEqual(menu, help);
+    assert.match(
+      renderCommandCategory("settings", OFF, "telegram") ?? "",
+      /memori dan data.*zona waktu.*izin AI/isu,
+    );
   });
 
   it("memfilter command berdasarkan availability dari sumber yang sama", () => {
@@ -71,8 +76,12 @@ describe("katalog command user-facing", () => {
       assert.ok(names.includes(name), name);
     }
     const help = renderHelpMessage(OFF, "whatsapp");
+    const menu = renderCommandMenu(OFF, "whatsapp");
     assert.doesNotMatch(help, /\/project|\/publish/u);
     assert.match(help, /ingatkan aku|Tugas,/u);
+    assert.match(menu, /Tugas & sesi/iu);
+    assert.match(menu, /check-in/iu);
+    assert.match(menu, /Memori & data/iu);
 
     const codingNames = userCommandCatalog(ON, "whatsapp")
       .map((item) => item.command);

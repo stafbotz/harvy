@@ -389,7 +389,8 @@ export function sessionActions(session: ActiveSession): InlineKeyboard {
       .text("Selesai", `session:${prefix}done`)
       .text("Aku tersangkut", `session:${prefix}stuck`)
       .row()
-      .text("Tanyain lagi nanti", `session:${prefix}checkin`);
+      .text("Tanyain lagi nanti", `session:${prefix}checkin`)
+      .text("Berhenti", `session:${prefix}stop`);
   }
 
   return keyboard

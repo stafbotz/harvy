@@ -36,6 +36,9 @@ describe("runtime supervisor", () => {
       '  process.exit(0);',
       '});',
       'process.send?.({ type: "harvy-dev-control-ready" });',
+      'process.send?.({ type: "harvy-runtime-channel-ready", channel: "whatsapp", accountId: "harvy" });',
+      'process.send?.({ type: "harvy-live-acceptance-trace", channel: "whatsapp", accountId: "harvy", stage: "private-normalized" });',
+      'process.send?.({ type: "harvy-live-acceptance-trace", channel: "whatsapp", accountId: "628000000000", stage: "private-normalized" });',
       'setInterval(() => undefined, 60_000);',
     ].join("\n"));
     const controller = new AbortController();
@@ -65,6 +68,29 @@ describe("runtime supervisor", () => {
       assert.equal(
         events.filter((event) => event.type === "child-started").length,
         2,
+      );
+      assert.deepEqual(
+        events.filter((event) => event.type === "child-ready"),
+        [{ type: "child-ready", attempt: 2 }],
+      );
+      assert.deepEqual(
+        events.filter((event) => event.type === "channel-ready"),
+        [{
+          type: "channel-ready",
+          attempt: 2,
+          channel: "whatsapp",
+          accountId: "harvy",
+        }],
+      );
+      assert.deepEqual(
+        events.filter((event) => event.type === "acceptance-trace"),
+        [{
+          type: "acceptance-trace",
+          attempt: 2,
+          channel: "whatsapp",
+          accountId: "harvy",
+          stage: "private-normalized",
+        }],
       );
     } finally {
       controller.abort();

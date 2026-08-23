@@ -86,6 +86,18 @@ describe("Conversation agent runtime", () => {
     assert.match(requests[0]?.messages[0]?.content ?? "", /settings\.time\.get/u);
     assert.doesNotMatch(requests[0]?.messages[0]?.content ?? "", /web\.search/u);
     assert.doesNotMatch(requests[0]?.messages[0]?.content ?? "", /agent\.delegate\.parallel/u);
+    assert.match(
+      requests[0]?.messages[0]?.content ?? "",
+      /bentuk, struktur, field, dan kedalaman yang diminta pengguna/iu,
+    );
+    assert.match(
+      requests[0]?.messages[0]?.content ?? "",
+      /jangan menghapus langkah, bukti, kriteria, atau detail yang diminta eksplisit/iu,
+    );
+    assert.doesNotMatch(
+      requests[0]?.messages[0]?.content ?? "",
+      /Jawaban final memakai bahasa pengguna, ringkas/iu,
+    );
     assert.match(requests[0]?.messages[1]?.content ?? "", /settings\.time\.get/u);
     assert.doesNotMatch(requests[0]?.messages[1]?.content ?? "", /task\.manage/u);
     assert.deepEqual(
@@ -1036,6 +1048,85 @@ describe("Conversation agent runtime", () => {
     if (result.status === "completed") assert.match(result.reply, /lengkap/u);
   });
 
+  it("memperbaiki final terstruktur yang tidak memenuhi field sebelum dikirim", async () => {
+    const requests: ChatRequest[] = [];
+    let call = 0;
+    const client = {
+      async completeToolTurn(
+        request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+      ): Promise<ChatAssistantToolMessage> {
+        requests.push(request);
+        call += 1;
+        assert.ok(request.tools.some(
+          (tool) => tool.function.name === "harvy_structured_steps_v1",
+        ));
+        const calls = [nativeToolCall("harvy_structured_steps_v1", call === 1
+          ? {
+              steps: [{
+                title: "Terlalu pendek",
+                field_1: "Uji.",
+              }],
+            }
+          : {
+              steps: [
+                {
+                  title: "Periksa onboarding nyata",
+                  field_1: "Jalankan onboarding dari akun acceptance yang datanya telah dibersihkan sepenuhnya.",
+                  field_2: "Rekam urutan bubble dan receipt transport tanpa menyimpan isi percakapan privat.",
+                  field_3: "Lulus bila consent dan menu tampil tepat satu kali dalam urutan produk yang benar.",
+                },
+                {
+                  title: "Periksa pekerjaan durable",
+                  field_1: "Kirim pekerjaan kompleks lalu amati satu anchor dari status awal sampai terminal.",
+                  field_2: "Catat identitas anchor, seluruh edit, pin, unpin, dan receipt hasil akhirnya.",
+                  field_3: "Lulus bila anchor yang sama diedit dan hasil menjawab setiap bagian permintaan.",
+                },
+                {
+                  title: "Periksa pemulihan kegagalan",
+                  field_1: "Nyalakan ulang runtime saat pekerjaan aktif lalu tunggu proses recovery selesai.",
+                  field_2: "Kumpulkan trace restart, status terminal, dan receipt delivery setelah pemulihan.",
+                  field_3: "Lulus bila pekerjaan pulih tanpa hasil ganda, kehilangan status, atau anchor baru.",
+                },
+              ],
+            }, call)];
+        assert.equal(request.validateToolCalls?.(calls), call === 2);
+        return { role: "assistant", content: null, tool_calls: calls };
+      },
+    } as unknown as AiClient;
+    const conversation = new Conversation(
+      client,
+      PRODUCTION_ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-08-04T05:00:00.000Z"),
+    );
+
+    const result = await conversation.agent(
+      [
+        "Susun rencana mendalam tepat tiga langkah.",
+        "Pada setiap langkah, tulis jelas: Tindakan, Bukti yang dikumpulkan, dan Kriteria lulus.",
+      ].join(" "),
+      "orchestrate",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(result.status, "completed");
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests[1]?.toolChoice, {
+      type: "function",
+      function: { name: "harvy_structured_steps_v1" },
+    });
+    assert.equal(requests[1]?.execution?.allowDelegation, false);
+    if (result.status === "completed") {
+      assert.match(result.reply, /^1\. Periksa onboarding nyata/mu);
+      assert.match(result.reply, /^2\. Periksa pekerjaan durable/mu);
+      assert.match(result.reply, /^3\. Periksa pemulihan kegagalan/mu);
+      assert.equal((result.reply.match(/Tindakan:/gu) ?? []).length, 3);
+      assert.equal((result.reply.match(/Bukti yang dikumpulkan:/gu) ?? []).length, 3);
+      assert.equal((result.reply.match(/Kriteria lulus:/gu) ?? []).length, 3);
+    }
+  });
+
   it("memulihkan truncation sekali dari state padat dengan role recovery tertutup", async () => {
     const requests: ChatRequest[] = [];
     let call = 0;
@@ -1630,6 +1721,18 @@ const NATIVE_CAPABILITY_NAMES: Readonly<Record<string, string>> = {
   "agent.delegate.parallel": "harvy_agent_delegate_parallel_v1",
   "agent.delegate.specialist": "harvy_agent_delegate_specialist_v1",
 };
+
+function nativeToolCall(
+  name: string,
+  input: unknown,
+  index = 0,
+): ChatToolCall {
+  return {
+    id: `call-${index}-${name}`,
+    type: "function",
+    function: { name, arguments: JSON.stringify(input) },
+  };
+}
 
 function nativeDecisionCall(
   decision: AgentPlannerDecision,

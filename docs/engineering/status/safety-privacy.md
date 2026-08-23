@@ -79,8 +79,11 @@ sebelum mengubah kontraknya.
   boundary/interruption tanpa fallback atau kegagalan provider. Di dalamnya,
   cerita biasa/putus cinta tetap pada dukungan proporsional, sedangkan self-harm
   dan kekerasan akut masuk jalur bahaya. Corpus ini adalah sampel regresi, bukan
-  pengukuran false-positive/false-negative yang terkalibrasi; jalur safety juga
-  belum diuji ulang end-to-end lewat akun Telegram/WhatsApp nyata.
+  pengukuran false-positive/false-negative yang terkalibrasi. Acceptance latest
+  build pada akun Telegram dan WhatsApp nyata juga meloloskan satu skenario
+  nonkrisis yang secara eksplisit ditandai sebagai simulasi melalui jalur
+  transport penuh, tanpa mencemari jawaban planning sesudahnya. Itu membuktikan
+  routing baseline, bukan penanganan krisis manusia nyata atau angka FP/FN.
 - Emergency preflight bersifat closed-set pada batching Telegram privat dan
   WhatsApp grup; jangan menganggap hasil negatif sebagai bukti aman. Grup baru
   tetap harus menyelesaikan notice sebelum ACK/model.

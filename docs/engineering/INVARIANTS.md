@@ -583,6 +583,47 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   snapshot itu; ID environment yang tidak sah menggagalkan startup, bukan
   diam-diam hilang. Katalog tidak dipersistenkan, sedangkan histori harga tetap
   append-only walau model kemudian dihapus atau diganti di `.env`.
+- **Pairing Console adalah boundary credential lokal, bukan data dashboard.**
+  Endpoint status/audit dilarang membawa token bot, `api_hash`, password 2FA,
+  session, nomor/JID, atau payload QR. QR hanya boleh hidup di memori operasi,
+  dirender sebagai matriks ke sesi operator loopback, lalu dibuang saat scan,
+  cancel, expiry, sukses, atau error. Browser tidak boleh membaca kembali
+  secret durable. Penggantian session baru commit setelah pairing berhasil;
+  pencabutan harus logout ke platform sebelum menghapus lokal dan gagal
+  tertutup bila logout tidak terbukti. Status terminal WhatsApp `loggedOut`
+  adalah bukti bahwa platform sudah mencabut session dan boleh dipakai untuk
+  membuang credential lokal yatim; close jaringan, timeout, atau alasan lain
+  bukan bukti. Pairing pengganti baru boleh dimulai setelah salah satu bukti
+  pencabutan tersebut terpenuhi. Role WhatsApp `harvy` dan `tester` wajib
+  memakai auth namespace serta identitas berbeda. Console pairing dan runner
+  acceptance wajib memegang lock credential lintas proses yang sama selama
+  operasi, bukan hanya mutex in-process. Pembacaan dan commit token bot serta
+  session tester Telegram diserialisasi di dalam proses agar dua completion
+  yang berdekatan tidak saling menimpa snapshot secret store. Cancel/timeout
+  memasang generation fence sebelum abort; callback QR atau session yang tiba
+  terlambat tidak boleh menghidupkan operasi lama kembali.
+- **Kesiapan auth WhatsApp berasal dari bukti credential, bukan satu flag
+  library.** `registered=true` tetap memerlukan identitas. Untuk pairing QR
+  Baileys 7 yang membiarkan flag itu `false`, readiness hanya boleh diberikan
+  bila identitas, seluruh account signature material, dan minimal satu signal
+  identity valid hadir bersama. State `me`-only tetap parsial. Console,
+  runtime, revoke, identity-separation guard, dan runner acceptance wajib
+  memakai validator yang sama.
+- **Credential-ready bukan transport-ready.** Managed acceptance WhatsApp wajib
+  menunggu account Harvy berstatus socket `open`, bukan sinyal kontrol proses,
+  lalu membuktikan ingress dan balasan live. Credential dapat membawa PN dan
+  LID; pemilihan serta pencocokan peer harus menerima keduanya, tetapi nilai
+  tersebut tidak boleh masuk receipt, Console, log, atau trace. Trace acceptance
+  hanya boleh berisi stage/counter allowlist content-free. Parent supervisor
+  wajib memberi batas lebih panjang daripada grace shutdown child dan baru
+  mengklaim selesai setelah isolated product state terhapus.
+- **Identitas utama tidak boleh dipromosikan diam-diam menjadi identitas
+  acceptance.** Snapshot Console atas konfigurasi kanal utama hanya boleh
+  membawa validitas, flag aktif, dan jumlah deklarasi; tidak boleh membawa
+  token, nomor, alias, path auth, atau mengklaim linked session. Bot/session
+  utama tidak disalin atau dipakai ulang oleh runner acceptance. Namespace uji
+  Telegram dan WhatsApp tetap terpisah dan pairing memerlukan konfirmasi akun
+  khusus pengujian.
 - **Capability model harus exact dan explicit.** Registry memakai
   `provider + modelId`, bukan base URL, tier, atau substring nama. Model tanpa
   deklarasi `AI_MODEL_PROFILES` hanya mendapat profile compatibility dan tidak
@@ -619,6 +660,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   model, isi chat, prompt/balasan, nama/ID pengguna atau grup, nomor, QR, token,
   atau kredensial kepada logger. Account ID WhatsApp wajib alias operasional
   non-pribadi yang diawali huruf. Trace tidak boleh berasal dari hash identitas.
+  Direct console call dependency Signal wajib dibuang pada boundary proses;
+  logger `silent` Baileys saja tidak cukup karena object ratchet dapat melewati
+  adapter logger.
   `warn`/`error` dicatat di boundary yang mengetahui operasinya; pure core tetap
   melempar error biasa. `LOG_RETENTION_DAYS` hanya menegakkan file lokal;
   collector mempunyai kebijakan retensi terpisah. Lihat `ADR-010`.
@@ -638,6 +682,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   nama di luar registry, argumen non-JSON, dan multi-call gagal tertutup. Hasil
   yang sah baru dinormalisasi menjadi `AgentPlannerDecision` dan tetap masuk
   seluruh validasi kernel sebelum executor dipanggil.
+- **Constraint bentuk final eksplisit dimiliki kode, bukan sekadar prompt.**
+  Untuk permintaan berpresisi tinggi yang meminta tepat sejumlah langkah,
+  beserta field per langkah bila disebutkan, runtime menurunkan
+  `ReplyStructureContract`. Final teks bebas tidak tersedia pada pass tersebut;
+  provider mengisi native structured-step schema dengan jumlah/field/minimum
+  substansi yang dibatasi, lalu kode merender nomor dan label. Label yang
+  berasal dari pesan tetap dibungkus sebagai data, bukan instruksi sistem.
+  Output malformed boleh mendapat paling banyak satu repair final terarah pada
+  RunBudget yang sama; output kedua yang tetap tidak sah tidak boleh dikirim.
+  Permintaan tanpa constraint exact tetap memakai final percakapan biasa.
 - **Continuation native adalah transcript sementara, bukan authority.** Dalam
   satu invocation, setiap observation harus mengikuti exact assistant turn
   dengan pesan `tool` dan `tool_call_id` yang cocok. Field yang diketahui—
@@ -719,8 +773,8 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   chat lain tidak boleh masuk record. Snapshot tetap data privat: ia wajib
   owner-scoped, berbatas, ikut penghapusan, dan diredaksi dari ekspor.
 - **Satu scope hanya mempunyai satu foreground nonterminal.** Work lane v2 saat
-  ini hanya untuk mode `orchestrate` privat Telegram. Foreground tidak boleh
-  menahan chat lane; job kedua tidak boleh diam-diam mengganti run pertama.
+  ini untuk mode `orchestrate` privat Telegram dan WhatsApp. Foreground tidak
+  boleh menahan chat lane; job kedua tidak boleh diam-diam mengganti run pertama.
   Store hanya mempertahankan record v1 atau v2 terbaru per scope; memulai run
   baru boleh mengganti terminal lama agar tidak ada data tertahan di luar
   bentuk ekspor tunggal.
@@ -759,8 +813,12 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 - **Run Anchor hanya merender fakta runtime.** Status/fase/work summary berasal
   dari record/event code-owned; nama model/tool/worker, persentase, dan ETA
   rekaan dilarang. Waiting input tidak boleh tampak sebagai spinner. Anchor
-  dikirim sebagai satu pesan editable dan harus disegarkan saat recovery atau
-  transisi expiry yang teramati.
+  privat dikirim tepat satu kali sebagai pesan editable, dipin selama run aktif,
+  diedit dengan message ID yang sama, lalu dilepas pada terminal; update status
+  tidak boleh menjadi bubble anchor pengganti. Hasil final boleh menjadi bubble
+  terpisah. Transient progress percakapan adalah surface kosmetik lain yang
+  wajib dibuang dan tidak dihitung sebagai Anchor. Anchor harus disegarkan saat
+  recovery atau transisi expiry yang teramati.
 - **Lifecycle hak data menang atas work lane.** Shutdown meng-abort dan mem-pause
   checkpoint sebelum drain. Startup merekonsiliasi running/paused/queued,
   pertanyaan kedaluwarsa, dan delivery ambigu. Penarikan consent/penghapusan

@@ -6,6 +6,39 @@ export type DerivedMemoryMetadata = Pick<
     "graphProjection"
 >;
 
+export interface LocallyInferredMemoryCandidate {
+  kind: "preference";
+  content: string;
+}
+
+/**
+ * Fallback sempit untuk preferensi yang jelas dimaksudkan lintas giliran.
+ * Ia hanya membentuk kandidat; seluruh jalur implicit tetap wajib meminta
+ * consent item-spesifik sebelum primary memory ditulis.
+ */
+export function inferDurablePreferenceCandidate(
+  rawTurn: string,
+): LocallyInferredMemoryCandidate | null {
+  const clean = compact(rawTurn);
+  if (
+    clean.length < 12 || clean.length > 500 || clean.endsWith("?") ||
+    /\b(?:ingat|simpan|catat)\b/iu.test(clean)
+  ) {
+    return null;
+  }
+  const patterns = [
+    /^(?:mulai sekarang|ke depannya|untuk seterusnya),?\s+(?:aku|saya)\s+lebih suka\s+(.+)$/iu,
+    /^(?:aku|saya)\s+lebih suka\s+((?:semua|setiap)\s+(?:jawaban|balasan)\b.+)$/iu,
+  ];
+  const value = captureValue(clean, patterns)?.replace(/[.!]+$/gu, "").trim() ??
+    null;
+  if (!value || value.length < 6 || value.length > 240) return null;
+  return {
+    kind: "preference",
+    content: `Lebih suka ${value}.`,
+  };
+}
+
 /**
  * Membentuk slot factual dan graph projection dengan parser lokal sempit.
  * Keluaran model tetap hanya content/kind; model tidak diberi kuasa membuat

@@ -79,6 +79,9 @@ import {
 import { EncryptedFileSecretStore } from "./core/secret-store.js";
 import { groupRuntimeAdmission } from "./core/group-runtime-policy.js";
 import { ConsoleServer } from "./console/console-server.js";
+import { ChannelSetupService } from "./operations/channel-setup.js";
+import { installThirdPartyConsoleSecretGuard } from
+  "./observability/third-party-console-guard.js";
 import { startCheckInWorker } from "./reminders/checkin-worker.js";
 import { startReminderWorker } from "./reminders/reminder-worker.js";
 import { FileHistoryRepository } from "./storage/file-history-repository.js";
@@ -132,6 +135,7 @@ import { VirtualTerminalExecutor } from "./agent/virtual-terminal.js";
 import { ParallelDelegationExecutor } from "./agent/parallel-delegation.js";
 
 async function main(): Promise<void> {
+  installThirdPartyConsoleSecretGuard();
 const logSystem = await createOperationalLogSystem(
   loadOperationalLogConfig(),
 );
@@ -457,6 +461,23 @@ const whatsappPrivate = config.whatsapp.enabled && config.whatsapp.privateEnable
               text,
             );
           },
+          removeTracked: async (accountId, userId, messageId) => {
+            if (!whatsapp) {
+              throw new Error("Transport WhatsApp privat belum tersedia.");
+            }
+            await whatsapp.removePrivateText(accountId, userId, messageId);
+          },
+          setPinned: async (accountId, userId, messageId, pinned) => {
+            if (!whatsapp) {
+              throw new Error("Transport WhatsApp privat belum tersedia.");
+            }
+            await whatsapp.setPrivateMessagePinned(
+              accountId,
+              userId,
+              messageId,
+              pinned,
+            );
+          },
         },
       },
       {
@@ -627,6 +648,7 @@ whatsapp = config.whatsapp.enabled
       },
       onStatus: (accountId, status) => {
         if (status !== "open") return;
+        notifySupervisorChannelReady("whatsapp", accountId);
         void whatsappPrivate?.resumeAgentRuns(accountId).catch(
           (error: unknown) => {
             logger.error(
@@ -637,6 +659,9 @@ whatsapp = config.whatsapp.enabled
             );
           },
         );
+      },
+      onPrivateLifecycle: (accountId, stage) => {
+        notifySupervisorAcceptanceTrace(accountId, stage);
       },
       onPairingCode: (accountId, code) => {
         if (
@@ -1049,6 +1074,20 @@ const agentRunRetention = startAgentRunRetentionWorker(
   logger.child("worker.agent-run-retention"),
 );
 
+const channelSetup = config.controlPlane.console.enabled
+  ? new ChannelSetupService({
+      primaryChannels: {
+        telegram: { declared: Boolean(config.telegramBotToken) },
+        whatsapp: {
+          configurationValid: true,
+          enabled: config.whatsapp.enabled,
+          privateEnabled: config.whatsapp.privateEnabled,
+          accountCount: config.whatsapp.accounts.length,
+          declared: config.whatsapp.enabled && config.whatsapp.accounts.length > 0,
+        },
+      },
+    })
+  : null;
 const consoleServer = config.controlPlane.console.enabled
   ? new ConsoleServer(
       controlPlane,
@@ -1057,6 +1096,7 @@ const consoleServer = config.controlPlane.console.enabled
       logger.child("console.server"),
       undefined,
       economy,
+      channelSetup,
     )
   : null;
 
@@ -1520,6 +1560,50 @@ function runtimeEnvironment(
 }
 
 type DevShutdownReason = "dev-restart" | "dev-stop";
+
+function notifySupervisorChannelReady(
+  channel: "whatsapp",
+  accountId: string,
+): void {
+  if (
+    process.env.HARVY_RUNTIME_SUPERVISOR !== "1" ||
+    typeof process.send !== "function"
+  ) {
+    return;
+  }
+  try {
+    process.send({
+      type: "harvy-runtime-channel-ready",
+      channel,
+      accountId,
+    });
+  } catch {
+    // Parent sudah berhenti; lifecycle child tetap ditangani signal dan exit.
+  }
+}
+
+function notifySupervisorAcceptanceTrace(
+  accountId: string,
+  stage: string,
+): void {
+  if (
+    process.env.HARVY_LIVE_ACCEPTANCE_TRACE !== "content-free-v1" ||
+    process.env.HARVY_RUNTIME_SUPERVISOR !== "1" ||
+    typeof process.send !== "function"
+  ) {
+    return;
+  }
+  try {
+    process.send({
+      type: "harvy-live-acceptance-trace",
+      channel: "whatsapp",
+      accountId,
+      stage,
+    });
+  } catch {
+    // Trace diagnostik tidak pernah memengaruhi runtime atau delivery produk.
+  }
+}
 
 function installDevShutdownControl(
   onShutdown: (reason: DevShutdownReason) => void,

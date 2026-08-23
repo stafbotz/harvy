@@ -44,6 +44,7 @@ import type {
 import {
   normalizeBaileysGroupMessage,
   normalizeBaileysPrivateMessage,
+  whatsAppPrivatePresentationBubbles,
   type WhatsAppPrivateMessage,
   type WhatsAppPrivateReply,
   type WhatsAppPrivateReplyResult,
@@ -54,6 +55,7 @@ import {
   type OperationalLogger,
 } from "../observability/operational-logger.js";
 import { createBaileysLogger } from "../observability/baileys-logger.js";
+import { isWhatsAppCredentialReady } from "./auth-credential.js";
 
 const OUTBOUND_MESSAGE_CACHE_MS = 2 * 60 * 60 * 1_000;
 export const GROUP_INCOMING_QUOTE_CACHE_MS = 60_000;
@@ -95,8 +97,24 @@ export interface BaileysAccountEvents {
     status: WhatsAppAccountStatus,
     reason?: number,
   ): void;
+  /** Metadata lifecycle content-free untuk acceptance/observability lokal. */
+  onPrivateLifecycle?(
+    accountId: string,
+    stage: WhatsAppPrivateLifecycleStage,
+  ): void;
   onError?(accountId: string, error: unknown): void;
 }
+
+export type WhatsAppPrivateLifecycleStage =
+  | "private-upsert-notify"
+  | "private-upsert-append"
+  | "private-candidate"
+  | "private-normalized"
+  | "private-handler-returned"
+  | "private-pipeline-failed"
+  | "private-delivery-attempted"
+  | "private-delivery-succeeded"
+  | "private-delivery-failed";
 
 export interface BaileysAccountManagerDependencies {
   createSocket?: (config: UserFacingSocketConfig) => WASocket;
@@ -585,6 +603,70 @@ export class BaileysAccountManager
     );
   }
 
+  async removePrivateText(
+    accountId: string,
+    userId: string,
+    messageId: string,
+  ): Promise<void> {
+    const runtime = this.accounts.get(accountId);
+    const socket = runtime?.socket ?? null;
+    if (
+      !runtime || runtime.stopping || runtime.status !== "open" || !socket
+    ) {
+      throw new Error(`Akun WhatsApp ${accountId} tidak tersambung.`);
+    }
+    const generation = runtime.generation;
+    await this.enqueueGroupOperation(
+      runtime,
+      `private:${userId}`,
+      async () => {
+        const transport = this.privateTransport(
+          runtime,
+          socket,
+          generation,
+          userId,
+        );
+        await transport.remove({ messageId });
+      },
+    );
+  }
+
+  async setPrivateMessagePinned(
+    accountId: string,
+    userId: string,
+    messageId: string,
+    pinned: boolean,
+  ): Promise<void> {
+    const runtime = this.accounts.get(accountId);
+    const socket = runtime?.socket ?? null;
+    if (
+      !runtime || runtime.stopping || runtime.status !== "open" || !socket
+    ) {
+      throw new Error(`Akun WhatsApp ${accountId} tidak tersambung.`);
+    }
+    const generation = runtime.generation;
+    await this.enqueueGroupOperation(
+      runtime,
+      `private:${userId}`,
+      async () => {
+        if (!this.isCurrent(runtime, generation)) {
+          throw new Error("Generation akun WhatsApp sudah berubah.");
+        }
+        await socket.sendMessage(userId, {
+          pin: {
+            remoteJid: userId,
+            fromMe: true,
+            id: messageId,
+          },
+          type: pinned
+            ? proto.PinInChat.Type.PIN_FOR_ALL
+            : proto.PinInChat.Type.UNPIN_FOR_ALL,
+          ...(pinned ? { time: 604_800 as const } : {}),
+        });
+      },
+    );
+  }
+
   /**
    * Revalidator live untuk retry reaktivasi. Cache tidak pernah menjadi bukti
    * membership: setiap pass masuk queue exact group dan membaca metadata dari
@@ -1032,9 +1114,10 @@ export class BaileysAccountManager
       );
       const { state, saveCreds } = await this.loadAuthState(authDirectory);
       if (!this.isCurrent(runtime, generation)) return;
+      const credentialReady = isWhatsAppCredentialReady(state.creds);
       if (
         this.config.pairingMode === "qr" &&
-        !state.creds.registered &&
+        !credentialReady &&
         state.creds.pairingCode
       ) {
         // Pairing-code yang ditolak meninggalkan state parsial. QR memerlukan
@@ -1047,7 +1130,7 @@ export class BaileysAccountManager
         await runtime.authWrite;
       }
       if (
-        state.creds.registered &&
+        credentialReady &&
         !credentialsMatchConfiguredNumber(
           runtime.config.phoneNumber,
           state.creds.me,
@@ -1093,7 +1176,7 @@ export class BaileysAccountManager
         runtime,
         socket,
         generation,
-        state.creds.registered,
+        credentialReady,
         saveCreds,
       );
     } catch (error) {
@@ -1106,7 +1189,7 @@ export class BaileysAccountManager
     runtime: AccountRuntime,
     socket: WASocket,
     generation: number,
-    registered: boolean,
+    credentialReady: boolean,
     saveCreds: () => Promise<void>,
   ): void {
     socket.ev.on("creds.update", () => {
@@ -1125,7 +1208,7 @@ export class BaileysAccountManager
           runtime,
           socket,
           generation,
-          registered,
+          credentialReady,
           update,
         ),
       );
@@ -1265,6 +1348,20 @@ export class BaileysAccountManager
     });
 
     socket.ev.on("messages.upsert", (upsert) => {
+      const hasInboundPrivate = upsert.messages.some((message) =>
+        message.key.fromMe !== true &&
+        Boolean(message.key.id) &&
+        Boolean(message.key.remoteJid) &&
+        !isJidGroup(message.key.remoteJid!)
+      );
+      if (hasInboundPrivate) {
+        this.notifyPrivateLifecycle(
+          runtime,
+          upsert.type === "notify"
+            ? "private-upsert-notify"
+            : "private-upsert-append",
+        );
+      }
       if (
         !this.acceptingEvents ||
         !this.isCurrent(runtime, generation) ||
@@ -1283,7 +1380,7 @@ export class BaileysAccountManager
     runtime: AccountRuntime,
     socket: WASocket,
     generation: number,
-    registeredAtConnect: boolean,
+    credentialReadyAtConnect: boolean,
     update: BaileysEventMap["connection.update"],
   ): Promise<void> {
     if (!this.isCurrent(runtime, generation)) return;
@@ -1299,7 +1396,7 @@ export class BaileysAccountManager
 
     if (
       update.connection === "connecting" &&
-      !registeredAtConnect &&
+      !credentialReadyAtConnect &&
       this.config.pairingMode === "code" &&
       !runtime.pairingRequested
     ) {
@@ -1437,11 +1534,15 @@ export class BaileysAccountManager
       if (!groupId) continue;
       if (!isJidGroup(groupId)) {
         if (!this.config.privateEnabled) continue;
+        if (raw.key.fromMe !== true && raw.key.id) {
+          this.notifyPrivateLifecycle(runtime, "private-candidate");
+        }
         const normalized = normalizeBaileysPrivateMessage(raw, {
           accountId: runtime.config.id,
           selfJids: selfJids(socket),
         });
         if (!normalized || !this.events.onPrivateMessage) continue;
+        this.notifyPrivateLifecycle(runtime, "private-normalized");
         const duplicateKey = messageCacheKey(
           normalized.userId,
           normalized.messageId,
@@ -1609,6 +1710,7 @@ export class BaileysAccountManager
     );
     try {
       const response = await this.events.onPrivateMessage?.(message, transport);
+      this.notifyPrivateLifecycle(runtime, "private-handler-returned");
       const prepared = typeof response === "string"
         ? { text: response }
         : response;
@@ -1623,14 +1725,15 @@ export class BaileysAccountManager
         }
         return;
       }
-      const plan = planResponsePresentation(text, {
-        maxSegmentCharacters: 12_000,
-      });
+      const bubbles = whatsAppPrivatePresentationBubbles(
+        prepared!,
+        12_000,
+      );
       const delivered: string[] = [];
       try {
-        for (const segment of plan.segments) {
-          await transport.send(segment.text);
-          delivered.push(segment.text);
+        for (const bubble of bubbles) {
+          await transport.send(bubble);
+          delivered.push(bubble);
         }
         if (prepared?.document) {
           await transport.sendDocument(prepared.document);
@@ -1655,6 +1758,7 @@ export class BaileysAccountManager
         this.reportError(runtime.config.id, error);
       }
     } catch (error) {
+      this.notifyPrivateLifecycle(runtime, "private-pipeline-failed");
       // Error boundary tetap content-free; callback tidak boleh membuat raw
       // private message masuk operational log.
       this.reportError(runtime.config.id, error);
@@ -1700,18 +1804,32 @@ export class BaileysAccountManager
       isCurrent,
       send: async (text) => {
         assertCurrent();
-        const sent = await socket.sendMessage(userId, { text: text.trim() });
-        return { messageId: sent?.key.id ?? null };
+        this.notifyPrivateLifecycle(runtime, "private-delivery-attempted");
+        try {
+          const sent = await socket.sendMessage(userId, { text: text.trim() });
+          this.notifyPrivateLifecycle(runtime, "private-delivery-succeeded");
+          return { messageId: sent?.key.id ?? null };
+        } catch (error) {
+          this.notifyPrivateLifecycle(runtime, "private-delivery-failed");
+          throw error;
+        }
       },
       sendDocument: async (document) => {
         assertCurrent();
-        const sent = await socket.sendMessage(userId, {
-          document: document.data,
-          fileName: document.fileName,
-          mimetype: document.mimetype,
-          ...(document.caption ? { caption: document.caption } : {}),
-        });
-        return { messageId: sent?.key.id ?? null };
+        this.notifyPrivateLifecycle(runtime, "private-delivery-attempted");
+        try {
+          const sent = await socket.sendMessage(userId, {
+            document: document.data,
+            fileName: document.fileName,
+            mimetype: document.mimetype,
+            ...(document.caption ? { caption: document.caption } : {}),
+          });
+          this.notifyPrivateLifecycle(runtime, "private-delivery-succeeded");
+          return { messageId: sent?.key.id ?? null };
+        } catch (error) {
+          this.notifyPrivateLifecycle(runtime, "private-delivery-failed");
+          throw error;
+        }
       },
       edit: async (reference, text) => {
         assertCurrent();
@@ -2156,6 +2274,21 @@ export class BaileysAccountManager
       },
     );
     this.events.onStatus?.(runtime.config.id, status, reason);
+  }
+
+  private notifyPrivateLifecycle(
+    runtime: AccountRuntime,
+    stage: WhatsAppPrivateLifecycleStage,
+  ): void {
+    try {
+      this.events.onPrivateLifecycle?.(runtime.config.id, stage);
+    } catch {
+      this.logger.warn(
+        "whatsapp_private_lifecycle_observer_failed",
+        "Observer lifecycle privat WhatsApp gagal dan diabaikan.",
+        { accountId: runtime.config.id, stage },
+      );
+    }
   }
 
   private reportError(accountId: string, error: unknown): void {

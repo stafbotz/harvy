@@ -146,6 +146,10 @@ export type ConsoleAuditAction =
   | "price_version_create"
   | "economy_credential_create"
   | "economy_credential_revoke"
+  | "channel_pairing_start"
+  | "channel_pairing_cancel"
+  | "channel_credential_update"
+  | "channel_credential_revoke"
   | "runtime_mode_update"
   | "unknown_mutation";
 

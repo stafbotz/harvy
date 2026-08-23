@@ -23,6 +23,7 @@ import {
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { privateAgentScope } from "../src/harness/scope.js";
 import { RunBudgetAccount } from "../src/core/run-budget.js";
+import { deriveReplyStructureContract } from "../src/core/reply-structure-contract.js";
 
 describe("agent routing dan planner contract", () => {
   it("memakai cheap tools untuk sederhana dan ambitious orchestrator untuk kompleks", () => {
@@ -173,6 +174,49 @@ describe("agent routing dan planner contract", () => {
       parseAgentNativeDecision([
         nativeCall("harvy_need_input_v1", { prompt: "\n" }),
       ], callable),
+      null,
+    );
+  });
+
+  it("mengganti final bebas dengan final langkah terstruktur saat kontrak exact ada", () => {
+    const contract = deriveReplyStructureContract(
+      "Susun mendalam tepat dua langkah. Pada setiap langkah, tulis: Tindakan dan Kriteria lulus.",
+    );
+    assert.ok(contract);
+    const tools = agentNativeTools([], contract);
+    assert.deepEqual(tools.map((tool) => tool.function.name), [
+      "harvy_structured_steps_v1",
+      "harvy_need_input_v1",
+    ]);
+    const decision = parseAgentNativeDecision([
+      nativeCall("harvy_structured_steps_v1", {
+        steps: [
+          {
+            title: "Periksa alur utama",
+            field_1: "Jalankan alur utama menggunakan akun acceptance nyata dari awal sampai terminal.\n2. Catat subaktivitas sebagai bagian field yang sama.",
+            field_2: "Lulus bila seluruh tahap muncul satu kali dan urutannya sesuai kontrak produk.",
+          },
+          {
+            title: "Periksa pemulihan",
+            field_1: "Mulai pekerjaan lalu nyalakan ulang runtime sebelum status terminal tercapai.",
+            field_2: "Lulus bila pekerjaan pulih tanpa hasil ganda dan anchor lama tetap digunakan.",
+          },
+        ],
+      }),
+    ], [], contract);
+
+    assert.equal(decision?.kind, "final");
+    if (decision?.kind === "final") {
+      assert.match(decision.reply, /^1\. Periksa alur utama/mu);
+      assert.match(decision.reply, /Tindakan:/u);
+      assert.match(decision.reply, /Kriteria lulus:/u);
+      assert.match(decision.reply, /^2\. Periksa pemulihan/mu);
+      assert.equal((decision.reply.match(/^\d+[.)]\s/gmu) ?? []).length, 2);
+    }
+    assert.equal(
+      parseAgentNativeDecision([
+        nativeCall("harvy_final_v1", { reply: "Jawaban dangkal." }),
+      ], [], contract),
       null,
     );
   });

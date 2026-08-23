@@ -48,6 +48,7 @@ import {
   agentPlannerPrompt,
   liveStateRequirement,
   parseAgentNativeDecision,
+  STRUCTURED_STEPS_TOOL_NAME,
   type AgentMode,
 } from "./agent.js";
 import {
@@ -148,6 +149,7 @@ import {
   type ModelProfileRegistry,
 } from "./model-profile.js";
 import type { RunBudgetAccount } from "../core/run-budget.js";
+import { deriveReplyStructureContract } from "../core/reply-structure-contract.js";
 import type { TierPrice } from "../core/telemetry-service.js";
 import { prepareAgentContext } from "./agent-context-pressure.js";
 import {
@@ -1289,6 +1291,7 @@ export class Conversation {
     const modelRoute = resolveModelRoute(cognitiveRole, this.routing);
     const tier = modelRoute.tier;
     const profile = resolveModelRouteProfile(modelRoute, this.routing);
+    const replyContract = deriveReplyStructureContract(plannerInput.request);
     const execution = this.execution(
       tier,
       role,
@@ -1340,6 +1343,7 @@ export class Conversation {
       });
       const nativeTools = agentNativeTools(
         effectivePlannerInput.callableCapabilities,
+        replyContract,
       );
       return {
         model: modelRoute.modelId,
@@ -1356,6 +1360,7 @@ export class Conversation {
           parseAgentNativeDecision(
             calls,
             effectivePlannerInput.callableCapabilities,
+            replyContract,
           ) !== null,
         usage: this.usage(runtime.ownerId, tier, "agent"),
         messages: [
@@ -1363,7 +1368,10 @@ export class Conversation {
             role: "system",
             content: [
               persona,
-              agentPlannerPrompt(effectivePlannerInput.callableCapabilities),
+              agentPlannerPrompt(
+                effectivePlannerInput.callableCapabilities,
+                replyContract,
+              ),
               ...(recovery
                 ? [
                     "Attempt sebelumnya berhenti karena batas output dan fragmennya tidak dipakai. Pulihkan hanya dari state tepercaya di request ini; panggil tepat satu function dengan argumen sesingkat yang tetap lengkap.",
@@ -1437,6 +1445,56 @@ export class Conversation {
         tools: request.tools,
       });
     };
+    const repairStructuredFinal = async (): Promise<ChatAssistantToolMessage> => {
+      if (!replyContract) {
+        throw new Error("Kontrak struktur final tidak tersedia untuk repair.");
+      }
+      const repairExecution = this.execution(
+        tier,
+        "synthesizer",
+        "agent",
+        null,
+        45_000,
+        {
+          modelId: modelRoute.modelId,
+          cognitiveRole,
+          difficulty:
+            runtime.routingAssessment?.complexity ??
+            (mode === "orchestrate" ? "deep" : "normal"),
+          ...(runtime.routingAssessment?.factualStakes
+            ? { stakes: runtime.routingAssessment.factualStakes }
+            : {}),
+          ...(runtime.routingAssessment?.ambiguity
+            ? { uncertainty: runtime.routingAssessment.ambiguity }
+            : {}),
+          maxSteps: 6,
+          allowTools: true,
+          allowDelegation: false,
+        },
+      );
+      const base = prepare(repairExecution, false);
+      const tools = agentNativeTools([], replyContract);
+      const repairRequest: ChatRequest = {
+        ...base,
+        execution: repairExecution,
+        tools,
+        toolChoice: {
+          type: "function",
+          function: { name: STRUCTURED_STEPS_TOOL_NAME },
+        },
+        validateToolCalls: (calls) =>
+          parseAgentNativeDecision(calls, [], replyContract) !== null,
+        messages: base.messages.map((message, index) =>
+          index === 0 && message.role === "system"
+            ? {
+                ...message,
+                content: `${message.content}\n\nJawaban terstruktur sebelumnya ditolak kode dan tidak dikirim kepada pengguna. Perbaiki seluruh field yang kurang atau terlalu pendek, lalu panggil tepat ${STRUCTURED_STEPS_TOOL_NAME}. Jangan mengubah jumlah langkah atau menghilangkan field.`,
+              }
+            : message
+        ),
+      };
+      return completePrepared(repairRequest);
+    };
 
     let assistant: ChatAssistantToolMessage;
     try {
@@ -1471,10 +1529,25 @@ export class Conversation {
       );
       assistant = await completePrepared(prepare(recoveryExecution, true));
     }
-    const decision = parseAgentNativeDecision(
+    let decision = parseAgentNativeDecision(
       assistant.tool_calls,
       plannerInput.callableCapabilities,
+      replyContract,
     );
+    if (
+      !decision && replyContract &&
+      assistant.tool_calls.some((call) =>
+        call.function.name === STRUCTURED_STEPS_TOOL_NAME
+      )
+    ) {
+      await assertRecoveryFresh(runtime, signal);
+      assistant = await repairStructuredFinal();
+      decision = parseAgentNativeDecision(
+        assistant.tool_calls,
+        [],
+        replyContract,
+      );
+    }
     if (!decision || !assistant.tool_calls[0]) {
       throw new Error("Planner agent mengembalikan keputusan tidak sah.");
     }

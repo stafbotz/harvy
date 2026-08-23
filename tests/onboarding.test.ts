@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  CONSENT_ACCEPTED_EMOJI,
+  CONSENT_ACCEPTED_HELD,
   CONSENT_DETAIL,
   consentActions,
   consentDetail,
   HeldMessageStore,
   introBubbles,
+  isOnboardingEntryCommand,
   PRE_CONSENT_SAFETY,
   welcomeBack,
 } from "../src/bot/onboarding.js";
@@ -102,6 +105,28 @@ describe("naskah perkenalan", () => {
       (buttons[0] as { callback_data?: string } | undefined)?.callback_data,
       "consent:yes",
     );
+  });
+
+  it("memakai acknowledgement consent yang sama di seluruh kanal privat", () => {
+    assert.equal(CONSENT_ACCEPTED_EMOJI, "😉");
+    assert.equal(
+      CONSENT_ACCEPTED_HELD,
+      "Oke, kita mulai. Aku lanjutkan pesanmu yang tadi.",
+    );
+  });
+
+  it("membedakan pintu onboarding dari pesan substantif yang perlu ditahan", () => {
+    for (const command of [
+      "/start",
+      " /MENU ",
+      "/bantuan",
+      "/HELP",
+    ]) {
+      assert.equal(isOnboardingEntryCommand(command), true, command);
+    }
+    assert.equal(isOnboardingEntryCommand("/menu tolong bantu tugas"), false);
+    assert.equal(isOnboardingEntryCommand("SETUJU"), false);
+    assert.equal(isOnboardingEntryCommand("tolong bantu aku"), false);
   });
 
   it("menyapa pengguna lama dari keadaan nyata, bukan ingatan yang dikarang", () => {

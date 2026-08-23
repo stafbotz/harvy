@@ -61,7 +61,10 @@ import {
   containsForbiddenMemorySecret,
   isSensitiveMemory,
 } from "../core/memory-policy.js";
-import { deriveMemoryMetadata } from "../core/memory-candidate.js";
+import {
+  deriveMemoryMetadata,
+  inferDurablePreferenceCandidate,
+} from "../core/memory-candidate.js";
 import {
   explicitMemoryRememberAuthority,
   normalizeMemoryWriteEmoji,
@@ -102,6 +105,7 @@ import {
 } from "../core/session-service.js";
 import {
   authorizedSessionSignal,
+  explicitlyRequestsSmallStepSession,
   sessionAppliesToMessage,
 } from "../core/session-policy.js";
 import type { TaskService } from "../core/task-service.js";
@@ -193,6 +197,7 @@ import { ActionOfferStore } from "./action-offers.js";
 import { MessageBatcher } from "./message-batcher.js";
 import {
   CONSENT_ACCEPTED,
+  CONSENT_ACCEPTED_EMOJI,
   CONSENT_ACCEPTED_HELD,
   consentDetail,
   consentActions,
@@ -880,6 +885,10 @@ export function createBot(
       "cancel",
       "Perintah /bantuan gagal:",
       async () => {
+        if (await profiles.needsOnboarding(ownerId)) {
+          await enqueueOnboarding(ctx, ownerId, "", true);
+          return;
+        }
         await clearPending(ownerId);
         actionOffers.clear(ownerId);
         await ctx.reply(renderHelpMessage(commandOptions, "telegram"), {
@@ -901,6 +910,10 @@ export function createBot(
       "cancel",
       "Perintah /menu gagal:",
       async () => {
+        if (await profiles.needsOnboarding(ownerId)) {
+          await enqueueOnboarding(ctx, ownerId, "", true);
+          return;
+        }
         await clearPending(ownerId);
         actionOffers.clear(ownerId);
         await ctx.reply(renderCommandMenu(commandOptions, "telegram"), {
@@ -2375,14 +2388,24 @@ export function createBot(
         return;
       }
 
-      const offeredTask = effectPermissions.generalState
+      const explicitSmallStepSession =
+        effectPermissions.generalState &&
+        !activeSession &&
+        route.kind === "conversation" &&
+        explicitlyRequestsSmallStepSession(text);
+      const offeredTask = effectPermissions.generalState &&
+          !explicitSmallStepSession
         ? taskToOffer(understanding)
         : null;
       const styleEligible =
         effectPermissions.generalState &&
+        !explicitSmallStepSession &&
         shouldAskStyle(profile) &&
         context.turns.length >= HISTORY_WINDOW &&
         !activeSession;
+      const suggestedActions = explicitSmallStepSession
+        ? (["start_small"] as const)
+        : (understanding.suggestedActions ?? []);
       const proposedActions =
         effectPermissions.generalState &&
         !activeSession &&
@@ -2392,8 +2415,12 @@ export function createBot(
         !styleEligible &&
         !(profile.stylePreference === "listen" &&
           understanding.intent === "feeling")
-          ? adaptiveActions(understanding.suggestedActions ?? [], {
-              intent: understanding.intent,
+          ? adaptiveActions(suggestedActions, {
+              // Permintaan code-owned ini tetap relevan walau extractor salah
+              // melabelinya sebagai task offer atau smalltalk.
+              intent: explicitSmallStepSession
+                ? "feeling"
+                : understanding.intent,
               risk: triage.level,
               hasActiveSession: false,
               hasBlockingQuestion: false,
@@ -2402,11 +2429,22 @@ export function createBot(
       const actionGoal =
         understanding.actionGoal?.trim() ||
         understanding.task?.title.trim() ||
+        (explicitSmallStepSession ? text : "") ||
         (proposedActions[0] === "listen" ? "Menyimak cerita ini" : "");
       const plannedActions = actionGoal ? proposedActions : [];
+      const proposedMemories: ExtractedMemory[] = [...understanding.memories];
+      const inferredPreference = inferDurablePreferenceCandidate(text);
+      if (
+        inferredPreference && !proposedMemories.some((memory) =>
+          memory.content.toLocaleLowerCase("id-ID") ===
+            inferredPreference.content.toLocaleLowerCase("id-ID")
+        )
+      ) {
+        proposedMemories.push(inferredPreference);
+      }
       const derivedMemoryCandidates = effectPermissions.generalState
           && !requiresAgentPlanning
-        ? understanding.memories.map((memory) => ({
+        ? proposedMemories.map((memory) => ({
             ...memory,
             ...deriveMemoryMetadata(memory.kind, memory.content, text),
             ...(storedUserTurn
@@ -2414,7 +2452,10 @@ export function createBot(
               : {}),
           }))
         : [];
-      const explicitRememberSignaled =
+      // Fallback lokal membuktikan bentuknya adalah preferensi implicit tanpa
+      // verba simpan. Label model tidak boleh menaikkannya menjadi consent
+      // explicit, bahkan bila semanticOperation model berkata sebaliknya.
+      const explicitRememberSignaled = inferredPreference === null &&
         understanding.memoryAction === "remember" &&
         understanding.taskAction === null &&
         understanding.task === null;
@@ -2496,7 +2537,7 @@ export function createBot(
           reply = conversation.deterministicTimeReply(timeZone);
         } else if (
           effectPermissions.generalState &&
-          !activeSession &&
+          (!engagedSession || requiresAgentPlanning) &&
           route.kind === "conversation" &&
           (understanding.intent === "question" ||
             understanding.intent === "request" ||
@@ -2729,7 +2770,7 @@ export function createBot(
         plannedActions.length > 0 &&
         remembered.saved.length === 0 &&
         remembered.sensitive === null &&
-        !replyHasBlockingQuestion(reply)
+        (!replyHasBlockingQuestion(reply) || explicitSmallStepSession)
       ) {
         adaptiveKeyboard = adaptiveActionButtons(
           actionOffers.set(ownerId, plannedActions, actionGoal),
@@ -2823,6 +2864,7 @@ export function createBot(
                 activeRunLaunch.runId,
                 String(sent.messageId),
               );
+              await setActiveRunAnchorPinned(activeRunLaunch, true);
               // Anchor yang sudah diakui transport tetap harus terikat ke
               // record. Namun work backend jangan diluncurkan bila pesan baru
               // menyupersesi turn persis selama send berlangsung.
@@ -3587,7 +3629,10 @@ export function createBot(
     };
   }
 
-  async function updateActiveRunAnchor(run: ActiveAgentRun): Promise<void> {
+  async function updateActiveRunAnchor(
+    run: ActiveAgentRun,
+    ensurePinned = false,
+  ): Promise<void> {
     const text = renderRunAnchor(run);
     const messageId = numericMessageId(run.anchor.messageId);
     if (messageId !== null) {
@@ -3597,14 +3642,42 @@ export function createBot(
           messageId,
           text,
         );
+        if (isTerminalActiveRun(run)) {
+          await setActiveRunAnchorPinned(run, false);
+        } else if (ensurePinned) {
+          await setActiveRunAnchorPinned(run, true);
+        }
         return;
       } catch (error) {
-        if (isTelegramMessageNotModified(error)) return;
+        if (isTelegramMessageNotModified(error)) {
+          if (isTerminalActiveRun(run)) {
+            await setActiveRunAnchorPinned(run, false);
+          } else if (ensurePinned) {
+            await setActiveRunAnchorPinned(run, true);
+          }
+          return;
+        }
         logger.warn(
           "active_run_anchor_edit_failed",
-          "Run Anchor gagal diedit; adapter mengirim anchor pengganti.",
+          "Run Anchor gagal diedit; anchor lama harus dihapus sebelum pengganti dikirim.",
           { error },
         );
+        try {
+          await bot.api.deleteMessage(
+            telegramChatId(run.anchor.chatId),
+            messageId,
+          );
+        } catch (deleteError) {
+          if (isTerminalActiveRun(run)) {
+            await setActiveRunAnchorPinned(run, false);
+          }
+          logger.warn(
+            "active_run_anchor_replace_blocked",
+            "Anchor pengganti tidak dikirim karena anchor lama belum berhasil dihapus.",
+            { error: deleteError },
+          );
+          return;
+        }
       }
     }
     try {
@@ -3612,12 +3685,15 @@ export function createBot(
         telegramChatId(run.anchor.chatId),
         text,
       );
-      await agentRuns?.attachActiveAnchor(
+      const attached = await agentRuns?.attachActiveAnchor(
         "telegram",
         run.ownerId,
         run.runId,
         String(sent.message_id),
       );
+      if (attached && !isTerminalActiveRun(attached)) {
+        await setActiveRunAnchorPinned(attached, true);
+      }
     } catch (error) {
       logger.warn(
         "active_run_anchor_fallback_failed",
@@ -3642,8 +3718,9 @@ export function createBot(
           run.runId,
           String(sent.message_id),
         );
+        await setActiveRunAnchorPinned(run, true);
       } else {
-        await updateActiveRunAnchor(run);
+        await updateActiveRunAnchor(run, true);
       }
       if (
         run.status === "queued" ||
@@ -4730,6 +4807,36 @@ export function createBot(
     }
   }
 
+  async function setActiveRunAnchorPinned(
+    run: ActiveAgentRun,
+    pinned: boolean,
+  ): Promise<void> {
+    const messageId = numericMessageId(run.anchor.messageId);
+    if (messageId === null) return;
+    try {
+      if (pinned) {
+        await bot.api.pinChatMessage(
+          telegramChatId(run.anchor.chatId),
+          messageId,
+          { disable_notification: true },
+        );
+      } else {
+        await bot.api.unpinChatMessage(
+          telegramChatId(run.anchor.chatId),
+          messageId,
+        );
+      }
+    } catch (error) {
+      logger.warn(
+        pinned ? "active_run_anchor_pin_failed" : "active_run_anchor_unpin_failed",
+        pinned
+          ? "Run Anchor Telegram gagal disematkan."
+          : "Run Anchor Telegram terminal gagal dilepas dari sematan.",
+        { error },
+      );
+    }
+  }
+
   async function rollbackOrdinaryMemories(
     ownerId: string,
     items: MemoryItem[],
@@ -5038,7 +5145,13 @@ export function createBot(
           "telegram",
         );
         if (!rendered) return;
-        await safeEdit(ctx, rendered, menuActions(commandOptions));
+        await safeEdit(
+          ctx,
+          rendered,
+          target === "settings"
+            ? dataControlActions()
+            : menuActions(commandOptions),
+        );
         interactionContext.record(interactionScope(ownerId), {
           domain: "menu",
           operation: "show-category",
@@ -6049,7 +6162,7 @@ export function createBot(
       hasExplicitImmediateDangerSignal,
     );
 
-    await ctx.reply("😉");
+    await ctx.reply(CONSENT_ACCEPTED_EMOJI);
     await ctx.reply(waiting.text ? CONSENT_ACCEPTED_HELD : CONSENT_ACCEPTED);
 
     // Diproses langsung, bukan lewat batcher: pesannya sudah selesai ditulis

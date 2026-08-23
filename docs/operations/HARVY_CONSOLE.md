@@ -1,9 +1,10 @@
 # Harvy Console: Operasi Lokal dan Jalur Produksi
 
 Harvy Console adalah control plane operator, bukan kanal percakapan pengguna.
-Versi sekarang sengaja hidup di proses Harvy yang sama dan hanya menerima
-koneksi `127.0.0.1`. Tujuannya adalah mengelola akses pilot serta memahami
-usage dan biaya tanpa menjadikan log sebagai arsip percakapan.
+Versi runtime sengaja hidup di proses Harvy yang sama; mode pairing dapat
+dibootstrap sendiri sebelum runtime utama. Keduanya hanya menerima koneksi
+`127.0.0.1`. Tujuannya adalah mengelola akses pilot serta memahami usage dan
+biaya tanpa menjadikan log sebagai arsip percakapan.
 
 Keputusan yang mengikat desain ini berada di
 [`ADR-013`](../decisions/ADR-013-harvy-console-entitlement-dan-ledger-biaya.md).
@@ -33,6 +34,66 @@ Login menukar token operator menjadi sesi in-memory dengan cookie `HttpOnly`
 dan `SameSite=Strict`. Browser tidak menyimpan token di `localStorage` atau
 `sessionStorage`. Restart proses membatalkan seluruh sesi.
 
+## Mode setup kanal tanpa bootstrap Telegram
+
+Pairing akun uji tidak bergantung pada runtime utama yang sudah memiliki token
+Telegram. Jalankan:
+
+```powershell
+npm run console:setup
+```
+
+Mode ini memakai server Console, login, Origin, CSRF, rate limit, CSP, dan audit
+yang sama, tetapi control-plane pendampingnya berada di direktori sementara.
+URL diarahkan ke tab **Kanal pengujian**. Token bot Telegram, session tester,
+dan dua session WhatsApp tetap ditulis ke storage live-acceptance lokal yang
+permanen; dashboard sementara bukan sumber status produk.
+
+Tab ini sengaja memperlihatkan dua boundary. Sisi **Produk utama** hanya
+meringkas konfigurasi proses dari environment sebagai boolean dan jumlah akun;
+ia tidak membaca kembali token, nomor, alias, atau path. Label
+`dikonfigurasi`/`dideklarasikan` bukan bukti bahwa session platform sudah
+tertaut. Sisi **Lingkungan uji** memakai bot Telegram, akun Telegram tester,
+dan dua session WhatsApp acceptance sendiri. Console tidak menyalin atau
+memakai ulang credential utama ke namespace acceptance.
+
+Saat belum lengkap, **Pengaturan akun dan sesi** terbuka agar pairing yang
+masih diperlukan langsung terlihat. Setelah empat identitas tersedia,
+pengaturan itu menutup dan surface utama hanya menampilkan dua alur:
+`Akun Telegram tester → Bot Harvy uji` serta
+`Nomor WhatsApp tester B → Nomor Harvy uji A`. Status `Harvy siap diuji`
+berarti material credential lokal tersedia; koneksi ulang dan pengiriman pesan
+nyata baru terbukti ketika runner acceptance dijalankan.
+
+Mode setup dan tab Kanal pengujian runtime memegang satu lock credential lintas
+proses. Console kedua serta runner acceptance akan gagal tertutup selama lock
+aktif. Tutup Console sebelum menjalankan acceptance agar session tidak berubah
+di tengah percakapan nyata.
+
+QR Telegram/WhatsApp hanya disimpan di memori selama operasi aktif. Endpoint
+status tidak mengembalikan payload QR, token, session, `api_hash`, nomor, atau
+JID. Endpoint QR mengubah payload menjadi matriks SVG dan hanya dapat dibaca
+oleh sesi operator. Token dan session tersimpan tidak pernah dikirim kembali
+ke browser. Pencabutan session mencoba logout ke platform sebelum credential
+lokal dihapus dan gagal tertutup bila logout tidak dapat dibuktikan. Bila
+perangkat sudah dicabut dari ponsel, status terminal `loggedOut` dihitung
+sebagai bukti pencabutan; operator dapat memilih **Pasangkan ulang** dan Console
+akan membersihkan credential lokal yatim lalu menampilkan QR baru dalam satu
+alur. Close jaringan biasa tetap mempertahankan credential lokal. Error
+diterjemahkan menjadi langkah pemulihan dan kode internal tidak menjadi copy
+utama. Direct console output dependency Signal disaring karena dapat memuat
+material ratchet walau logger Baileys sudah silent.
+
+Regresi UI setup dapat diperiksa dengan browser Chromium/Edge nyata, termasuk
+login, pemuatan API, exception JavaScript, dan layout desktop/mobile:
+
+```powershell
+npm run test:console-browser
+```
+
+Command ini memakai server serta storage sementara dan tidak melakukan pairing
+atau mengirim pesan ke platform.
+
 ## Yang dapat diatur
 
 - Mendaftarkan chat pribadi atau grup dari ID platform. ID mentah hanya dipakai
@@ -53,6 +114,9 @@ dan `SameSite=Strict`. Browser tidak menyimpan token di `localStorage` atau
   status rekonsiliasi, entitlement, subject grup, principal anggota
   pseudonim, dan audit operator. Dashboard memecah standard/beta serta paket;
   tabel usage dapat difilter menurut cohort dan paket.
+- Memverifikasi dan mengganti token bot Telegram uji, memasangkan akun Telegram
+  tester (termasuk 2FA tanpa persist password), serta memasangkan atau mencabut
+  dua role WhatsApp live acceptance yang wajib berbeda.
 
 Tidak ada checkout, pembayaran, auto-renew, invoice, refund, webhook, atau SLA
 komersial pada versi ini. Paket berstatus `pilot` adalah hipotesis produk.

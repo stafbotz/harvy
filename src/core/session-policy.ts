@@ -12,6 +12,25 @@ const DONE_CUE = /\b(?:sudah|udah|telah|already|is|sesi(?:nya)?\s+)?(?:selesai|b
 const CANCEL_CUE = /\b(?:batalkan|batalin|hentikan|berhenti(?:kan)?|stop|cancel)\b/iu;
 const NOT_DONE_CUE = /\b(?:belum|not\s+yet|belum\s+benar-benar)\s+(?:selesai|beres|tuntas|finished|done|complete)\b/iu;
 const DO_NOT_CANCEL_CUE = /\b(?:jangan|tidak\s+usah|nggak\s+usah|gak\s+usah|ga\s+usah|do\s+not|don't)\s+(?:batalkan|batalin|hentikan|berhenti(?:kan)?|stop|cancel)\b/iu;
+const DO_NOT_START_SMALL_STEP = /\b(?:jangan|tidak\s+usah|nggak\s+usah|gak\s+usah|ga\s+usah|do\s+not|don't)\b[^.!?\n]{0,48}\b(?:mulai|memulai|start)\b[^.!?\n]{0,32}\b(?:langkah\s+kecil|small\s+step)\b/iu;
+const EXPLICIT_SMALL_STEP_REQUESTS = [
+  /\b(?:tolong\s+)?bantu(?:lah)?(?:\s+(?:aku|saya|kami|me))?(?:\s+untuk)?\s+(?:mulai|memulai|start)(?:\s+dari|\s+with)?\s+(?:satu|one)?\s*langkah\s+kecil\b/iu,
+  /\bhelp\s+me\s+(?:start|begin)(?:\s+with)?\s+(?:one|a)?\s*small\s+step\b/iu,
+] as const;
+
+/**
+ * Mengenali permintaan eksplisit untuk ditawari sesi fokus satu langkah.
+ *
+ * Ini bukan authority untuk menulis state sesi: adapter masih menampilkan
+ * tombol code-owned dan sesi baru lahir setelah tombol itu dipilih. Pagar
+ * lokal hanya mencegah extractor yang keliru mengubah permintaan bantuan ini
+ * menjadi tawaran menyimpan tugas atau pertanyaan preferensi lain.
+ */
+export function explicitlyRequestsSmallStepSession(message: string): boolean {
+  const text = normalize(message);
+  if (!text || DO_NOT_START_SMALL_STEP.test(text)) return false;
+  return EXPLICIT_SMALL_STEP_REQUESTS.some((pattern) => pattern.test(text));
+}
 
 /**
  * Sesi adalah konteks lunak. Ia hanya ikut ke prompt bila pesan memang tampak

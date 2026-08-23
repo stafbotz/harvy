@@ -139,10 +139,16 @@ Supervisor eksternal tetap diperlukan untuk restart dan alerting produksi.
 Baileys menerima adapter logger struktural milik Harvy. Log info/debug bawaan
 Baileys dibuang; warning/error hanya dipetakan ke kategori dan scalar teknis
 yang dikenal. Restart protokol `515` setelah pairing dicatat sebagai lifecycle
-normal, bukan kegagalan fatal. QR dan pairing code memakai keluaran terminal
+normal, bukan kegagalan fatal. Dependency Signal yang menulis object session
+langsung ke global console dipagari menurut call-site package sebelum socket
+dibuka; material ratchet tidak boleh mencapai stdout meski logger Baileys
+berstatus `silent`. QR dan pairing code memakai keluaran terminal
 operator khusus yang tidak melewati logger, hanya ketika stdout benar-benar TTY
 dan `APP_ENV` bukan `production`. Production tidak menampilkan secret pairing
-ke stdout; auth harus diprovisikan lewat prosedur operator aman.
+ke stdout; auth harus diprovisikan lewat prosedur operator aman. Jalur live
+acceptance yang lebih baru memakai Console loopback: payload QR tetap hanya di
+memori, endpoint terautentikasi mengembalikan matriks SVG tanpa nilai mentah,
+dan logger/audit hanya menerima action, target role, outcome, serta reason code.
 
 ## Konsekuensi
 

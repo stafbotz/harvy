@@ -6,6 +6,7 @@ import {
   toNumber,
   type WAMessage,
 } from "baileys";
+import { planResponsePresentation } from "../core/response-presentation.js";
 import type { GroupMessage } from "../domain/group.js";
 
 export interface BaileysMessageContext {
@@ -36,6 +37,12 @@ export interface WhatsAppPrivateInboundDocument {
 
 export interface WhatsAppPrivateReply {
   text: string;
+  /**
+   * Bubble user-facing yang memang disengaja oleh surface code-owned seperti
+   * onboarding. Gabungannya wajib sama dengan `text`; field ini tidak memberi
+   * model cara membuat spam atau menyembunyikan logical reply lain.
+   */
+  presentationBubbles?: readonly string[];
   document?: WhatsAppPrivateOutboundDocument;
   /** Dipanggil adapter hanya setelah socket mengakui send. */
   onDelivered?(delivery?: WhatsAppPrivateDelivery): Promise<void>;
@@ -61,6 +68,31 @@ export interface WhatsAppPrivateDelivery {
 
 export interface WhatsAppPrivateMessageRef {
   messageId: string | null;
+}
+
+export function whatsAppPrivatePresentationBubbles(
+  reply: Pick<WhatsAppPrivateReply, "text" | "presentationBubbles">,
+  maxSegmentCharacters: number,
+): string[] {
+  const logicalText = reply.text.trim();
+  const explicit = reply.presentationBubbles;
+  if (!explicit) {
+    return planResponsePresentation(logicalText, {
+      maxSegmentCharacters,
+    }).segments.map((segment) => segment.text);
+  }
+  if (explicit.length < 1 || explicit.length > 16) {
+    throw new Error("Presentasi bubble WhatsApp privat tidak sah.");
+  }
+  const bubbles = explicit.map((bubble) => bubble.trim());
+  if (
+    bubbles.some((bubble) =>
+      !bubble || Array.from(bubble).length > maxSegmentCharacters
+    ) || bubbles.join("\n\n") !== logicalText
+  ) {
+    throw new Error("Presentasi bubble WhatsApp privat tidak cocok dengan reply.");
+  }
+  return bubbles;
 }
 
 /** Socket-scoped transport; setiap operasi memeriksa generation akun. */

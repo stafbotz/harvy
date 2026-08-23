@@ -1,7 +1,8 @@
 # Status — WhatsApp
 
-Refreshed: 23 Agustus 2026 pada parity kemampuan WhatsApp privat. Angka gerbang
-penuh terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
+Refreshed: 23 Agustus 2026 pada acceptance nyata WhatsApp privat. Angka gerbang
+penuh terbaru dicatat di `docs/LOG.md`; baseline privat terbaru sudah lulus,
+sedangkan bukti grup, reconnect, coding, dan GitHub tetap belum lengkap.
 
 ## Keadaan saat ini
 
@@ -208,9 +209,41 @@ penuh terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
   crash/reconnect, waiting input, atau workspace publish belum dijalankan.
 - `npm run acceptance:whatsapp-private` memakai akun tester terpisah yang sudah
   paired, dua konfirmasi environment explicit, dan output tanpa JID/nomor/isi
-  pesan/path auth. Ia menguji consent, menu parity, task+reminder, sesi+check-in,
-  memori berizin, interupsi, multi-bubble, ekspor, Workspace ZIP, AgentRun, lalu
-  menghapus seluruh data akun uji sebelum boleh menyatakan lulus.
+  pesan/path auth. Implementasi saat ini menguji consent+menu, task+reminder,
+  sesi+check-in, penolakan consent memori, safety nonkrisis, planning AgentRun,
+  ekspor, lalu penghapusan seluruh data akun uji. Evaluator menunggu burst
+  multi-bubble sampai quiet gap sebelum membaca consent atau mengirim command
+  berikutnya. Ia belum menguji interupsi di tengah burst, Workspace ZIP,
+  CodingRun, atau GitHub live.
+- Pairing fixed-role `harvy`/`tester` dan
+  `npm run acceptance:whatsapp-private:managed` kini dapat menurunkan identitas
+  dari auth lokal, menyalakan build Harvy dengan state produk sementara,
+  menjalankan harness privat tersebut, melakukan graceful drain, dan membuang
+  state sementara tanpa meminta operator menyalin nomor/JID. Launcher menunggu
+  account WhatsApp Harvy benar-benar `open`, bukan sekadar IPC proses siap,
+  memakai import `tsx` absolut dari cwd terisolasi, menerima pasangan JID
+  PN/LID, mencatat receipt tahap yang gagal, lalu berhenti sebelum skenario
+  berikutnya agar respons tertunda tidak mencemari bukti tahap lain; cleanup
+  tetap berjalan. Linked device dapat menerima mutasi anchor sebelum event
+  create, sehingga evaluator mengikat create/edit/pin/unpin ke target bubble
+  exact dan tetap menolak target ganda. Trace live hanya membawa counter
+  lifecycle allowlist; parent memberi waktu shutdown 75 detik untuk grace child
+  60 detik dan cleanup state sementara retry-bounded.
+- Acceptance akun nyata terbaru 23 Agustus 2026 lulus 10/10 tahap: reset akun
+  khusus, consent+menu, pembuatan tugas natural, reminder, sesi+check-in,
+  penolakan memori implisit, planning durable, safety nonkrisis tersimulasi,
+  ekspor dokumen, dan full data cleanup. Sebanyak 17 ingress menjadi `notify`
+  dan 29/29 delivery Harvy berhasil, tanpa pipeline/delivery failure, restart,
+  crash loop, atau shutdown timeout; isolated state terhapus. Planning selesai
+  dalam sekitar 19 detik dengan satu Run Anchor yang dipin, diedit, dan dilepas;
+  satu transient surface dibuang dan hasil akhir berada pada bubble terpisah.
+  Evaluator menerima 3/3 langkah bertindakan, berbukti, dan berkriteria lulus.
+  Receipt tidak membawa isi pesan atau identifier akun.
+- Readiness credential tidak hanya memakai flag `registered`: Baileys 7 rc14
+  pada QR menyimpan identitas, account signature, dan signal identity hasil
+  pair-success tetapi membiarkan flag itu `false`. Console, runtime utama,
+  revoke, pemeriksaan beda-identitas, serta runner acceptance memakai satu
+  validator material pair-success yang sama dan tetap menolak state `me`-only.
 - `WHATSAPP_ACCOUNTS` mendukung beberapa alias account satu proses, masing-masing
   dengan auth folder, socket, cache, reconnect, generation, dan queue sendiri.
 - Satu nomor nyata pernah QR/login/`open` dan membalas satu jalur dasar.
@@ -221,18 +254,26 @@ penuh terbaru dicatat di `docs/LOG.md`; bukti kanal nyata tetap belum lengkap.
   dan shutdown belum diuji end-to-end di grup nyata.
 - WhatsApp privat sudah mempunyai parity otomatis untuk percakapan, task dan
   reminder, sesi dan check-in, memori/safety/kontrol data, ekspor, Workspace
-  ZIP, private coding, GitHub, dan active AgentRun durable. Namun acceptance
-  akun nyata belum dapat dijalankan karena akun Harvy lokal belum paired dan
-  belum ada akun tester khusus yang terpisah; reconnect, delivery receipt, dan
-  kualitas UX live tetap belum terbukti.
-- Preflight acceptance latest build gagal tertutup sebelum koneksi atau send
-  dengan kode konfirmasi operator yang belum diberikan. Kegagalan ini adalah
-  bukti harness menjaga scope, bukan bukti fitur WhatsApp lulus live.
+  ZIP, private coding, GitHub, dan active AgentRun durable. Pairing serta runner
+  dua akun khusus kini tersedia. WhatsApp A Harvy uji dan WhatsApp B tester
+  telah mencapai durable pair-success nyata dengan credential terpisah.
+  Baseline percakapan/task/session/memory/safety/planning/export/delete kini
+  terbukti live, termasuk delivery receipt `delivered`; reconnect, interupsi
+  burst, Workspace/CodingRun/GitHub, dan kualitas UX dogfood tetap belum
+  terbukti.
+- Percobaan tersebut juga membuktikan dependency Signal dapat menulis object
+  session kriptografis langsung ke stdout meski logger Baileys silent. Guard
+  call-site sekarang membuang direct console output itu. Session tester sudah
+  dirotasi dan run penuh berikutnya tidak memancarkan material tersebut.
 - WhatsApp memakai perintah teks untuk sebagian kontrol yang di Telegram berupa
   tombol/callback. Ini sengaja bukan bentuk UI yang identik, tetapi operasi dan
   authority akhirnya harus tetap setara.
-- Dua nomor nyata sekaligus belum diuji. Tidak ada failover atau rebind otomatis
-  antar-account.
+- Saat dua session baru pertama diuji, B→A tidak menghasilkan upsert, sedangkan
+  handshake langsung A→B menghasilkan `notify`; blocklist kedua akun kosong.
+  Setelah peer session itu terbentuk, probe B→A dan acceptance penuh lulus.
+  Penyebab platform/Signal awal belum dibuktikan, sehingga credential-ready
+  tetap tidak boleh dianggap bukti transport-ready. Tidak ada failover atau
+  rebind otomatis antar-account.
 - Pending confirmation dan authority epoch grup tidak durable lintas restart.
 - Group AgentRun dan group-coding composition dibuktikan otomatis, belum diuji
   fault/live end-to-end lengkap pada WhatsApp nyata. Flag tetap opt-in; tidak

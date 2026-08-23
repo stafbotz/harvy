@@ -147,6 +147,11 @@ learning, storage, atau kontrol data yang bukan policy safety.
   dicocokkan gagal tertutup tanpa write, bukan menebak izin.
   Episode merupakan ringkasan model; provenance membuktikan source/coverage,
   bukan kebenaran klaim.
+- Acceptance akun Telegram dan WhatsApp nyata 23 Agustus 2026 membuktikan satu
+  preferensi implicit menghasilkan permintaan izin yang dapat ditolak dan
+  penolakan dikonfirmasi, lalu ekspor serta full deletion berhasil pada kedua
+  kanal. Coverage ini tidak mengukur false-positive/false-negative kandidat,
+  recall memori jangka panjang, atau seluruh variasi copy consent.
 
 ## Bukti dan pointer
 

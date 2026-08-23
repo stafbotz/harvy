@@ -28,6 +28,11 @@ import {
   NOOP_OPERATIONAL_LOGGER,
   type OperationalLogger,
 } from "../observability/operational-logger.js";
+import {
+  ChannelSetupError,
+  type ChannelSetupService,
+  type WhatsAppTestRole,
+} from "../operations/channel-setup.js";
 import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "./assets.js";
 
 const SESSION_COOKIE = "harvy_console_session";
@@ -43,6 +48,7 @@ export interface ConsoleServerOptions {
   operatorToken?: string | null;
   sessionIdleMs?: number;
   sessionAbsoluteMs?: number;
+  setupOnly?: boolean;
 }
 
 export interface ConsoleStartResult {
@@ -89,6 +95,7 @@ export class ConsoleServer {
       NOOP_OPERATIONAL_LOGGER.child("console.server"),
     private readonly now: () => number = () => Date.now(),
     private readonly economy: EconomyService | null = null,
+    private readonly channelSetup: ChannelSetupService | null = null,
   ) {
     if (options.host !== "127.0.0.1") {
       throw new Error("Harvy Console local-first hanya boleh bind ke 127.0.0.1.");
@@ -109,6 +116,7 @@ export class ConsoleServer {
 
   async start(): Promise<ConsoleStartResult> {
     if (this.server || this.origin) throw new Error("Console sudah berjalan.");
+    await this.channelSetup?.initialize();
     await this.controlPlane.initialize();
     const server = createServer((request, response) => {
       void this.handle(request, response).catch((error: unknown) => {
@@ -185,14 +193,16 @@ export class ConsoleServer {
     this.stopMutations();
     await this.drainMutations();
     const server = this.server;
-    if (!server) return;
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    });
+    if (server) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
     this.server = null;
     this.origin = null;
     this.lifecycle = "stopped";
     this.sessions.clear();
+    await this.channelSetup?.close();
     this.logger.info("console_stopped", "Harvy Console lokal berhenti.");
   }
 
@@ -306,7 +316,11 @@ export class ConsoleServer {
         null,
         "succeeded",
       );
-      sendJson(response, 201, { authenticated: true, csrfToken: session.csrf });
+      sendJson(response, 201, {
+        authenticated: true,
+        csrfToken: session.csrf,
+        setupOnly: this.options.setupOnly === true,
+      });
       return;
     }
 
@@ -316,7 +330,11 @@ export class ConsoleServer {
         sendJson(response, 401, apiError("authentication_required", "Sesi operator diperlukan."));
         return;
       }
-      sendJson(response, 200, { authenticated: true, csrfToken: session.csrf });
+      sendJson(response, 200, {
+        authenticated: true,
+        csrfToken: session.csrf,
+        setupOnly: this.options.setupOnly === true,
+      });
       return;
     }
     if (request.method === "DELETE") {
@@ -342,6 +360,48 @@ export class ConsoleServer {
   }
 
   private async handleRead(url: URL, response: ServerResponse): Promise<void> {
+    if (url.pathname === "/api/v1/channel-setup") {
+      if (!this.channelSetup) {
+        throw new HttpError(
+          503,
+          "channel_setup_unavailable",
+          "Pengelola kanal belum dikonfigurasi.",
+        );
+      }
+      sendJson(response, 200, await this.channelSetup.snapshot());
+      return;
+    }
+    if (url.pathname === "/api/v1/channel-setup/telegram/qr.svg") {
+      if (!this.channelSetup) {
+        throw new HttpError(503, "channel_setup_unavailable", "Pengelola kanal belum dikonfigurasi.");
+      }
+      sendText(
+        response,
+        200,
+        "image/svg+xml; charset=utf-8",
+        this.channelSetup.qrSvg("telegram"),
+      );
+      return;
+    }
+    const whatsappQr = /^\/api\/v1\/channel-setup\/whatsapp\/(harvy|tester)\/qr\.svg$/u.exec(
+      url.pathname,
+    );
+    if (whatsappQr?.[1]) {
+      if (!this.channelSetup) {
+        throw new HttpError(503, "channel_setup_unavailable", "Pengelola kanal belum dikonfigurasi.");
+      }
+      sendText(
+        response,
+        200,
+        "image/svg+xml; charset=utf-8",
+        this.channelSetup.qrSvg("whatsapp", whatsappQr[1] as WhatsAppTestRole),
+      );
+      return;
+    }
+    if (this.options.setupOnly === true) {
+      sendJson(response, 404, apiError("not_found", "Endpoint tidak tersedia pada mode setup."));
+      return;
+    }
     if (url.pathname === "/api/v1/dashboard") {
       const since = new Date(this.now() - 24 * 60 * 60 * 1_000).toISOString();
       const [usage, entitlement, breakdown, attempts] = await Promise.all([
@@ -595,6 +655,158 @@ export class ConsoleServer {
     }
     this.activeMutations += 1;
     try {
+      if (url.pathname.startsWith("/api/v1/channel-setup/")) {
+        const setup = this.channelSetup;
+        if (!setup) {
+          throw new HttpError(
+            503,
+            "channel_setup_unavailable",
+            "Pengelola kanal belum dikonfigurasi.",
+          );
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/telegram/bot-token" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(session, "channel_credential_update", "telegram_bot", async () => {
+            const body = await readJsonObject(request);
+            assertExactKeys(body, ["token"]);
+            await setup.setTelegramBotToken(readString(body.token, "token", 256));
+          });
+          sendJson(response, 200, { updated: true });
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/telegram/bot-token" &&
+          request.method === "DELETE"
+        ) {
+          await this.runMutation(session, "channel_credential_revoke", "telegram_bot", async () => {
+            const body = await readJsonObject(request);
+            requireConfirmation(body, "DELETE_TELEGRAM_TEST_BOT");
+            await setup.deleteTelegramBotToken();
+          });
+          sendJson(response, 200, { deleted: true });
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/telegram/tester/pair" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(session, "channel_pairing_start", "telegram_tester", async () => {
+            const body = await readJsonObject(request);
+            assertExactKeys(body, ["apiId", "apiHash", "confirmation"]);
+            requireConfirmation(body, "DEDICATED_TEST_ACCOUNT", ["apiId", "apiHash"]);
+            setup.startTelegramTester({
+              apiId: readInteger(body.apiId),
+              apiHash: readString(body.apiHash, "apiHash", 64),
+            });
+          });
+          sendJson(response, 202, { accepted: true });
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/telegram/tester/password" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(session, "channel_credential_update", "telegram_tester", async () => {
+            const body = await readJsonObject(request);
+            assertExactKeys(body, ["password"]);
+            setup.submitTelegramPassword(readOpaqueSecret(body.password, "password", 256));
+          });
+          sendJson(response, 202, { accepted: true });
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/telegram/tester/cancel" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(session, "channel_pairing_cancel", "telegram_tester", async () => {
+            const body = await readJsonObject(request);
+            assertExactKeys(body, []);
+            await setup.cancelTelegramTester();
+          });
+          sendJson(response, 200, { cancelled: true });
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/telegram/tester" &&
+          request.method === "DELETE"
+        ) {
+          await this.runMutation(session, "channel_credential_revoke", "telegram_tester", async () => {
+            const body = await readJsonObject(request);
+            requireConfirmation(body, "DELETE_TELEGRAM_TEST_SESSION");
+            setup.startTelegramTesterRevoke();
+          });
+          sendJson(response, 202, { accepted: true });
+          return;
+        }
+
+        const whatsappOperation = /^\/api\/v1\/channel-setup\/whatsapp\/(harvy|tester)\/(pair|replace|cancel|session)$/u.exec(
+          url.pathname,
+        );
+        if (whatsappOperation?.[1] && whatsappOperation[2]) {
+          const role = whatsappOperation[1] as WhatsAppTestRole;
+          const operation = whatsappOperation[2];
+          if (operation === "pair" && request.method === "POST") {
+            await this.runMutation(session, "channel_pairing_start", `whatsapp_${role}`, async () => {
+              const body = await readJsonObject(request);
+              requireConfirmation(body, "DEDICATED_TEST_ACCOUNT");
+              setup.startWhatsApp(role);
+            });
+            sendJson(response, 202, { accepted: true });
+            return;
+          }
+          if (operation === "replace" && request.method === "POST") {
+            await this.runMutation(session, "channel_credential_update", `whatsapp_${role}`, async () => {
+              const body = await readJsonObject(request);
+              requireConfirmation(
+                body,
+                role === "harvy"
+                  ? "REPLACE_WHATSAPP_HARVY_SESSION"
+                  : "REPLACE_WHATSAPP_TESTER_SESSION",
+              );
+              setup.startWhatsAppReplace(role);
+            });
+            sendJson(response, 202, { accepted: true });
+            return;
+          }
+          if (operation === "cancel" && request.method === "POST") {
+            await this.runMutation(session, "channel_pairing_cancel", `whatsapp_${role}`, async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, []);
+              await setup.cancelWhatsApp(role);
+            });
+            sendJson(response, 200, { cancelled: true });
+            return;
+          }
+          if (operation === "session" && request.method === "DELETE") {
+            await this.runMutation(session, "channel_credential_revoke", `whatsapp_${role}`, async () => {
+              const body = await readJsonObject(request);
+              requireConfirmation(
+                body,
+                role === "harvy"
+                  ? "REVOKE_WHATSAPP_HARVY_SESSION"
+                  : "REVOKE_WHATSAPP_TESTER_SESSION",
+              );
+              setup.startWhatsAppRevoke(role);
+            });
+            sendJson(response, 202, { accepted: true });
+            return;
+          }
+        }
+      }
+
+      if (this.options.setupOnly === true) {
+        await this.controlPlane.audit(
+          session.ref,
+          mutation.action,
+          mutation.targetRef,
+          "rejected",
+          "not_found",
+        );
+        throw new HttpError(404, "not_found", "Endpoint tidak tersedia pada mode setup.");
+      }
+
       if (url.pathname === "/api/v1/enrollments" && request.method === "POST") {
         const created = await this.runMutation(
           session,
@@ -836,7 +1048,8 @@ export class ConsoleServer {
         targetRef,
         error instanceof ControlPlaneValidationError ||
           error instanceof ControlPlaneConflictError ||
-          error instanceof HttpError
+          error instanceof HttpError ||
+          (error instanceof ChannelSetupError && error.status < 500)
           ? "rejected"
           : "failed",
         errorCode(error),
@@ -923,6 +1136,9 @@ class HttpError extends Error {
 
 function asRequestError(error: unknown): HttpError | null {
   if (error instanceof HttpError) return error;
+  if (error instanceof ChannelSetupError) {
+    return new HttpError(error.status, error.code, error.message);
+  }
   if (error instanceof ControlPlaneConflictError) {
     return new HttpError(409, "version_conflict", error.message);
   }
@@ -1005,6 +1221,22 @@ function assertRequiredKeys(
 ): void {
   if (required.some((key) => !(key in value))) {
     throw new HttpError(400, "missing_field", "Body belum lengkap.");
+  }
+}
+
+function requireConfirmation(
+  body: Record<string, unknown>,
+  expected: string,
+  additionalFields: readonly string[] = [],
+): void {
+  assertExactKeys(body, [...additionalFields, "confirmation"]);
+  const confirmation = readString(body.confirmation, "confirmation", 96);
+  if (!constantEqual(confirmation, expected)) {
+    throw new HttpError(
+      400,
+      "confirmation_rejected",
+      "Frasa konfirmasi tidak cocok.",
+    );
   }
 }
 
@@ -1220,6 +1452,33 @@ function describeMutation(
   url: URL,
   method: string | undefined,
 ): MutationDescriptor {
+  if (
+    method === "POST" &&
+    /\/channel-setup\/(telegram\/tester|whatsapp\/(harvy|tester))\/pair$/u.test(url.pathname)
+  ) {
+    return { action: "channel_pairing_start", targetRef: channelAuditTarget(url.pathname) };
+  }
+  if (
+    method === "POST" &&
+    /\/channel-setup\/(telegram\/tester|whatsapp\/(harvy|tester))\/cancel$/u.test(url.pathname)
+  ) {
+    return { action: "channel_pairing_cancel", targetRef: channelAuditTarget(url.pathname) };
+  }
+  if (
+    method === "POST" &&
+    (url.pathname.endsWith("/telegram/bot-token") ||
+      url.pathname.endsWith("/telegram/tester/password"))
+  ) {
+    return { action: "channel_credential_update", targetRef: channelAuditTarget(url.pathname) };
+  }
+  if (
+    method === "DELETE" &&
+    (url.pathname.endsWith("/telegram/bot-token") ||
+      url.pathname.endsWith("/telegram/tester") ||
+      /\/channel-setup\/whatsapp\/(harvy|tester)\/session$/u.test(url.pathname))
+  ) {
+    return { action: "channel_credential_revoke", targetRef: channelAuditTarget(url.pathname) };
+  }
   if (method === "POST" && url.pathname === "/api/v1/enrollments") {
     return { action: "enrollment_create", targetRef: null };
   }
@@ -1260,6 +1519,26 @@ function describeMutation(
   return { action: "unknown_mutation", targetRef: null };
 }
 
+function readOpaqueSecret(value: unknown, field: string, maximum: number): string {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > maximum ||
+    /\p{Cc}/u.test(value)
+  ) {
+    throw new HttpError(400, "invalid_field", `Field ${field} tidak sah.`);
+  }
+  return value;
+}
+
+function channelAuditTarget(pathname: string): string | null {
+  if (pathname.includes("/telegram/bot-token")) return "telegram_bot";
+  if (pathname.includes("/telegram/tester")) return "telegram_tester";
+  if (pathname.includes("/whatsapp/harvy")) return "whatsapp_harvy";
+  if (pathname.includes("/whatsapp/tester")) return "whatsapp_tester";
+  return null;
+}
+
 function safeAuditTarget(raw: string): string | null {
   try {
     const decoded = decodeURIComponent(raw);
@@ -1276,6 +1555,7 @@ function enrollmentTarget(value: unknown): string | null {
 
 function errorCode(error: unknown): string {
   if (error instanceof HttpError) return error.code;
+  if (error instanceof ChannelSetupError) return error.code;
   if (error instanceof ControlPlaneConflictError) return "version_conflict";
   if (error instanceof ControlPlaneValidationError) return "validation_rejected";
   return "internal_error";

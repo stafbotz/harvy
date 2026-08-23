@@ -145,8 +145,21 @@ export const CONSENT_ACCEPTED = [
   "Tulis aja apa yang ada di kepalamu, nggak usah dirapiin dulu.",
 ].join("\n");
 
+export const CONSENT_ACCEPTED_EMOJI = "😉";
+
 export const CONSENT_ACCEPTED_HELD =
-  "Okeii, Aku baca pesanmu yang tadi dulu, yaa.";
+  "Oke, kita mulai. Aku lanjutkan pesanmu yang tadi.";
+
+/**
+ * Pintu navigasi hanya meminta surface onboarding; ia bukan pekerjaan yang
+ * perlu diputar ulang setelah consent. Pesan substantif tetap ditahan agar
+ * pengguna tidak dihukum dengan mengetik ulang cerita atau permintaannya.
+ */
+export function isOnboardingEntryCommand(text: string): boolean {
+  const normalized = text.trim().toLocaleLowerCase("id-ID").replace(/\s+/gu, " ");
+  return normalized === "/start" || normalized === "/menu" ||
+    normalized === "/bantuan" || normalized === "/help";
+}
 
 export function welcomeBack(activeTasks: number): string {
   if (activeTasks > 0) {
