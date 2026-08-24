@@ -7,6 +7,17 @@
 - Supersesi parsial: screening risk+privacy gabungan dan blanket triage/review
   pada seluruh pesan WhatsApp grup
 
+## Amendemen 24 Agustus 2026
+
+Bagian keputusan 6 disupersede untuk durable member memory. Grup tidak
+mewarisi authority onboarding kanal privat. Kandidat member-local implicit kini
+dilewati tanpa write dan tanpa prompt izin; perintah remember explicit tetap
+harus cocok dengan raw turn dan exact candidate, credential tetap ditolak, dan
+shared room memory tetap membutuhkan konfirmasi admin. Karena tidak ada lagi
+jalur proposal implicit, classifier `memory-privacy` juga dipensiunkan dari
+runtime grup. `contextPrivacy` untuk retensi raw rolling context tetap berlaku
+tanpa perubahan.
+
 ## Konteks
 
 Jalur grup sebelumnya memakai triase gabungan pada setiap direct maupun

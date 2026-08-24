@@ -10,6 +10,17 @@
   global mutation gate untuk setiap keadaan emosional non-calm, dan triase
   umum untuk jawaban pending closed-set
 
+## Amendemen 24 Agustus 2026
+
+Bagian keputusan 5 dan konsekuensi classifier privasi disupersede oleh
+Konstitusi v0.8 serta ADR-006 yang diamendemen. Consent onboarding privat versi
+8 kini menjadi authority auto-memory ordinary maupun personal; tidak ada izin
+atau tombol per-item. Classifier `memory-privacy` dipensiunkan dari runtime
+karena tidak lagi menentukan authority. Model understanding hanya mengusulkan
+kandidat, primary tetap menjaga scope/lifecycle/dedupe/limit dan menolak
+credential, sedangkan acknowledgement hanya boleh muncul sesudah commit.
+Purpose telemetry lama tetap dapat dibaca sebagai data historis.
+
 ## Konteks
 
 Pipeline privat lama menjalankan understanding dan triase secara paralel pada

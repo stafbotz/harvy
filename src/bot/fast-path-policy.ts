@@ -1,17 +1,4 @@
-import type { Understanding } from "../ai/understand.js";
 import type { Pending } from "./pending.js";
-
-/** Balasan lokal hanya untuk chat dingin tanpa sesi atau pending. */
-export function deterministicQuickChatReply(message: string): string | null {
-  const normalized = normalize(message);
-  if (/^(?:makasih|terima kasih|thanks|thank you|tengkyu)$/u.test(normalized)) {
-    return "Sama-sama.";
-  }
-  if (/^(?:iya|ya|yap|oke|ok|sip|siap)$/u.test(normalized)) {
-    return "Sip.";
-  }
-  return null;
-}
 
 const ARITHMETIC_OPERAND =
   String.raw`(?:-?\d+(?:[.,]\d{1,6})?|setengah|seperempat|tiga\s+perempat)`;
@@ -51,27 +38,6 @@ export function deterministicArithmeticReply(message: string): string | null {
   return rendered ? `Hasilnya ${rendered}.` : null;
 }
 
-const EMPTY_REMINDER_REQUEST = /^(?:(?:harvy[\s,]+)?(?:tolong\s+)?(?:buat(?:kan)?|bikin(?:kan)?|pasang(?:kan)?)\s+(?:sebuah\s+)?(?:pengingat|reminder)|(?:harvy[\s,]+)?(?:tolong\s+)?(?:ingatkan|ingetin|remind)\s+(?:aku|saya|gue|gua))\s*(?:dong|ya|please)?[.!?]*$/iu;
-
-/**
- * Permintaan reminder tanpa isi belum dapat menjadi state yang berguna.
- * Extractor tetap membuktikan bahwa ini task/request/question biasa; pola
- * lokal hanya menutup bentuk kosong agar kedua data minimum dikumpulkan bersama.
- */
-export function deterministicEmptyReminderReply(
-  message: string,
-  understanding: Pick<Understanding, "intent" | "task" | "taskAction">,
-): string | null {
-  if (
-    understanding.task !== null || understanding.taskAction !== null ||
-    (understanding.intent !== "task" && understanding.intent !== "request" &&
-      understanding.intent !== "question")
-  ) return null;
-  return EMPTY_REMINDER_REQUEST.test(message.normalize("NFKC").trim())
-    ? "Boleh. Tulis apa yang perlu kuingatkan dan kapan waktunya—misalnya: “ingetin aku besok jam 7 minum obat”."
-    : null;
-}
-
 /**
  * Form value berstruktur sempit tidak memerlukan compiler intent atau triase
  * umum. Caller tetap menjalankan emergency preflight lokal lebih dahulu.
@@ -95,7 +61,6 @@ export function isNarrowPendingAnswer(
       return looksLikeNarrowChoice(answer);
     case "edit-memory":
     case "confirm-task":
-    case "confirm-memory":
     case "confirm-memory-wipe":
     case "confirm-consent-withdrawal":
     case "confirm-full-deletion":

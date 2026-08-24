@@ -4,6 +4,8 @@
 - **Tanggal:** 21 Agustus 2026
 - **Amandemen:** 22 Agustus 2026 — explicit remember adalah consent item-spesifik;
   acknowledgement memakai receipt commit dan bahasa percakapan kontekstual
+- **Amandemen:** 24 Agustus 2026 — consent onboarding privat mengotorisasi
+  auto-memory; prompt dan tombol consent per-item dihapus
 - **Disupersesi sebagian:** ADR-044 menggantikan guard frasa pada poin 6 dan 9
   dengan `SemanticOperation` tervalidasi; lexical matching tetap hanya untuk
   ranking target owner-local
@@ -65,16 +67,15 @@ pengalaman percakapan.
    atau daftar record, dan beberapa write disintesis menjadi satu kalimat.
    Callback lama tetap dapat dibaca hanya untuk pesan yang sudah terlanjur
    terkirim.
-9. **Perintah explicit remember adalah consent item-spesifik.** Sinyal model
-   `memoryAction: "remember"` tidak membawa authority sendiri. Adapter tepercaya
-   juga memeriksa bentuk perintah pada teks user turn, menolak negasi,
-   retrieval, dan reminder, lalu hanya memberi `sensitiveConsent` kepada
-   candidate yang cocok dengan klausa yang diminta disimpan. Personal memory
-   itu langsung ditulis dan diakui sekali tanpa tombol `Boleh diingat`/`Jangan`.
-   Candidate lain tetap mengikuti policy implicit. Credential/secret ditolak
-   di adapter dan service walaupun diminta eksplisit. Aturan yang sama pada
-   member-local group memory tetap terikat anggota dan grup asal; shared room
-   memory tidak memperoleh authority ini.
+9. **Onboarding privat adalah authority auto-memory; explicit remember tetap
+   dibuktikan.** Setelah consent versi aktif, candidate biasa maupun personal
+   dapat ditulis tanpa prompt per-item. Sinyal model `memoryAction: "remember"`
+   tetap bukan bukti bahwa pengguna meminta write: adapter memeriksa raw turn
+   untuk membedakan permintaan explicit, retrieval, negasi, dan reminder agar
+   kegagalan dijawab tepat. Credential/secret tetap ditolak. Grup tidak
+   mewarisi consent privat: member-local implicit diabaikan tanpa prompt,
+   explicit remember tetap terikat anggota+grup, dan shared room memory tidak
+   memperoleh authority ini.
 10. **📍 dan 💭 memiliki peran berbeda tetapi tidak wajib.** `📍` hanya boleh
     membantu menyatakan write atau update yang sudah terkonfirmasi. `💭` hanya
     boleh membantu recall pemahaman lama yang sedang dibawa kembali ke turn
@@ -117,7 +118,7 @@ Trade-off dan batas:
 Tes mengunci command/menu/private gate, renderer bersama tiga entry point,
 context route/budget, ketidakpastian, larangan metadata, empty state, tombol
 `Ubah` tanpa pending, targeted forget tanpa ID, konfirmasi forget-all,
-correction kuliah/relasi, explicit remember item-scoped, implicit personal
-consent, hard exclusion credential, receipt sebelum acknowledgement, semantik
+correction kuliah/relasi, explicit remember item-scoped, auto-memory privat
+pasca-onboarding, hard exclusion credential, receipt sebelum acknowledgement, semantik
 opsional `📍`/`💭`, larangan duplicate note/log per-item, cascade lama, serta
 regresi command dan memory suite.

@@ -9,13 +9,12 @@
  */
 
 /**
- * Jenis memori menentukan dua hal sekaligus: apakah ia boleh disimpan tanpa
- * bertanya, dan berapa lama ia hidup.
+ * Jenis memori menentukan horizon dan metadata penyimpanannya.
  *
- * `personal` berdiri sendiri karena Pasal 4 nomor 3 melarang informasi sensitif
- * disimpan otomatis dari cerita biasa. Ia memerlukan consent bertoken atau
- * perintah explicit-remember item-spesifik yang dibuktikan adapter tepercaya.
- * Jenis lain boleh langsung disimpan asal pengguna diberi tahu.
+ * Di scope privat, consent onboarding aktif menjadi authority penyimpanan
+ * otomatis untuk semua jenis. `personal` tetap memerlukan bukti authority pada
+ * boundary adapter (`sensitiveConsent`), sehingga caller di luar alur onboarding
+ * tidak dapat menyimpannya diam-diam. Credential selalu ditolak primary service.
  */
 export type MemoryKind =
   | "profile"

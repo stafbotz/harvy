@@ -1,8 +1,9 @@
 # Status — WhatsApp
 
-Refreshed: 23 Agustus 2026 pada acceptance nyata WhatsApp privat. Angka gerbang
-penuh terbaru dicatat di `docs/LOG.md`; baseline privat terbaru sudah lulus,
-sedangkan bukti grup, reconnect, coding, dan GitHub tetap belum lengkap.
+Refreshed: 24 Agustus 2026 pada auto-memory privat berbasis onboarding. Angka
+gerbang penuh terbaru dicatat di `docs/LOG.md`; policy memori current build
+sudah terbukti live, sedangkan full run current build masih gagal di stage
+safety nonkrisis dan bukti grup, reconnect, coding, serta GitHub belum lengkap.
 
 ## Keadaan saat ini
 
@@ -27,12 +28,21 @@ sedangkan bukti grup, reconnect, coding, dan GitHub tetap belum lengkap.
   lihat/hapus memori, serta `/hapus-data` dengan konfirmasi exact mempunyai
   perintah teks tertutup. Kontrol lihat/hapus/ekspor tetap dapat dipakai tanpa
   consent AI aktif.
+- Consent onboarding versi 8 mengotorisasi auto-memory ordinary maupun personal
+  pada scope WhatsApp privat. Candidate baru tidak memunculkan prompt
+  `SIMPAN MEMORI`/`JANGAN SIMPAN`; acknowledgment natural hanya sesudah commit,
+  credential tetap ditolak, dan `/memori` menampilkan item exact untuk kontrol
+  lanjutan.
 - `/menu` dan `/bantuan` mempunyai renderer teks berbeda dari satu katalog
   user-facing yang sama dengan Telegram, tetapi hanya memuat command WhatsApp
   yang benar-benar tersedia. Free-text account/menu memakai bounded
   `SemanticOperation`; code tetap memeriksa raw evidence, explicitness,
   subject, confidence, owner, dan operation sebelum renderer/service
   deterministic dipanggil.
+- Cold smalltalk serta reminder tanpa isi sekarang memakai understanding/reply
+  model, bukan tabel regex. Planning durable hanya hidup dari
+  `RoutingAssessment.planningRequired` tepercaya dan nonmekanis; kata seperti
+  `rencana` atau `langkah` tidak lagi menjadi override adapter.
 - Private upsert dideduplikasi per account+pengirim lalu dilepas dari callback
   event agar bubble baru tetap dapat masuk selama model bekerja. Setelah
   consent, `MessageBatcher` dan semantic boundary yang sama dengan Telegram
@@ -56,6 +66,12 @@ sedangkan bukti grup, reconnect, coding, dan GitHub tetap belum lengkap.
   `publicFocus` tervalidasi dari core yang sama dengan Telegram, tanpa call AI
   tambahan dan hanya setelah triase final biasa; respons cepat dan fase
   listening tetap tanpa status.
+- Receipt task/reminder/session/check-in/preference privat memakai presenter
+  model bersama Telegram. Fakta, status, waktu, ID, command, dan tombol tetap
+  code-owned; output invalid/provider lambat kembali ke fallback lengkap.
+  Panggilan ini tidak membaca summary atau memori durable. Check-in proaktif
+  boleh dinamis tetapi tidak menerima goal maupun riwayat sehingga teks privat
+  tidak muncul di preview lock-screen.
 - Metadata membership pengirim dan Harvy harus segar sebelum ingress diterima;
   core melakukan revalidation sebelum binding atau mutasi. Observation authority
   async diserialkan per runtime; hanya observation authorized/live yang boleh
@@ -89,8 +105,9 @@ sedangkan bukti grup, reconnect, coding, dan GitHub tetap belum lengkap.
   sedangkan hint possible/strong, compiler unavailable, marker continuation,
   dan emergency lokal memakai acute triage evidence-aware.
 - Raw message/reply hanya masuk context dua jam ketika privacy ordinary dan
-  safety calm+certain. Memori durable memakai classifier privacy candidate-only
-  yang terpisah. Support pasti tidak membayar reviewer kedua; danger dan
+  safety calm+certain. Memori member-local implicit dilewati tanpa write atau
+  prompt; explicit remember dan shared-room admin memakai authority code-owned
+  masing-masing. Support pasti tidak membayar reviewer kedua; danger dan
   support tidak pasti tetap review fail-closed.
 - Emergency lokal berpresisi tinggi melewati debounce, reservation/dedupe, dan
   fixed ACK-nya dapat keluar sebelum FIFO setelah authority+binding+notice.
@@ -210,7 +227,8 @@ sedangkan bukti grup, reconnect, coding, dan GitHub tetap belum lengkap.
 - `npm run acceptance:whatsapp-private` memakai akun tester terpisah yang sudah
   paired, dua konfirmasi environment explicit, dan output tanpa JID/nomor/isi
   pesan/path auth. Implementasi saat ini menguji consent+menu, task+reminder,
-  sesi+check-in, penolakan consent memori, safety nonkrisis, planning AgentRun,
+  sesi+check-in, auto-memory implicit beserta recall tanpa consent per-item,
+  safety nonkrisis, planning AgentRun,
   ekspor, lalu penghapusan seluruh data akun uji. Evaluator menunggu burst
   multi-bubble sampai quiet gap sebelum membaca consent atau mengirim command
   berikutnya. Ia belum menguji interupsi di tengah burst, Workspace ZIP,
@@ -228,17 +246,20 @@ sedangkan bukti grup, reconnect, coding, dan GitHub tetap belum lengkap.
   create, sehingga evaluator mengikat create/edit/pin/unpin ke target bubble
   exact dan tetap menolak target ganda. Trace live hanya membawa counter
   lifecycle allowlist; parent memberi waktu shutdown 75 detik untuk grace child
-  60 detik dan cleanup state sementara retry-bounded.
-- Acceptance akun nyata terbaru 23 Agustus 2026 lulus 10/10 tahap: reset akun
-  khusus, consent+menu, pembuatan tugas natural, reminder, sesi+check-in,
-  penolakan memori implisit, planning durable, safety nonkrisis tersimulasi,
-  ekspor dokumen, dan full data cleanup. Sebanyak 17 ingress menjadi `notify`
-  dan 29/29 delivery Harvy berhasil, tanpa pipeline/delivery failure, restart,
-  crash loop, atau shutdown timeout; isolated state terhapus. Planning selesai
-  dalam sekitar 19 detik dengan satu Run Anchor yang dipin, diedit, dan dilepas;
-  satu transient surface dibuang dan hasil akhir berada pada bubble terpisah.
-  Evaluator menerima 3/3 langkah bertindakan, berbukti, dan berkriteria lulus.
-  Receipt tidak membawa isi pesan atau identifier akun.
+  60 detik dan cleanup state sementara retry-bounded. Reset awal dan cleanup
+  akhir memakai stanza ID berbeda; memakai ulang ID sebelumnya membuat dedupe
+  ingress secara benar menelan cleanup kedua dan sekarang menjadi regresi yang
+  ditutup oleh harness.
+- Baseline akun nyata 23 Agustus 2026 pada policy sebelumnya lulus 10/10. Rerun
+  current build 24 Agustus meluluskan reset akun khusus, consent+menu, pembuatan
+  tugas natural, reminder, sesi+check-in, auto-memory preference implicit
+  beserta acknowledgement dan recall, serta planning durable. Sebanyak 16
+  ingress menjadi `notify` dan 28/28 delivery call berhasil tanpa pipeline/
+  delivery failure; planning sekitar 16 detik memakai satu Run Anchor yang
+  dipin, diedit, dan dilepas dengan kualitas 3/3/3. Stage safety nonkrisis lalu
+  timeout, jadi run bukan full pass; cleanup, shutdown, dan penghapusan isolated
+  state tetap lulus. Ack tertinggi `none`. Receipt tidak membawa isi pesan atau
+  identifier akun.
 - Readiness credential tidak hanya memakai flag `registered`: Baileys 7 rc14
   pada QR menyimpan identitas, account signature, dan signal identity hasil
   pair-success tetapi membiarkan flag itu `false`. Console, runtime utama,
@@ -250,6 +271,14 @@ sedangkan bukti grup, reconnect, coding, dan GitHub tetap belum lengkap.
 
 ## Batas dan defect aktif
 
+- Policy auto-memory versi 8 sudah diuji ulang melalui dua akun nyata. Rerun
+  current build lulus reset, onboarding/menu, task, reminder, sesi/check-in,
+  auto-memory implicit+acknowledgement+recall, dan planning durable; ia kemudian
+  timeout pada assertion safety nonkrisis meski beberapa surface respons masuk.
+  Cleanup akhir, shutdown, dan penghapusan isolated state lulus. Karena itu run
+  ini bukan full pass. Acceptance juga belum menunggu reminder/check-in
+  proaktif benar-benar jatuh tempo, sehingga copy notifikasi dinamisnya masih
+  baru dibuktikan otomatis.
 - Notice/privacy terbaru, memory member/room, timing ambient, removal, safety,
   dan shutdown belum diuji end-to-end di grup nyata.
 - WhatsApp privat sudah mempunyai parity otomatis untuk percakapan, task dan
@@ -257,10 +286,12 @@ sedangkan bukti grup, reconnect, coding, dan GitHub tetap belum lengkap.
   ZIP, private coding, GitHub, dan active AgentRun durable. Pairing serta runner
   dua akun khusus kini tersedia. WhatsApp A Harvy uji dan WhatsApp B tester
   telah mencapai durable pair-success nyata dengan credential terpisah.
-  Baseline percakapan/task/session/memory/safety/planning/export/delete kini
-  terbukti live, termasuk delivery receipt `delivered`; reconnect, interupsi
-  burst, Workspace/CodingRun/GitHub, dan kualitas UX dogfood tetap belum
-  terbukti.
+  Baseline lama membuktikan percakapan/task/session/memory/safety/planning/
+  export/delete. Current build membuktikan kembali semuanya sampai planning dan
+  policy memori baru, tetapi belum meluluskan safety/export sebagai satu run
+  penuh; receipt server accepted tersedia sedangkan ack tertinggi current run
+  tetap `none`. Reconnect, interupsi burst, Workspace/CodingRun/GitHub, dan
+  kualitas UX dogfood tetap belum terbukti.
 - Percobaan tersebut juga membuktikan dependency Signal dapat menulis object
   session kriptografis langsung ke stdout meski logger Baileys silent. Guard
   call-site sekarang membuang direct console output itu. Session tester sudah

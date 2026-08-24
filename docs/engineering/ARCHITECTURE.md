@@ -57,8 +57,10 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   `prioritizer.ts` (skor prioritas
   murni), `task-service.ts`, `memory-policy.ts` (jenis sensitif, hard exclusion
   credential, masa berlaku, pemilihan memori untuk prompt),
-  `memory-explicit-consent.ts` (bukti lokal item-scoped untuk perintah remember),
-  `memory-service.ts`, `history-policy.ts`
+  `memory-explicit-consent.ts` (bukti lokal item-scoped untuk perintah remember
+  explicit dan acknowledgment/failure yang jujur),
+  `memory-candidate.ts` (canonical metadata dan boundary sempit untuk instruksi
+  bentuk seluruh jawaban Harvy ke depan), `memory-service.ts`, `history-policy.ts`
   (jendela dan ambang pemadatan), `history-service.ts`, `profile-service.ts`
   (`CONSENT_VERSION`, `needsOnboarding`, `shouldAskStyle`),
   `safety-policy.ts` (`RiskHint`, `RiskDisposition`, sinyal immediate-danger,
@@ -192,8 +194,7 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   (prompt/parser compaction v2), `context.ts`
   (`HarvyContext`: ringkasan, giliran terakhir, primary memory, dan retrieved
   evidence terstruktur), `safety.ts` (acute-risk triage, disposition resolution, arahan
-  anti-penolakan, dan pemeriksaan balasan), `memory-privacy.ts` (classifier
-  sensitivitas candidate-only), `group-ingress.ts` (risk hint dan privacy raw
+  anti-penolakan, dan pemeriksaan balasan), `group-ingress.ts` (risk hint dan privacy raw
   context grup), dan `conversation.ts` (menyatukan pemahaman, balasan,
   peringkasan episode, dan Agent Runtime).
   Pada free-text Telegram privat pasca-consent, pure policy immediate-danger
@@ -208,13 +209,17 @@ ProjectWorkspace menjadi boundary filesystem terkelola yang eksplisit.
   bubble lain dipertahankan dan baru diperiksa per bagian setelah consent.
   Giliran yang sudah utuh menjalankan compiler `cheap`; hanya RiskHint
   `possible|strong` atau kegagalan compiler yang memanggil acute triage.
-  Emergency lokal langsung mentriase tanpa compiler. Privacy memory hanya
-  dinilai ketika ada kandidat, dan support pasti tidak rutin direview; danger
-  serta support belum pasti tetap fail-closed. Ekstraksi tidak pernah membayar
+  Emergency lokal langsung mentriase tanpa compiler. Auto-memory privat hanya
+  berjalan pada calm yang pasti sesudah consent onboarding versi aktif; tidak
+  ada classifier privacy atau prompt izin per-item. Model mengusulkan kandidat,
+  sedangkan primary tetap menjaga owner/lifecycle/dedupe/limit dan menolak
+  credential. Support pasti tidak rutin direview; danger serta support belum
+  pasti tetap fail-closed. Ekstraksi tidak pernah membayar
   harga model besar, sementara tutor memakai `ambitious` hanya pada giliran
   tenang. Grup memakai kontrak selektif yang sama setelah authority, binding,
   dan notice live: direct memakai compiler ingress, ambient menggabungkannya
-  dengan planner, raw-context privacy dan durable-memory privacy tetap terpisah,
+  dengan planner; raw-context privacy tetap terpisah, kandidat durable
+  member-local implicit dilewati, dan explicit remember tetap item-scoped,
   serta emergency lokal dapat melewati debounce dan memulai acute triage tanpa
   compiler umum tanpa memberi authority mutasi.
 

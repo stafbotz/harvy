@@ -11,6 +11,8 @@
   lifecycle suppression; `ADR-032` menambah graph temporal turunan.
 - UX daftar/tombol per-item disupersesi `ADR-043`; primary MemoryItem dan hak
   cascade deletion yang ditetapkan ADR ini tetap berlaku.
+- Amandemen 24 Agustus 2026: consent onboarding privat menggantikan prompt
+  per-item; grup tetap memakai authority yang lebih sempit.
 
 ## Konteks
 
@@ -48,7 +50,7 @@ giliran, pengguna tidak dapat menghapus satu hal tertentu karena tidak ada "satu
 hal" yang dapat ditunjuk, dan hal paling sensitif ikut tersimpan tanpa pernah
 ada yang memutuskan bahwa ia tersimpan.
 
-### 2. Memori biasa disimpan otomatis; memori sensitif memerlukan izin spesifik
+### 2. Memori privat disimpan otomatis setelah onboarding
 
 Jenis memori menentukan perlakuannya:
 
@@ -58,7 +60,7 @@ Jenis memori menentukan perlakuannya:
 | `preference` | lebih paham lewat contoh, tidak suka dikejar-kejar | otomatis |
 | `routine` | les Jumat sore, ekskul Sabtu | otomatis |
 | `context` | ujian biologi minggu depan, sedang lomba | otomatis |
-| `personal` | kesehatan, keluarga, relasi, gender, orientasi seksual, tekanan emosional berat | **ditawarkan bila hanya diceritakan; langsung disimpan bila pengguna eksplisit meminta item itu diingat** |
+| `personal` | kesehatan, keluarga, relasi, gender, orientasi seksual, tekanan emosional berat | otomatis setelah consent onboarding privat aktif |
 
 Yang otomatis tetap **diberitahukan** saat disimpan, tetapi acknowledgement
 menjadi bagian balasan kontekstual, bukan copy per-kind atau dump record. Sejak
@@ -68,44 +70,30 @@ untuk write/update, `💭` hanya untuk recall lama, dan keduanya tidak wajib.
 Pemberitahuan juga tidak memasang tombol Lupakan per item; pengguna mengoreksi
 atau melupakan dengan bahasa biasa, sementara `/memori` dan Data & izin menjaga
 transparansi. Pasal 4 nomor 2 meminta pengguna tahu ketika sesuatu yang baru
-disimpan dan tetap mewajibkan consent lebih dulu untuk jenis yang memerlukannya;
-ia tidak meminta Harvy membuka pengelola record untuk setiap remah.
+disimpan; ia tidak meminta Harvy membuka pengelola record atau meminta izin
+kedua untuk setiap remah. Consent onboarding privat yang menjelaskan bahwa
+catatan biasa maupun personal dapat disimpan otomatis menjadi authority scope.
+Perubahan material ini menaikkan `CONSENT_VERSION`, sehingga consent versi lama
+tidak dipakai diam-diam untuk kebijakan baru.
 
-Secara kontrak, yang sensitif tidak boleh disimpan tanpa tindakan pengguna.
-Pada cerita biasa, tindakan itu tetap jawaban atas tawaran bertoken. Pada
-perintah seperti `ingat ya ...`, perintah user turn sendiri sudah menjadi
-persetujuan spesifik atas item tersebut; Harvy tidak meminta persetujuan yang
-sama untuk kedua kalinya. Pasal 4 nomor 3 melarang penyimpanan otomatis, bukan
-penyimpanan yang memang diperintahkan pengguna.
-
-Authority ini tidak berasal dari JSON model saja. Adapter tepercaya memerlukan
-`memoryAction: "remember"` yang tervalidasi **dan** bukti lokal konservatif pada
-teks user turn, lalu mencocokkannya dengan candidate yang berada dalam klausa
-yang diminta diingat. Izin terikat user, turn, item, dan scope. Fakta sensitif
-lain dalam pesan yang sama tetap masuk jalur consent biasa. Negasi, retrieval,
-cerita `aku lupa`, serta reminder waktu gagal tertutup dan tidak memperoleh
-authority write.
+Perintah seperti `ingat ya ...` tetap dibuktikan dari raw user turn agar
+kegagalan write dapat dilaporkan dan fakta lain tidak diakui sebagai bagian
+perintah. Bukti ini bukan lagi satu-satunya authority pada kanal privat. Model
+hanya mengusulkan isi; primary service tetap memiliki dedupe, lifecycle block,
+batas penyimpanan, dan hard exclusion credential. Grup tidak mewarisi consent
+privat: kandidat member-local implicit diabaikan tanpa prompt, perintah explicit
+anggota tetap item-scoped, dan shared room memory tetap dikonfirmasi pengelola.
 
 Credential merupakan hard exclusion yang berbeda dari data personal sensitif.
 Password, OTP, PIN, token, API key, dan credential sejenis ditolak lagi oleh
 primary service sekalipun adapter membawa consent eksplisit; derivation tidak
 pernah dimulai untuk konten tersebut.
 
-Harvy **boleh** mengingat curhat. Yang dilarang Konstitusi bukan mengingatnya,
-melainkan menyimpannya diam-diam. Perintah pengguna untuk mengingat bukan
-penyimpanan diam-diam.
-
-Jenis hasil ekstraksi bukan satu-satunya pagar. Triase model yang terpisah juga
-menilai apakah isi sensitif dan memaksanya ke jalur izin meskipun ekstraksi
-salah menamainya `profile` atau jenis biasa lain. Daftar kata lokal yang sempat
-menjadi pagar kedua dihapus 27 Juli 2026 atas keputusan pemilik produk; lihat
-koreksi pada `ADR-007`.
-
-Konsekuensi implementasinya dicatat terbuka pada amandemen `ADR-008` dan
-`STATUS.md`: bila ekstraksi dan triase sama-sama salah menilai isi sensitif
-sebagai biasa, jalur otomatis masih dapat terlewati. Pemberitahuan dan undo
-tidak menggantikan izin sebelumnya; karena itu larangan normatif di atas belum
-boleh diklaim terjamin sepenuhnya oleh kode.
+Harvy **boleh** mengingat curhat setelah onboarding privat aktif, tetapi tidak
+boleh diam-diam mengarang atau mengaku menyimpan. Setiap write/update yang
+commit mempunyai receipt sebelum acknowledgement; failure tidak mendapat klaim
+write. Pengguna dapat mengoreksi atau melupakan lewat bahasa biasa dan
+`/memori`, tanpa tombol per-save.
 
 ### 3. Riwayat disimpan ke disk, dipadatkan per episode, lalu dibuang
 

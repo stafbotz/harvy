@@ -43,8 +43,10 @@ describe("naskah perkenalan", () => {
 
     // Pasal 3.9: pengguna berhak tahu pesannya diproses AI.
     assert.match(consent, /diproses oleh AI/i);
-    // Pengguna tahu bisa lihat dan hapus data.
-    assert.match(consent, /lihat atau hapus/i);
+    // Pengguna tahu auto-memory dan kontrolnya sebelum memilih mulai.
+    assert.match(consent, /otomatis mengingatnya/i);
+    assert.match(consent, /melihat, mengoreksi, atau menghapusnya/i);
+    assert.match(consent, /setelah benar-benar menyimpan atau memperbaruinya/i);
     // Link ke halaman persyaratan.
     assert.match(consent, new RegExp(TEST_TERMS_URL));
     // Framing sebagai janji bersama.
@@ -55,6 +57,11 @@ describe("naskah perkenalan", () => {
     assert.match(CONSENT_DETAIL, /record.*ekspor\/penghapusan data/i);
     assert.match(CONSENT_DETAIL, /potongan konteks, memori, dan riwayat/i);
     assert.match(CONSENT_DETAIL, /paling lama 7 hari/i);
+    assert.match(CONSENT_DETAIL, /termasuk hal pribadi/i);
+    assert.match(CONSENT_DETAIL, /bukan permintaan izin baru/i);
+    assert.match(CONSENT_DETAIL, /tidak disertai tombol per item/i);
+    assert.match(CONSENT_DETAIL, /membuka \/memori/i);
+    assert.match(CONSENT_DETAIL, /credential sejenis tidak pernah kujadikan memori/i);
   });
 
   it("tidak menjanjikan penilai AI selalu mengenali catatan pribadi", () => {

@@ -223,13 +223,6 @@ export function bubblePauseMs(text: string): number {
   return presentationPauseMs(text);
 }
 
-/** Persetujuan sebelum hal sensitif disimpan. Pasal 4 nomor 3. */
-export function memoryConsentActions(token: string): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("Boleh diingat", `memsave:${token}`)
-    .text("Jangan", `memskip:${token}`);
-}
-
 export const MEMORY_PORTRAIT_TITLE = "Yang aku ingat tentang kamu";
 export const MEMORY_PORTRAIT_EMPTY = [
   MEMORY_PORTRAIT_TITLE,

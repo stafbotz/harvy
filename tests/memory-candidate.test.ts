@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   deriveMemoryMetadata,
-  inferDurablePreferenceCandidate,
+  inferExplicitResponsePreference,
 } from "../src/core/memory-candidate.js";
 
 describe("deriveMemoryMetadata", () => {
-  it("membentuk kandidat lokal hanya untuk preferensi lintas giliran yang jelas", () => {
+  it("membentuk authority lokal hanya untuk instruksi bentuk jawaban lintas giliran", () => {
     assert.deepEqual(
-      inferDurablePreferenceCandidate(
+      inferExplicitResponsePreference(
         "Mulai sekarang, aku lebih suka semua jawaban memakai langkah pendek dan bernomor.",
       ),
       {
@@ -17,14 +17,37 @@ describe("deriveMemoryMetadata", () => {
       },
     );
     assert.equal(
-      inferDurablePreferenceCandidate("Aku lebih suka jawaban ini singkat."),
+      inferExplicitResponsePreference("Aku lebih suka jawaban ini singkat."),
       null,
     );
     assert.equal(
-      inferDurablePreferenceCandidate(
+      inferExplicitResponsePreference(
         "Tolong simpan: aku lebih suka semua jawaban singkat.",
       ),
       null,
+    );
+    assert.equal(
+      inferExplicitResponsePreference(
+        "Mulai sekarang, aku lebih suka belajar malam.",
+      ),
+      null,
+      "preferensi personal bukan instruksi tentang jawaban Harvy",
+    );
+    assert.equal(
+      inferExplicitResponsePreference(
+        "Mulai sekarang, aku lebih suka semua jawaban singkat. Warna favoritku biru.",
+      ),
+      null,
+      "kalimat kedua tidak boleh ikut memperoleh authority",
+    );
+    assert.deepEqual(
+      inferExplicitResponsePreference(
+        "Ke depannya, saya lebih suka setiap balasanmu memakai poin pendek!",
+      ),
+      {
+        kind: "preference",
+        content: "Lebih suka setiap balasanmu memakai poin pendek.",
+      },
     );
   });
 

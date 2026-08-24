@@ -2,20 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   deterministicArithmeticReply,
-  deterministicEmptyReminderReply,
-  deterministicQuickChatReply,
   isNarrowPendingAnswer,
 } from "../src/bot/fast-path-policy.js";
 import type { Pending } from "../src/bot/pending.js";
 
 describe("fast path percakapan privat", () => {
-  it("hanya menjawab acknowledgement dingin dari closed set", () => {
-    assert.equal(deterministicQuickChatReply("makasih!"), "Sama-sama.");
-    assert.equal(deterministicQuickChatReply("oke"), "Sip.");
-    assert.equal(deterministicQuickChatReply("aku capek banget"), null);
-    assert.equal(deterministicQuickChatReply("iya, tapi nanti dulu"), null);
-  });
-
   it("menghitung satu operasi eksplisit secara exact", () => {
     assert.equal(
       deterministicArithmeticReply("kerjakan soal ini untukku: 24 dibagi 6"),
@@ -40,39 +31,6 @@ describe("fast path percakapan privat", () => {
     ]) {
       assert.equal(deterministicArithmeticReply(message), null, message);
     }
-  });
-
-  it("mengumpulkan isi dan waktu hanya untuk reminder yang benar-benar kosong", () => {
-    const empty = {
-      intent: "request" as const,
-      task: null,
-      taskAction: null,
-    };
-    assert.match(
-      deterministicEmptyReminderReply("buat pengingat dong", empty) ?? "",
-      /apa.*kapan|apa.*waktu/iu,
-    );
-    assert.equal(
-      deterministicEmptyReminderReply(
-        "buat pengingat minum obat besok jam 7",
-        empty,
-      ),
-      null,
-    );
-    assert.equal(
-      deterministicEmptyReminderReply("buat pengingat dong", {
-        ...empty,
-        intent: "smalltalk",
-      }),
-      null,
-    );
-    assert.match(
-      deterministicEmptyReminderReply("buat pengingat dong", {
-        ...empty,
-        intent: "question",
-      }) ?? "",
-      /apa.*kapan/iu,
-    );
   });
 
   it("mengenali nilai waktu dan pilihan sempit menurut jenis pending", () => {

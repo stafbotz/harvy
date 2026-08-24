@@ -18,6 +18,8 @@ import {
   liveAcceptancePlanningPrompt,
   type LivePlanQuality,
 } from "../src/operations/live-acceptance-quality.js";
+import { replyAcknowledgesMemoryWrite } from
+  "../src/core/memory-explicit-consent.js";
 import {
   observeWhatsAppRunAnchor,
   parseWhatsAppSurfaceEvent,
@@ -171,6 +173,7 @@ async function main(): Promise<void> {
           config,
           messages,
           waiters,
+          "reset",
         );
         return stageResult(messages, fromSequence, evidenceDigest);
       });
@@ -307,43 +310,69 @@ async function main(): Promise<void> {
       return digestMessage(checkIn);
     });
 
-    await stage(stages, "implicit_memory_requires_consent", async () => {
-      const proposalBurst = await sendAndCollectBurst(
-        socket,
-        config,
-        messages,
-        waiters,
-        "Mulai sekarang, aku lebih suka semua jawaban memakai langkah pendek dan bernomor.",
-        "memory-proposal",
-      );
-      const proposal = proposalBurst.messages.find((item) =>
-        /SIMPAN MEMORI|JANGAN SIMPAN/iu.test(item.text)
-      );
-      if (!proposal) {
-        throw acceptanceFailure(
-          "WHATSAPP_PRIVATE_ACCEPTANCE_MEMORY_CONSENT_MISSING",
-          responseFailureEvidence(proposalBurst.messages),
+    await stage(
+      stages,
+      "implicit_memory_after_onboarding_without_item_consent",
+      async () => {
+        const responseBurst = await sendAndCollectBurst(
+          socket,
+          config,
+          messages,
+          waiters,
+          "Aku lebih suka belajar dengan contoh konkret daripada definisi panjang.",
+          "memory-implicit",
         );
-      }
-      const declinedBurst = await sendAndCollectBurst(
-        socket,
-        config,
-        messages,
-        waiters,
-        "JANGAN SIMPAN",
-        "memory-decline",
-      );
-      const declined = declinedBurst.messages.find((item) =>
-        /tidak aku simpan|nggak aku simpan/iu.test(item.text)
-      );
-      if (!declined) {
-        throw acceptanceFailure(
-          "WHATSAPP_PRIVATE_ACCEPTANCE_MEMORY_DECLINE_MISSING",
-          responseFailureEvidence(declinedBurst.messages),
+        if (responseBurst.messages.length === 0) {
+          throw acceptanceFailure(
+            "WHATSAPP_PRIVATE_ACCEPTANCE_MEMORY_RESPONSE_MISSING",
+            responseFailureEvidence(responseBurst.messages),
+          );
+        }
+        if (responseBurst.messages.some((item) =>
+          /Boleh aku (?:menyimpan|inget)|SIMPAN MEMORI|JANGAN SIMPAN/iu.test(
+            item.text,
+          )
+        )) {
+          throw acceptanceFailure(
+            "WHATSAPP_PRIVATE_ACCEPTANCE_REDUNDANT_MEMORY_CONSENT",
+            responseFailureEvidence(responseBurst.messages),
+          );
+        }
+        const writeAcknowledged = responseBurst.messages.some((item) =>
+          replyAcknowledgesMemoryWrite(item.text)
         );
-      }
-      return sha256(`${digestMessage(proposal)}\0${digestMessage(declined)}`);
-    });
+        // Recall tetap diperiksa ketika acknowledgement hilang. Dengan begitu
+        // hasil live membedakan extraction/write yang gagal dari commit yang
+        // berhasil tetapi dipresentasikan secara tidak jujur atau terlewat.
+        const recalled = await sendAndCollectBurst(
+          socket,
+          config,
+          messages,
+          waiters,
+          "/memori",
+          "memory-recall",
+        );
+        if (
+          !/Memori yang tersimpan di chat WhatsApp ini/iu.test(recalled.text) ||
+          !/contoh konkret|definisi panjang/iu.test(recalled.text)
+        ) {
+          throw acceptanceFailure(
+            "WHATSAPP_PRIVATE_ACCEPTANCE_MEMORY_NOT_COMMITTED",
+            responseFailureEvidence([
+              ...responseBurst.messages,
+              ...recalled.messages,
+            ]),
+          );
+        }
+        if (!writeAcknowledged) {
+          throw acceptanceFailure(
+            "WHATSAPP_PRIVATE_ACCEPTANCE_MEMORY_COMMIT_NOT_ACKNOWLEDGED",
+            responseFailureEvidence(responseBurst.messages),
+          );
+        }
+        return digestBurst(recalled.messages);
+      },
+    );
 
     await stage(stages, "durable_planning_runtime", async () => {
       const fromSequence = messages.length;
@@ -442,6 +471,7 @@ async function main(): Promise<void> {
           config,
           messages,
           waiters,
+          "final",
         );
         stages.push({
           stage: "dedicated_account_cleanup",
@@ -506,6 +536,7 @@ async function cleanupDedicatedAccount(
   config: AcceptanceConfig,
   messages: CapturedMessage[],
   waiters: Set<() => void>,
+  phase: "reset" | "final",
 ): Promise<string> {
   const deleted = await sendAndWait(
     socket,
@@ -513,7 +544,7 @@ async function cleanupDedicatedAccount(
     messages,
     waiters,
     "/hapus-data",
-    "cleanup-request",
+    `${phase}-cleanup-request`,
     (item) => /HAPUS SEMUA DATA|tidak bisa dibatalkan/iu.test(item.text),
   );
   await sendAndWait(
@@ -522,7 +553,7 @@ async function cleanupDedicatedAccount(
     messages,
     waiters,
     "HAPUS SEMUA DATA",
-    "cleanup-confirm",
+    `${phase}-cleanup-confirm`,
     (item) => /seluruh data|sudah dihapus/iu.test(item.text),
   );
   return digestMessage(deleted);
@@ -779,7 +810,9 @@ function assertPrivateOnboarding(intro: CapturedBurst): void {
     /aku Harvy/iu,
     /AI agent/iu,
     /Pesanmu bakal diproses oleh AI/iu,
-    /lihat atau hapus/iu,
+    /bisa otomatis mengingatnya/iu,
+    /bakal bilang setelah benar-benar menyimpan atau memperbaruinya/iu,
+    /melihat, mengoreksi, atau menghapusnya/iu,
     /balas SETUJU/iu,
   ]) {
     if (!expected.test(combined)) {

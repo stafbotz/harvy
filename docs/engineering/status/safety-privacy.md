@@ -1,6 +1,6 @@
 # Status — Safety dan Privacy
 
-Refreshed: 23 Agustus 2026 pada consent memori implicit lintas kanal dan probe
+Refreshed: 24 Agustus 2026 pada authority auto-memory privat dan probe
 model nyata. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`. Untuk
 perubahan di area ini, baca bagian Constitution dan invariant yang relevan
 sebelum mengubah kontraknya.
@@ -27,15 +27,19 @@ sebelum mengubah kontraknya.
   tugas/reminder biasa yang eksplisit dapat berjalan saat aman secara aksi,
   begitu pula kontrol eksplisit berisiko rendah—termasuk hak data dan kontrol
   grup yang masih lolos authority—selama tidak ada danger atau bukti kuat
-  unresolved. Kandidat memori baru, pending implisit, sesi, dan
+  unresolved. Kandidat auto-memory privat, sesi, dan
   state percakapan umum hanya pada calm yang pasti.
 - Acute triage tidak lagi menilai privacy. Pada grup, `contextPrivacy` terpisah
   hanya mengizinkan raw rolling context; null/sensitive no-retain tanpa UX
-  support. Model ekstraksi dan classifier `memory-privacy` boleh membantu
-  membentuk kandidat/prompt, tetapi tidak lagi menjadi authority write:
-  seluruh kandidat implicit pada Telegram privat, WhatsApp privat, dan direct
-  WhatsApp grup menunggu izin item-spesifik. Perintah explicit remember tetap
-  harus dibuktikan dari raw turn dan exact candidate; credential selalu ditolak.
+  support. Consent onboarding privat versi 8 menjadi authority auto-memory
+  ordinary maupun personal tanpa prompt/tombol per-item. Model ekstraksi hanya
+  mengusulkan isi; primary masih mengikat owner/lifecycle/dedupe/limit dan
+  menolak credential. Classifier `memory-privacy` dipensiunkan karena tidak lagi
+  menentukan authority. Perintah explicit remember tetap dibuktikan dari raw
+  turn dan exact candidate agar intent serta kegagalan tidak dikarang model.
+  Grup tidak mewarisi consent privat: kandidat member-local implicit dilewati
+  tanpa write/prompt, explicit remember tetap item-scoped, dan shared room tetap
+  memerlukan konfirmasi admin.
 - Jawaban pending berbentuk tanggal/waktu/durasi/pilihan dari closed set serta
   acknowledgment dingin yang sempit mempunyai fast path setelah emergency
   preflight negatif. Edit memori, konfirmasi destruktif, dan `agent-input`
@@ -62,28 +66,32 @@ sebelum mengubah kontraknya.
   revision yang ditolak disettle hanya pada generation yang sama, dan mode
   runtime efektif diperiksa lagi tepat sebelum pending revalidation, delivery,
   serta fixed ACK.
-- Telemetry tetap content-free; classifier `memory-privacy` dan
-  `group-ingress` adalah overhead non-billable dan summary menyediakan
-  `safeActionBlockedRate`.
+- Telemetry tetap content-free; `group-ingress` adalah overhead non-billable
+  dan summary menyediakan `safeActionBlockedRate`. Purpose historis
+  `memory-privacy` tetap dapat dibaca pada ledger lama, tetapi current runtime
+  tidak lagi membuat call tersebut.
 - Export, withdrawal, forget, dan full deletion tersedia dengan owner scope.
   Confirmation token dipakai untuk withdrawal, full deletion, dan forget-all;
   export serta forget-one tidak memakai pending confirmation.
 
 ## Batas dan defect aktif
 
-- Salah klasifikasi ekstraksi/privacy masih dapat melewatkan kandidat yang
-  seharusnya ditawarkan atau meminta izin secara berlebihan, tetapi tidak lagi
-  dapat mengotorisasi penyimpanan implicit. Jangan mengklaim deteksi sensitivitas
-  sempurna atau bahwa semua fakta penting pasti menjadi kandidat.
+- Salah klasifikasi ekstraksi privat dapat melewatkan kandidat atau menyimpan
+  candidate yang keliru setelah onboarding. Receipt commit serta kontrol
+  lihat/koreksi/hapus membuatnya dapat diaudit pengguna, tetapi tidak menjamin
+  akurasi. Jangan mengklaim semua fakta penting pasti menjadi kandidat atau
+  false-positive/false-negative sudah terukur. Credential tetap hard-excluded.
 - Evaluasi provider nyata terbaru lulus 60/60: 42 kasus percakapan dan 18 kasus
   boundary/interruption tanpa fallback atau kegagalan provider. Di dalamnya,
   cerita biasa/putus cinta tetap pada dukungan proporsional, sedangkan self-harm
   dan kekerasan akut masuk jalur bahaya. Corpus ini adalah sampel regresi, bukan
-  pengukuran false-positive/false-negative yang terkalibrasi. Acceptance latest
-  build pada akun Telegram dan WhatsApp nyata juga meloloskan satu skenario
-  nonkrisis yang secara eksplisit ditandai sebagai simulasi melalui jalur
-  transport penuh, tanpa mencemari jawaban planning sesudahnya. Itu membuktikan
-  routing baseline, bukan penanganan krisis manusia nyata atau angka FP/FN.
+  pengukuran false-positive/false-negative yang terkalibrasi. Baseline sebelum
+  perubahan policy memori pernah meloloskan skenario nonkrisis tersimulasi pada
+  Telegram dan WhatsApp nyata. Rerun WhatsApp current build 24 Agustus menerima
+  beberapa surface respons tetapi timeout pada predicate stage tersebut;
+  Telegram current full belum mencapainya. Karena itu safety live current build
+  belum lulus dan baseline lama tidak boleh dipromosikan menjadi bukti current,
+  penanganan krisis manusia nyata, atau angka FP/FN.
 - Emergency preflight bersifat closed-set pada batching Telegram privat dan
   WhatsApp grup; jangan menganggap hasil negatif sebagai bukti aman. Grup baru
   tetap harus menyelesaikan notice sebelum ACK/model.
@@ -98,7 +106,6 @@ sebelum mengubah kontraknya.
 ## Bukti dan pointer
 
 - Kode: `src/ai/safety.ts`, `src/ai/group-ingress.ts`,
-  `src/ai/memory-privacy.ts`,
   `src/core/safety-policy.ts`,
   `src/core/data-control-service.ts`, `src/bot/message-batcher.ts`,
   `src/bot/fast-path-policy.ts`, `src/bot/onboarding.ts`,

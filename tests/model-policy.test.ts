@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  requiresPlannedExecution,
   resolveModel,
   resolveModelRoute,
   selectConversationModelRole,
@@ -160,6 +161,44 @@ describe("kebijakan pemilihan model", () => {
         executionSize: "heavy",
       }),
     }), "orchestrate");
+  });
+
+  it("menjaga interaksi terpandu ringan di percakapan setelah pagar safety dan tool", () => {
+    assert.equal(selectGlobalRoute({
+      intent: "feeling",
+      messageLength: 80,
+      guidedInteraction: true,
+      assessment: assessment({ planningRequired: true }),
+    }), "conversation");
+    assert.equal(selectGlobalRoute({
+      intent: "question",
+      messageLength: 80,
+      guidedInteraction: true,
+      specializedFlow: true,
+      assessment: assessment({ planningRequired: true }),
+    }), "specialized");
+    assert.equal(selectGlobalRoute({
+      intent: "feeling",
+      messageLength: 80,
+      guidedInteraction: true,
+      risk: "dukungan",
+      assessment: assessment({ planningRequired: true }),
+    }), "conversation");
+  });
+
+  it("hanya mengaktifkan durable planning dari assessment tepercaya nonmekanis", () => {
+    assert.equal(requiresPlannedExecution(assessment({
+      planningRequired: true,
+      complexity: "deep",
+    })), true);
+    assert.equal(requiresPlannedExecution(assessment({
+      planningRequired: true,
+      confidence: 0.2,
+    })), false);
+    assert.equal(requiresPlannedExecution(assessment({
+      planningRequired: true,
+      complexity: "mechanical",
+    })), false);
   });
 
   it("mengarahkan semua tingkatan ke satu model selama mode uji", () => {

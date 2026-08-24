@@ -98,8 +98,8 @@ export interface RoutingInput {
   deterministicFastPath?: boolean;
   /** Flow/tool khusus yang dipilih high-precision code-owned preflight. */
   specializedFlow?: boolean;
-  /** Override planning lokal yang berasal dari intent eksplisit pengguna. */
-  forceOrchestration?: boolean;
+  /** Policy UX memilih interaksi ringan dari sinyal model bounded. */
+  guidedInteraction?: boolean;
   /**
    * Percakapan menyinggung keselamatan, seperti menyakiti diri, kekerasan,
    * pelecehan, atau eksploitasi.
@@ -144,7 +144,6 @@ const DEFAULT_ROLE_TIERS: Readonly<Record<CognitiveModelRole, ModelTier>> =
  */
 export function selectGlobalRoute(input: RoutingInput): GlobalWorkRoute {
   if (input.deterministicFastPath) return "deterministic";
-  if (input.forceOrchestration) return "orchestrate";
 
   // Safety mempunyai compiler dan review selektif tersendiri. Nuansa emosi
   // tidak boleh secara otomatis mengaktifkan agent graph atau tool.
@@ -154,8 +153,12 @@ export function selectGlobalRoute(input: RoutingInput): GlobalWorkRoute {
   ) return "conversation";
 
   // High-precision flow code-owned tidak boleh dikalahkan classifier semantik.
-  // Planning eksplisit sudah ditangani forceOrchestration di atas.
   if (input.specializedFlow) return "specialized";
+
+  // Resolusi konflik ini terjadi setelah safety dan flow state-live. Sinyal
+  // model tidak memperoleh authority baru; policy hanya mencegah interaksi
+  // terpandu yang kecil dinaikkan menjadi pekerjaan durable.
+  if (input.guidedInteraction) return "conversation";
 
   const assessment = input.assessment;
   // Low-confidence semantic output cannot override compatibility/high-precision
@@ -166,7 +169,7 @@ export function selectGlobalRoute(input: RoutingInput): GlobalWorkRoute {
       assessment.transformationMechanical;
     const deep =
       assessment.complexity === "deep" ||
-      (assessment.planningRequired && !mechanical) ||
+      requiresPlannedExecution(assessment) ||
       (assessment.executionSize === "heavy" && !mechanical) ||
       (assessment.emotionalNuance === "high" &&
         (assessment.ambiguity === "high" ||
@@ -188,6 +191,20 @@ export function selectGlobalRoute(input: RoutingInput): GlobalWorkRoute {
   return input.intent === "question" || input.intent === "request"
     ? "specialized"
     : "conversation";
+}
+
+/**
+ * Planning durable diusulkan assessment model yang bounded, lalu dipersempit
+ * oleh confidence dan policy pekerjaan mekanis milik kode. Kata mentah tidak
+ * pernah menaikkan request menjadi AgentRun.
+ */
+export function requiresPlannedExecution(
+  assessment: RoutingAssessment | null | undefined,
+): boolean {
+  if (!assessment || assessment.confidence < 0.55) return false;
+  const mechanical = assessment.complexity === "mechanical" ||
+    assessment.transformationMechanical;
+  return assessment.planningRequired && !mechanical;
 }
 
 /** Adapter kompatibilitas untuk surface yang masih memakai dua mode agent. */

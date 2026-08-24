@@ -10,13 +10,12 @@
  * dan penghapusan sendiri.
  */
 import { randomUUID } from "node:crypto";
-import type { ExtractedMemory, ExtractedTask } from "../ai/understand.js";
+import type { ExtractedTask } from "../ai/understand.js";
 import type { AgentMode } from "../ai/agent.js";
 import type { AgentRunCheckpoint } from "../harness/agent-harness.js";
 
 export type Pending =
   | { kind: "confirm-task"; task: ExtractedTask }
-  | { kind: "confirm-memory"; memory: ExtractedMemory }
   | { kind: "confirm-memory-wipe" }
   | { kind: "confirm-consent-withdrawal" }
   | { kind: "confirm-full-deletion" }

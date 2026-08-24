@@ -5,15 +5,20 @@ import {
   type InlineKeyboard,
 } from "grammy";
 import { randomUUID } from "node:crypto";
-import type { HarvyContext } from "../ai/context.js";
+import { EMPTY_CONTEXT, type HarvyContext } from "../ai/context.js";
 import type { Conversation, ConversationRuntime } from "../ai/conversation.js";
+import type { OperationPresentationBrief } from
+  "../ai/operation-presentation.js";
 import { hasMemoryPortraitEvidence } from "../ai/memory-portrait.js";
 import { ByokProviderError } from "../ai/client.js";
 import {
   currentUsageAttribution,
   withUsageAttribution,
 } from "../ai/usage-attribution.js";
-import { selectGlobalRoute } from "../ai/model-policy.js";
+import {
+  requiresPlannedExecution,
+  selectGlobalRoute,
+} from "../ai/model-policy.js";
 import { liveStateRequirement } from "../ai/agent.js";
 import {
   canUseDirectTimeFastPath,
@@ -51,6 +56,7 @@ import type { PrivateCodingRunHandle } from "../core/private-coding-application.
 import type { PrivateGitHubPublishOffer } from "../core/private-github-application.js";
 import {
   adaptiveActions,
+  prefersGuidedSmallStep,
   replyHasBlockingQuestion,
 } from "../core/action-policy.js";
 import { HISTORY_WINDOW } from "../core/history-policy.js";
@@ -63,7 +69,7 @@ import {
 } from "../core/memory-policy.js";
 import {
   deriveMemoryMetadata,
-  inferDurablePreferenceCandidate,
+  inferExplicitResponsePreference,
 } from "../core/memory-candidate.js";
 import {
   explicitMemoryRememberAuthority,
@@ -105,7 +111,6 @@ import {
 } from "../core/session-service.js";
 import {
   authorizedSessionSignal,
-  explicitlyRequestsSmallStepSession,
   sessionAppliesToMessage,
 } from "../core/session-policy.js";
 import type { TaskService } from "../core/task-service.js";
@@ -170,7 +175,6 @@ import {
   MEMORY_SAVE_UNAVAILABLE,
   MEMORY_SECRET_REJECTION,
   MEMORY_WIPE_PROMPT,
-  memoryConsentActions,
   memoryNoteLines,
   memoryPortraitActions,
   memoryWipeConfirmActions,
@@ -215,8 +219,6 @@ import {
 import { PendingStore, type Pending } from "./pending.js";
 import {
   deterministicArithmeticReply,
-  deterministicEmptyReminderReply,
-  deterministicQuickChatReply,
   isNarrowPendingAnswer,
 } from "./fast-path-policy.js";
 import {
@@ -258,15 +260,15 @@ const MEMORY_PORTRAIT_QUERY =
 
 interface AuthorizedMemoryCandidate {
   memory: ExtractedMemory;
-  /** Dibentuk kode lokal dari user turn; tidak pernah dibaca dari JSON model. */
-  explicitConsent: boolean;
+  /** Perintah remember dibuktikan lokal; onboarding mengotorisasi write biasa. */
+  explicitRequest: boolean;
 }
 
 interface StoredMemoryBatch {
   /** Primary memory yang benar-benar baru ditulis dan perlu rollback bila send gagal. */
   saved: MemoryItem[];
-  /** Kandidat implicit sensitif yang masih memerlukan tombol bertoken. */
-  sensitive: ExtractedMemory | null;
+  /** Ada kandidat yang tidak berhasil commit dan tidak boleh diakui sebagai write. */
+  uncommitted: boolean;
   /** Primary baru atau duplicate yang diminta eksplisit oleh user turn ini. */
   explicitlyRemembered: MemoryItem[];
   /** Hasil code-owned yang boleh dijelaskan model setelah commit selesai. */
@@ -422,6 +424,79 @@ export function createBot(
   };
   const currentTurnId = (): string | null =>
     currentUsageAttribution()?.turnId ?? null;
+  const presentPrivateOperation = async (
+    ownerId: string,
+    brief: OperationPresentationBrief,
+    options: {
+      context?: HarvyContext;
+      style?: StylePreference | null;
+      timeZone?: string;
+      runtime?: ConversationRuntime;
+    } = {},
+  ): Promise<string> => {
+    const present = (conversation as Partial<
+      Pick<Conversation, "presentOperation">
+    >).presentOperation;
+    if (typeof present !== "function") return brief.fallbackText;
+    try {
+      if (await profiles.needsOnboarding(ownerId)) return brief.fallbackText;
+      const profile = await profiles.load(ownerId);
+      const context = options.context ?? EMPTY_CONTEXT;
+      return await present.call(
+        conversation,
+        brief,
+        context,
+        options.style === undefined
+          ? profile.stylePreference
+          : options.style,
+        {
+          ...options.runtime,
+          ownerId,
+          channel: "telegram",
+          timeZone: options.timeZone ?? profile.timeZone ??
+            config.defaultTimezone,
+        },
+      );
+    } catch (error) {
+      logger.warn(
+        "telegram_private_operation_presentation_failed",
+        "Presentasi operasi privat Telegram gagal; fallback dipakai.",
+        {
+          kind: brief.kind,
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+      );
+      return brief.fallbackText;
+    }
+  };
+  const scheduledCheckInText = async (
+    session: ActiveSession,
+  ): Promise<string> => {
+    const present = (conversation as Partial<
+      Pick<Conversation, "presentScheduledCheckIn">
+    >).presentScheduledCheckIn;
+    if (typeof present !== "function") return CHECK_IN_MESSAGE;
+    try {
+      const profile = await profiles.load(session.ownerId);
+      return await present.call(
+        conversation,
+        session,
+        profile.stylePreference,
+        {
+          ownerId: session.ownerId,
+          channel: "telegram",
+          timeZone: profile.timeZone ?? config.defaultTimezone,
+        },
+      ) ?? CHECK_IN_MESSAGE;
+    } catch (error) {
+      logger.warn(
+        "telegram_private_checkin_presentation_failed",
+        "Pertanyaan check-in Telegram gagal dipersonalisasi; fallback dipakai.",
+        { errorType: error instanceof Error ? error.name : "unknown" },
+      );
+      return CHECK_IN_MESSAGE;
+    }
+  };
   const markDeliveredForOwner = async (
     ownerId: string,
     turnId: string | null,
@@ -1507,12 +1582,16 @@ export function createBot(
     const accepted = await messageBatcher.runWhenIdle(
       candidate.ownerId,
       async () => {
-      sent = await sessions.deliverCheckIn(candidate, async (current) => {
-        await bot.api.sendMessage(current.chatId, CHECK_IN_MESSAGE, {
-          reply_markup: checkInOutcomeActions(current),
+        const personalized = await scheduledCheckInText(candidate);
+        sent = await sessions.deliverCheckIn(candidate, async (current) => {
+          const response = current.updatedAt === candidate.updatedAt
+            ? personalized
+            : CHECK_IN_MESSAGE;
+          await bot.api.sendMessage(current.chatId, response, {
+            reply_markup: checkInOutcomeActions(current),
+          });
+          await history.append(current.ownerId, "harvy", response);
         });
-        await history.append(current.ownerId, "harvy", CHECK_IN_MESSAGE);
-      });
       },
     );
     return accepted && sent;
@@ -1525,10 +1604,30 @@ export function createBot(
     const accepted = await messageBatcher.runWhenIdle(
       candidate.ownerId,
       async () => {
+        const profile = await profiles.load(candidate.ownerId);
+        const timeZone = profile.timeZone ?? config.defaultTimezone;
+        const candidateFallback = [
+          "🔔 Pengingat",
+          "",
+          `• ${candidate.title}`,
+        ].join("\n");
+        const personalized = await presentPrivateOperation(candidate.ownerId, {
+          kind: "reminder-due",
+          outcome: "information",
+          userMessage: `Pengingat untuk ${candidate.title}`,
+          stableBody: ["🔔 Pengingat", "", `• ${candidate.title}`].join("\n"),
+          fallbackText: candidateFallback,
+        }, { timeZone });
         sent = await tasks.deliverReminder(candidate, async (current) => {
-          const response = [`🔔 Pengingat`, "", `• ${current.title}`].join(
-            "\n",
-          );
+          const fallbackText = [
+            "🔔 Pengingat",
+            "",
+            `• ${current.title}`,
+          ].join("\n");
+          const response = current.title === candidate.title &&
+              current.dueAt === candidate.dueAt
+            ? personalized
+            : fallbackText;
           await bot.api.sendMessage(current.chatId, response, {
             reply_markup: reminderActions(current),
           });
@@ -1930,19 +2029,12 @@ export function createBot(
       !waitingAtStart && !activeSession && !immediateDanger && !urgentBoundary
         ? deterministicArithmeticReply(text)
         : null;
-    const quickReply = arithmeticReply ??
-      (!waitingAtStart &&
-          !activeSession &&
-          context.turns.length === 0 &&
-          !context.summary
-        ? deterministicQuickChatReply(text)
-        : null);
-    if (quickReply) {
+    if (arithmeticReply) {
       await noteTurnSignal(ownerId, "deterministic-fast-path");
       await appendUserHistory(ownerId, text, runtime);
       if (!(await runtimeIsCurrent(runtime))) return;
-      await ctx.reply(quickReply);
-      await history.append(ownerId, "harvy", quickReply);
+      await ctx.reply(arithmeticReply);
+      await history.append(ownerId, "harvy", arithmeticReply);
       void history.compact(ownerId);
       return;
     }
@@ -2025,6 +2117,8 @@ export function createBot(
     // path and never wait on an embedding/vector provider.
     if (
       memoryContextCompiler && understanding &&
+      (understanding.intent !== "smalltalk" ||
+        Boolean(understanding.semanticOperation)) &&
       riskHint.level === "none" && !immediateDanger && !urgentBoundary
     ) {
       try {
@@ -2282,7 +2376,14 @@ export function createBot(
       // runtime read-only. Label intent/action model tidak boleh membajaknya ke
       // kontrol memori atau kontrol data sebelum tool authority hidup.
       const requiresLiveState = liveStateRequirement(text) !== null;
-      const requiresAgentPlanning = isExplicitPlanningRequest(text);
+      const guidedSmallStep = effectPermissions.generalState &&
+        !activeSession &&
+        prefersGuidedSmallStep(
+          understanding.suggestedActions ?? [],
+          understanding.routingAssessment,
+        );
+      const requiresAgentPlanning = !guidedSmallStep &&
+        requiresPlannedExecution(understanding.routingAssessment);
       const proposedRoute = immediateUnderstandingRoute(understanding, text);
       const proposedRouteAllowed = proposedRoute.kind === "save-task"
         ? effectPermissions.ordinaryTask
@@ -2303,19 +2404,6 @@ export function createBot(
           !requiresAgentPlanning
           ? proposedRoute
           : ({ kind: "conversation" } as const);
-
-      const emptyReminderReply = route.kind === "conversation"
-        ? deterministicEmptyReminderReply(text, understanding)
-        : null;
-      if (emptyReminderReply) {
-        if (!(await runtimeIsCurrent(runtime))) return;
-        await appendUserHistory(ownerId, text, runtime);
-        if (!(await runtimeIsCurrent(runtime))) return;
-        await ctx.reply(emptyReminderReply);
-        await history.append(ownerId, "harvy", emptyReminderReply);
-        void history.compact(ownerId);
-        return;
-      }
 
       if (route.kind === "memory-control") {
         if (!(await runtimeIsCurrent(runtime))) return;
@@ -2389,10 +2477,8 @@ export function createBot(
       }
 
       const explicitSmallStepSession =
-        effectPermissions.generalState &&
-        !activeSession &&
-        route.kind === "conversation" &&
-        explicitlyRequestsSmallStepSession(text);
+        guidedSmallStep &&
+        route.kind === "conversation";
       const offeredTask = effectPermissions.generalState &&
           !explicitSmallStepSession
         ? taskToOffer(understanding)
@@ -2432,16 +2518,14 @@ export function createBot(
         (explicitSmallStepSession ? text : "") ||
         (proposedActions[0] === "listen" ? "Menyimak cerita ini" : "");
       const plannedActions = actionGoal ? proposedActions : [];
-      const proposedMemories: ExtractedMemory[] = [...understanding.memories];
-      const inferredPreference = inferDurablePreferenceCandidate(text);
-      if (
-        inferredPreference && !proposedMemories.some((memory) =>
-          memory.content.toLocaleLowerCase("id-ID") ===
-            inferredPreference.content.toLocaleLowerCase("id-ID")
-        )
-      ) {
-        proposedMemories.push(inferredPreference);
-      }
+      const explicitResponsePreference = inferExplicitResponsePreference(text);
+      // Boundary lokal membuktikan bahwa seluruh turn adalah satu instruksi
+      // presentasi. Gunakan canonical candidate-nya saja: kandidat model yang
+      // memparafrasakan item yang sama tidak boleh menghasilkan write kedua
+      // atau prompt consent tambahan.
+      const proposedMemories: ExtractedMemory[] = explicitResponsePreference
+        ? [explicitResponsePreference]
+        : [...understanding.memories];
       const derivedMemoryCandidates = effectPermissions.generalState
           && !requiresAgentPlanning
         ? proposedMemories.map((memory) => ({
@@ -2452,10 +2536,13 @@ export function createBot(
               : {}),
           }))
         : [];
-      // Fallback lokal membuktikan bentuknya adalah preferensi implicit tanpa
-      // verba simpan. Label model tidak boleh menaikkannya menjadi consent
-      // explicit, bahkan bila semanticOperation model berkata sebaliknya.
-      const explicitRememberSignaled = inferredPreference === null &&
+      const explicitResponsePreferenceForbidden = Boolean(
+        explicitResponsePreference &&
+          containsForbiddenMemorySecret(explicitResponsePreference.content),
+      );
+      // Instruksi presentasi explicit mempunyai authority sendiri. Jalur
+      // remember umum tetap memerlukan proposal semantik dan evidence raw-turn.
+      const explicitRememberSignaled = explicitResponsePreference === null &&
         understanding.memoryAction === "remember" &&
         understanding.taskAction === null &&
         understanding.task === null;
@@ -2470,6 +2557,14 @@ export function createBot(
       const explicitlyConsented = new Set(
         explicitRemember?.candidateIndexes ?? [],
       );
+      if (explicitResponsePreference && !explicitResponsePreferenceForbidden) {
+        const index = derivedMemoryCandidates.findIndex((memory) =>
+          memory.kind === explicitResponsePreference.kind &&
+          memory.content.toLocaleLowerCase("id-ID") ===
+            explicitResponsePreference.content.toLocaleLowerCase("id-ID")
+        );
+        if (index >= 0) explicitlyConsented.add(index);
+      }
       const explicitAuthorityMissing =
         explicitRememberSignaled &&
         (!explicitRemember ||
@@ -2489,19 +2584,22 @@ export function createBot(
           : derivedMemoryCandidates
             .map((memory, index) => ({
               memory,
-              explicitConsent: explicitlyConsented.has(index),
+              explicitRequest: explicitlyConsented.has(index),
             }))
             // Primary MemoryService menolak lagi. Filter ini juga mencegah
             // candidate credential membayar classifier privasi kedua.
             .filter(({ memory }) =>
               !containsForbiddenMemorySecret(memory.content));
-      // Classifier model tidak lagi menjadi authority privasi. Kandidat yang
-      // tidak berada di bawah perintah simpan eksplisit selalu menunggu izin;
-      // false-negative dua model dengan bias serupa tidak dapat menulis data.
-      const remembered = await storeOrdinaryMemories(
+      // Gerbang onboarding sudah memberi authority memori pada scope privat.
+      // Model hanya mengusulkan isi; primary service tetap menolak credential,
+      // duplikat, owner tersuspensi, dan write di luar batas penyimpanan.
+      const storedMemories = await storeOrdinaryMemories(
         ownerId,
         memoryCandidates,
       );
+      const remembered = explicitAuthorityMissing
+        ? { ...storedMemories, uncommitted: true }
+        : storedMemories;
       if (!(await runtimeIsCurrent(runtime))) {
         await rollbackOrdinaryMemories(ownerId, remembered.saved);
         await telemetry.discardUndelivered?.(ownerId, currentTurnId());
@@ -2529,7 +2627,10 @@ export function createBot(
           ? "request"
           : "question";
       try {
-        if (explicitRemember?.forbiddenSecret) {
+        if (
+          explicitRemember?.forbiddenSecret ||
+          explicitResponsePreferenceForbidden
+        ) {
           reply = MEMORY_SECRET_REJECTION;
         } else if (explicitRequestUnresolved || explicitCommitMissing) {
           reply = MEMORY_SAVE_UNAVAILABLE;
@@ -2550,7 +2651,7 @@ export function createBot(
             needsStepByStep: understanding.needsStepByStep,
             assessment: understanding.routingAssessment ?? null,
             specializedFlow: requiresLiveState,
-            forceOrchestration: requiresAgentPlanning,
+            guidedInteraction: guidedSmallStep,
             risk: triage.level,
           });
           const planningMode = globalRoute === "orchestrate"
@@ -2743,7 +2844,7 @@ export function createBot(
       if (
         reply &&
         remembered.acknowledgements.length === 0 &&
-        remembered.sensitive !== null &&
+        remembered.uncommitted &&
         replyAcknowledgesMemoryWrite(reply)
       ) {
         reply = withoutUnconfirmedMemoryWriteClaims(reply) ||
@@ -2769,7 +2870,6 @@ export function createBot(
         reply &&
         plannedActions.length > 0 &&
         remembered.saved.length === 0 &&
-        remembered.sensitive === null &&
         (!replyHasBlockingQuestion(reply) || explicitSmallStepSession)
       ) {
         adaptiveKeyboard = adaptiveActionButtons(
@@ -3056,7 +3156,6 @@ export function createBot(
           throw error;
         }
         if (!(await runtimeIsCurrent(runtime))) return;
-        await askSensitive(ctx, ownerId, remembered.sensitive, runtime);
         return;
       }
 
@@ -3097,7 +3196,9 @@ export function createBot(
       }
 
       if (!(await runtimeIsCurrent(runtime))) return;
-      await askSensitive(ctx, ownerId, remembered.sensitive, runtime);
+      if (pending.peek(ownerId)?.kind !== "agent-input") {
+        await clearPending(ownerId);
+      }
 
       // Ditanyakan setelah percakapan punya isi, bukan setelah giliran pertama.
       // Pada uji pertama pesan pembukanya cuma "p", dan pertanyaan gaya sudah
@@ -4053,7 +4154,6 @@ export function createBot(
         );
         return true;
       case "confirm-task":
-      case "confirm-memory":
       case "confirm-memory-wipe":
       case "confirm-consent-withdrawal":
       case "confirm-full-deletion":
@@ -4696,13 +4796,12 @@ export function createBot(
   }
 
   /**
-   * Menyimpan memori yang memang diminta eksplisit dan menyisihkan kandidat
-   * implisit untuk ditawarkan.
+   * Menyimpan kandidat setelah consent onboarding privat aktif.
    *
-   * Beta belum mempunyai pengukuran false-negative classifier yang layak untuk
-   * menjamin data sensitif. Karena itu tidak ada kandidat implisit yang boleh
-   * menjadi durable. Perintah simpan eksplisit hanya lewat setelah authority
-   * item-scoped dibentuk adapter tepercaya — Pasal 4 nomor 3.
+   * Perintah remember tetap dibuktikan lokal agar kegagalan dapat dijelaskan
+   * secara jujur. Kandidat percakapan biasa memakai authority onboarding dan
+   * tidak membuat prompt atau tombol per-item. Primary MemoryService tetap
+   * menjadi pagar credential, lifecycle, dedupe, dan batas penyimpanan.
    */
   async function storeOrdinaryMemories(
     ownerId: string,
@@ -4711,16 +4810,12 @@ export function createBot(
     const saved: MemoryItem[] = [];
     const explicitlyRemembered: MemoryItem[] = [];
     const acknowledgements: StoredMemoryBatch["acknowledgements"] = [];
-    let sensitive: ExtractedMemory | null = null;
+    let uncommitted = false;
 
     try {
       for (const authorized of items) {
         const item = authorized.memory;
         const isSensitive = isSensitiveMemory(item);
-        if (!authorized.explicitConsent) {
-          sensitive ??= { ...item };
-          continue;
-        }
 
         const stored = await memories.remember({
           ownerId,
@@ -4742,18 +4837,18 @@ export function createBot(
           acknowledgements.push({
             item: stored,
             operation: item.correction ? "updated" : "saved",
-            explicit: authorized.explicitConsent,
+            explicit: authorized.explicitRequest,
           });
-          if (authorized.explicitConsent) explicitlyRemembered.push(stored);
+          if (authorized.explicitRequest) explicitlyRemembered.push(stored);
           continue;
         }
-        if (authorized.explicitConsent) {
-          const duplicate = (await memories.list(ownerId)).find(
-            (existing) =>
-              existing.content.toLocaleLowerCase("id-ID") ===
-                item.content.toLocaleLowerCase("id-ID"),
-          );
-          if (duplicate) {
+        const duplicate = (await memories.list(ownerId)).find(
+          (existing) =>
+            existing.content.toLocaleLowerCase("id-ID") ===
+              item.content.toLocaleLowerCase("id-ID"),
+        );
+        if (duplicate) {
+          if (authorized.explicitRequest) {
             explicitlyRemembered.push(duplicate);
             acknowledgements.push({
               item: duplicate,
@@ -4761,14 +4856,16 @@ export function createBot(
               explicit: true,
             });
           }
+          continue;
         }
+        uncommitted = true;
       }
     } catch (error) {
       await rollbackOrdinaryMemories(ownerId, saved);
       throw error;
     }
 
-    return { saved, sensitive, explicitlyRemembered, acknowledgements };
+    return { saved, uncommitted, explicitlyRemembered, acknowledgements };
   }
 
   function memoryNoticeItemsForReply(
@@ -4851,53 +4948,6 @@ export function createBot(
           error,
         );
       }
-    }
-  }
-
-  /**
-   * Hanya satu langkah tertunda yang dapat hidup sekaligus per pengguna.
-   *
-   * Ketika sebuah pesan melahirkan tawaran tugas sekaligus memori sensitif,
-   * tawaran tugas menang dan memorinya dilewatkan. Menumpuk dua pertanyaan
-   * sekaligus membuat pengguna harus menjawab kuis, dan Pasal 3.11 meminta
-   * pilihan yang tidak berlebihan.
-   */
-  async function askSensitive(
-    ctx: Context,
-    ownerId: string,
-    sensitive: ExtractedMemory | null,
-    runtime: ConversationRuntime = {},
-  ): Promise<void> {
-    if (!(await runtimeIsCurrent(runtime))) return;
-    if (!sensitive) {
-      // Batch yang memuat bubble sebelum prompt agent tidak sah sebagai
-      // jawaban. Jangan biarkan housekeeping memori membatalkan checkpoint
-      // yang sengaja tidak dikonsumsi itu.
-      if (pending.peek(ownerId)?.kind === "agent-input") return;
-      await clearPending(ownerId);
-      return;
-    }
-
-    const confirmationToken = await setPending(ownerId, {
-      kind: "confirm-memory",
-      memory: sensitive,
-    });
-    if (!(await runtimeIsCurrent(runtime))) {
-      pending.take(ownerId, confirmationToken);
-      return;
-    }
-    try {
-      await ctx.reply(
-        [
-          `Boleh aku inget ini? “${sensitive.content}”`,
-          "",
-          "Kalau boleh, kamu nggak perlu cerita ulang nanti. Kalau nggak, aku tetap dengerin hari ini dan nggak nyimpen apa-apa.",
-        ].join("\n"),
-        { reply_markup: memoryConsentActions(confirmationToken) },
-      );
-    } catch (error) {
-      pending.take(ownerId, confirmationToken);
-      throw error;
     }
   }
 
@@ -5057,8 +5107,7 @@ export function createBot(
       return false;
     }
 
-    const response = [
-      ...(heading ? [heading, ""] : []),
+    const factBody = [
       formatTask(task, timeZone),
       understandingNote(task),
       ...(reminderRejected
@@ -5068,6 +5117,34 @@ export function createBot(
           ]
         : []),
     ].join("\n");
+    const fallbackText = [
+      ...(heading ? [heading, ""] : []),
+      factBody,
+    ].join("\n");
+    const response = heading
+      ? await presentPrivateOperation(ownerId, {
+          kind: "task-created",
+          outcome: "success",
+          userMessage: extracted.title,
+          stableBody: factBody,
+          fallbackText,
+          allowedNextSteps: task.reminderAt
+            ? []
+            : ["Kalau perlu, pilih kapan Harvy harus mengingatkan."],
+        }, { timeZone, runtime })
+      : fallbackText;
+    if (!(await runtimeIsCurrent(runtime))) {
+      try {
+        await tasks.remove(ownerId, task.id);
+      } catch (error) {
+        logger.error(
+          "stale_presented_task_compensation_failed",
+          "Tugas dari presentasi Telegram stale gagal dikompensasi.",
+          error,
+        );
+      }
+      return false;
+    }
 
     await ctx.reply(response, { reply_markup: taskActions(task) });
     await history.append(ownerId, "harvy", response);
@@ -5175,8 +5252,20 @@ export function createBot(
         if (target !== "listen" && target !== "advice") return;
 
         await profiles.rememberStyle(ownerId, target);
-        await safeEdit(ctx, styleAck(target));
-        await history.append(ownerId, "harvy", styleAck(target));
+        const fallbackText = styleAck(target);
+        const response = await presentPrivateOperation(ownerId, {
+          kind: "preference-updated",
+          outcome: "success",
+          userMessage: target === "listen"
+            ? "Dengarkan dulu"
+            : "Langsung beri saran",
+          stableBody: target === "listen"
+            ? "Gaya respons: dengarkan dulu."
+            : "Gaya respons: langsung beri saran.",
+          fallbackText,
+        }, { style: target });
+        await safeEdit(ctx, response);
+        await history.append(ownerId, "harvy", response);
         return;
       }
 
@@ -5249,7 +5338,10 @@ export function createBot(
           await safeEdit(ctx, taskMissingNote());
           return;
         }
-        await refreshAfterChange(ctx, ownerId, completed.title);
+        await refreshAfterChange(ctx, ownerId, {
+          kind: "completed",
+          title: completed.title,
+        });
         return;
       }
 
@@ -5259,7 +5351,10 @@ export function createBot(
           await safeEdit(ctx, taskMissingNote());
           return;
         }
-        await refreshAfterChange(ctx, ownerId);
+        await refreshAfterChange(ctx, ownerId, {
+          kind: "removed",
+          title: removed.title,
+        });
         return;
       }
 
@@ -5300,53 +5395,9 @@ export function createBot(
         return;
       }
 
-      case "memsave": {
-        const waiting = pending.take(ownerId, target);
-
-        if (waiting?.kind !== "confirm-memory") {
-          await safeEdit(ctx, "Tombol ini udah nggak berlaku.");
-          return;
-        }
-
-        const saved = await memories.remember({
-          ownerId,
-          kind: waiting.memory.kind,
-          content: waiting.memory.content,
-          ...(waiting.memory.sourceSequences
-            ? { sourceSequences: [...waiting.memory.sourceSequences] }
-            : {}),
-          ...knowledgeFields(waiting.memory),
-          ...(waiting.memory.sensitivity
-            ? {
-                sensitivity: waiting.memory.sensitivity,
-                sensitiveConsent: true,
-              }
-            : {}),
-        });
-
-        await safeEdit(
-          ctx,
-          saved ? memoryNoteLines([saved]) : "Ternyata udah aku inget sebelumnya.",
-        );
-        return;
-      }
-
-      case "memskip": {
-        const waiting = pending.take(ownerId, target);
-        if (waiting?.kind !== "confirm-memory") {
-          await safeEdit(ctx, "Tombol ini udah nggak berlaku.");
-          return;
-        }
-        await safeEdit(
-          ctx,
-          "Oke, itu nggak aku simpen. Aku tetap di sini kalau kamu mau cerita.",
-        );
-        return;
-      }
-
-      // Tombol pada catatan yang menempel di balasan. Balasannya pesan
-      // sungguhan, jadi yang dibuang cukup barisnya — bukan seluruh pesannya,
-      // dan bukan diganti daftar memori.
+      // Kompatibilitas untuk tombol catatan yang sudah terkirim oleh build lama.
+      // Build baru tidak membuat tombol per-write, tetapi callback lama tetap
+      // boleh menjalankan hak hapus pada scope pemiliknya.
       case "memdrop": {
         const stoppedRun = await discardAgentRunForMemoryChange(ownerId);
         const forgotten = await memories.forget(ownerId, target);
@@ -5595,16 +5646,28 @@ export function createBot(
       case "stop": {
         await sessions.stop(ownerId);
         await dropKeyboard(ctx);
-        await ctx.reply("Oke, sesi ini berhenti di sini.");
+        const response = await presentPrivateOperation(ownerId, {
+          kind: "session-stopped",
+          outcome: "success",
+          userMessage: "Berhenti dari sesi ini",
+          stableBody: "Status sesi: berhenti.",
+          fallbackText: "Oke, sesi ini berhenti di sini.",
+        });
+        await ctx.reply(response);
         await recordEvent(ownerId, "session_stopped");
         return;
       }
       case "done": {
         await sessions.progress(ownerId, "done", current.id);
         await dropKeyboard(ctx);
-        await ctx.reply(
-          "Selesai 🌿 Aku nggak akan terus mendorong sesi ini.",
-        );
+        const response = await presentPrivateOperation(ownerId, {
+          kind: "session-completed",
+          outcome: "success",
+          userMessage: "Sesi ini selesai",
+          stableBody: "Status sesi: selesai.",
+          fallbackText: "Selesai 🌿 Aku nggak akan terus mendorong sesi ini.",
+        });
+        await ctx.reply(response);
         await recordEvent(ownerId, "session_completed");
         return;
       }
@@ -5682,20 +5745,42 @@ export function createBot(
     switch (selected.operation) {
       case "done":
         await sessions.progress(ownerId, "done", current.id);
-        await safeEdit(ctx, "Sip, selesai 🌿");
+        await safeEdit(ctx, await presentPrivateOperation(ownerId, {
+          kind: "session-completed",
+          outcome: "success",
+          userMessage: "Check-in ini selesai",
+          stableBody: "Status sesi: selesai.",
+          fallbackText: "Sip, selesai 🌿",
+        }));
         await recordEvent(ownerId, "checkin_completed");
         await recordEvent(ownerId, "session_completed");
         return;
       case "ongoing":
         await safeEdit(
           ctx,
-          "Oke, masih jalan. Aku nggak menjadwalkan pesan lain tanpa kamu minta.",
+          await presentPrivateOperation(ownerId, {
+            kind: "checkin-ongoing",
+            outcome: "information",
+            userMessage: "Pekerjaannya masih berjalan",
+            stableBody: "Status sesi: masih berjalan.",
+            fallbackText:
+              "Oke, masih jalan. Aku nggak menjadwalkan pesan lain tanpa kamu minta.",
+            allowedNextSteps: [
+              "Harvy tidak akan menjadwalkan pesan lain kecuali kamu memintanya.",
+            ],
+          }),
           sessionActions(current),
         );
         return;
       case "stop":
         await sessions.stop(ownerId);
-        await safeEdit(ctx, "Oke, sesi dan check-in ini berhenti.");
+        await safeEdit(ctx, await presentPrivateOperation(ownerId, {
+          kind: "session-stopped",
+          outcome: "success",
+          userMessage: "Hentikan sesi dan check-in",
+          stableBody: "Status sesi dan check-in: berhenti.",
+          fallbackText: "Oke, sesi dan check-in ini berhenti.",
+        }));
         await recordEvent(ownerId, "session_stopped");
         return;
       case "stuck":
@@ -5889,7 +5974,15 @@ export function createBot(
     }
 
     await clearPending(ownerId);
-    await ctx.reply(`Zona waktu tersimpan.\n\n${formatTimeSettings(profile)}`);
+    const fallbackText = `Zona waktu tersimpan.\n\n${formatTimeSettings(profile)}`;
+    const response = await presentPrivateOperation(ownerId, {
+      kind: "preference-updated",
+      outcome: "success",
+      userMessage: "Ubah zona waktu",
+      stableBody: formatTimeSettings(profile),
+      fallbackText,
+    }, { timeZone: target });
+    await ctx.reply(response);
   }
 
   async function handleQuietHoursChoice(
@@ -5937,7 +6030,15 @@ export function createBot(
       await promptCheckInTime(ctx, ownerId, sessionId);
       return;
     }
-    await ctx.reply(`Jam tenang tersimpan.\n\n${formatTimeSettings(profile)}`);
+    const fallbackText = `Jam tenang tersimpan.\n\n${formatTimeSettings(profile)}`;
+    const response = await presentPrivateOperation(ownerId, {
+      kind: "preference-updated",
+      outcome: "success",
+      userMessage: "Ubah jam tenang",
+      stableBody: formatTimeSettings(profile),
+      fallbackText,
+    });
+    await ctx.reply(response);
   }
 
   async function handleConsentWithdrawal(
@@ -6219,13 +6320,19 @@ export function createBot(
     const updated = await tasks.setReminder(ownerId, taskId, target);
 
     if (updated) {
-      await ctx.reply(
-        [
-          "Oke, nanti aku ingetin.",
-          "",
-          formatTask(updated, timeZone),
-        ].join("\n"),
-      );
+      const fallbackText = [
+        "Oke, nanti aku ingetin.",
+        "",
+        formatTask(updated, timeZone),
+      ].join("\n");
+      const response = await presentPrivateOperation(ownerId, {
+        kind: "reminder-scheduled",
+        outcome: "success",
+        userMessage: "Ingatkan tugas ini satu jam lagi",
+        stableBody: formatTask(updated, timeZone),
+        fallbackText,
+      }, { timeZone });
+      await ctx.reply(response);
       return;
     }
     await safeEdit(ctx, taskMissingNote());
@@ -6234,28 +6341,53 @@ export function createBot(
   async function refreshAfterChange(
     ctx: Context,
     ownerId: string,
-    completedTitle?: string,
+    change: { kind: "completed" | "removed"; title: string },
   ): Promise<void> {
     const remaining = await tasks.listActive(ownerId);
     const timeZone = await timeZoneFor(ownerId);
-    const heading = completedTitle
-      ? taskCompletedHeading(completedTitle)
+    const heading = change.kind === "completed"
+      ? taskCompletedHeading(change.title)
       : taskDroppedHeading();
+    const changeFact = change.kind === "completed"
+      ? `Tugas selesai\n${change.title}`
+      : `Tugas dibatalkan\n${change.title}`;
 
     if (remaining.length === 0) {
-      await safeEdit(ctx, `${heading}\n\n${nothingLeftNote()}`);
+      const fallbackText = `${heading}\n\n${nothingLeftNote()}`;
+      const response = await presentPrivateOperation(ownerId, {
+        kind: change.kind === "completed" ? "task-completed" : "task-removed",
+        outcome: "success",
+        userMessage: change.title,
+        stableBody: `${changeFact}\n\nTugas aktif: tidak ada.`,
+        fallbackText,
+      }, { timeZone });
+      await safeEdit(ctx, response);
       return;
     }
 
-    await safeEdit(
-      ctx,
-      [
-        heading,
+    const fallbackText = [
+      heading,
+      "",
+      "Sisanya:",
+      "",
+      ...remaining.map((task) => formatTask(task, timeZone)),
+    ].join("\n");
+    const response = await presentPrivateOperation(ownerId, {
+      kind: change.kind === "completed" ? "task-completed" : "task-removed",
+      outcome: "success",
+      userMessage: change.title,
+      stableBody: [
+        changeFact,
         "",
-        "Sisanya:",
+        "Tugas aktif yang tersisa",
         "",
         ...remaining.map((task) => formatTask(task, timeZone)),
       ].join("\n"),
+      fallbackText,
+    }, { timeZone });
+    await safeEdit(
+      ctx,
+      response,
       taskListActions(remaining),
     );
   }
@@ -6265,7 +6397,18 @@ export function createBot(
     const timeZone = await timeZoneFor(ownerId);
 
     if (active.length === 0) {
-      await ctx.reply(emptyListNote());
+      const fallbackText = emptyListNote();
+      const response = await presentPrivateOperation(ownerId, {
+        kind: "empty-state",
+        outcome: "information",
+        userMessage: "/tugas",
+        stableBody: "Tugas aktif: tidak ada.",
+        fallbackText,
+        allowedNextSteps: [
+          "Kalau ada yang ingin kamu pegang, tulis saja dengan kalimat biasa.",
+        ],
+      }, { timeZone });
+      await ctx.reply(response);
       interactionContext.record(interactionScope(ownerId), {
         domain: "task",
         operation: "list",
@@ -6273,14 +6416,23 @@ export function createBot(
       return;
     }
 
-    await ctx.reply(
-      [
-        taskListLead(),
+    const fallbackText = [
+      taskListLead(),
+      "",
+      ...active.map((task) => formatTask(task, timeZone)),
+    ].join("\n");
+    const response = await presentPrivateOperation(ownerId, {
+      kind: "task-list",
+      outcome: "information",
+      userMessage: "/tugas",
+      stableBody: [
+        "Tugas aktif",
         "",
         ...active.map((task) => formatTask(task, timeZone)),
       ].join("\n"),
-      { reply_markup: taskListActions(active) },
-    );
+      fallbackText,
+    }, { timeZone });
+    await ctx.reply(response, { reply_markup: taskListActions(active) });
     interactionContext.record(interactionScope(ownerId), {
       domain: "task",
       operation: "list",
@@ -6316,14 +6468,6 @@ export function createBot(
     _mode: "tools" | "orchestrate",
   ): boolean {
     return true;
-  }
-
-  function isExplicitPlanningRequest(text: string): boolean {
-    if (/\bjangan\s+(?:buat(?:kan)?|bikin(?:kan)?|susun(?:kan)?|rancang(?:kan)?|rencanakan|pecah(?:kan)?)\b/iu.test(text)) {
-      return false;
-    }
-    return /\b(?:rencanakan|pecah(?:kan)? menjadi langkah)\b/iu.test(text) ||
-      /\b(?:tolong\s+)?(?:buat(?:kan)?|bikin(?:kan)?|susun(?:kan)?|rancang(?:kan)?|beri(?:kan)?(?: aku| saya)?)\b.{0,40}\b(?:rencana|planning|langkah demi langkah)\b/iu.test(text);
   }
 
   async function runGuardedAction(

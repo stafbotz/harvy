@@ -41,7 +41,7 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
-## 2026-08-23 — Parity privat, delivery fence, dan verifikasi latest build
+## 2026-08-24 — Parity privat, delivery fence, dan verifikasi latest build
 
 Scope: adapter Telegram/WhatsApp privat, capability dan executor agent, task/
 session delivery, consent memori, lifecycle runtime, backup lokal, evaluator
@@ -52,7 +52,15 @@ sama dengan Telegram privat melalui UX teks kanalnya, tanpa membekukan WhatsApp
 grup. Task/reminder/session/check-in, data control, Workspace ZIP, CodingRun,
 GitHub, serta AgentRun durable dirangkai pada adapter privat. Reminder/check-in
 beralih ke delivery intent at-most-once yang menahan duplikat dan mengekspos
-hasil ambigu; semua memori implicit lintas kanal memerlukan izin item-spesifik.
+hasil ambigu. Consent onboarding privat versi 8 kini menjadi authority untuk
+auto-memory ordinary maupun personal tanpa prompt atau tombol per-item;
+credential tetap ditolak, commit diberitahukan secara natural, dan kegagalan
+write tidak boleh dibalas seolah data sudah tersimpan. Pengguna mengendalikan
+hasil lewat bahasa natural dan `/memori`. Classifier privacy-memory terpisah
+dipensiunkan; extractor model mengusulkan kandidat, tetapi authority tetap milik
+adapter. Grup tidak mewarisi consent privat: kandidat member-local implicit
+dilewati tanpa prompt, explicit remember tetap item-scoped, dan shared-room
+tetap memerlukan admin.
 Supervisor restart berbatas, runtime lock reclaim, backup lokal terenkripsi,
 dan acceptance harness akun tester WhatsApp ditambahkan. Pairing lokal untuk
 akun Telegram tester serta dua peran WhatsApp kini dikelola dari tab Kanal pengujian
@@ -105,8 +113,19 @@ terminal; transient progress dan hasil final tetap surface berbeda. Permintaan
 exact-step dengan field eksplisit sekarang diturunkan menjadi kontrak struktur
 code-owned dan native final schema; free-text final tidak tersedia pada pass
 tersebut, satu repair bounded diizinkan, dan kode merender hasilnya.
+Presenter receipt privat kini memisahkan copy model dari fakta code-owned di
+Telegram/WhatsApp; failure memakai fallback, dan check-in model tidak menerima
+goal/konteks lama. Cold smalltalk serta reminder kosong masuk reply model;
+planning AgentRun berasal dari assessment tepercaya/nonmekanis, bukan regex kata.
+Reminder juga kini ditahan saat consent AI ditarik.
+Acceptance memori sekarang selalu membuktikan commit lewat `/memori`, bukan
+hanya mencocokkan gaya acknowledgement. Reset awal dan cleanup akhir WhatsApp
+memakai stanza ID berbeda agar dedupe replay produk tidak menelan cleanup kedua.
+Satu false-negative live pada preferensi cara belajar ditutup dengan instruksi
+extractor generik bahwa preferensi belajar/komunikasi yang stabil adalah
+kandidat; rerun akun nyata membuktikan write, acknowledgement, dan recall.
 
-Verified: `npm run check` PASS; `npm test` PASS 1.762/1.762 dalam 219 suite;
+Verified: `npm run check` PASS; `npm test` PASS 1.776/1.776 dalam 221 suite;
 tes terarah Console/channel setup/live-acceptance/lock PASS 19/19; smoke setup
 localhost membuktikan session `setupOnly`, endpoint kanal 200, dashboard 404,
 response tanpa token, instance kedua ditolak `LOCAL_DATA_LOCKED`, serta shutdown
@@ -124,30 +143,30 @@ Edge headless nyata membuktikan login, render/API tanpa exception, status kanal
 final, dan layout desktop/mobile; setelah timeout harness dibuat toleran beban,
 empat pengulangan PASS dan tidak menyisakan profile atau screenshot sementara.
 Pairing WhatsApp A Harvy uji menghasilkan material pair-success durable nyata;
-audit content-free berikutnya membuktikan keempat credential acceptance siap;
-WhatsApp utama dan Harvy uji juga siap serta identitasnya berbeda. Smoke Edge
-state empat-dari-empat membuktikan surface siap, pengaturan tertutup, aksi
-Kelola yang membuka serta memfokuskan kanal tepat, form/pairing tersembunyi,
-dan layout desktop/mobile tanpa overflow. Tes regresi credential/Console/Baileys/
-live-acceptance terarah PASS 68/68. Regresi recovery baru PASS 23/23 dan smoke
-Edge membuktikan error → panel pulihkan → QR pengganti. Sesudah rotasi tester
-dan handshake peer-session, probe WhatsApp privat lulus end-to-end. Acceptance
-latest build terakhir kemudian lulus melalui akun nyata pada kedua kanal:
-Telegram privat 8/8 tahap dan WhatsApp privat managed 10/10 tahap. Telegram
-planning selesai sekitar 22 detik dengan satu Anchor editable+pin/unpin dan
-hasil 3/3 langkah bertindakan, berbukti, serta berkriteria lulus. WhatsApp
-planning selesai sekitar 19 detik dengan Anchor yang sama-sama mutable, satu
-transient surface terhapus, dan kualitas 3/3/3; keseluruhan run melihat 17
-ingress `notify`, 29/29 delivery berhasil, ack `delivered`, cleanup produk
-lulus, 0 restart/crash-loop/shutdown-timeout, shutdown bersih, dan isolated
-state terhapus. Kedua receipt content-free dan tidak membawa identifier akun.
-Tes kontrak output dan parity terarah awal PASS 201/201; regresi akhir lintas
-Agent Runtime, WhatsApp privat, live acceptance, dan topologi bubble PASS 90/90.
+audit content-free membuktikan empat credential acceptance siap dan kedua
+identitas WhatsApp berbeda. Smoke Edge membuktikan surface siap, pengaturan
+tertutup, aksi Kelola tepat, layout desktop/mobile tanpa overflow, serta alur
+error → pulihkan → QR pengganti. Tes credential/Console/Baileys/acceptance
+terarah PASS 68/68 dan recovery PASS 23/23. Baseline penuh Telegram tepat
+sebelum perubahan consent ini lulus 8/8. Current build kemudian lulus fokus
+Telegram memory 3/3 melalui akun nyata: onboarding, preferensi belajar implicit
+tersimpan tanpa consent/tombol per-item, recall `/memori`, dan cleanup. Rerun
+penuh current build lulus tahap onboarding/menu serta task/reminder, lalu timeout
+pada timezone/session/check-in; tahap sesudahnya tidak dijadikan bukti.
+WhatsApp privat mempunyai baseline full 10/10 dari policy sebelumnya. Rerun
+managed current build meluluskan reset, onboarding/menu, task, reminder,
+sesi/check-in, auto-memory implicit beserta acknowledgement+recall, dan planning
+sekitar 16 detik dengan Anchor mutable serta kualitas 3/3/3. Run kemudian timeout
+pada stage safety nonkrisis sehingga bukan full pass; cleanup tetap lulus. Ada
+16 ingress `notify`, 28/28 delivery call berhasil tanpa pipeline/delivery
+failure, ack tertinggi `none`, runtime shutdown bersih, dan isolated state
+terhapus. Receipt content-free dan tidak membawa identifier akun.
 
-Not verified: WhatsApp grup latest build, reconnect/interupsi burst/CodingRun/
-GitHub WhatsApp privat, interruption/reconnect Telegram, dogfood tujuh hari,
-tiga wawancara,
-backup eksternal/lintas mesin,
+Not verified: rerun penuh current-build Telegram setelah timeout timezone/
+session/check-in, full current-build WhatsApp setelah timeout safety nonkrisis,
+WhatsApp grup latest build, reconnect/interupsi burst/
+CodingRun/GitHub WhatsApp privat, interruption/reconnect Telegram, dogfood tujuh
+hari, tiga wawancara, backup eksternal/lintas mesin,
 multi-process storage, sandbox Linux non-root, atau GitHub App/push/PR nyata.
 
 Next: mulai dogfood tujuh hari pada tiga surface produk, lakukan tiga wawancara,
@@ -377,27 +396,3 @@ acquisition/sandbox pihak ketiga.
 Next: evaluasi assessment pada corpus tanpa menambah call ordinary; kemudian
 rangkai resource reserve dan specialist hanya bersama privacy/objective policy
 serta telemetry outcome content-free.
-
-## 2026-08-20 — Riset agent dipromosikan dan dibersihkan
-
-Scope: `docs/research/`, navigasi dokumentasi, serta bukti implementasi agent,
-memory, sandbox, provider, dan control plane.
-
-Changed: tujuh draf riset non-normatif dihapus setelah audit penuh. Temuan yang
-diterima sudah hidup pada kontrak, kode, tes, dan status subsystem: bounded
-AgentRun/checkpoint, scope dan approval code-owned, episodic/semantic memory,
-context-pressure serta observation compaction, fallback provider berbatas,
-console operasi, dan sandbox OCI `network=none` dengan GitHub berada di broker
-terpisah. Tidak ada perilaku runtime baru. Self-installing skill, device
-spoofing, command blacklist, dan network allowlist tidak diadopsi: sebagian
-lebih lemah daripada isolation yang berjalan, sementara procedural/social
-learning dan fallback native masih memerlukan keputusan atau bukti live yang
-tercatat di STATUS.
-
-Verified: seluruh isi `docs/research/` dibaca; implementasi dan tes terkait
-diperiksa terhadap kontrak/status aktual. `docs/INDEX.md` tidak lagi menautkan
-draf yang dihapus. `npm run context:check` PASS dan `git diff --check` PASS
-dengan peringatan konversi line-ending Windows saja.
-
-Not verified: `npm run check`, `npm test`, dan acceptance live tidak dijalankan
-ulang karena tidak ada perubahan kode atau perilaku runtime.

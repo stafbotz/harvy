@@ -1,6 +1,6 @@
 # Current Context
 
-Refreshed: 2026-08-23
+Refreshed: 2026-08-24
 Baseline: fe363c9
 Context-Version: 1
 
@@ -8,7 +8,7 @@ Context-Version: 1
 
 - Working tree material berada di atas commit dasar `fe363c9` pada `main`;
   tidak ada commit implementasi, push, atau PR baru.
-- `npm run check` PASS. `npm test` PASS 1.708/1.708 dalam 210 suite. Evaluasi
+- `npm run check` PASS. `npm test` PASS 1.776/1.776 dalam 221 suite. Evaluasi
   provider nyata PASS 60/60 (42 percakapan + 18 boundary/interruption) tanpa
   fallback, provider failure, atau execution failure.
 - Smoke build final mencapai `application_ready` lalu IPC
@@ -24,8 +24,10 @@ Context-Version: 1
   kanal; WhatsApp grup tetap aktif sebagai produk beta, bukan dibekukan.
 - Reminder/check-in memakai intent delivery at-most-once dan owner queue untuk
   menahan duplikat setelah crash, dengan trade-off hasil ambigu dapat kehilangan
-  satu kiriman. Semua kandidat memori implicit privat/grup meminta izin
-  item-spesifik; model/classifier tidak lagi mempunyai authority write.
+  satu kiriman. Consent onboarding privat versi 8 mengotorisasi auto-memory
+  ordinary/personal tanpa prompt atau tombol per-item; adapter tetap memegang
+  authority, credential ditolak, dan grup melewati kandidat implicit tanpa
+  write. Classifier privacy-memory terpisah sudah dipensiunkan.
 - Supervisor single-child menambah restart berbatas, graceful IPC, dan runtime
   lock recovery. Backup lokal memakai archive authenticated-encrypted dan
   restore ke direktori baru. Evaluator menilai outcome nyata seperti hasil
@@ -33,10 +35,12 @@ Context-Version: 1
 
 ## Active cross-subsystem blockers
 
-- Latest build belum dipakai bercakap oleh tester nyata di Telegram atau
-  WhatsApp. Akun WhatsApp lokal belum paired dengan akun tester terpisah; grup
-  latest build, dua nomor, reconnect, receipt transport, dogfood tujuh hari,
-  dan tiga wawancara belum selesai.
+- Current build sudah dipakai bercakap lewat tester nyata Telegram dan dua nomor
+  WhatsApp terpisah. Focus auto-memory Telegram lulus 3/3; WhatsApp membuktikan
+  auto-memory+recall serta planning, tetapi full run masing-masing masih tertahan
+  pada timeout sesi/check-in Telegram dan safety nonkrisis WhatsApp. Grup latest
+  build, reconnect, receipt ack WhatsApp, dogfood tujuh hari, dan tiga wawancara
+  belum selesai.
 - Host ini Windows tanpa runtime OCI Linux non-root dan tidak mempunyai GitHub
   App/repository uji. Hostile-code conformance, branch/push/draft PR, provider
   fallback, dan critic `toughest` masih belum terbukti live.

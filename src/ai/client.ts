@@ -132,7 +132,9 @@ export type AiRequestOperation =
   | "group-ingress"
   | "group-plan-ambient"
   | "group-revalidate-ambient"
-  | "group-reply";
+  | "group-reply"
+  | "private-operation-presentation"
+  | "private-checkin-presentation";
 
 export interface ChatRequest {
   model: string;

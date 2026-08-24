@@ -17,6 +17,7 @@ export type AiPurpose =
   | "memory-privacy"
   | "group-ingress"
   | "reply"
+  | "presentation"
   | "reply-review"
   | "summary"
   | "agent"

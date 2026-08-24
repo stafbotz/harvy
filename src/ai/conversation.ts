@@ -93,14 +93,8 @@ import {
 import {
   parseDueDate,
   parseUnderstanding,
-  type ExtractedMemory,
   type Understanding,
 } from "./understand.js";
-import {
-  MEMORY_PRIVACY_PROMPT,
-  memoryPrivacyInput,
-  parseMemoryPrivacy,
-} from "./memory-privacy.js";
 import {
   MEMORY_PORTRAIT_MAX_CHARACTERS,
   MEMORY_PORTRAIT_PROMPT,
@@ -158,6 +152,18 @@ import {
   type ConversationProgressReporter,
   type SafePublicProgressFocus,
 } from "../core/conversation-progress.js";
+import {
+  OPERATION_PRESENTATION_PROMPT,
+  operationPresentationInput,
+  parseOperationPresentation,
+  renderOperationPresentation,
+  type OperationPresentationBrief,
+} from "./operation-presentation.js";
+import {
+  CHECK_IN_PRESENTATION_PROMPT,
+  checkInPresentationInput,
+  parseCheckInPresentation,
+} from "./check-in-presentation.js";
 
 export interface RoutingConfig {
   mode: "testing" | "production";
@@ -254,8 +260,6 @@ export const TRIAGE_TIMEOUT_MS = 12_000;
 /** Pemeriksaan balasan hanya menghasilkan satu boolean dan satu alasan. */
 const REVIEW_MAX_TOKENS = 256;
 const REVIEW_TIMEOUT_MS = 8_000;
-const MEMORY_PRIVACY_MAX_TOKENS = 128;
-const MEMORY_PRIVACY_TIMEOUT_MS = 8_000;
 const GROUP_INGRESS_MAX_TOKENS = 192;
 const GROUP_INGRESS_TIMEOUT_MS = 8_000;
 const INSIGHT_MAX_TOKENS = 512;
@@ -272,6 +276,19 @@ const MEMORY_PORTRAIT_MAX_TOKENS = 2_048;
  */
 const EPISODE_SUMMARY_MAX_TOKENS = 768;
 const GENERAL_MODEL_DEADLINE_MS = 30_000;
+const OPERATION_PRESENTATION_MAX_TOKENS = 256;
+const OPERATION_PRESENTATION_DEADLINE_MS = 3_000;
+const CHECK_IN_PRESENTATION_MAX_TOKENS = 192;
+const CHECK_IN_PRESENTATION_DEADLINE_MS = 6_000;
+const PRESENTATION_RECENT_TURN_LIMIT = 4;
+
+function minimalPresentationContext(context: HarvyContext): HarvyContext {
+  return {
+    summary: null,
+    turns: context.turns.slice(-PRESENTATION_RECENT_TURN_LIMIT),
+    memories: [],
+  };
+}
 
 interface AgentNativeThread {
   messages: ChatMessage[];
@@ -642,48 +659,6 @@ export class Conversation {
   }
 
   /**
-   * Menilai sensitivitas hanya ketika compiler sudah membuat kandidat memori.
-   * Kegagalan dikembalikan sebagai `null`; adapter memperlakukannya sensitif
-   * agar gangguan classifier tidak dapat menyimpan data pribadi diam-diam.
-   */
-  async assessMemoryPrivacy(
-    candidates: readonly ExtractedMemory[],
-    ownerId?: string,
-    signal?: AbortSignal,
-  ): Promise<boolean | null> {
-    if (candidates.length === 0) return false;
-    const raw = await this.client.complete({
-      model: resolveModel("cheap", this.routing),
-      temperature: 0,
-      maxTokens: MEMORY_PRIVACY_MAX_TOKENS,
-      execution: this.execution(
-        "cheap",
-        "classifier",
-        "safety",
-        MEMORY_PRIVACY_MAX_TOKENS,
-        MEMORY_PRIVACY_TIMEOUT_MS,
-      ),
-      timeoutMs: MEMORY_PRIVACY_TIMEOUT_MS,
-      json: true,
-      validateResponse: (content) => parseMemoryPrivacy(content) !== null,
-      ...(signal ? { signal } : {}),
-      usage: this.usage(ownerId, "cheap", "memory-privacy"),
-      messages: [
-        { role: "system", content: MEMORY_PRIVACY_PROMPT },
-        { role: "user", content: memoryPrivacyInput(candidates) },
-      ],
-    });
-    const sensitive = parseMemoryPrivacy(raw);
-    if (sensitive === null) {
-      this.logger.warn(
-        "memory_privacy_parse_failed",
-        "Balasan model untuk sensitivitas memori tidak dapat dibaca.",
-      );
-    }
-    return sensitive;
-  }
-
-  /**
    * Memeriksa rancangan balasan untuk giliran yang berisiko.
    *
    * Mengembalikan `null` ketika pemeriksaannya sendiri gagal. Pemanggilnya
@@ -939,6 +914,168 @@ export class Conversation {
     return modelIdentityQuestion
       ? prependCapybaraIdentity(reply)
       : reply;
+  }
+
+  /**
+   * Menyuarakan receipt code-owned tanpa menyerahkan fakta atau authority ke
+   * model. Jalur ini selalu kembali ke copy deterministik bila provider lambat,
+   * gagal, atau mengembalikan bentuk yang tidak sah.
+   */
+  async presentOperation(
+    brief: OperationPresentationBrief,
+    context: HarvyContext = EMPTY_CONTEXT,
+    style: StylePreference | null = null,
+    runtime: ConversationRuntime = {},
+  ): Promise<string> {
+    try {
+      const modelRoute = resolveModelRoute("everyday_conversation", this.routing);
+      const { context: boundedContext, manifest: contextManifest } =
+        compileHarvyContext(minimalPresentationContext(context));
+      const execution = this.execution(
+        modelRoute.tier,
+        "conversationalist",
+        "conversation",
+        OPERATION_PRESENTATION_MAX_TOKENS,
+        OPERATION_PRESENTATION_DEADLINE_MS,
+        {
+          modelId: modelRoute.modelId,
+          cognitiveRole: modelRoute.role,
+          difficulty: "mechanical",
+          stakes: "low",
+          uncertainty: "low",
+          allowTools: false,
+          allowDelegation: false,
+          allowEscalation: false,
+        },
+      );
+      const raw = await this.client.complete({
+        model: modelRoute.modelId,
+        temperature: 0.55,
+        maxTokens: OPERATION_PRESENTATION_MAX_TOKENS,
+        timeoutMs: OPERATION_PRESENTATION_DEADLINE_MS,
+        maxAttempts: 1,
+        execution,
+        json: true,
+        validateResponse: (content) =>
+          parseOperationPresentation(
+            content,
+            brief.allowedNextSteps?.length ?? 0,
+          ) !== null,
+        ...(runtime.signal ? { signal: runtime.signal } : {}),
+        contextManifest,
+        operation: "private-operation-presentation",
+        usage: this.usage(runtime.ownerId, modelRoute.tier, "presentation"),
+        messages: [
+          {
+            role: "system",
+            content: `${replyPrompt(null, {
+              context: boundedContext,
+              style,
+              now: this.now(),
+              timeZone: runtime.timeZone ?? this.defaultTimeZone,
+              suppressFirstMessageClaim: true,
+            })}\n\n${OPERATION_PRESENTATION_PROMPT}`,
+          },
+          ...recentTurnMessages(boundedContext.turns),
+          { role: "user", content: operationPresentationInput(brief) },
+        ],
+      });
+      const draft = parseOperationPresentation(
+        raw,
+        brief.allowedNextSteps?.length ?? 0,
+      );
+      if (!draft) {
+        this.logger.warn(
+          "operation_presentation_invalid",
+          "Copy presentasi operasi tidak sah; fallback deterministik dipakai.",
+          { kind: brief.kind },
+        );
+      }
+      return renderOperationPresentation(brief, draft);
+    } catch (error) {
+      this.logger.warn(
+        "operation_presentation_failed",
+        "Copy presentasi operasi gagal dibuat; fallback deterministik dipakai.",
+        {
+          kind: brief.kind,
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+      );
+      return brief.fallbackText.trim();
+    }
+  }
+
+  /** Pertanyaan proaktif dinamis; state dan pilihan check-in tetap code-owned. */
+  async presentScheduledCheckIn(
+    session: ActiveSession,
+    style: StylePreference | null = null,
+    runtime: ConversationRuntime = {},
+  ): Promise<string | null> {
+    try {
+      const modelRoute = resolveModelRoute("everyday_conversation", this.routing);
+      const { context: boundedContext, manifest: contextManifest } =
+        compileHarvyContext(EMPTY_CONTEXT);
+      const execution = this.execution(
+        modelRoute.tier,
+        "conversationalist",
+        "conversation",
+        CHECK_IN_PRESENTATION_MAX_TOKENS,
+        CHECK_IN_PRESENTATION_DEADLINE_MS,
+        {
+          modelId: modelRoute.modelId,
+          cognitiveRole: modelRoute.role,
+          difficulty: "mechanical",
+          stakes: "low",
+          uncertainty: "low",
+          allowTools: false,
+          allowDelegation: false,
+          allowEscalation: false,
+        },
+      );
+      const raw = await this.client.complete({
+        model: modelRoute.modelId,
+        temperature: 0.6,
+        maxTokens: CHECK_IN_PRESENTATION_MAX_TOKENS,
+        timeoutMs: CHECK_IN_PRESENTATION_DEADLINE_MS,
+        maxAttempts: 1,
+        execution,
+        json: true,
+        validateResponse: (content) =>
+          parseCheckInPresentation(content) !== null,
+        contextManifest,
+        operation: "private-checkin-presentation",
+        usage: this.usage(runtime.ownerId, modelRoute.tier, "presentation"),
+        messages: [
+          {
+            role: "system",
+            content: `${replyPrompt(null, {
+              context: boundedContext,
+              style,
+              now: this.now(),
+              timeZone: runtime.timeZone ?? this.defaultTimeZone,
+              suppressFirstMessageClaim: true,
+            })}\n\n${CHECK_IN_PRESENTATION_PROMPT}`,
+          },
+          ...recentTurnMessages(boundedContext.turns),
+          { role: "user", content: checkInPresentationInput(session) },
+        ],
+      });
+      const question = parseCheckInPresentation(raw);
+      if (!question) {
+        this.logger.warn(
+          "checkin_presentation_invalid",
+          "Pertanyaan check-in model tidak sah; fallback akan dipakai.",
+        );
+      }
+      return question;
+    } catch (error) {
+      this.logger.warn(
+        "checkin_presentation_failed",
+        "Pertanyaan check-in model gagal dibuat; fallback akan dipakai.",
+        { errorType: error instanceof Error ? error.name : "unknown" },
+      );
+      return null;
+    }
   }
 
   /**

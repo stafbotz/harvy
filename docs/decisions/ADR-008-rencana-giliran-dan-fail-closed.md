@@ -20,6 +20,12 @@
 > dinilai per efek. Danger, bukti kuat unresolved, consent, delivery rollback,
 > serta port grup lama tetap fail-closed.
 
+> **Supersesi parsial 24 Agustus 2026.** Ketentuan historis bahwa candidate
+> personal/implicit selalu membuat prompt consent diganti oleh Konstitusi v0.8
+> dan ADR-006. Pada kanal privat, consent onboarding versi aktif adalah
+> authority auto-memory; claim write tetap menunggu receipt dan credential
+> tetap ditolak. Grup hanya menyimpan member-local memory dari perintah explicit.
+
 ## Konteks
 
 Audit percakapan menemukan bahwa ekstraksi, balasan, tombol, tugas, memori,

@@ -15,12 +15,14 @@ export interface ExplicitMemoryRememberAuthority {
 }
 
 /**
- * Membentuk bukti consent item-scoped dari teks user turn sendiri.
+ * Membentuk bukti permintaan remember item-scoped dari teks user turn sendiri.
  *
  * `memoryAction: remember` tetap diperlukan oleh adapter, tetapi tidak cukup:
- * model tidak boleh memberi authority. Fungsi lokal ini memvalidasi proposal
- * closed-set, exact evidence dan target dari raw turn, lalu hanya memilih
- * candidate yang berkorespondensi secara bounded dengan span yang diminta.
+ * model tidak boleh mengarang adanya perintah explicit. Fungsi lokal ini
+ * memvalidasi proposal closed-set, exact evidence dan target dari raw turn,
+ * lalu hanya menandai candidate yang berkorespondensi secara bounded dengan
+ * span yang diminta. Kanal privat memperoleh authority durable dari onboarding;
+ * bukti ini tetap diperlukan untuk failure handling dan acknowledgment jujur.
  */
 export function explicitMemoryRememberAuthority(
   message: string,

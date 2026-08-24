@@ -26,7 +26,8 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   bila ISO memuat waktu dan offset.
 - **Balasan model adalah masukan yang tidak tepercaya.** Selalu lewat
   `understand.ts`; jangan pernah memakai hasil `JSON.parse` mentah dari model.
-- **Mutasi tidak boleh bergantung pada klasifikasi model saja.** Daftar memori
+- **Mutasi yang memerlukan perintah turn tidak boleh bergantung pada klasifikasi
+  model saja.** Daftar memori
   yang terbuka salah dan tugas kosong yang tertulis sama-sama pernah terjadi:
   "kamu pahami aja" membuka seluruh catatan pribadi seseorang lengkap dengan
   tombol Lupakan semua, dan "buat pengingat dong" tersimpan sebagai tugas
@@ -37,6 +38,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   pasangan intent/action. Scoped forget juga wajib mempunyai semantic forget
   explicit dengan evidence raw-turn dan hanya memilih source owner-local;
   target hasil model tidak menjadi izin mutasi.
+  Auto-memory privat adalah pengecualian yang authority-nya datang dari consent
+  onboarding versi aktif; model hanya mengusulkan isi dan primary service tetap
+  memagari secret, lifecycle, dedupe, serta batas penyimpanan.
 - `TaskService` menerima `now: () => Date` agar dapat diuji. Tes memakai
   `MemoryRepository` yang mengimplementasi `TaskRepository`, bukan berkas nyata.
 - ID tugas tidak pernah ditampilkan kepada pengguna. Semua tindakan berjalan
@@ -158,6 +162,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   Telegram/12.000 WhatsApp terjadi sesudahnya dan wajib menjaga setiap code
   point. Sebelum setiap bubble dan sesudah jeda interruptible, transport wajib
   memeriksa signal/revision/generation lagi.
+- **Suara receipt tidak boleh menjadi authority transaksi.** Pada operasi
+  task, reminder, sesi, check-in, dan preferensi di kanal privat, kode menyusun
+  blok fakta stabil, fallback lengkap, serta paling banyak empat tindak lanjut
+  allowlisted. Model hanya boleh menulis satu acknowledgment pendek dan memilih
+  indeks tindak lanjut; status, judul, ID, waktu, tombol, izin, dan mutasi tetap
+  berasal dari kode. Output invalid, timeout tiga detik, atau provider gagal
+  kembali utuh ke fallback. Panggilan tambahan ini tidak menerima ringkasan
+  lama atau memori durable; paling banyak empat turn terbaru dapat dipakai bila
+  caller memang sudah membawanya. Consent, safety, hak data, billing, identitas
+  produk, menu capability, serta Run Anchor tetap deterministic.
 - **History mengikuti receipt delivery.** Beberapa bubble yang terkirim tetap
   satu assistant turn logis. Jika delivery terpotong, hanya gabungan bubble
   yang diakui transport boleh disimpan; unsent continuation, final response
@@ -194,19 +208,15 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   menggantikan pembungkus itu, dan ia **wajib ikut setiap kali** `context.turns`
   tidak kosong. Memori dan ringkasan tetap di dalam `<konteks>`; keduanya memang
   catatan, dan tidak ada bentuk chat yang wajar untuk mereka.
-- **Semua memori implicit memerlukan authority pengguna yang item-spesifik.**
-  Kandidat yang hanya muncul dari cerita—biasa maupun sensitif—wajib lewat
-  prompt izin bertoken; model ekstraksi dan classifier `memory-privacy` bukan
-  authority write. Perintah user turn untuk mengingat item tersebut sudah
-  merupakan jawaban pengguna dan tidak boleh memicu consent kedua. Sinyal model
-  `memoryAction: "remember"` tidak cukup: adapter juga wajib membuktikan bentuk
-  perintah pada raw user turn dan mencocokkan klausa itu ke exact candidate.
+- **Consent onboarding privat mengotorisasi auto-memory pada scope itu.**
+  Kandidat biasa maupun personal dari percakapan pasca-onboarding boleh commit
+  tanpa prompt atau tombol per-item. Perintah user turn untuk mengingat tetap
+  dibuktikan dari raw text dan exact candidate agar kegagalan dapat dijawab
+  jujur; instruksi bentuk seluruh jawaban memakai candidate canonical lokal.
   Negasi, retrieval, reminder, signal tanpa kecocokan, user/turn/scope lain,
-  serta candidate lain tidak mendapat authority. Password, OTP, PIN, token,
-  API key, dan credential sejenis selalu ditolak lagi di service sebelum
-  primary write atau derivation. Classifier implicit yang invalid, timeout,
-  atau error tetap gagal tertutup, tetapi hasil “biasa” juga tidak mengizinkan
-  auto-write. Urutannya code-owned: authority
+  serta credential tidak boleh diperlakukan sebagai explicit request. Password,
+  OTP, PIN, token, API key, dan credential sejenis selalu ditolak lagi di
+  service sebelum primary write atau derivation. Urutannya code-owned: authority
   dan policy → primary commit → receipt `saved|updated|already-known` → wording
   percakapan → delivery. Kata atau emoji model bukan bukti commit. Bila
   delivery gagal sebelum acknowledgement terlihat, catatan yang baru ditulis
@@ -387,6 +397,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   deterministik lihat/hapus memori dan `/hapus-data` tetap tersedia tanpa
   consent AI agar hak data tidak ikut terkunci. Scope WhatsApp tidak mewarisi
   consent atau data privat Telegram.
+- **Consent privat versi 8 adalah authority memori otomatis.** Setelah
+  onboarding aktif, Telegram privat dan WhatsApp privat boleh menyimpan
+  kandidat ordinary maupun personal yang berguna tanpa prompt atau tombol
+  izin per-item. Model hanya mengusulkan kandidat; primary tetap menentukan
+  scope pemilik, lifecycle, dedupe, limit, dan hard exclusion credential.
+  Harvy baru boleh mengatakan sesuatu sudah diingat setelah write benar-benar
+  commit. Pemberitahuannya natural dan ringkas, sedangkan lihat, koreksi, serta
+  hapus tetap tersedia lewat percakapan dan `/memori`. Consent lama tidak boleh
+  membuka authority baru ini: perubahan kontrak terikat `CONSENT_VERSION` 8
+  dan memicu onboarding ulang sekali.
 - **Hak menarik izin dan menghapus data tidak boleh digagalkan pre-clear run.**
   Penarikan izin menutup ingress/history dan mempersistenkan profil lebih dulu,
   lalu cleanup checkpoint dilakukan best-effort dengan scope tetap diblokir
@@ -426,7 +446,10 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   selesai juga merujuk sesi atau tumpang tindih dengan tujuan sesi; `cancel`
   tetap memerlukan teks pengguna yang jelas.
 - **Check-in adalah satu kali dan selalu opt-in.** Pengguna memilih waktunya;
-  notifikasi generik tidak memuat tujuan. Diabaikan atau dijawab "masih jalan"
+  pertanyaannya boleh ditulis model agar tidak terasa seperti template, tetapi
+  payload dan prompt notifikasi tidak boleh memuat tujuan sesi, summary, memori,
+  atau turn lama karena preview lock-screen dapat membocorkannya. Output model
+  invalid/gagal kembali ke pertanyaan generik. Diabaikan atau dijawab "masih jalan"
   tidak membuat nudge baru. Worker menunggu owner idle dan jam tenang berakhir.
   Penarikan persetujuan tidak menghapus sesi/check-in, tetapi worker menahan
   pengirimannya sampai pengguna menyetujui lagi. Kegagalan membaca kandidat
@@ -635,6 +658,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   boleh memilih everyday atau orchestrator melalui keputusan code-owned, tetapi
   work class safety tetap tidak memperoleh tool/delegasi. Tier/role yang lebih
   kuat bukan permission baru.
+- **Makna planning berasal dari assessment, bukan kata pemicu.** Raw text atau
+  regex tidak boleh memaksa request menjadi AgentRun. Planning durable hanya
+  boleh hidup ketika `RoutingAssessment.planningRequired` tepercaya (confidence
+  minimal 0,55) dan pekerjaannya bukan transformasi mekanis. Bila sinyal itu
+  berkonflik dengan `start_small` sebagai tindakan pertama untuk pekerjaan
+  kecil tanpa tool, policy memilih percakapan terpandu; pilihan UI itu tidak
+  membuat sesi sampai pengguna menerima kontrol code-owned. Regex/set lokal
+  tetap sah untuk command exact, validasi ID/schema, nilai formulir sempit,
+  hitungan exact, emergency preflight, serta guard state-live yang gagal
+  tertutup; semuanya bukan classifier percakapan umum.
 - **Respons provider harus terminal dan cocok bentuknya.** Teks hanya sah pada
   `finish_reason=stop`; native calls hanya sah pada
   `finish_reason=tool_calls`. Length, content filter, reason asing/hilang, dan
@@ -830,7 +863,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   jawaban 10 menit. Record aktif mempunyai horizon maksimal tujuh hari sejak
   dibuat dan terminal maksimal tujuh hari sejak berhenti; record terbaru saja
   diretensi, dengan penarikan consent/penghapusan sebagai jalur hapus lebih
-  cepat. Perubahan jenis serta horizon data ini terikat `CONSENT_VERSION` 7.
+  cepat. Jenis serta horizon active-run diperkenalkan pada
+  `CONSENT_VERSION` 7; authority memori otomatis privat yang berlaku sekarang
+  terikat consent versi 8.
 
 ## ProjectWorkspace dan archive
 
@@ -1195,21 +1230,14 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   seluruh memori sosial dihapus saat disable. Memori semantik hanya milik satu
   kanal+grup+anggota, tidak boleh masuk state privat/grup lain, dan hanya boleh
   dipakai saat anggota itu berbicara. `contextPrivacy` bukan consent authority
-  memori durable. Setelah direct menghasilkan kandidat, classifier
-  `memory-privacy` khusus kandidat hanya membantu policy/prompt dan tidak
-  menentukan authority write; jenis personal, hasil biasa/sensitive,
-  parse null, timeout, atau error sama-sama tidak boleh otomatis tersimpan.
-  Tidak ada kandidat berarti tidak ada call privacy. Semua usulan implicit
-  hanya boleh disimpan sesudah anggota yang sama mengonfirmasi pending 10 menit
-  dalam scope yang sama.
-  Perintah explicit remember boleh menjadi consent hanya bila signal
+  memori durable, dan grup tidak mewarisi authority onboarding dari kanal
+  privat. Kandidat member-local implicit karena itu dilewati tanpa disimpan dan
+  tanpa prompt izin yang mengganggu percakapan. Perintah explicit remember
+  boleh menjadi consent hanya bila signal
   understanding dan guard lokal cocok pada candidate, anggota, turn, dan grup
   yang sama; ia tidak berlaku untuk candidate lain atau shared room memory.
-  Credential tetap ditolak oleh group memory service. Pending baru
-  dipasang setelah promptnya berhasil dikirim dan baru dibersihkan setelah
-  acknowledgment sukses; kegagalan acknowledgment wajib rollback write dengan
-  identitas proposal yang dipakai saat menyimpan, bukan identitas pesan
-  konfirmasi terbaru. Lihat, koreksi, hapus satu, lupakan diri, dan reset admin
+  Credential tetap ditolak oleh group memory service. Lihat, koreksi, hapus
+  satu, lupakan diri, dan reset admin
   hadir bersama; penghapusan diri/reset wajib konfirmasi kedua 10 menit. Hanya
   admin dapat menambah julukan Harvy. Shared room memory hanya lahir dari
   proposal eksplisit anggota dan konfirmasi admin, kedaluwarsa 60 hari, terlihat

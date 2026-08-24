@@ -33,10 +33,7 @@ import {
   normalizeTelegramText,
   splitReplyBubbles,
 } from "../src/bot/messages.js";
-import {
-  deterministicArithmeticReply,
-  deterministicEmptyReminderReply,
-} from "../src/bot/fast-path-policy.js";
+import { deterministicArithmeticReply } from "../src/bot/fast-path-policy.js";
 import {
   immediateUnderstandingRoute,
   taskToOffer,
@@ -367,8 +364,7 @@ async function evaluate(testCase: ConversationEvalCase) {
   }
 
   let reply = !relevantSession && route.kind === "conversation"
-    ? deterministicArithmeticReply(testCase.message) ??
-      deterministicEmptyReminderReply(testCase.message, understanding)
+    ? deterministicArithmeticReply(testCase.message)
     : null;
   reply ??= await conversation.reply(
       testCase.message,

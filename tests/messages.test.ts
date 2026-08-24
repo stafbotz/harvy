@@ -9,7 +9,6 @@ import {
   formatSession,
   formatTask,
   MAX_BUBBLE_PAUSE_MS,
-  memoryConsentActions,
   memoryPortraitActions,
   memoryWipeConfirmActions,
   normalizeTelegramText,
@@ -294,17 +293,6 @@ describe("tombol fitur Harvy Loop", () => {
       .map((button) => "callback_data" in button ? button.callback_data : "");
     assert.ok(dataCallbacks.includes("control:memories"));
     assert.ok(dataCallbacks.includes("memall:"));
-  });
-
-  it("mengikat persetujuan memori sensitif ke token proposal", () => {
-    const callbacks = memoryConsentActions("mem12345").inline_keyboard
-      .flat()
-      .map((button) => ("callback_data" in button ? button.callback_data : ""));
-
-    assert.deepEqual(callbacks, [
-      "memsave:mem12345",
-      "memskip:mem12345",
-    ]);
   });
 
   it("mengikat seluruh konfirmasi destruktif ke token sekali pakai", () => {

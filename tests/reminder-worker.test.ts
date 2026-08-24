@@ -6,6 +6,40 @@ import type { TaskService } from "../src/core/task-service.js";
 import { startReminderWorker } from "../src/reminders/reminder-worker.js";
 
 describe("worker pengingat", () => {
+  it("tidak mengirim reminder setelah consent AI ditarik", async () => {
+    let sends = 0;
+    const worker = startReminderWorker(
+      {
+        async sendReminder(): Promise<boolean> {
+          sends += 1;
+          return true;
+        },
+      } as never,
+      {
+        async dueReminders(): Promise<unknown[]> {
+          return [{ ownerId: "student" }];
+        },
+      } as unknown as TaskService,
+      {
+        async load(): Promise<{ deletionRequestedAt: null }> {
+          return { deletionRequestedAt: null };
+        },
+        async needsOnboarding(): Promise<boolean> {
+          return true;
+        },
+      } as unknown as ProfileService,
+      {
+        reminderIntervalMs: 60_000,
+        defaultTimezone: "Asia/Jakarta",
+      } as AppConfig,
+    );
+
+    worker.stop();
+    await worker.drain();
+
+    assert.equal(sends, 0);
+  });
+
   it("menangani kegagalan baca kandidat dan mencoba lagi pada tick berikutnya", async () => {
     let reads = 0;
     const worker = startReminderWorker(

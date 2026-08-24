@@ -1,8 +1,8 @@
 # Status — Telegram Privat
 
-Refreshed: 23 Agustus 2026 pada acceptance akun Telegram tester nyata terhadap
-latest build. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; baseline
-privat lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
+Refreshed: 24 Agustus 2026 pada auto-memory privat berbasis onboarding.
+Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; focus live policy baru
+sudah lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
 
 ## Keadaan saat ini
 
@@ -21,6 +21,11 @@ privat lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
   dan menyediakan jalur safety tanpa consent. Bubble setelah pesan pertama
   tidak dikirim ke model atau dinilai safety sebelum consent. Setelah consent,
   batas bubble yang ditahan dipertahankan dan matcher lokal menilai tiap bagian.
+- Consent onboarding versi 8 mengotorisasi auto-memory ordinary maupun personal
+  pada scope Telegram privat. Candidate baru tidak meminta izin atau memberi
+  tombol lupakan/urungkan per-item; Harvy baru memberi acknowledgment natural
+  setelah commit. Credential tetap ditolak dan kontrol lihat/koreksi/hapus
+  tersedia lewat percakapan serta `/memori`.
 - Ingress pesan nonblocking memakai boundary semantic-first untuk bahasa
   natural: model menerima seluruh current batch, konteks terbaru, dan timing
   content-free lalu mengembalikan state, confidence, continuation likelihood,
@@ -52,6 +57,13 @@ privat lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
   hanya guard ekstrem, lalu hard splitter 4.000 karakter menjaga semua code
   point. Setiap bubble dan jedanya interruptible; history hanya mencatat bubble
   yang benar-benar terkirim.
+- Receipt task/reminder/session/check-in/preference privat memakai presenter
+  model bersama WhatsApp. Model hanya menulis satu acknowledgment dan boleh
+  memilih satu next-step allowlisted; daftar/status/waktu/ID/tombol tetap
+  dirender kode, dengan fallback deterministik berdeadline tiga detik. Summary
+  dan memori durable tidak dikirim ke call presentasi tambahan. Pertanyaan
+  check-in proaktif juga dinamis, tetapi sengaja tidak menerima goal atau
+  riwayat agar preview notifikasi tidak membocorkan topik sesi.
 - Work yang melewati grace period memakai satu transient progress message.
   Surface yang sama diedit hanya dari activity event backend nyata, dihapus
   sebelum jawaban pertama, dan gagal secara kosmetik. Jawaban cepat serta fase
@@ -70,6 +82,10 @@ privat lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
   command tetap deterministic. Natural usage dan follow-up seperti `detailnya`
   memakai renderer account yang membaca state terbaru, bukan phrase list atau
   snapshot saldo lama.
+- Cold smalltalk dan reminder tanpa isi tidak lagi dijawab tabel regex statis;
+  keduanya memakai understanding/reply model. Planning durable juga tidak lagi
+  dipaksa dari kata seperti `rencana` atau `langkah`: adapter hanya menerima
+  `RoutingAssessment.planningRequired` yang tepercaya dan nonmekanis.
 - Surface yang berhasil terkirim mencatat maksimal tiga referen interaksi
   content-free selama sepuluh menit, terisolasi per owner+channel+conversation.
   State ini hanya membantu anaphora, hilang saat restart, dan tidak masuk
@@ -103,16 +119,20 @@ privat lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
 
 ## Batas dan defect aktif
 
-- Acceptance akun tester nyata pada 23 Agustus 2026 menjalankan latest build
-  dan lulus 8/8 tahap: onboarding+menu capability, task+reminder, timezone+
-  sesi+check-in, penolakan consent memori implicit, planning runtime durable,
-  safety nonkrisis tersimulasi, ekspor dokumen, serta cleanup data. Tahap
-  planning selesai dalam sekitar 22 detik dengan tepat satu Run Anchor yang
-  diedit in-place, dipin saat aktif, dilepas pada terminal, dan satu bubble
-  hasil terpisah. Evaluator kegunaan menerima tepat tiga langkah; ketiganya
-  masing-masing memuat tindakan, bukti, dan kriteria lulus tanpa carry-over
-  skenario safety. Runtime shutdown bersih dan receipt tidak membawa isi pesan
-  atau identifier akun. Ini baseline acceptance, bukan dogfood tujuh hari.
+- Current build policy auto-memory versi 8 diuji melalui akun tester nyata.
+  Focus memori lulus 3/3: onboarding/menu mengungkap penyimpanan otomatis,
+  preferensi cara belajar implicit disimpan tanpa consent atau tombol per-item
+  dan ditemukan kembali lewat `/memori`, lalu cleanup; runtime shutdown bersih
+  dan receipt tetap content-free.
+- Baseline full 8/8 masih berasal dari build tepat sebelum perubahan authority
+  memori. Rerun full current build 23 Agustus 2026 melewati onboarding/menu dan
+  task/reminder, lalu timeout pada rangkaian timezone+sesi+check-in. Stage memori
+  sesudah timeout sempat menangkap respons tertunda yang salah; harness kemudian
+  diperbaiki memakai predicate acknowledgement yang sama dengan produk dan
+  focus terisolasi di atas lulus. Planning serta stage setelahnya pada run full
+  itu bukan bukti current build dan masih perlu diulang. Acceptance juga belum
+  menunggu reminder/check-in proaktif benar-benar jatuh tempo, sehingga copy
+  notifikasi dinamisnya masih baru dibuktikan otomatis.
 - Latest build sudah mencapai `application_ready` dengan polling Telegram aktif
   setelah recovery, lalu berhenti melalui IPC dengan `shutdown_completed` dan
   lock terlepas. Preflight Bot API `getMe` juga berhasil. Ini membuktikan
@@ -130,8 +150,10 @@ privat lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
 - Emergency preflight closed-set Telegram belum mencakup command/callback dan
   bukan pengganti triase; false negative tetap mungkin. WhatsApp grup memakai
   matcher yang sama melalui jalur terpisah ADR-024.
-- Baseline live sudah membuktikan onboarding multi-bubble, tombol sesi,
-  task/reminder, memory-consent, safety route, ekspor, serta topologi Run Anchor.
+- Baseline full sebelumnya sudah membuktikan onboarding multi-bubble, tombol
+  sesi, task/reminder, safety route, ekspor, serta topologi Run Anchor; focus
+  current build membuktikan auto-memory implicit beserta recall tanpa consent
+  kedua.
   Adaptive timing pada rangkaian bubble bebas, interruption/correction saat
   provider aktif, reconnect transport, dan kualitas penggunaan harian masih
   baru teruji otomatis atau belum masuk baseline live.

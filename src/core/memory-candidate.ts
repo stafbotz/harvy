@@ -6,19 +6,25 @@ export type DerivedMemoryMetadata = Pick<
     "graphProjection"
 >;
 
-export interface LocallyInferredMemoryCandidate {
+export interface ExplicitResponsePreference {
   kind: "preference";
   content: string;
 }
 
 /**
- * Fallback sempit untuk preferensi yang jelas dimaksudkan lintas giliran.
- * Ia hanya membentuk kandidat; seluruh jalur implicit tetap wajib meminta
- * consent item-spesifik sebelum primary memory ditulis.
+ * Authority lokal yang sengaja sangat sempit untuk instruksi pengguna tentang
+ * bentuk seluruh jawaban Harvy ke depan. Turn seperti ini bukan cerita tentang
+ * pengguna: menerapkannya lintas giliran adalah isi perintah itu sendiri.
+ *
+ * Hasilnya tetap kandidat item-scoped dan masih melewati larangan credential,
+ * primary MemoryService, commit receipt, serta rollback delivery. Preferensi
+ * personal seperti "mulai sekarang aku lebih suka belajar malam" tidak masuk
+ * boundary ini; ia tetap kandidat percakapan biasa dengan authority onboarding
+ * pada kanal privat.
  */
-export function inferDurablePreferenceCandidate(
+export function inferExplicitResponsePreference(
   rawTurn: string,
-): LocallyInferredMemoryCandidate | null {
+): ExplicitResponsePreference | null {
   const clean = compact(rawTurn);
   if (
     clean.length < 12 || clean.length > 500 || clean.endsWith("?") ||
@@ -26,12 +32,15 @@ export function inferDurablePreferenceCandidate(
   ) {
     return null;
   }
+  const body = clean.replace(/[.!]+$/gu, "").trim();
+  // Boundary ini hanya mengotorisasi satu instruksi presentasi. Kalimat kedua
+  // harus dinilai sendiri agar fakta lain tidak ikut memperoleh authority.
+  if (!body || /[.!?]/u.test(body)) return null;
   const patterns = [
-    /^(?:mulai sekarang|ke depannya|untuk seterusnya),?\s+(?:aku|saya)\s+lebih suka\s+(.+)$/iu,
-    /^(?:aku|saya)\s+lebih suka\s+((?:semua|setiap)\s+(?:jawaban|balasan)\b.+)$/iu,
+    /^(?:mulai sekarang|ke depannya|untuk seterusnya),?\s+(?:aku|saya)\s+lebih suka\s+((?:semua|setiap)\s+(?:jawaban|balasan)(?:mu)?\b.+)$/iu,
+    /^(?:aku|saya)\s+lebih suka\s+((?:semua|setiap)\s+(?:jawaban|balasan)(?:mu)?\b.+)$/iu,
   ];
-  const value = captureValue(clean, patterns)?.replace(/[.!]+$/gu, "").trim() ??
-    null;
+  const value = captureValue(body, patterns);
   if (!value || value.length < 6 || value.length > 240) return null;
   return {
     kind: "preference",

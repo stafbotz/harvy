@@ -22,7 +22,9 @@ export const MEMORY_STORAGE_LIMIT = 128;
  * Mengurus apa yang Harvy ingat tentang seorang pengguna.
  *
  * Seluruh metode menerima `ownerId`. Itu batas isolasi data yang sama dengan
- * tugas, dan tidak ada kueri memori yang boleh berjalan tanpanya.
+ * tugas, dan tidak ada kueri memori yang boleh berjalan tanpanya. Untuk jenis
+ * personal, `sensitiveConsent` berarti adapter telah membuktikan authority
+ * penyimpanan—consent onboarding privat atau perintah explicit pada scope lain.
  */
 export class MemoryService {
   private readonly derivations = new Map<string, Promise<void>>();

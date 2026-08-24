@@ -2,30 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   authorizedSessionSignal,
-  explicitlyRequestsSmallStepSession,
   sessionAppliesToMessage,
 } from "../src/core/session-policy.js";
 import type { ActiveSession, SessionSignal } from "../src/domain/session.js";
 import type { SemanticOperation } from "../src/domain/semantic-operation.js";
 
 describe("kebijakan sesi semantic", () => {
-  it("mengenali permintaan langkah kecil tanpa menjadikannya authority mutasi", () => {
-    for (const message of [
-      "Aku kewalahan dengan audit ini. Bantu aku mulai satu langkah kecil.",
-      "Tolong bantu saya untuk memulai dari satu langkah kecil",
-      "Help me start with one small step",
-    ]) {
-      assert.equal(explicitlyRequestsSmallStepSession(message), true, message);
-    }
-    for (const message of [
-      "Aku sudah mulai satu langkah kecil tadi.",
-      "Jangan bantu aku mulai satu langkah kecil dulu.",
-      "Aku hanya menjelaskan arti langkah kecil.",
-    ]) {
-      assert.equal(explicitlyRequestsSmallStepSession(message), false, message);
-    }
-  });
-
   it("membawa sesi dari meaning, goal overlap, atau jawaban struktural", () => {
     const active = session();
     assert.equal(

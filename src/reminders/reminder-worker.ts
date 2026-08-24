@@ -31,6 +31,7 @@ export function startReminderWorker(
         try {
           const profile = await profiles.load(task.ownerId);
           if (profile.deletionRequestedAt !== null) return;
+          if (await profiles.needsOnboarding(task.ownerId)) return;
           const timeZone = profile.timeZone ?? config.defaultTimezone;
           if (isInQuietHours(new Date(), timeZone, profile.quietHours)) {
             return;

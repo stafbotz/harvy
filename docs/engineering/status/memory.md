@@ -1,6 +1,6 @@
 # Status — Memory dan Data
 
-Refreshed: 23 Agustus 2026 pada explicit/implicit consent lintas kanal,
+Refreshed: 24 Agustus 2026 pada auto-memory privat berbasis onboarding,
 long-term memory, acknowledgement kontekstual, dan UX `/memori`;
 archive SQLite, outbox learning, user model, procedural/error memory,
 persistent embedding index, compiler konteks, lifecycle, kontrol data, serta
@@ -20,28 +20,32 @@ learning, storage, atau kontrol data yang bukan policy safety.
   memory, provenance, validity interval, status `active|superseded|uncertain|
   expired`, suppression receipt, entity, dan relation temporal. Graph tidak
   pernah menjadi authority tanpa semantic source.
-- Kandidat faktual melewati policy dan primary commit sebelum acknowledgement
+- Consent onboarding privat versi 8 menjadi authority untuk auto-memory
+  ordinary maupun personal di Telegram privat dan WhatsApp privat. Tidak ada
+  prompt `SIMPAN MEMORI`/`JANGAN SIMPAN`, tombol izin, maupun tombol
+  lupakan/urungkan per write. Kandidat faktual melewati policy dan primary
+  commit sebelum acknowledgement
   balasan disusun. Receipt code-owned membedakan `saved`, `updated`, dan
   `already-known`; model hanya memilih bahasa percakapannya dan kata/emoji tidak
-  pernah menjadi bukti write. Kandidat implicit pada kedua kanal privat maupun
-  direct WhatsApp grup selalu menunggu izin item-spesifik sebelum primary
-  commit; classifier privacy bukan authority penyimpanan. Acknowledgement
+  pernah menjadi bukti write. Acknowledgement
   menyatu dengan jawaban utama,
   mengikuti konteks, dan tidak menjadi notifikasi record kedua. `📍` opsional
   hanya untuk save/update, sedangkan `💭` opsional hanya untuk recall; beberapa
   write tidak dicetak sebagai rentetan log. Parser lokal hanya membentuk
   slot/graph untuk pola yang didukung; koreksi menutup interval lama,
   kontradiksi tanpa koreksi menjadi `uncertain`, dan nilai yang berulang
-  membentuk interval baru. Seluruh kandidat yang hanya diceritakan tetap
-  memerlukan consent bertoken; label biasa maupun sensitif tidak mengizinkan
-  penyimpanan otomatis.
+  membentuk interval baru. Classifier model `memory-privacy` sudah dipensiunkan:
+  ia tidak dibutuhkan untuk authority per-item dan tidak lagi membayar call
+  provider. Jenis `personal` tetap melewati pagar sensitive write service,
+  dengan consent onboarding privat sebagai authority adapter.
   Jika user turn secara eksplisit memerintahkan Harvy mengingat satu item,
   kombinasi `memoryAction: "remember"` dan `SemanticOperation` exact tervalidasi;
-  code mengikat evidence+target ke raw turn dan memberi consent hanya kepada
-  candidate yang cocok. Item itu langsung masuk primary
-  memory beserta derivation normal tanpa prompt izin kedua. Negasi, retrieval,
-  reminder, signal tanpa candidate match, serta fakta lain dalam turn yang sama
-  tidak memperoleh authority. Credential ditolak di adapter dan service.
+  code mengikat evidence+target ke raw turn agar perintah, kegagalan, dan
+  acknowledgement tidak dikarang model. Candidate berguna lain dalam turn yang
+  sama tetap dapat memakai authority onboarding sebagai memori percakapan
+  biasa. Negasi, retrieval, reminder, atau signal explicit tanpa exact match
+  tidak diperlakukan sebagai perintah write. Credential ditolak di adapter dan
+  service.
 - Riwayat mentah terbaru dibatasi 24 giliran. Awalan kontigu dipadatkan menjadi
   episode terstruktur dengan source sequence/hash, CAS, generation guard, dan
   drain shutdown. Episode ditulis idempoten ke cold SQLite archive sebelum hot
@@ -109,11 +113,12 @@ learning, storage, atau kontrol data yang bukan policy safety.
   fisik dan divalidasi fail-closed. Runtime long-term semantic/learning Phase
   E/F kini dapat menyusun recent/retrieved context untuk Telegram dan WhatsApp
   privat dengan owner scope terpisah. Adapter WhatsApp menyediakan lihat,
-  hapus, ekspor, extraction, prompt konfirmasi, dan full deletion lewat
+  hapus, ekspor, extraction, konfirmasi destruktif, dan full deletion lewat
   perintah teks. Group member memory tetap
   memakai service terpisah yang mengikat explicit remember pada
-  anggota+turn+grup, sedangkan shared room dan project memory tetap memakai
-  authority masing-masing dan tidak mewarisi consent itu.
+  anggota+turn+grup. Kandidat member-local implicit di grup dilewati tanpa
+  write dan tanpa prompt karena grup tidak mewarisi consent onboarding privat;
+  shared room dan project memory tetap memakai authority masing-masing.
 
 ## Batas dan defect aktif
 
@@ -139,24 +144,34 @@ learning, storage, atau kontrol data yang bukan policy safety.
   secara terpisah. Target forget topikal juga hanya dapat menghapus primary
   source yang cocok secara lexical/alias; detail episode-only tanpa primary
   source memerlukan permintaan yang lebih spesifik atau hapus semua ingatan.
-- Pada cerita implicit, extractor atau classifier masih dapat salah membentuk,
-  melewatkan, atau terlalu sering menawarkan kandidat. Kesalahan itu tidak
-  memberi authority write karena semua kandidat implicit menunggu izin, tetapi
-  kualitas prompt consent tetap perlu diukur. Guard explicit remember sengaja
+- Pada cerita privat, extractor dapat salah membentuk, melewatkan, atau terlalu
+  sering membuat kandidat. Setelah consent versi 8, false positive dapat
+  menjadi memori yang keliru; receipt natural, koreksi/hapus natural, dan
+  `/memori` memberi kontrol, tetapi bukan bukti akurasi sempurna. False-positive
+  dan false-negative model aktual karena itu wajib diukur lewat acceptance dan
+  dogfood, bukan disimpulkan dari unit test. Guard explicit remember sengaja
   konservatif setelah evidence semantik: parafrasa candidate yang tidak dapat
-  dicocokkan gagal tertutup tanpa write, bukan menebak izin.
+  dicocokkan gagal tertutup sebagai perintah explicit, bukan menebak intent.
   Episode merupakan ringkasan model; provenance membuktikan source/coverage,
   bukan kebenaran klaim.
-- Acceptance akun Telegram dan WhatsApp nyata 23 Agustus 2026 membuktikan satu
-  preferensi implicit menghasilkan permintaan izin yang dapat ditolak dan
-  penolakan dikonfirmasi, lalu ekspor serta full deletion berhasil pada kedua
-  kanal. Coverage ini tidak mengukur false-positive/false-negative kandidat,
-  recall memori jangka panjang, atau seluruh variasi copy consent.
+- Instruksi satu kalimat tentang bentuk seluruh jawaban Harvy ke depan bukan
+  lagi diperlakukan sebagai cerita implicit. Boundary lokal yang sempit membuat
+  satu canonical preference; parafrasa kandidat model diganti agar tidak lahir
+  write duplikat. Candidate privat lain memakai policy onboarding yang sama.
+- Bukti live 24 Agustus 2026 membuktikan policy versi 8 pada kedua kanal privat.
+  Telegram tester nyata lulus focus 3/3 dan WhatsApp tester nyata meluluskan
+  stage memori dalam run full: preferensi cara belajar implicit disimpan tanpa
+  consent atau tombol per-item, write diberitahukan, `/memori` menemukan item
+  exact, lalu cleanup produk berhasil. Satu percobaan WhatsApp sebelumnya
+  menemukan false-negative extractor; prompt model diperjelas secara generik
+  untuk preferensi cara belajar/berkomunikasi dan rerun live kemudian lulus.
+  Ini satu sampel positif, bukan kalibrasi FP/FN.
 
 ## Bukti dan pointer
 
 - Kode: `src/core/memory-service.ts`, `src/core/memory-knowledge-service.ts`,
   `src/core/memory-explicit-consent.ts`,
+  `src/core/memory-candidate.ts`,
   `src/core/memory-context-compiler.ts`, `src/core/memory-query-plan.ts`,
   `src/core/history-service.ts`, `src/core/history-search.ts`,
   `src/core/long-term-memory-service.ts`,

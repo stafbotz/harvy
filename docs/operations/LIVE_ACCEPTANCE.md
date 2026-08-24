@@ -98,7 +98,8 @@ Remove-Item Env:HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_ACCOUNT
 ```
 
 Runner Telegram menyalakan build terisolasi dan memeriksa consent/menu,
-task+reminder, timezone, sesi+check-in, consent memori, safety, Agent Runtime,
+task+reminder, timezone, sesi+check-in, auto-memory implicit setelah onboarding
+tanpa consent/tombol per-item beserta recall `/memori`, safety, Agent Runtime,
 ekspor data, dan penghapusan data. Semua tahap tetap bergantung pada respons
 live sehingga kegagalan provider, transport, tombol, atau perilaku produk akan
 terlihat sebagai kegagalan tahap, bukan diganti fixture. Tahap planning meminta
@@ -106,6 +107,19 @@ tepat tiga langkah dengan Tindakan, Bukti yang dikumpulkan, dan Kriteria lulus;
 evaluator menolak respons yang sekadar ada tetapi tidak dapat dijalankan. Ia
 juga mengharuskan tepat satu Run Anchor yang diedit in-place, dipin saat aktif,
 dan dilepas pada terminal.
+
+Saat mendiagnosis kontrak auto-memory tanpa membiarkan timeout stage lain
+mencemari respons yang diamati, runner dapat dibatasi pada onboarding,
+candidate implicit+recall, dan cleanup:
+
+```powershell
+$env:HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS = "memory"
+npm run acceptance:telegram-private
+Remove-Item Env:HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS
+```
+
+Dua acknowledgement akun nonkritis di atas tetap wajib. Focus ini adalah bukti
+terarah, bukan pengganti rerun full.
 
 WhatsApp privat memakai dua folder auth fixed yang sudah dipasangkan dan
 menurunkan JID secara lokal; operator tidak perlu menyalin nomor atau JID ke
@@ -117,6 +131,9 @@ npm run acceptance:whatsapp-private:managed
 
 Runner menyalakan akun Harvy, menjalankan akun tester melalui harness live yang
 ada, menghentikan runtime dengan drain, lalu membuang state produk sementara.
+Salah satu tahap mengirim preferensi personal tanpa perintah ingat, menolak
+prompt consent per-item, lalu membuka `/memori` untuk membuktikan item hasil
+commit dapat dibaca kembali.
 Launcher menunggu account WhatsApp A benar-benar berstatus `open`; IPC kontrol
 proses saja bukan readiness kanal. Ia memuat runtime `tsx` melalui URL absolut
 walau cwd produk terisolasi, mengirim ke identitas LID bila tersedia, dan
@@ -149,17 +166,22 @@ Kedua acceptance berusaha menghapus data tester lewat kontrol produk. Riwayat
 chat yang disimpan Telegram atau WhatsApp sendiri tidak ikut dihapus oleh
 kontrol data Harvy.
 
-## Baseline terverifikasi 23 Agustus 2026
+## Bukti terverifikasi 24 Agustus 2026
 
-- Telegram privat latest build lulus 8/8 tahap lewat akun tester MTProto nyata.
-  Planning lulus dalam sekitar 22 detik dengan dua bubble durable yang terlihat:
-  satu Anchor mutable dan satu hasil; kualitas langkah/aksi/bukti/kriteria adalah
-  3/3/3. Runtime berhenti bersih dan cleanup produk lulus.
-- WhatsApp privat managed latest build lulus 10/10 tahap lewat nomor tester B
-  menuju nomor Harvy uji A. Harness melihat 17 ingress `notify`, 29/29 delivery
-  berhasil, ack tertinggi `delivered`, tanpa pipeline/delivery failure. Planning
-  lulus dalam sekitar 19 detik; satu Anchor dipin/diedit/dilepas, satu transient
-  surface dihapus, dan hasil akhir dikirim terpisah. Runtime berhenti bersih dan
+- Telegram privat mempunyai baseline full 8/8 dari build sebelum perubahan
+  kontrak memori ini. Current build lulus focus memori 3/3 melalui akun MTProto
+  nyata: onboarding/menu, auto-memory preferensi belajar implicit tanpa consent
+  atau tombol per-item, recall `/memori`, dan cleanup; runtime berhenti bersih.
+  Rerun full current build melewati
+  onboarding/menu serta task/reminder, lalu timeout pada sesi/check-in. Stage
+  sesudah timeout tidak menjadi bukti full yang sah dan masih harus diulang.
+- WhatsApp privat managed current build lewat nomor tester B menuju nomor Harvy
+  uji A meluluskan reset, onboarding/menu, task, reminder, sesi/check-in,
+  auto-memory preferensi belajar implicit+acknowledgement+recall, serta planning
+  durable dengan kualitas 3/3/3. Run kemudian timeout pada stage safety
+  nonkrisis, sehingga bukan full pass; cleanup akhir tetap lulus. Harness
+  melihat 16 ingress dan 28/28 delivery call berhasil tanpa pipeline/delivery
+  failure, tetapi receipt ack tertinggi `none`. Runtime berhenti bersih dan
   isolated product state terhapus.
 
 Angka ini adalah receipt satu run baseline dan tidak boleh dipromosikan menjadi
@@ -167,7 +189,8 @@ SLA, reliabilitas tujuh hari, atau bukti reconnect/crash recovery.
 
 ## Yang belum dibuktikan oleh baseline
 
-Baseline privat sudah membuktikan onboarding multi-bubble, tetapi belum
+Baseline privat sudah membuktikan onboarding multi-bubble, tetapi current build
+Telegram masih memerlukan rerun full dan belum
 membuktikan interupsi di tengah burst, CodingRun/GitHub live, reminder atau check-in
 yang benar-benar jatuh tempo setelah crash, konflik multi-instance, maupun
 dogfood tujuh hari. WhatsApp grup tetap memakai

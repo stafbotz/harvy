@@ -17,8 +17,12 @@ delivery jatuh-tempo setelah crash tetap belum diuji.
   cancel wajib explicit, sementara goal overlap dan jawaban formula tetap
   fallback struktural. Tutoring menjalankan tahap
   `ukur → coba → petunjuk → penjelasan → coba lagi`.
-- Check-in satu kali hanya dibuat setelah pilihan pengguna, memakai notifikasi
-  generik, dan tidak menjadwalkan nudge berulang secara implisit.
+- Check-in satu kali hanya dibuat setelah pilihan pengguna. Model boleh menulis
+  pertanyaan generik yang lebih natural dari jenis/tahap sesi, tetapi tidak
+  menerima goal, summary, memori, atau riwayat; fallback tetap generik dan tidak
+  ada nudge berulang secara implisit.
+- Worker reminder dan check-in sama-sama menahan delivery selama consent AI
+  ditarik; jadwal tidak dihapus dan dapat berjalan lagi setelah consent aktif.
 - Zona WIB/WITA/WIT, fallback IANA lama, jam tenang, status sesi, serta agenda
   internal Harvy tersedia. Agenda eksternal tidak ada.
 - Harvy dapat menyusun draf bantuan manusia tetapi tidak mengirimkannya.
@@ -29,6 +33,10 @@ delivery jatuh-tempo setelah crash tetap belum diuji.
   send ambigu tidak di-retry otomatis, sehingga satu jadwal tidak sengaja
   mengirim duplikat. Status itu tampil sebagai delivery yang belum dapat
   dipastikan; pengguna dapat menjadwalkan ulang untuk membuat intent baru.
+- Copy model untuk reminder/check-in proaktif dibuat sebelum intent delivery
+  menjadi `in_flight`, lalu hanya dipakai bila fingerprint kandidat masih sama;
+  hal ini tidak memperlebar crash window delivery. Timeout/invalid/provider
+  gagal memakai copy deterministik dan tidak menggagalkan jadwal.
 
 ## Batas dan defect aktif
 
@@ -42,6 +50,10 @@ delivery jatuh-tempo setelah crash tetap belum diuji.
   balasan. Ia belum menunggu reminder/check-in benar-benar jatuh tempo, belum
   melakukan crash di antara intent dan receipt, dan belum menguji tutoring
   penuh atau quiet-hours end-to-end pada kedua transport.
+- Presenter receipt dan resolusi konflik planning/langkah-kecil sudah melewati
+  acceptance current build di Telegram dan WhatsApp nyata. Pertanyaan proaktif
+  saat reminder/check-in jatuh tempo belum benar-benar ditunggu pada run live;
+  privacy payload dan fallback-nya baru terbukti otomatis.
 - Diagnostic provider live membaca tenggat natural `besok jam 7 malam`, dan
   evaluasi provider penuh lulus untuk save-task, reminder kosong, timezone,
   jawaban singkat sesi, serta selesai sesi eksplisit. Bersama acceptance live,

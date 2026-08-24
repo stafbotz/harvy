@@ -196,7 +196,7 @@ describe("giliran grup", () => {
     ]);
   });
 
-  it("meminta izin untuk memori biasa implisit lalu menyimpannya hanya bagi anggota", async () => {
+  it("melewati memori biasa implisit di grup tanpa prompt atau write", async () => {
     const runtime = createRuntime({
       memoryExtractor: {
         understand: async () => understanding({
@@ -214,31 +214,15 @@ describe("giliran grup", () => {
     });
 
     assert.equal(await runtime.turns.handle(incoming), "replied");
-    assert.match(
-      runtime.replies[0] ?? "",
-      /belum menyimpan.*ya, simpan memori ini/isu,
-    );
+    assert.equal(runtime.replies[0], "Oke, biru memang adem.");
     assert.doesNotMatch(runtime.replies[0] ?? "", /warna favoritku biru/iu);
+    assert.doesNotMatch(runtime.replies[0] ?? "", /simpan memori ini/iu);
     assert.deepEqual(
       await runtime.memories.memberMemories(
         "whatsapp:grup@g.us",
         ["anggota-a"],
       ),
       [],
-    );
-    await runtime.turns.handle(message({
-      messageId: "izin-biru",
-      participantId: "anggota-a",
-      participantAliases: ["anggota-a"],
-      mentionsHarvy: true,
-      text: "ya, simpan memori ini",
-    }));
-    assert.equal(
-      (await runtime.memories.memberMemories(
-        "whatsapp:grup@g.us",
-        ["anggota-a"],
-      ))[0]?.content,
-      "Warna favoritnya biru",
     );
     assert.deepEqual(
       await runtime.memories.memberMemories(
@@ -249,7 +233,7 @@ describe("giliran grup", () => {
     );
   });
 
-  it("meminta izin lalu menyimpan memori sensitif grup hanya setelah konfirmasi", async () => {
+  it("melewati memori personal implisit di grup tanpa prompt atau write", async () => {
     const runtime = createRuntime({
       memoryExtractor: {
         understand: async () => understanding({
@@ -273,27 +257,11 @@ describe("giliran grup", () => {
       ),
       [],
     );
-    assert.match(runtime.replies[0] ?? "", /belum menyimpan/iu);
-    assert.match(runtime.replies[0] ?? "", /ya, simpan memori ini/iu);
-
-    await runtime.turns.handle(
-      message({
-        messageId: "pesan-izin-memori",
-        participantId: "anggota-a",
-        participantAliases: ["anggota-a"],
-        mentionsHarvy: true,
-        text: "ya, simpan memori ini",
-      }),
-    );
-    const stored = await runtime.memories.memberMemories(
-      "whatsapp:grup@g.us",
-      ["anggota-a"],
-    );
-    assert.equal(stored[0]?.content, "Sedang menghadapi masalah keluarga");
-    assert.equal(stored[0]?.consent, "explicit");
+    assert.doesNotMatch(runtime.replies[0] ?? "", /simpan memori ini/iu);
+    assert.doesNotMatch(runtime.replies[0] ?? "", /sudah aku simpan|aku ingat/iu);
   });
 
-  it("menganggap perintah ingat sebagai consent item-spesifik di grup", async () => {
+  it("menyimpan perintah ingat explicit sebagai member-local memory grup", async () => {
     const runtime = createRuntime({
       reply: async () => "Aku bakal inget yang ini.",
       memoryExtractor: {
@@ -365,74 +333,16 @@ describe("giliran grup", () => {
     assert.doesNotMatch(runtime.replies[0] ?? "", /ya, simpan memori ini/iu);
   });
 
-  it("merollback memori sensitif bila balasan konfirmasinya gagal", async () => {
-    let sends = 0;
-    const runtime = createRuntime({
-      memoryExtractor: {
-        understand: async () => understanding({
-          kind: "personal",
-          content: "Sedang menghadapi masalah keluarga",
-        }),
-      },
-      sendReply: async () => {
-        sends += 1;
-        if (sends === 2) throw new Error("gagal kirim konfirmasi");
-      },
-    });
-    await runtime.turns.handle(message({
-      messageId: "jembatan-identitas",
-      participantId: "pn-anggota",
-      participantAliases: ["pn-anggota", "lid-anggota"],
-      mentionsHarvy: false,
-    }));
-    await runtime.turns.handle(message({
-      messageId: "usulan-sensitif",
-      participantId: "pn-anggota",
-      participantAliases: ["pn-anggota"],
-      mentionsHarvy: true,
-    }));
-
-    await assert.rejects(
-      runtime.turns.handle(message({
-        messageId: "izin-gagal",
-        participantId: "lid-anggota",
-        participantAliases: ["lid-anggota"],
-        mentionsHarvy: true,
-        text: "ya, simpan memori ini",
-      })),
-      /gagal kirim konfirmasi/u,
-    );
-    assert.deepEqual(
-      await runtime.memories.memberMemories(
-        "whatsapp:grup@g.us",
-        ["pn-anggota"],
-      ),
-      [],
-    );
-
-    await runtime.turns.handle(message({
-      messageId: "izin-coba-lagi",
-      participantId: "lid-anggota",
-      participantAliases: ["lid-anggota"],
-      mentionsHarvy: true,
-      text: "ya, simpan memori ini",
-    }));
-    assert.equal(
-      (await runtime.memories.memberMemories(
-        "whatsapp:grup@g.us",
-        ["pn-anggota"],
-      ))[0]?.consent,
-      "explicit",
-    );
-  });
-
   it("merollback memori anggota bila pengiriman balasan gagal", async () => {
     const runtime = createRuntime({
       memoryExtractor: {
         understand: async () => understanding({
           kind: "profile",
           content: "Nama panggilannya Nara",
-        }),
+        }, "remember", memorySemantic(
+          "Harvy, ingat ya nama panggilanku Nara",
+          "nama panggilanku Nara",
+        )),
       },
       sendReply: async () => {
         throw new Error("gagal kirim");
@@ -445,6 +355,7 @@ describe("giliran grup", () => {
           participantId: "anggota-a",
           participantAliases: ["anggota-a"],
           mentionsHarvy: true,
+          text: "Harvy, ingat ya nama panggilanku Nara",
         }),
       ),
       /gagal kirim/u,
@@ -2381,8 +2292,7 @@ describe("giliran grup", () => {
     );
   });
 
-  it("classifier privacy tidak menjadi authority durable bagi kandidat implisit", async () => {
-    let privacyCalls = 0;
+  it("kandidat grup implisit tidak menjadi durable memory", async () => {
     const runtime = createRuntime({
       memoryExtractor: {
         understand: async (text) =>
@@ -2395,10 +2305,6 @@ describe("giliran grup", () => {
                 kind: "preference",
                 content: "tidak dipakai",
               }), memories: [] },
-        assessMemoryPrivacy: async () => {
-          privacyCalls += 1;
-          return null;
-        },
       },
       assessGroupIngress: async () => ({
         riskHint: NO_RISK_HINT,
@@ -2411,14 +2317,12 @@ describe("giliran grup", () => {
       text: "Harvy, halo",
       mentionsHarvy: true,
     }));
-    assert.equal(privacyCalls, 0);
     await runtime.turns.handle(message({
       messageId: "dengan-candidate",
       text: "Harvy, candidate",
       mentionsHarvy: true,
     }));
 
-    assert.equal(privacyCalls, 0);
     assert.deepEqual(
       await runtime.memories.memberMemories(
         "whatsapp:grup@g.us",
@@ -2426,7 +2330,7 @@ describe("giliran grup", () => {
       ),
       [],
     );
-    assert.match(runtime.replies.at(-1) ?? "", /belum menyimpan/iu);
+    assert.doesNotMatch(runtime.replies.at(-1) ?? "", /simpan memori ini/iu);
   });
 
   it("menolak semua model call ketika authority ingress tidak terbukti", async () => {
@@ -3659,11 +3563,6 @@ function createRuntime(options: RuntimeOptions = {}): {
       ? {
           understand: (...args) =>
             options.memoryExtractor!.understand(...args),
-          assessMemoryPrivacy:
-            options.memoryExtractor.assessMemoryPrivacy
-              ? (...args) =>
-                  options.memoryExtractor!.assessMemoryPrivacy!(...args)
-              : async () => false,
         }
       : null;
   const ingressAssessment: GroupIngressAssessmentPort = {

@@ -47,10 +47,10 @@ jujur, tidak manipulatif, dan menghormati kendali pengguna.
 
 | Pengalaman | Kanal | Status |
 |---|---|---|
-| Harvy pribadi | Telegram | Kanal produk aktif; baseline latest build lulus 8/8 lewat akun tester nyata, tetapi dogfood pengguna nyata tujuh hari belum selesai |
+| Harvy pribadi | Telegram | Kanal produk aktif; baseline full sebelum perubahan memori lulus 8/8, current build lulus focus auto-memory implicit+recall 3/3 lewat akun tester nyata tetapi rerun full masih tertahan timeout sesi/check-in; dogfood tujuh hari belum selesai |
 | Harvy di grup | Telegram | Nanti; belum dimulai |
 | Harvy di grup | WhatsApp melalui Baileys | Kanal produk beta lokal; tidak dibekukan. Satu bukti grup nyata lama ada, tetapi latest build belum menjalani acceptance lengkap |
-| Harvy pribadi | WhatsApp melalui Baileys | Kanal produk beta lokal opt-in; capability personal/coding setara Telegram, dua akun uji sudah paired, dan baseline managed latest build lulus 10/10; reconnect serta CodingRun/GitHub live belum selesai |
+| Harvy pribadi | WhatsApp melalui Baileys | Kanal produk beta lokal opt-in; capability personal/coding setara Telegram dan dua akun uji sudah paired. Current build membuktikan auto-memory implicit+recall serta planning live, tetapi full run berhenti pada stage safety nonkrisis; reconnect dan CodingRun/GitHub live belum selesai |
 | Visualisasi | Web | Setelah alur chat terbukti perlu |
 
 WhatsApp dirancang untuk dapat memakai **banyak nomor Harvy**. Setiap nomor
@@ -211,9 +211,9 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   waktu tanpa episode hangat juga tidak lagi membayar understanding/triage.
   Lihat [`ADR-021`](decisions/ADR-021-emergency-preflight-dan-boundary-local-first.md).
 - [x] Safety routing privat selektif melalui `RiskHint`, disposition
-  `unavailable`, privacy-memory classifier candidate-only, conditional review,
-  pending/ack fast path sempit, serta izin per efek yang mempertahankan kontrol
-  eksplisit atas data sendiri. Lihat
+  `unavailable`, conditional review, pending/ack fast path sempit, serta
+  authority memori per adapter yang mempertahankan kontrol eksplisit atas data
+  sendiri. Lihat
   [`ADR-022`](decisions/ADR-022-selective-safety-routing-dan-privacy-memory.md).
 - [x] Debounce adaptif content-free mengikuti p90 gap bubble per pemilik atau
   anggota+scope grup setelah sampel minimum, termasuk lintas batch yang sudah
@@ -221,7 +221,7 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   memutus sampel grup; jendela semantik open/incomplete belum dipendekkan.
   Lihat [`ADR-023`](decisions/ADR-023-adaptive-debounce-per-subjek.md).
 - [x] Safety grup selektif melalui `riskHint`, privacy raw-context terpisah,
-  memory-privacy candidate-only, authority sebelum model, conditional review,
+  authority sebelum model, member-local implicit no-write, conditional review,
   serta emergency bypass debounce yang tetap tunduk binding dan notice.
   Lihat
   [`ADR-024`](decisions/ADR-024-selective-safety-dan-privacy-ingress-grup.md).
@@ -445,11 +445,14 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   private, output allowlist, publish handoff private, dan authority lifecycle
   fence; reachability tetap opt-in dan belum live-accepted.
   Lihat `ADR-037`.
-- [x] Memori terstruktur per pengguna yang dapat dilihat dan dihapus. Seluruh
-  kandidat implicit—biasa maupun sensitif—memerlukan izin item-spesifik;
-  perintah explicit remember harus dibuktikan dari raw turn dan credential
-  selalu ditolak. Salah klasifikasi model masih dapat melewatkan atau terlalu
-  sering menawarkan kandidat, tetapi tidak lagi menjadi authority write.
+- [x] Memori terstruktur per pengguna yang dapat dilihat dan dihapus. Consent
+  onboarding privat versi 8 mengotorisasi auto-memory ordinary dan personal
+  tanpa prompt/tombol per-item; commit diberitahukan natural dan kontrol tetap
+  tersedia lewat percakapan serta `/memori`. Perintah explicit remember tetap
+  dibuktikan dari raw turn agar intent/failure tidak dikarang, sedangkan
+  credential selalu ditolak. Grup tidak mewarisi consent privat: kandidat
+  member-local implicit dilewati dan explicit remember tetap item-scoped.
+  False-positive/false-negative extractor belum terkalibrasi.
   Lihat `ADR-006` dan `ADR-044`.
 - [x] Pemeriksaan keselamatan sebagai lapisan tersendiri: triase risiko tiga
   tingkat, arahan yang melarang menolak lalu menutup, dan pemeriksaan balasan

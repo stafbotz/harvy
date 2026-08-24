@@ -12,7 +12,6 @@ import {
 } from "../domain/group.js";
 import type { HarvyContext } from "../ai/context.js";
 import type {
-  ExtractedMemory,
   Understanding,
 } from "../ai/understand.js";
 import type { ConversationRuntime } from "../ai/conversation.js";
@@ -135,6 +134,7 @@ type GroupMemoryConsentProposal = {
 type GroupMemoryCandidateResult = {
   saved: GroupMemberMemoryItem[];
   consent: GroupMemoryConsentProposal | null;
+  implicitSkipped: boolean;
   explicitlyRememberedIds: string[];
   explicitDuplicateContent: string | null;
   explicitSaveFailed: boolean;
@@ -256,11 +256,6 @@ export interface GroupMemoryExtractionPort {
     context?: HarvyContext,
     runtime?: ConversationRuntime,
   ): Promise<Understanding | null>;
-  assessMemoryPrivacy?(
-    candidates: readonly ExtractedMemory[],
-    ownerId?: string,
-    signal?: AbortSignal,
-  ): Promise<boolean | null>;
 }
 
 export interface GroupIngressAssessmentPort {
@@ -1568,6 +1563,7 @@ export class GroupTurnService {
         : {
             saved: [],
             consent: null,
+            implicitSkipped: false,
             explicitlyRememberedIds: [],
             explicitDuplicateContent: null,
             explicitSaveFailed: false,
@@ -1578,7 +1574,7 @@ export class GroupTurnService {
       reply = GROUP_MEMORY_SECRET_REJECTION;
     } else {
       if (
-        memoryCandidates.consent &&
+        (memoryCandidates.consent || memoryCandidates.implicitSkipped) &&
         savedMemories.length === 0 &&
         replyAcknowledgesMemoryWrite(reply)
       ) {
@@ -1656,6 +1652,7 @@ export class GroupTurnService {
       return {
         saved,
         consent,
+        implicitSkipped: false,
         explicitlyRememberedIds,
         explicitDuplicateContent,
         explicitSaveFailed,
@@ -1670,6 +1667,7 @@ export class GroupTurnService {
       return {
         saved,
         consent,
+        implicitSkipped: false,
         explicitlyRememberedIds,
         explicitDuplicateContent,
         explicitSaveFailed: true,
@@ -1680,6 +1678,7 @@ export class GroupTurnService {
       return {
         saved,
         consent,
+        implicitSkipped: false,
         explicitlyRememberedIds,
         explicitDuplicateContent,
         explicitSaveFailed,
@@ -1687,17 +1686,25 @@ export class GroupTurnService {
       };
     }
     const authorizedIndexes = new Set(authority?.candidateIndexes ?? []);
+    // Tidak ada onboarding individual di scope grup yang dapat menjadi
+    // authority penyimpanan otomatis. Jangan menyela anggota dengan prompt:
+    // kandidat implicit diabaikan, sedangkan perintah remember yang terbukti
+    // tetap dapat membuat member-local memory.
+    const implicitSkipped = extracted.some((_candidate, index) =>
+      !authorizedIndexes.has(index));
     const candidates = extracted
       .map((candidate, index) => ({
         candidate,
         explicitConsent: authorizedIndexes.has(index),
       }))
+      .filter(({ explicitConsent }) => explicitConsent)
       .filter(({ candidate }) =>
         !containsForbiddenMemorySecret(candidate.content));
     if (candidates.length === 0) {
       return {
         saved,
         consent,
+        implicitSkipped,
         explicitlyRememberedIds,
         explicitDuplicateContent,
         explicitSaveFailed,
@@ -1714,15 +1721,11 @@ export class GroupTurnService {
           {
             kind: candidate.kind,
             content: candidate.content,
-            // Grup mempunyai audience lebih luas daripada chat privat. Tidak
-            // ada kandidat percakapan implisit yang boleh ditulis berdasarkan
-            // penilaian model saja; semuanya masuk jalur consent anggota.
-            sensitivity:
-              !explicitConsent || candidate.kind === "personal"
-                ? "sensitive"
-                : "ordinary",
-            consent: explicitConsent ? "explicit" : "notice",
-            source: explicitConsent ? "explicit" : "conversation",
+            sensitivity: candidate.kind === "personal"
+              ? "sensitive"
+              : "ordinary",
+            consent: "explicit",
+            source: "explicit",
           },
           this.authorityMutationGuard(
             scopeKey,
@@ -1770,6 +1773,7 @@ export class GroupTurnService {
     return {
       saved,
       consent,
+      implicitSkipped,
       explicitlyRememberedIds,
       explicitDuplicateContent,
       explicitSaveFailed,

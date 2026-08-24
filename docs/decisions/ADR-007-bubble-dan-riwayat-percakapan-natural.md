@@ -20,6 +20,12 @@
 > benar-benar terkirim. Pagar lokal tetap dipakai hanya untuk bentuk
 > deterministik serta emergency eksplisit.
 
+> **Supersesi parsial 24 Agustus 2026.** Ketentuan historis bahwa candidate
+> `personal` selalu meminta izin per-item diganti oleh Konstitusi v0.8 dan
+> ADR-006: consent onboarding privat versi aktif mengotorisasi auto-memory
+> ordinary maupun personal; credential tetap hard-excluded. Grup tidak
+> mewarisi authority tersebut.
+
 ## Konteks
 
 Uji Telegram nyata menunjukkan empat kegagalan yang saling berkaitan.

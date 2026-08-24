@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   adaptiveActions,
+  prefersGuidedSmallStep,
   replyHasBlockingQuestion,
   type AdaptiveActionId,
 } from "../src/core/action-policy.js";
@@ -75,6 +76,33 @@ describe("tombol adaptif", () => {
         hasBlockingQuestion: false,
       }),
       [],
+    );
+  });
+
+  it("memilih interaksi langkah kecil dari sinyal semantik, bukan kata mentah", () => {
+    const assessment = {
+      complexity: "normal" as const,
+      ambiguity: "medium" as const,
+      planningRequired: true,
+      emotionalNuance: "high" as const,
+      executionSize: "small" as const,
+      factualStakes: "low" as const,
+      transformationMechanical: false,
+      toolNeed: "none" as const,
+      confidence: 0.9,
+    };
+    assert.equal(
+      prefersGuidedSmallStep(["start_small", "plan"], assessment),
+      true,
+    );
+    assert.equal(prefersGuidedSmallStep(["plan"], assessment), false);
+    assert.equal(
+      prefersGuidedSmallStep(["start_small"], {
+        ...assessment,
+        executionSize: "heavy",
+        toolNeed: "execution",
+      }),
+      false,
     );
   });
 

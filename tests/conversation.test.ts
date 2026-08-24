@@ -179,6 +179,38 @@ describe("pemahaman pesan", () => {
     );
   });
 
+  it("mengajari model membedakan instruksi bentuk jawaban dari preferensi personal", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, SMALLTALK),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.understand(
+      "Mulai sekarang, aku lebih suka semua jawaban memakai langkah pendek dan bernomor.",
+    );
+
+    const prompt = requests[0]?.messages[0]?.content ?? "";
+    assert.match(prompt, /bentuk seluruh jawaban Harvy.*remember explicit/isu);
+    assert.match(
+      prompt,
+      /Instruksi penerapan lintas giliran.*perintah remember\s+explicit/isu,
+    );
+    assert.match(
+      prompt,
+      /lebih suka belajar malam.*memoryAction null/isu,
+    );
+    assert.match(
+      prompt,
+      /Preferensi cara belajar atau berkomunikasi.*wajib menjadi candidate preference/isu,
+    );
+    assert.match(
+      prompt,
+      /lebih paham lewat contoh nyata daripada teori panjang/iu,
+    );
+  });
+
   it("manifest triase menandai summary dan memori sebagai tidak layak route", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(
@@ -226,30 +258,6 @@ describe("pemahaman pesan", () => {
       requests[0]?.messages[0]?.content ?? "",
       /cerita personal.*tanpa bukti bahaya akut.*none/isu,
     );
-  });
-
-  it("menilai privasi hanya ketika ada kandidat memori dan bukan sebagai safety-critical", async () => {
-    const requests: ChatRequest[] = [];
-    const conversation = new Conversation(
-      recorder(requests, '{"sensitive":true}'),
-      ROUTING,
-      "Asia/Jakarta",
-    );
-
-    assert.equal(await conversation.assessMemoryPrivacy([]), false);
-    assert.equal(requests.length, 0);
-    assert.equal(
-      await conversation.assessMemoryPrivacy(
-        [{ kind: "preference", content: "Kesulitan membaca soal panjang" }],
-        "student",
-      ),
-      true,
-    );
-
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0]?.usage?.purpose, "memory-privacy");
-    assert.equal(requests[0]?.usage?.safetyCritical, false);
-    assert.match(requests[0]?.messages[0]?.content ?? "", /TIDAK menilai bahaya akut/u);
   });
 
   it("membungkus konteks agar tidak terbaca sebagai perintah", async () => {
@@ -1186,6 +1194,145 @@ describe("balasan percakapan", () => {
     assert.equal(requests[0]?.execution?.workClass, "safety");
     assert.equal(requests[0]?.execution?.allowTools, false);
     assert.equal(requests[0]?.execution?.allowDelegation, false);
+  });
+});
+
+describe("presentasi operasi privat", () => {
+  it("memakai model untuk suara tetapi merender fakta dan next step dari kode", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(
+        requests,
+        '{"acknowledgement":"Satu hal sudah keluar dari kepalamu.","nextStepIndex":0}',
+      ),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const response = await conversation.presentOperation(
+      {
+        kind: "task-created",
+        outcome: "success",
+        userMessage: "catat kirim laporan",
+        stableBody: "• Kirim laporan\n  penting · besok 09.00",
+        fallbackText: "Aku catat, ya.\n\n• Kirim laporan",
+        allowedNextSteps: ["Kalau perlu, tentukan waktu pengingatnya."],
+      },
+      {
+        summary: "Sedang menutup audit mingguan.",
+        turns: [{ role: "user", text: "Aku mau fokus audit dulu.", at: NOW }],
+        memories: [{
+          ...profileMemory(),
+          content: "MEMORI-DURABLE-TIDAK-RELEVAN",
+        }],
+      },
+      "advice",
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(
+      response,
+      [
+        "Satu hal sudah keluar dari kepalamu.",
+        "",
+        "• Kirim laporan\n  penting · besok 09.00",
+        "",
+        "Kalau perlu, tentukan waktu pengingatnya.",
+      ].join("\n"),
+    );
+    assert.equal(requests[0]?.json, true);
+    assert.equal(requests[0]?.maxAttempts, 1);
+    assert.equal(requests[0]?.usage?.purpose, "presentation");
+    assert.equal(requests[0]?.execution?.allowTools, false);
+    assert.equal(requests[0]?.execution?.allowDelegation, false);
+    assert.doesNotMatch(
+      requests[0]?.messages.map((message) => message.content).join("\n") ?? "",
+      /Sedang menutup audit mingguan/u,
+    );
+    assert.doesNotMatch(
+      requests[0]?.messages.map((message) => message.content).join("\n") ?? "",
+      /MEMORI-DURABLE-TIDAK-RELEVAN/u,
+    );
+    assert.match(
+      requests[0]?.messages.at(-1)?.content ?? "",
+      /Kirim laporan/u,
+    );
+  });
+
+  it("memakai fallback utuh saat output model invalid atau provider gagal", async () => {
+    const fallbackText = "Aku catat, ya.\n\n• Kirim laporan";
+    const invalid = new Conversation(
+      recorder([], "bukan json"),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+    assert.equal(
+      await invalid.presentOperation({
+        kind: "task-created",
+        outcome: "success",
+        userMessage: "catat",
+        stableBody: "• Kirim laporan",
+        fallbackText,
+      }),
+      fallbackText,
+    );
+
+    const failed = new Conversation(
+      {
+        async complete(): Promise<string> {
+          throw new Error("provider down");
+        },
+      } as unknown as AiClient,
+      ROUTING,
+      "Asia/Jakarta",
+    );
+    assert.equal(
+      await failed.presentOperation({
+        kind: "task-created",
+        outcome: "success",
+        userMessage: "catat",
+        stableBody: "• Kirim laporan",
+        fallbackText,
+      }),
+      fallbackText,
+    );
+  });
+
+  it("membuat check-in dinamis tanpa konteks privat, tool, atau authority", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(
+        requests,
+        '{"question":"Sesi tadi masih terasa pas untuk dilanjutkan, atau kamu ingin berhenti dulu?"}',
+      ),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+    const session: ActiveSession = {
+      ...tutorSession(),
+      checkIn: {
+        at: "2026-08-02T09:30:00.000Z",
+        sentAt: null,
+        delivery: null,
+      },
+    };
+
+    assert.equal(
+      await conversation.presentScheduledCheckIn(
+        session,
+        "listen",
+        { ownerId: "student", channel: "whatsapp" },
+      ),
+      "Sesi tadi masih terasa pas untuk dilanjutkan, atau kamu ingin berhenti dulu?",
+    );
+    assert.equal(requests[0]?.usage?.purpose, "presentation");
+    assert.equal(requests[0]?.operation, "private-checkin-presentation");
+    assert.equal(requests[0]?.execution?.allowTools, false);
+    const prompt = requests[0]?.messages
+      .map((message) => message.content)
+      .join("\n") ?? "";
+    assert.doesNotMatch(prompt, /persamaan kuadrat/iu);
+    assert.match(prompt, /lock screen/iu);
   });
 });
 

@@ -19,6 +19,8 @@ import {
 } from "../src/bot/onboarding.js";
 import { acquireLocalRuntimeLock } from "../src/core/local-runtime-lock.js";
 import { superviseRuntime } from "../src/operations/runtime-supervisor.js";
+import { replyAcknowledgesMemoryWrite } from
+  "../src/core/memory-explicit-consent.js";
 import {
   assessThreeStepAuditPlan,
   liveAcceptancePlanningPrompt,
@@ -125,6 +127,7 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
     shutdownTimeoutMs: 75_000,
   });
   const stages: StageEvidence[] = [];
+  const focus = acceptanceFocus(process.env);
   let context: AcceptanceContext | null = null;
   let cleanupAvailable = false;
   let runtimeCode = 1;
@@ -240,6 +243,8 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
     );
 
     if (onboardingReady) {
+
+    if (focus === "full") {
 
     await recordStage(stages, "natural_task_and_reminder", async () => {
       const proposal = await sendAndWait(
@@ -363,25 +368,49 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
       return messageDigest(scheduled);
     });
 
-    await recordStage(stages, "implicit_memory_requires_consent", async () => {
-      const proposal = await sendAndWait(
-        activeContext,
-        "Mulai sekarang, aku lebih suka semua jawaban memakai langkah pendek dan bernomor.",
-        (message) => hasButton(message, /^Jangan$/u),
-        180_000,
-      );
-      const declined = await clickAndWaitForMutation(
-        activeContext,
-        proposal,
-        /^Jangan$/u,
-        (message) => /tidak|nggak|jangan|belum/iu.test(message.message),
-        activeContext.timeoutMs,
-      );
-      if (!/tidak|nggak|jangan|belum/iu.test(declined.message)) {
-        throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_MEMORY_DECLINE_NOT_CONFIRMED");
-      }
-      return sha256(`${messageDigest(proposal)}\0${messageDigest(declined)}`);
-    });
+    }
+
+    await recordStage(
+      stages,
+      "implicit_memory_after_onboarding_without_item_consent",
+      async () => {
+        const response = await sendAndWait(
+          activeContext,
+          "Aku lebih suka belajar dengan contoh konkret daripada definisi panjang.",
+          (message) =>
+            replyAcknowledgesMemoryWrite(message.message) ||
+            hasButton(message, /^(?:Jangan|Simpan|Lupakan|Urungkan)$/u) ||
+            /Boleh aku (?:menyimpan|inget)|SIMPAN MEMORI|JANGAN SIMPAN/iu.test(
+              message.message,
+            ),
+          180_000,
+        );
+        if (
+          hasButton(response, /^(?:Jangan|Simpan|Lupakan|Urungkan)$/u) ||
+          /Boleh aku (?:menyimpan|inget)|SIMPAN MEMORI|JANGAN SIMPAN/iu.test(
+            response.message,
+          )
+        ) {
+          throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_REDUNDANT_MEMORY_CONSENT");
+        }
+        if (!replyAcknowledgesMemoryWrite(response.message)) {
+          throw blocked(
+            "TELEGRAM_PRIVATE_ACCEPTANCE_MEMORY_COMMIT_NOT_ACKNOWLEDGED",
+          );
+        }
+        const recalled = await sendAndWait(
+          activeContext,
+          "/memori",
+          (message) =>
+            /Yang aku ingat tentang kamu/iu.test(message.message) &&
+            /contoh|konkret|definisi/iu.test(message.message),
+          180_000,
+        );
+        return messageDigest(recalled);
+      },
+    );
+
+    if (focus === "full") {
 
     await recordStage(stages, "durable_planning_runtime", async () => {
       const sent = await activeContext.client.sendMessage(
@@ -449,6 +478,7 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
       return messageDigest(exported);
     });
     }
+    }
   } finally {
     if (cleanupAvailable && context) {
       const cleanupContext = context;
@@ -476,13 +506,15 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
     await removeIsolatedRuntimeRoot(root);
   }
 
-  const passed = stages.length === 8 &&
+  const expectedStageCount = focus === "memory" ? 3 : 8;
+  const passed = stages.length === expectedStageCount &&
     stages.every((stage) => stage.status === "passed") && runtimeCode === 0;
   process.stdout.write(`${JSON.stringify({
     protocol: "harvy-telegram-private-live-acceptance/2",
     status: passed ? "passed" : "failed",
     testedAt: new Date().toISOString(),
     transport: "teleproto-live-private",
+    focus,
     dedicatedTestAccount: true,
     stages,
     runtimeShutdown: runtimeCode === 0 ? "clean" : "failed",
@@ -567,7 +599,9 @@ function assertTelegramOnboarding(intro: TelegramBurst): void {
     /aku Harvy/iu,
     /AI agent/iu,
     /Pesanmu bakal diproses oleh AI/iu,
-    /lihat atau hapus/iu,
+    /bisa otomatis mengingatnya/iu,
+    /bakal bilang setelah benar-benar menyimpan atau memperbaruinya/iu,
+    /melihat, mengoreksi, atau menghapusnya/iu,
   ]) {
     if (!expected.test(combined)) {
       throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_ONBOARDING_COPY_MISMATCH");
@@ -902,6 +936,12 @@ function acceptanceGate(env: NodeJS.ProcessEnv): void {
   if (env.HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_ACCOUNT !== DEDICATED_ACCOUNT) {
     throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_REQUIRES_DEDICATED_TEST_ACCOUNT");
   }
+}
+
+function acceptanceFocus(env: NodeJS.ProcessEnv): "full" | "memory" {
+  const value = env.HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS?.trim() || "full";
+  if (value === "full" || value === "memory") return value;
+  throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS_INVALID");
 }
 
 function readTimeout(env: NodeJS.ProcessEnv): number {
