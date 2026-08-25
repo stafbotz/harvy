@@ -51,10 +51,6 @@ export const CONSOLE_HTML = `<!doctype html>
         <button id="nav-usage" role="tab" aria-selected="false" aria-controls="tab-usage" tabindex="-1" data-tab="usage"><span aria-hidden="true">↗</span>Penggunaan</button>
         <button id="nav-audit" role="tab" aria-selected="false" aria-controls="tab-audit" tabindex="-1" data-tab="audit"><span aria-hidden="true">✓</span>Audit</button>
       </nav>
-      <div class="sidebar-foot">
-        <span class="privacy-dot" aria-hidden="true"></span>
-        <p>Isi percakapan tidak ditampilkan di Console.</p>
-      </div>
     </aside>
 
     <main id="main-content" class="workspace">
@@ -107,145 +103,206 @@ export const CONSOLE_HTML = `<!doctype html>
       </section>
 
       <section id="tab-channels" class="tabpanel hidden" role="tabpanel" aria-labelledby="nav-channels">
-        <section id="channel-readiness" class="channel-readiness" aria-labelledby="channel-readiness-title" aria-live="polite">
-          <div class="readiness-state">
-            <span id="channel-readiness-mark" class="readiness-mark" aria-hidden="true">·</span>
-            <div>
-              <p id="channel-readiness-label" class="readiness-label">Memeriksa kanal</p>
-              <h2 id="channel-readiness-title">Menyiapkan status pengujian</h2>
-              <p id="channel-readiness-detail">Console sedang memastikan identitas uji tersedia.</p>
-            </div>
+        <div class="channel-environment-nav">
+          <div class="channel-environment-tabs" role="tablist" aria-label="Jenis kanal Harvy">
+            <button id="channel-environment-service" class="channel-environment-tab active" type="button" role="tab" aria-selected="true" aria-controls="channel-environment-service-panel" data-channel-environment="service">
+              <span><strong>Layanan</strong><small>Kanal yang digunakan pengguna</small></span>
+              <span id="service-tab-status" class="badge">Memeriksa</span>
+            </button>
+            <button id="channel-environment-testing" class="channel-environment-tab" type="button" role="tab" aria-selected="false" aria-controls="channel-environment-testing-panel" data-channel-environment="testing">
+              <span><strong>Pengujian</strong><small>Akun terpisah untuk menguji build</small></span>
+              <span id="testing-tab-status" class="badge">Memeriksa</span>
+            </button>
           </div>
           <button id="channels-refresh" class="ghost compact refresh-action" type="button"><span aria-hidden="true">↻</span> Periksa koneksi</button>
-        </section>
+        </div>
 
-        <section class="connection-list" aria-labelledby="connection-list-title">
-          <div class="connection-list-head">
-            <div><h3 id="connection-list-title">Alur pengujian</h3><p>Akun tester berbicara langsung kepada Harvy uji tanpa memakai akun produk utama.</p></div>
-          </div>
-          <article id="telegram-route" class="connection-row">
-            <div class="channel-symbol telegram-symbol" aria-hidden="true">TG</div>
-            <div class="connection-copy">
-              <strong>Telegram</strong>
-              <div class="route-map"><span><small>Penguji</small>Akun tester</span><i aria-hidden="true">→</i><span><small>Harvy</small>Bot Harvy uji</span></div>
-            </div>
-            <div class="connection-actions"><span id="telegram-route-status" class="connection-status">Memeriksa</span><button id="telegram-manage-open" class="ghost compact" type="button">Kelola</button></div>
-          </article>
-          <article id="whatsapp-route" class="connection-row">
-            <div class="channel-symbol whatsapp-symbol" aria-hidden="true">WA</div>
-            <div class="connection-copy">
-              <strong>WhatsApp</strong>
-              <div class="route-map"><span><small>Penguji</small>Nomor tester B</span><i aria-hidden="true">→</i><span><small>Harvy</small>Nomor Harvy uji A</span></div>
-            </div>
-            <div class="connection-actions"><span id="whatsapp-route-status" class="connection-status">Memeriksa</span><button id="whatsapp-manage-open" class="ghost compact" type="button">Kelola</button></div>
-          </article>
-        </section>
-
-        <details id="channel-settings" class="channel-settings">
-          <summary>
-            <span><strong>Konfigurasi kanal Harvy</strong><small>Kanal utama, pairing acceptance, dan pemisahan identitas.</small></span>
-            <span class="settings-summary-end"><span id="setup-progress-badge" class="badge warn">0 dari 4 terhubung</span><i aria-hidden="true">⌄</i></span>
-          </summary>
-          <div class="channel-settings-body">
-            <details class="identity-boundary" aria-labelledby="identity-boundary-title">
-              <summary class="identity-boundary-head">
-                <span><strong id="identity-boundary-title">Pemisahan dari kanal utama</strong><small>Periksa boundary identitas tanpa membuka secret atau nomor.</small></span>
-                <i aria-hidden="true">⌄</i>
-              </summary>
-              <div class="identity-boundary-body">
-                <div class="identity-map">
-                  <article class="identity-card primary-identity">
-                    <div class="identity-card-title"><span class="identity-label">Produk utama</span><strong id="primary-config-source">Dikelola dari Console</strong></div>
-                    <div class="identity-status-row"><div><strong>Telegram Harvy utama</strong><p id="primary-telegram-detail">Memeriksa konfigurasi tanpa membaca token.</p></div><span id="primary-telegram-status" class="badge">Memeriksa</span></div>
-                    <div class="identity-status-row"><div><strong>WhatsApp Harvy utama</strong><p id="primary-whatsapp-detail">Memeriksa deklarasi akun tanpa menampilkan nomor.</p></div><span id="primary-whatsapp-status" class="badge">Memeriksa</span></div>
-                  </article>
-                  <div class="boundary-marker" aria-hidden="true"><span>Terpisah</span><i>→</i></div>
-                  <article class="identity-card acceptance-identity">
-                    <div class="identity-card-title"><span class="identity-label test">Lingkungan uji</span><strong>Empat identitas khusus</strong></div>
-                    <ol class="setup-checklist" aria-label="Progres pairing kanal uji">
-                      <li id="setup-step-telegram-bot"><span>1</span>Bot Harvy uji di Telegram</li>
-                      <li id="setup-step-telegram-tester"><span>2</span>Akun Telegram tester</li>
-                      <li id="setup-step-whatsapp-harvy"><span>3</span>Nomor Harvy uji A</li>
-                      <li id="setup-step-whatsapp-tester"><span>4</span>Nomor tester B</li>
-                    </ol>
-                    <div class="setup-progress-track" aria-hidden="true"><span id="setup-progress-fill"></span></div>
-                  </article>
-                </div>
-                <p class="boundary-copy"><strong>Mengapa dipisah?</strong> Console mengelola keduanya, tetapi pengujian dapat logout dan membuat data sementara. Credential utama dan acceptance tetap berada di penyimpanan serta identitas yang berbeda.</p>
+        <div class="channel-environments">
+          <section id="channel-environment-service-panel" class="channel-environment-view active" role="tabpanel" aria-labelledby="channel-environment-service">
+            <section class="environment-card primary-environment" aria-labelledby="primary-environment-title">
+              <header class="environment-head">
+                <span class="environment-kind">Kanal pengguna</span>
+                <span id="primary-environment-status" class="badge">Memeriksa</span>
+              </header>
+              <div class="environment-title">
+                <h3 id="primary-environment-title">Kanal layanan</h3>
+                <p id="primary-config-source">Memeriksa sumber konfigurasi tanpa membuka credential.</p>
               </div>
-            </details>
+              <div class="environment-connections">
+                <div class="environment-row">
+                  <div class="channel-symbol telegram-symbol" aria-hidden="true">TG</div>
+                  <div><strong>Telegram</strong><p id="primary-telegram-detail">Memeriksa konfigurasi tanpa membaca token.</p></div>
+                  <span id="primary-telegram-status" class="badge">Memeriksa</span>
+                </div>
+                <div class="environment-row">
+                  <div class="channel-symbol whatsapp-symbol" aria-hidden="true">WA</div>
+                  <div><strong>WhatsApp</strong><p id="primary-whatsapp-detail">Memeriksa deklarasi akun tanpa menampilkan nomor.</p></div>
+                  <span id="primary-whatsapp-status" class="badge">Memeriksa</span>
+                </div>
+              </div>
+              <footer class="environment-footer">
+                <p>Perubahan di sini memengaruhi kanal yang digunakan pengguna.</p>
+                <button id="primary-manage-open" class="ghost compact" type="button">Kelola kanal</button>
+              </footer>
+            </section>
+          </section>
 
-            <section id="primary-settings" class="channel-panel" aria-labelledby="primary-settings-title">
-              <div class="panel-head"><div><h3 id="primary-settings-title">Harvy utama</h3><p>Credential produk yang dipakai ketika runtime Harvy dijalankan.</p></div><span id="primary-ready" class="badge">Belum siap</span></div>
-              <div class="channel-grid">
+          <section id="channel-environment-testing-panel" class="channel-environment-view" role="tabpanel" aria-labelledby="channel-environment-testing" hidden>
+            <section id="channel-readiness" class="channel-readiness" aria-labelledby="channel-readiness-title" aria-live="polite">
+              <div class="readiness-state">
+                <span id="channel-readiness-mark" class="readiness-mark" aria-hidden="true">·</span>
+                <div>
+                  <p id="channel-readiness-label" class="readiness-label">Memeriksa kanal</p>
+                  <h2 id="channel-readiness-title">Menyiapkan status pengujian</h2>
+                  <p id="channel-readiness-detail">Console sedang memastikan seluruh akun pengujian tersedia.</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="environment-card acceptance-environment" aria-labelledby="acceptance-environment-title">
+              <header class="environment-head">
+                <span class="environment-kind test">Akun terpisah</span>
+                <span id="setup-progress-badge" class="badge warn">0 dari 4 siap</span>
+              </header>
+              <div class="environment-title">
+                <h3 id="acceptance-environment-title">Koneksi pengujian</h3>
+                <p>Penguji berbicara kepada Harvy melalui akun yang terpisah dari layanan.</p>
+              </div>
+              <div class="acceptance-routes">
+                <article id="telegram-route" class="connection-row">
+                  <div class="channel-symbol telegram-symbol" aria-hidden="true">TG</div>
+                  <div class="connection-copy">
+                    <strong>Telegram</strong>
+                    <div class="route-map"><span><small>PENGUJI</small><b>Akun Telegram</b></span><i aria-hidden="true">→</i><span><small>HARVY</small><b>Bot Telegram</b></span></div>
+                  </div>
+                  <div class="connection-actions"><span id="telegram-route-status" class="connection-status">Memeriksa</span><button id="telegram-manage-open" class="ghost compact" type="button">Kelola</button></div>
+                </article>
+                <article id="whatsapp-route" class="connection-row">
+                  <div class="channel-symbol whatsapp-symbol" aria-hidden="true">WA</div>
+                  <div class="connection-copy">
+                    <strong>WhatsApp</strong>
+                    <div class="route-map"><span><small>PENGUJI</small><b>Akun WhatsApp</b></span><i aria-hidden="true">→</i><span><small>HARVY</small><b>Akun WhatsApp</b></span></div>
+                  </div>
+                  <div class="connection-actions"><span id="whatsapp-route-status" class="connection-status">Memeriksa</span><button id="whatsapp-manage-open" class="ghost compact" type="button">Kelola</button></div>
+                </article>
+              </div>
+              <ol class="setup-checklist" aria-label="Progres koneksi pengujian">
+                <li id="setup-step-telegram-bot"><span>1</span>Harvy Telegram</li>
+                <li id="setup-step-telegram-tester"><span>2</span>Penguji Telegram</li>
+                <li id="setup-step-whatsapp-harvy"><span>3</span>Harvy WhatsApp</li>
+                <li id="setup-step-whatsapp-tester"><span>4</span>Penguji WhatsApp</li>
+              </ol>
+              <div class="setup-progress-track" aria-hidden="true"><span id="setup-progress-fill"></span></div>
+            </section>
+          </section>
+        </div>
+
+        <section id="channel-settings" class="channel-settings hidden" aria-labelledby="settings-context-label">
+          <header class="channel-settings-head">
+            <div><p class="kicker">PENGATURAN KONEKSI</p><strong id="settings-context-label">Pilih kanal</strong><span>Token, penautan akun, dan pemulihan sesi hanya ditampilkan saat diperlukan.</span></div>
+            <button id="channel-settings-close" class="ghost compact" type="button">Tutup</button>
+          </header>
+          <div class="channel-settings-body">
+
+            <section id="primary-settings" class="channel-panel settings-panel active" aria-labelledby="primary-settings-title" tabindex="-1">
+              <div class="panel-head"><div><h3 id="primary-settings-title">Kanal layanan</h3><p>Identitas Telegram dan WhatsApp yang digunakan Harvy untuk melayani pengguna.</p></div><span id="primary-ready" class="badge">Belum siap</span></div>
+              <div class="channel-grid primary-service-grid">
                 <section id="primary-telegram-bot-card" class="channel-card" aria-labelledby="primary-telegram-bot-title">
-                  <div class="channel-card-head"><div><h3 id="primary-telegram-bot-title">Bot Telegram utama</h3><p id="primary-telegram-bot-detail">Belum diperiksa.</p></div><span id="primary-telegram-bot-status" class="badge">Memeriksa</span></div>
+                  <div class="channel-card-head"><div><h3 id="primary-telegram-bot-title">Bot Telegram</h3><p id="primary-telegram-bot-detail">Belum diperiksa.</p></div><span id="primary-telegram-bot-status" class="badge">Memeriksa</span></div>
                   <details id="primary-telegram-bot-editor" class="credential-editor" open>
-                    <summary id="primary-telegram-bot-editor-summary">Tambahkan token bot utama</summary>
+                    <summary id="primary-telegram-bot-editor-summary">Tambahkan token bot layanan</summary>
                     <form id="primary-telegram-bot-form" class="channel-form">
                       <label for="primary-telegram-bot-token">Token baru dari BotFather<input id="primary-telegram-bot-token" type="password" autocomplete="off" maxlength="256" required></label>
                       <button id="primary-telegram-bot-save" type="submit">Verifikasi dan simpan</button>
                     </form>
-                    <div id="primary-telegram-migrate-zone" class="credential-migration hidden"><strong>Pindahkan dari environment</strong><p>Token lama akan diverifikasi, disimpan terenkripsi, lalu barisnya dihapus dari <code>.env</code>. Nilainya tidak ditampilkan kembali.</p><label class="check-label"><input id="primary-telegram-migrate-confirm" type="checkbox">Saya memahami bahwa Console menjadi sumber credential utama.</label><button id="primary-telegram-migrate" type="button">Pindahkan ke Console</button></div>
+                    <div id="primary-telegram-migrate-zone" class="credential-migration hidden"><strong>Pindahkan dari environment</strong><p>Token lama akan diverifikasi, disimpan terenkripsi, lalu barisnya dihapus dari <code>.env</code>. Nilainya tidak ditampilkan kembali.</p><label class="check-label"><input id="primary-telegram-migrate-confirm" type="checkbox">Saya memahami bahwa Console menjadi sumber credential layanan.</label><button id="primary-telegram-migrate" type="button">Pindahkan ke Console</button></div>
                     <div id="primary-telegram-verify-zone" class="credential-actions hidden"><button id="primary-telegram-verify" class="ghost compact" type="button">Periksa token sekarang</button></div>
-                    <div id="primary-telegram-delete-zone" class="credential-danger hidden"><strong>Hapus token bot utama</strong><p>Runtime yang sedang hidup tidak langsung berhenti, tetapi Harvy tidak dapat memulai lagi sebelum token baru disimpan.</p><label for="primary-telegram-delete-confirm">Ketik <code>DELETE_PRIMARY_TELEGRAM_BOT</code><input id="primary-telegram-delete-confirm" autocomplete="off"></label><button id="primary-telegram-delete" class="ghost compact" type="button">Hapus token</button></div>
+                    <div id="primary-telegram-delete-zone" class="credential-danger hidden"><strong>Hapus token bot layanan</strong><p>Runtime yang sedang hidup tidak langsung berhenti, tetapi Harvy tidak dapat memulai lagi sebelum token baru disimpan.</p><label for="primary-telegram-delete-confirm">Ketik <code>DELETE_PRIMARY_TELEGRAM_BOT</code><input id="primary-telegram-delete-confirm" autocomplete="off"></label><button id="primary-telegram-delete" class="ghost compact" type="button">Hapus token</button></div>
                   </details>
+                </section>
+
+                <section id="primary-whatsapp-card" class="channel-card" aria-labelledby="primary-whatsapp-card-title">
+                  <div class="channel-card-head"><div><h3 id="primary-whatsapp-card-title">Akun WhatsApp layanan</h3><p id="primary-whatsapp-card-detail">Belum diperiksa.</p></div><span id="primary-whatsapp-card-status" class="badge">Memeriksa</span></div>
+                  <div id="primary-whatsapp-runtime-note" class="inline-note hidden">Runtime Harvy sedang memakai sesi ini. Hentikan runtime lalu buka <code>npm run console:setup</code> untuk mengubahnya.</div>
+                  <div id="primary-whatsapp-migrate-zone" class="credential-migration hidden">
+                    <strong>Pindahkan konfigurasi lama ke Console</strong>
+                    <p>Alias akun dan pengaturan akan disimpan terenkripsi setelah setiap sesi lokal cocok. Tiga field WhatsApp layanan lalu dihapus dari <code>.env</code>.</p>
+                    <label class="check-label"><input id="primary-whatsapp-migrate-confirm" type="checkbox">Saya memahami bahwa Console menjadi satu-satunya sumber daftar akun layanan.</label>
+                    <button id="primary-whatsapp-migrate" type="button">Pindahkan ke Console</button>
+                  </div>
+                  <div id="primary-whatsapp-managed-zone" class="service-fleet hidden">
+                    <form id="primary-whatsapp-settings-form" class="service-settings-form">
+                      <div><strong>Perilaku kanal</strong><p>Perubahan diterapkan saat Harvy dijalankan kembali.</p></div>
+                      <label class="check-label"><input id="primary-whatsapp-enabled" type="checkbox">Aktifkan layanan WhatsApp</label>
+                      <label class="check-label"><input id="primary-whatsapp-private-enabled" type="checkbox">Layani percakapan pribadi</label>
+                      <div class="credential-actions"><button id="primary-whatsapp-settings-save" type="submit">Simpan pengaturan</button><button id="primary-whatsapp-verify" class="ghost compact" type="button">Periksa semua sesi</button></div>
+                    </form>
+                    <div class="service-account-section">
+                      <div class="service-account-heading"><div><strong>Akun layanan</strong><p>Alias dipakai Harvy untuk routing; nomor telepon tidak ditampilkan.</p></div><span id="primary-whatsapp-account-count" class="badge">0 akun</span></div>
+                      <div id="primary-whatsapp-account-list" class="service-account-list"></div>
+                      <form id="primary-whatsapp-account-form" class="channel-form service-account-add">
+                        <label for="primary-whatsapp-account-alias">Alias akun baru<input id="primary-whatsapp-account-alias" autocomplete="off" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_-]{0,31}" placeholder="misalnya layanan_kelas" required><span>Nama internal stabil—bukan nomor telepon atau JID.</span></label>
+                        <label class="check-label"><input id="primary-whatsapp-account-confirm" type="checkbox" required>Saya memahami akun ini dapat menerima pesan pengguna sebagai Harvy.</label>
+                        <button id="primary-whatsapp-account-add" type="submit">Tambahkan dan pasangkan</button>
+                      </form>
+                    </div>
+                  </div>
                 </section>
               </div>
             </section>
 
-            <section id="telegram-settings" class="channel-panel" aria-labelledby="telegram-settings-title" tabindex="-1">
-              <div class="panel-head"><div><h3 id="telegram-settings-title">Telegram acceptance</h3><p>Akun tester berbicara kepada bot Harvy uji yang terpisah dari bot utama.</p></div><span id="telegram-ready" class="badge">Belum siap</span></div>
+            <section id="telegram-settings" class="channel-panel settings-panel" aria-labelledby="telegram-settings-title" tabindex="-1">
+              <div class="panel-head"><div><h3 id="telegram-settings-title">Telegram</h3><p>Akun penguji berbicara kepada Harvy melalui bot Telegram yang terpisah dari layanan.</p></div><span id="telegram-ready" class="badge">Belum siap</span></div>
               <div class="channel-grid">
                 <section id="telegram-bot-card" class="channel-card" aria-labelledby="telegram-bot-title">
-                  <div class="channel-card-head"><div><h3 id="telegram-bot-title">Bot Harvy uji</h3><p id="telegram-bot-detail">Belum diperiksa.</p></div><span id="telegram-bot-status" class="badge">Memeriksa</span></div>
+                  <div class="channel-card-head"><div><h3 id="telegram-bot-title">Harvy · Bot Telegram</h3><p id="telegram-bot-detail">Belum diperiksa.</p></div><span id="telegram-bot-status" class="badge">Memeriksa</span></div>
                   <details id="telegram-bot-editor" class="credential-editor" open>
-                    <summary id="telegram-bot-editor-summary">Tambahkan token bot uji</summary>
+                    <summary id="telegram-bot-editor-summary">Tambahkan token bot pengujian</summary>
                     <form id="telegram-bot-form" class="channel-form">
                       <label for="telegram-bot-token">Token baru dari BotFather<input id="telegram-bot-token" type="password" autocomplete="off" maxlength="256" required></label>
                       <button id="telegram-bot-save" type="submit">Verifikasi dan simpan</button>
                     </form>
-                    <div id="telegram-bot-delete-zone" class="credential-danger hidden"><strong>Hapus token bot uji</strong><p>Telegram tidak dapat diuji sampai token baru disimpan.</p><label for="telegram-bot-delete-confirm">Ketik <code>DELETE_TELEGRAM_TEST_BOT</code><input id="telegram-bot-delete-confirm" autocomplete="off"></label><button id="telegram-bot-delete" class="ghost compact" type="button">Hapus token</button></div>
+                    <div id="telegram-bot-delete-zone" class="credential-danger hidden"><strong>Hapus token bot pengujian</strong><p>Telegram tidak dapat diuji sampai token baru disimpan.</p><label for="telegram-bot-delete-confirm">Ketik <code>DELETE_TELEGRAM_TEST_BOT</code><input id="telegram-bot-delete-confirm" autocomplete="off"></label><button id="telegram-bot-delete" class="ghost compact" type="button">Hapus token</button></div>
                   </details>
                 </section>
 
                 <section id="telegram-tester-card" class="channel-card" aria-labelledby="telegram-tester-title">
-                  <div class="channel-card-head"><div><h3 id="telegram-tester-title">Akun tester</h3><p id="telegram-tester-detail">Belum diperiksa.</p></div><span id="telegram-tester-status" class="badge">Memeriksa</span></div>
+                  <div class="channel-card-head"><div><h3 id="telegram-tester-title">Penguji · Akun Telegram</h3><p id="telegram-tester-detail">Belum diperiksa.</p></div><span id="telegram-tester-status" class="badge">Memeriksa</span></div>
                   <form id="telegram-tester-form" class="channel-form">
                     <label for="telegram-api-id">api_id<input id="telegram-api-id" inputmode="numeric" autocomplete="off" maxlength="12" required></label>
                     <label for="telegram-api-hash">api_hash<input id="telegram-api-hash" type="password" autocomplete="off" maxlength="64" required></label>
                     <label class="check-label"><input id="telegram-dedicated" type="checkbox" required>Ini akun khusus pengujian, bukan akun pribadi.</label>
                     <button id="telegram-tester-pair" type="submit">Mulai pairing QR</button>
                   </form>
-                  <div id="telegram-tester-qr-stage" class="qr-stage hidden"><img id="telegram-tester-qr" alt="QR pairing akun Telegram tester"><p>Pindai dari Telegram → Settings → Devices → Link Desktop Device.</p></div>
+                  <div id="telegram-tester-qr-stage" class="qr-stage hidden"><div id="telegram-tester-qr" class="qr-image" role="img" aria-label="QR pairing akun Telegram penguji"></div><p>Pindai dari Telegram → Settings → Devices → Link Desktop Device.</p><p id="telegram-tester-qr-load-status" class="qr-load-status" aria-live="polite"></p><button id="telegram-tester-qr-retry" class="ghost compact hidden" type="button">Coba muat QR lagi</button></div>
                   <form id="telegram-password-form" class="channel-form hidden"><label for="telegram-password">Password verifikasi dua langkah<input id="telegram-password" type="password" autocomplete="off" maxlength="256" required></label><button id="telegram-password-submit" type="submit">Kirim password</button></form>
                   <div class="channel-actions"><button id="telegram-tester-cancel" class="ghost compact hidden" type="button">Batalkan pairing</button></div>
-                  <details id="telegram-tester-manage" class="danger-zone hidden"><summary>Ganti atau cabut sesi tester</summary><p>Cabut hanya bila akun akan diganti. Console logout ke Telegram lebih dulu; bila jaringan gagal, credential lokal dipertahankan.</p><label for="telegram-tester-delete-confirm">Ketik <code>DELETE_TELEGRAM_TEST_SESSION</code><input id="telegram-tester-delete-confirm" autocomplete="off"></label><button id="telegram-tester-delete" class="ghost compact" type="button">Cabut dan hapus</button></details>
+                  <details id="telegram-tester-manage" class="danger-zone hidden"><summary>Ganti atau cabut sesi penguji</summary><p>Cabut hanya bila akun akan diganti. Console logout ke Telegram lebih dulu; bila jaringan gagal, credential lokal dipertahankan.</p><label for="telegram-tester-delete-confirm">Ketik <code>DELETE_TELEGRAM_TEST_SESSION</code><input id="telegram-tester-delete-confirm" autocomplete="off"></label><button id="telegram-tester-delete" class="ghost compact" type="button">Cabut dan hapus</button></details>
                 </section>
               </div>
             </section>
 
-            <section id="whatsapp-settings" class="channel-panel" aria-labelledby="whatsapp-settings-title" tabindex="-1">
-              <div class="panel-head"><div><h3 id="whatsapp-settings-title">WhatsApp acceptance</h3><p>Nomor A menjalankan Harvy uji dan nomor B berbicara kepadanya sebagai tester.</p></div></div>
+            <section id="whatsapp-settings" class="channel-panel settings-panel" aria-labelledby="whatsapp-settings-title" tabindex="-1">
+              <div class="panel-head"><div><h3 id="whatsapp-settings-title">WhatsApp</h3><p>Akun penguji berbicara kepada Harvy melalui dua akun WhatsApp yang terpisah.</p></div><span id="whatsapp-ready" class="badge">Belum siap</span></div>
               <div class="channel-grid">
                 <section id="whatsapp-harvy-card" class="channel-card" data-whatsapp-role="harvy">
-                  <div class="channel-card-head"><div><h3>Nomor Harvy uji A</h3><p id="whatsapp-harvy-detail">Belum diperiksa.</p></div><span id="whatsapp-harvy-status" class="badge">Memeriksa</span></div>
-                  <div id="whatsapp-harvy-setup" class="channel-form"><label class="check-label"><input id="whatsapp-harvy-dedicated" type="checkbox">Ini nomor nonkritis khusus pengujian dan bukan sesi utama.</label><button id="whatsapp-harvy-pair" type="button">Mulai pairing QR</button></div>
-                  <div id="whatsapp-harvy-qr-stage" class="qr-stage hidden"><img id="whatsapp-harvy-qr" alt="QR pairing WhatsApp Harvy uji"><p>Pindai dari WhatsApp A → Perangkat tertaut.</p></div>
+                  <div class="channel-card-head"><div><h3>Harvy · Akun WhatsApp</h3><p id="whatsapp-harvy-detail">Belum diperiksa.</p></div><span id="whatsapp-harvy-status" class="badge">Memeriksa</span></div>
+                  <div id="whatsapp-harvy-setup" class="channel-form"><label class="check-label"><input id="whatsapp-harvy-dedicated" type="checkbox">Ini akun nonkritis khusus pengujian dan bukan sesi layanan.</label><button id="whatsapp-harvy-pair" type="button">Mulai pairing QR</button></div>
+                  <div id="whatsapp-harvy-qr-stage" class="qr-stage hidden"><div id="whatsapp-harvy-qr" class="qr-image" role="img" aria-label="QR pairing akun WhatsApp Harvy"></div><p>Pindai dari akun WhatsApp Harvy → Perangkat tertaut.</p><p id="whatsapp-harvy-qr-load-status" class="qr-load-status" aria-live="polite"></p><button id="whatsapp-harvy-qr-retry" class="ghost compact hidden" type="button">Coba muat QR lagi</button></div>
                   <button id="whatsapp-harvy-cancel" class="ghost compact hidden" type="button">Batalkan operasi</button>
-                  <details id="whatsapp-harvy-manage" class="session-manager hidden"><summary id="whatsapp-harvy-manage-summary">Kelola sesi Harvy</summary><div class="session-manager-body"><div class="session-replace"><strong>Pasangkan ulang nomor Harvy</strong><p>Console mencabut sesi lama lebih dulu, lalu menampilkan QR baru. Credential lokal tetap dipertahankan jika pencabutan tidak dapat dibuktikan.</p><label class="check-label"><input id="whatsapp-harvy-replace-confirm" type="checkbox">Nomor A siap dipindai ulang sebagai akun khusus pengujian.</label><button id="whatsapp-harvy-replace" type="button">Pasangkan ulang</button></div><details class="danger-zone"><summary>Cabut tanpa memasangkan ulang</summary><p>Gunakan hanya bila nomor ini tidak lagi dipakai untuk acceptance.</p><label for="whatsapp-harvy-revoke-confirm">Ketik <code>REVOKE_WHATSAPP_HARVY_SESSION</code><input id="whatsapp-harvy-revoke-confirm" autocomplete="off"></label><button id="whatsapp-harvy-revoke" class="ghost compact" type="button">Cabut dan hapus</button></details></div></details>
+                  <details id="whatsapp-harvy-manage" class="session-manager hidden"><summary id="whatsapp-harvy-manage-summary">Kelola sesi Harvy</summary><div class="session-manager-body"><div class="session-replace"><strong>Pasangkan ulang akun Harvy</strong><p>Console mencabut sesi lama lebih dulu, lalu menampilkan QR baru. Credential lokal tetap dipertahankan jika pencabutan tidak dapat dibuktikan.</p><label class="check-label"><input id="whatsapp-harvy-replace-confirm" type="checkbox">Akun Harvy siap dipindai ulang sebagai akun khusus pengujian.</label><button id="whatsapp-harvy-replace" type="button">Pasangkan ulang</button></div><details class="danger-zone"><summary>Cabut tanpa memasangkan ulang</summary><p>Gunakan hanya bila akun ini tidak lagi dipakai untuk pengujian.</p><label for="whatsapp-harvy-revoke-confirm">Ketik <code>REVOKE_WHATSAPP_HARVY_SESSION</code><input id="whatsapp-harvy-revoke-confirm" autocomplete="off"></label><button id="whatsapp-harvy-revoke" class="ghost compact" type="button">Cabut dan hapus</button></details></div></details>
                 </section>
                 <section id="whatsapp-tester-card" class="channel-card" data-whatsapp-role="tester">
-                  <div class="channel-card-head"><div><h3>Nomor tester B</h3><p id="whatsapp-tester-detail">Belum diperiksa.</p></div><span id="whatsapp-tester-status" class="badge">Memeriksa</span></div>
-                  <div id="whatsapp-tester-setup" class="channel-form"><label class="check-label"><input id="whatsapp-tester-dedicated" type="checkbox">Ini nomor nonkritis khusus pengujian dan berbeda dari nomor A.</label><button id="whatsapp-tester-pair" type="button">Mulai pairing QR</button></div>
-                  <div id="whatsapp-tester-qr-stage" class="qr-stage hidden"><img id="whatsapp-tester-qr" alt="QR pairing WhatsApp tester"><p>Pindai dari WhatsApp B → Perangkat tertaut.</p></div>
+                  <div class="channel-card-head"><div><h3>Penguji · Akun WhatsApp</h3><p id="whatsapp-tester-detail">Belum diperiksa.</p></div><span id="whatsapp-tester-status" class="badge">Memeriksa</span></div>
+                  <div id="whatsapp-tester-setup" class="channel-form"><label class="check-label"><input id="whatsapp-tester-dedicated" type="checkbox">Ini akun nonkritis khusus pengujian dan berbeda dari akun Harvy.</label><button id="whatsapp-tester-pair" type="button">Mulai pairing QR</button></div>
+                  <div id="whatsapp-tester-qr-stage" class="qr-stage hidden"><div id="whatsapp-tester-qr" class="qr-image" role="img" aria-label="QR pairing akun WhatsApp penguji"></div><p>Pindai dari akun WhatsApp penguji → Perangkat tertaut.</p><p id="whatsapp-tester-qr-load-status" class="qr-load-status" aria-live="polite"></p><button id="whatsapp-tester-qr-retry" class="ghost compact hidden" type="button">Coba muat QR lagi</button></div>
                   <button id="whatsapp-tester-cancel" class="ghost compact hidden" type="button">Batalkan operasi</button>
-                  <details id="whatsapp-tester-manage" class="session-manager hidden"><summary id="whatsapp-tester-manage-summary">Kelola sesi tester</summary><div class="session-manager-body"><div class="session-replace"><strong>Pasangkan ulang nomor tester</strong><p>Console mencabut sesi lama lebih dulu, lalu menampilkan QR baru. Jika perangkat telah dihapus dari ponsel, bukti logged out digunakan untuk membersihkan credential lokal.</p><label class="check-label"><input id="whatsapp-tester-replace-confirm" type="checkbox">Nomor B siap dipindai ulang dan tetap berbeda dari nomor A.</label><button id="whatsapp-tester-replace" type="button">Pasangkan ulang</button></div><details class="danger-zone"><summary>Cabut tanpa memasangkan ulang</summary><p>Gunakan hanya bila nomor tester tidak lagi dipakai untuk acceptance.</p><label for="whatsapp-tester-revoke-confirm">Ketik <code>REVOKE_WHATSAPP_TESTER_SESSION</code><input id="whatsapp-tester-revoke-confirm" autocomplete="off"></label><button id="whatsapp-tester-revoke" class="ghost compact" type="button">Cabut dan hapus</button></details></div></details>
+                  <details id="whatsapp-tester-manage" class="session-manager hidden"><summary id="whatsapp-tester-manage-summary">Kelola sesi penguji</summary><div class="session-manager-body"><div class="session-replace"><strong>Pasangkan ulang akun penguji</strong><p>Console mencabut sesi lama lebih dulu, lalu menampilkan QR baru. Jika perangkat telah dihapus dari ponsel, bukti logged out digunakan untuk membersihkan credential lokal.</p><label class="check-label"><input id="whatsapp-tester-replace-confirm" type="checkbox">Akun penguji siap dipindai ulang dan tetap berbeda dari akun Harvy.</label><button id="whatsapp-tester-replace" type="button">Pasangkan ulang</button></div><details class="danger-zone"><summary>Cabut tanpa memasangkan ulang</summary><p>Gunakan hanya bila akun penguji tidak lagi dipakai untuk pengujian.</p><label for="whatsapp-tester-revoke-confirm">Ketik <code>REVOKE_WHATSAPP_TESTER_SESSION</code><input id="whatsapp-tester-revoke-confirm" autocomplete="off"></label><button id="whatsapp-tester-revoke" class="ghost compact" type="button">Cabut dan hapus</button></details></div></details>
                 </section>
               </div>
             </section>
           </div>
-        </details>
+        </section>
       </section>
 
       <section id="tab-access" class="tabpanel hidden" role="tabpanel" aria-labelledby="nav-access">
@@ -315,7 +372,7 @@ export const CONSOLE_HTML = `<!doctype html>
       </section>
 
       <section id="tab-audit" class="tabpanel hidden" role="tabpanel" aria-labelledby="nav-audit">
-        <div class="section-intro"><div><p class="kicker">AKUNTABILITAS</p><h2>Audit operator</h2><p>Riwayat perubahan control plane tanpa isi percakapan atau kredensial.</p></div></div>
+        <div class="section-intro"><div><p class="kicker">AKUNTABILITAS</p><h2>Audit operator</h2><p>Console mencatat status dan perubahan operasional, bukan isi percakapan atau kredensial.</p></div></div>
         <article class="panel"><div id="audits"></div></article>
       </section>
     </main>
@@ -361,16 +418,15 @@ code{color:var(--mint);font-family:ui-monospace,SFMono-Regular,Consolas,monospac
 .sidebar-brand{display:flex;align-items:center;gap:11px;padding:0 8px 25px}.sidebar-brand strong,.sidebar-brand span{display:block}.sidebar-brand strong{font-size:1.05rem}.sidebar-brand span{font-size:.78rem;color:var(--muted)}
 .nav-tabs{display:grid;gap:5px}.nav-tabs button{display:flex;align-items:center;gap:11px;justify-content:flex-start;min-height:43px;background:transparent;color:var(--muted);border-color:transparent;text-align:left}
 .nav-tabs button span{width:20px;text-align:center;color:var(--faint);font-size:1rem}.nav-tabs button:hover:not(:disabled){background:var(--bg-soft);color:var(--text)}.nav-tabs button.active{background:var(--panel-strong);border-color:transparent;color:var(--text)}.nav-tabs button.active span{color:var(--mint)}
-.sidebar-foot{margin-top:auto;display:flex;gap:9px;align-items:flex-start;padding:14px 8px 0;border-top:1px solid var(--line-soft)}.sidebar-foot p{margin:0;font-size:.72rem;line-height:1.45}.sidebar-foot strong{color:var(--text)}
-.privacy-dot{width:7px;height:7px;margin-top:5px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 4px rgba(37,105,75,.08)}
 .workspace{width:min(1400px,100%);padding:30px clamp(22px,4vw,58px) 70px;overflow:hidden}
 .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:28px}.page-description{margin:0}.top-actions{display:flex;align-items:center;gap:9px}
 .sync-state{display:grid;text-align:right;justify-items:end;gap:5px;margin-right:4px}.sync-state>span:last-child{font-size:.69rem;color:var(--faint)}
 .status-badge{padding:4px 9px}.status-badge.ready{color:var(--mint);border-color:#bad4c4;background:#f0f7f2}.status-badge.warning{color:var(--amber);border-color:#ead9ad;background:var(--amber-bg)}.status-badge.neutral{color:var(--muted)}
 .icon-button{width:42px;padding:0;font-size:1.2rem;background:transparent;color:var(--text);border-color:var(--line)}.setup-only #refresh{display:none}
+.setup-only{display:block;background:linear-gradient(180deg,#fafbf8 0,#f5f6f2 340px)}.setup-only .sidebar{display:none}.setup-only .workspace{width:min(1040px,100%);margin:0 auto;padding:24px 32px 72px;overflow:visible}.setup-only .topbar{align-items:center;padding-bottom:21px;border-bottom:1px solid var(--line-soft)}.setup-only .loading-bar{left:0}.setup-only #page-title{font-size:1.9rem}.setup-only .page-description{max-width:620px}
 .loading-bar{height:3px;position:fixed;z-index:30;top:0;left:236px;right:0;overflow:hidden;background:rgba(37,105,75,.1)}.loading-bar:after{content:"";display:block;width:36%;height:100%;background:var(--mint);animation:loading 1.05s ease-in-out infinite}
 @keyframes loading{from{transform:translateX(-120%)}to{transform:translateX(390%)}}
-.notice,.error-banner{border-radius:12px;padding:12px 14px;margin:-8px 0 20px}.notice{border:1px solid #bad4c4;background:#eff8f2;color:var(--mint)}
+.notice,.error-banner{border-radius:12px;padding:12px 14px;margin:-8px 0 20px}.notice{border:1px solid #bad4c4;background:#eff8f2;color:var(--mint)}.notice.warning{border-color:#ead9ad;background:var(--amber-bg);color:var(--amber)}
 .error-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid #e3b9b4;background:var(--red-bg);color:var(--red)}.error-banner div{display:grid;gap:3px}.error-banner span{font-size:.82rem}
 .tabpanel{outline:none}.period-label{color:var(--faint);margin-bottom:12px}
 .summary-grid{display:grid;grid-template-columns:1.25fr repeat(3,1fr);gap:13px}.summary-card{position:relative;min-height:145px;padding:19px;border:1px solid var(--line);border-radius:17px;background:var(--panel);overflow:hidden}
@@ -396,23 +452,24 @@ th,td{text-align:left;border-bottom:1px solid var(--line-soft);padding:12px 9px;
 .price-editor{margin-bottom:16px}.group-list{display:grid;gap:13px}.group-card{border:1px solid var(--line);border-radius:17px;background:var(--panel);overflow:hidden}
 .group-card-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:17px 19px;border-bottom:1px solid var(--line-soft)}.group-card-head h3{margin:0}.group-meta{display:flex;gap:6px;flex-wrap:wrap}.group-body{padding:6px 15px 12px}
 .usage-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}.usage-chip{padding:13px 15px;border:1px solid var(--line);border-radius:13px;background:var(--bg-soft)}.usage-chip span,.usage-chip strong{display:block}.usage-chip span{font-size:.69rem;color:var(--faint)}.usage-chip strong{margin-top:5px}.economy-note{margin:0;font-size:.78rem;color:var(--faint)}
-.channel-readiness{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:8px 0 28px}.readiness-state{display:flex;align-items:flex-start;gap:16px}.readiness-mark{display:grid;place-items:center;width:46px;height:46px;flex:0 0 46px;border-radius:14px;background:var(--panel-strong);color:var(--mint);font-size:1.2rem;font-weight:850}.readiness-label{margin:1px 0 5px;color:var(--faint);font-size:.74rem;font-weight:750}.channel-readiness h2{margin-bottom:5px;font-size:1.45rem}.channel-readiness p:last-child{margin:0}.refresh-action{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto}.refresh-action span{font-size:1.05rem}.ready-mode .readiness-mark{background:var(--mint);color:#fff}.ready-mode .readiness-label{color:var(--mint)}
-.connection-list{border:1px solid var(--line);border-radius:17px;background:var(--panel);overflow:hidden;box-shadow:0 10px 35px rgba(23,45,32,.045)}.connection-list-head{padding:20px 22px 16px;border-bottom:1px solid var(--line-soft)}.connection-list-head h3{margin-bottom:4px}.connection-list-head p{margin:0;font-size:.82rem}.connection-row{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line-soft)}.connection-row:last-child{border-bottom:0}.channel-symbol{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--bg-soft);color:var(--muted);font-size:.67rem;font-weight:850;letter-spacing:.03em}.telegram-symbol{color:#24678f;background:#eef6fb}.whatsapp-symbol{color:var(--mint);background:#edf7f1}.connection-copy{display:grid;gap:6px}.connection-copy>strong{font-size:.91rem}.route-map{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.82rem}.route-map span{display:grid;gap:1px}.route-map small{color:var(--faint);font-size:.65rem;font-weight:650}.route-map i{color:var(--faint);font-size:1rem;font-style:normal}.connection-actions{display:flex;align-items:center;gap:14px}.connection-status{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:.75rem;font-weight:700}.connection-status:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--faint)}.connection-status.good{color:var(--mint)}.connection-status.good:before{background:var(--mint)}.connection-status.warn{color:var(--amber)}.connection-status.warn:before{background:var(--amber)}.connection-status.bad{color:var(--red)}.connection-status.bad:before{background:var(--red)}
-.channel-settings{margin-top:18px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.72);overflow:hidden}.channel-settings>summary,.identity-boundary>summary{list-style:none}.channel-settings>summary::-webkit-details-marker,.identity-boundary>summary::-webkit-details-marker{display:none}.channel-settings>summary{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 18px;cursor:pointer}.channel-settings>summary:hover{background:var(--bg-soft)}.channel-settings>summary>span:first-child{display:grid;gap:3px}.channel-settings>summary small,.identity-boundary-head small{color:var(--faint);font-size:.73rem;font-weight:500}.settings-summary-end{display:flex;align-items:center;gap:12px}.settings-summary-end i,.identity-boundary-head i{color:var(--faint);font-style:normal;transition:transform .18s ease}.channel-settings[open]>.channel-settings-body{border-top:1px solid var(--line-soft)}.channel-settings[open]>.channel-settings-body+.settings-summary-end i,.channel-settings[open]>summary .settings-summary-end i,.identity-boundary[open]>summary i{transform:rotate(180deg)}.channel-settings-body{padding:16px;background:#fafbf9}
-.identity-boundary{margin-bottom:16px;border:1px solid var(--line);border-radius:13px;background:var(--panel);overflow:hidden}.identity-boundary-head{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 16px;cursor:pointer}.identity-boundary-head:hover{background:var(--bg-soft)}.identity-boundary-head>span{display:grid;gap:3px}.identity-boundary-body{padding:0 16px 16px;border-top:1px solid var(--line-soft)}.identity-map{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:12px;padding-top:16px}.identity-card{padding:15px;border:1px solid var(--line-soft);border-radius:12px;background:#fbfcfa}.identity-card-title{display:grid;gap:7px;margin-bottom:12px}.identity-label{width:max-content;padding:3px 7px;border-radius:6px;color:#745d2f;background:#fff5dd;font-size:.64rem;font-weight:750}.identity-label.test{color:var(--mint);background:#eaf5ee}.identity-status-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;border-top:1px solid var(--line-soft)}.identity-status-row p{margin:4px 0 0;font-size:.73rem}.boundary-marker{display:grid;align-content:center;justify-items:center;gap:6px;color:var(--faint)}.boundary-marker span{font-size:.62rem;font-weight:750;writing-mode:vertical-rl}.boundary-marker i{color:var(--mint);font-size:1.05rem;font-style:normal}.setup-checklist{display:grid;gap:8px;margin:0;padding:0;list-style:none}.setup-checklist li{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:.76rem}.setup-checklist li span{display:grid;place-items:center;width:22px;height:22px;flex:0 0 22px;border:1px solid var(--line);border-radius:50%;font-size:.66rem;font-weight:800}.setup-checklist li.complete{color:var(--text)}.setup-checklist li.complete span{color:#fff;background:var(--mint);border-color:var(--mint)}.setup-progress-track{height:4px;margin-top:14px;border-radius:99px;background:#e3ebe5;overflow:hidden}.setup-progress-track span{display:block;width:0;height:100%;border-radius:inherit;background:var(--mint);transition:width .25s ease}.boundary-copy{margin:14px 0 0;padding-top:13px;border-top:1px solid var(--line-soft);font-size:.76rem}.boundary-copy strong{color:var(--text)}
-.channel-panel{margin-bottom:14px;border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden}.channel-panel:last-child{margin-bottom:0}.channel-panel>.panel-head{padding:17px 19px;border-bottom:1px solid var(--line-soft)}.channel-panel>.panel-head h3{margin-bottom:4px}.channel-panel>.panel-head p{font-size:.79rem}.channel-grid{display:block}.channel-card{display:grid;align-content:start;gap:13px;padding:17px 19px;border-bottom:1px solid var(--line-soft);background:transparent}.channel-card:last-child{border-bottom:0}.channel-card.ready{background:#fcfdfc}.channel-card-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.channel-card-head h3,.channel-card-head p{margin-bottom:0}.channel-card-head p{font-size:.78rem;margin-top:4px}.channel-form{display:grid;gap:11px}.channel-actions{display:flex;gap:8px;flex-wrap:wrap}.check-label{display:flex;grid-template-columns:none;align-items:flex-start;gap:9px;font-weight:500;line-height:1.4}.check-label input{width:18px;min-height:18px;height:18px;margin:1px 0 0;flex:0 0 auto}
+.channel-environment-nav{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:14px;margin-bottom:20px}.channel-environment-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid var(--line);border-radius:15px;background:var(--panel);overflow:hidden}.channel-environment-tab{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:66px;padding:12px 15px;border:0;border-right:1px solid var(--line-soft);border-radius:0;background:transparent;color:var(--muted);text-align:left}.channel-environment-tab:last-child{border-right:0}.channel-environment-tab:hover:not(:disabled){background:var(--bg-soft);color:var(--text)}.channel-environment-tab.active{background:var(--panel-strong);color:var(--text);box-shadow:inset 0 -3px 0 var(--mint)}.channel-environment-tab>span:first-child{display:grid;gap:2px}.channel-environment-tab strong{font-size:.88rem}.channel-environment-tab small{color:var(--faint);font-size:.68rem;font-weight:550}.channel-environment-tab.active small{color:var(--muted)}.refresh-action{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-width:142px;flex:0 0 auto}.refresh-action span{font-size:1.05rem}.channel-environments{display:block}.channel-environment-view{display:none}.channel-environment-view.active{display:block}.channel-readiness{display:flex;align-items:center;gap:16px;padding:0 0 18px}.readiness-state{display:flex;align-items:flex-start;gap:16px}.readiness-mark{display:grid;place-items:center;width:46px;height:46px;flex:0 0 46px;border-radius:14px;background:var(--panel-strong);color:var(--mint);font-size:1.2rem;font-weight:850}.readiness-label{margin:1px 0 5px;color:var(--faint);font-size:.74rem;font-weight:750}.channel-readiness h2{margin-bottom:5px;font-size:1.35rem}.channel-readiness p:last-child{margin:0}.ready-mode .readiness-mark{background:var(--mint);color:#fff}.ready-mode .readiness-label{color:var(--mint)}
+.environment-card{border:1px solid var(--line);border-radius:18px;background:var(--panel);overflow:hidden;box-shadow:0 10px 35px rgba(23,45,32,.045)}.primary-environment{border-top:3px solid #c5d1c8}.acceptance-environment{border-top:3px solid var(--mint)}.environment-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 20px 0}.environment-kind{color:#6f603e;font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.environment-kind.test{color:var(--mint)}.environment-title{padding:12px 20px 17px}.environment-title h3{margin-bottom:5px;font-size:1.24rem}.environment-title p{margin:0;font-size:.79rem}.environment-connections,.acceptance-routes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-top:1px solid var(--line-soft)}.environment-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:start;gap:13px;padding:17px 20px}.environment-row:first-child{border-right:1px solid var(--line-soft)}.environment-row strong{font-size:.84rem}.environment-row p{margin:4px 0 0;font-size:.73rem}.environment-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 20px;border-top:1px solid var(--line-soft);background:#fafbf9}.environment-footer p{margin:0;font-size:.72rem}.channel-symbol{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--bg-soft);color:var(--muted);font-size:.67rem;font-weight:850;letter-spacing:.03em}.telegram-symbol{color:#24678f;background:#eef6fb}.whatsapp-symbol{color:var(--mint);background:#edf7f1}.connection-row{display:grid;grid-template-columns:40px minmax(0,1fr);align-items:start;gap:13px;padding:17px 20px}.connection-row:first-child{border-right:1px solid var(--line-soft)}.connection-copy{display:grid;gap:8px}.connection-copy>strong{font-size:.88rem}.route-map{display:grid;grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr);align-items:center;gap:5px;color:var(--muted);font-size:.75rem;text-align:center}.route-map span{display:grid;gap:2px;min-width:0}.route-map small{color:var(--faint);font-size:.59rem;font-weight:750;letter-spacing:.08em}.route-map b{overflow-wrap:anywhere;font-size:.72rem;font-weight:650}.route-map i{color:var(--faint);font-size:.95rem;font-style:normal}.connection-actions{grid-column:2;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:4px}.connection-status{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:.73rem;font-weight:700}.connection-status:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--faint)}.connection-status.good{color:var(--mint)}.connection-status.good:before{background:var(--mint)}.connection-status.warn{color:var(--amber)}.connection-status.warn:before{background:var(--amber)}.connection-status.bad{color:var(--red)}.connection-status.bad:before{background:var(--red)}.acceptance-environment>.setup-checklist{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0;padding:13px 20px 11px;border-top:1px solid var(--line-soft);list-style:none;background:#fafbf9}.setup-checklist li{display:flex;align-items:center;justify-content:center;gap:7px;color:var(--muted);font-size:.68rem;white-space:nowrap}.setup-checklist li span{display:grid;place-items:center;width:20px;height:20px;flex:0 0 20px;border:1px solid var(--line);border-radius:50%;font-size:.61rem;font-weight:800}.setup-checklist li.complete{color:var(--text)}.setup-checklist li.complete span{color:#fff;background:var(--mint);border-color:var(--mint)}.setup-progress-track{height:3px;background:#e3ebe5;overflow:hidden}.setup-progress-track span{display:block;width:0;height:100%;background:var(--mint);transition:width .25s ease}
+.channel-settings{margin-top:18px;border:1px solid var(--line);border-radius:18px;background:var(--panel);overflow:hidden;box-shadow:0 10px 35px rgba(23,45,32,.04)}.channel-settings-head{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 20px;border-bottom:1px solid var(--line-soft);background:#fafbf9}.channel-settings-head>div{display:grid;gap:3px}.channel-settings-head .kicker{margin:0}.channel-settings-head strong{font-size:.93rem}.channel-settings-head span{color:var(--faint);font-size:.72rem}.channel-settings-body{background:#fff}
+.channel-panel{display:none;margin:0;border:0;border-radius:0;background:var(--panel);overflow:hidden}.channel-panel.active{display:block}.channel-panel>.panel-head{padding:19px 21px;border-bottom:1px solid var(--line-soft)}.channel-panel>.panel-head h3{margin-bottom:4px}.channel-panel>.panel-head p{font-size:.79rem}.channel-grid{display:block}.channel-card{display:grid;align-content:start;gap:13px;padding:17px 21px;border-bottom:1px solid var(--line-soft);background:transparent}.channel-card:last-child{border-bottom:0}.channel-card.ready{background:#fcfdfc}.channel-card-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.channel-card-head h3,.channel-card-head p{margin-bottom:0}.channel-card-head p{font-size:.78rem;margin-top:4px}.channel-form{display:grid;gap:11px}.channel-actions{display:flex;gap:8px;flex-wrap:wrap}.check-label{display:flex;grid-template-columns:none;align-items:flex-start;gap:9px;font-weight:500;line-height:1.4}.check-label input{width:18px;min-height:18px;height:18px;margin:1px 0 0;flex:0 0 auto}
 .credential-editor{border:1px solid var(--line);border-radius:11px;background:var(--bg-soft);overflow:hidden}.credential-editor summary{cursor:pointer;padding:11px 12px;color:var(--muted);font-size:.79rem;font-weight:750}.credential-editor[open] summary{color:var(--text);border-bottom:1px solid var(--line)}.credential-editor .channel-form{padding:13px}.credential-actions,.credential-migration{margin:0 13px 13px;padding-top:12px;border-top:1px solid var(--line)}.credential-migration strong{display:block;font-size:.78rem}.credential-migration p,.credential-migration label,.credential-migration button{margin-top:9px}.credential-migration p{margin-bottom:0;font-size:.73rem}.credential-danger{margin:0 13px 13px;padding-top:12px;border-top:1px solid #e3b9b4}.credential-danger strong{display:block;color:var(--red);font-size:.78rem}.credential-danger p,.credential-danger label,.credential-danger button{margin-top:9px}.credential-danger p{margin-bottom:0;font-size:.73rem}
-.qr-stage{display:grid;justify-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:13px;background:#fff}.qr-stage img{display:block;width:min(100%,320px);aspect-ratio:1}.qr-stage p{margin:0;color:#33483d;text-align:center;font-size:.78rem}.session-manager{padding-top:11px;border-top:1px solid var(--line-soft)}.session-manager>summary{cursor:pointer;color:var(--muted);font-size:.8rem;font-weight:700}.session-manager[open]>summary{color:var(--text)}.session-manager-body{display:grid;gap:13px;padding-top:12px}.session-replace{display:grid;gap:9px;padding:13px;border:1px solid #cfe2d5;border-radius:11px;background:#f4faf6}.session-replace strong{color:#294a35;font-size:.8rem}.session-replace p{margin:0;font-size:.75rem}.session-replace button{justify-self:start}.danger-zone{padding-top:11px;border-top:1px solid var(--line-soft)}.danger-zone summary{cursor:pointer;color:var(--muted);font-size:.8rem;font-weight:700}.danger-zone[open] summary{color:var(--red)}.danger-zone label,.danger-zone p,.danger-zone button{margin-top:10px}.danger-zone p{font-size:.75rem;margin-bottom:0}
+.inline-note{padding:11px 12px;border:1px solid #ead9ad;border-radius:11px;background:var(--amber-bg);color:#6f561d;font-size:.74rem;line-height:1.55}.service-fleet{display:grid;gap:16px}.service-settings-form{display:grid;grid-template-columns:minmax(180px,1fr) repeat(2,minmax(150px,auto));align-items:center;gap:12px;padding:14px;border:1px solid var(--line);border-radius:13px;background:var(--bg-soft)}.service-settings-form p,.service-account-heading p{margin:3px 0 0;font-size:.71rem}.service-settings-form>.credential-actions{display:flex;grid-column:1/-1;gap:8px;margin:0;padding-top:12px}.service-account-section{display:grid;gap:12px}.service-account-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.service-account-list{display:grid;gap:9px}.service-account-empty{padding:17px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);font-size:.76rem;text-align:center}.service-account{display:grid;gap:12px;padding:13px;border:1px solid var(--line);border-radius:13px;background:#fff}.service-account-main{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.service-account-copy{display:grid;gap:3px;min-width:0}.service-account-copy strong{overflow-wrap:anywhere;font-size:.83rem}.service-account-copy p{margin:0;font-size:.72rem}.service-account-actions{display:flex;gap:8px;flex-wrap:wrap}.service-account-actions button{min-height:34px;padding:7px 10px}.service-account .qr-stage{margin-top:1px}.service-account-danger{padding-top:10px;border-top:1px solid var(--line-soft)}.service-account-danger summary{cursor:pointer;color:var(--muted);font-size:.73rem;font-weight:700}.service-account-danger[open] summary{color:var(--red)}.service-account-danger p{margin:8px 0;font-size:.72rem}.service-account-add{padding-top:14px;border-top:1px solid var(--line-soft)}.service-account-add label>span{display:block;margin-top:4px;color:var(--faint);font-size:.68rem;font-weight:500}
+.qr-stage{display:grid;justify-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:13px;background:#fff}.qr-image{display:grid;place-items:center;width:min(100%,320px);aspect-ratio:1;overflow:hidden;background:#f5f8f5;transition:opacity .16s ease}.qr-image svg{display:block;width:100%;height:100%}.qr-image.qr-loading{opacity:.58}.qr-image.qr-loading:empty:after{content:"";width:28px;height:28px;border:3px solid #d9e5dc;border-top-color:var(--mint);border-radius:50%;animation:spin .8s linear infinite}.qr-image.qr-failed{display:none}.qr-stage p{margin:0;color:#33483d;text-align:center;font-size:.78rem}.qr-stage .qr-load-status{min-height:1.2em;color:var(--muted);font-weight:700}.qr-stage .qr-load-status.good{color:var(--green)}.qr-stage .qr-load-status.bad{color:var(--red)}.qr-stage .qr-load-status:empty{display:none}.qr-stage .qr-load-status+button{justify-self:center}.session-manager{padding-top:11px;border-top:1px solid var(--line-soft)}.session-manager>summary{cursor:pointer;color:var(--muted);font-size:.8rem;font-weight:700}.session-manager[open]>summary{color:var(--text)}.session-manager-body{display:grid;gap:13px;padding-top:12px}.session-replace{display:grid;gap:9px;padding:13px;border:1px solid #cfe2d5;border-radius:11px;background:#f4faf6}.session-replace strong{color:#294a35;font-size:.8rem}.session-replace p{margin:0;font-size:.75rem}.session-replace button{justify-self:start}.danger-zone{padding-top:11px;border-top:1px solid var(--line-soft)}.danger-zone summary{cursor:pointer;color:var(--muted);font-size:.8rem;font-weight:700}.danger-zone[open] summary{color:var(--red)}.danger-zone label,.danger-zone p,.danger-zone button{margin-top:10px}.danger-zone p{font-size:.75rem;margin-bottom:0}
 @media(max-width:1100px){.summary-grid{grid-template-columns:repeat(2,1fr)}.diagnostic-grid{grid-template-columns:repeat(3,1fr)}.form-grid,.price-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:900px){.app-shell{display:block}.sidebar{position:sticky;height:auto;padding:12px 16px 10px;border-right:0;border-bottom:1px solid var(--line-soft)}.sidebar-brand{padding:0 0 10px}.sidebar-brand .brand-mark{width:33px;height:33px}.nav-tabs{display:flex;overflow:auto;gap:6px;padding-bottom:2px}.nav-tabs button{white-space:nowrap;min-height:38px;padding:7px 10px}.sidebar-foot{display:none}.workspace{padding:24px 20px 60px}.loading-bar{left:0}.login-shell{grid-template-columns:1fr;gap:30px;max-width:660px}.login-brand h1{font-size:clamp(2.2rem,9vw,3.6rem)}.identity-map{grid-template-columns:1fr}.boundary-marker{grid-auto-flow:column;justify-content:center}.boundary-marker span{writing-mode:initial}.boundary-marker i{transform:rotate(90deg)}}
-@media(max-width:720px){body{font-size:14px}.workspace{padding:20px 12px 50px}.topbar{display:grid;gap:14px}.top-actions{width:100%}.sync-state{margin-right:auto;text-align:left;justify-items:start}.summary-grid,.content-grid.two,.usage-summary{grid-template-columns:1fr}.summary-card{min-height:122px}.summary-value{margin:12px 0 7px}.cost-banner,.section-intro,.panel-head,.group-card-head,.channel-card-head{align-items:flex-start;flex-direction:column}.diagnostic-grid{grid-template-columns:repeat(2,1fr)}.form-grid,.price-form,.filter-grid{grid-template-columns:1fr}.panel,.login-card{padding:16px;border-radius:15px}.login-shell{width:min(100% - 24px,660px);padding:30px 0}.login-brand{padding:8px}.channel-readiness{align-items:flex-start;flex-direction:column;padding-bottom:22px}.refresh-action{margin-left:62px}.connection-list-head{padding:17px 16px 14px}.connection-row{grid-template-columns:40px minmax(0,1fr);gap:12px;padding:16px}.connection-actions{grid-column:2;justify-content:space-between}.route-map{align-items:flex-start;flex-wrap:wrap;gap:6px}.route-map i{padding-top:10px}.channel-settings>summary{align-items:flex-start;padding:15px}.settings-summary-end{align-items:flex-end;flex-direction:column-reverse;gap:6px}.channel-settings-body{padding:11px}.identity-boundary-head{align-items:flex-start}.identity-boundary-body{padding:0 12px 12px}.identity-status-row{display:grid}.channel-panel>.panel-head,.channel-card{padding:15px}.table-scroll{overflow:visible}table.responsive thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}table.responsive,table.responsive tbody,table.responsive tr,table.responsive td{display:block;width:100%}table.responsive tr{padding:10px 0;border-bottom:1px solid var(--line-soft)}table.responsive tr:last-child{border-bottom:0}table.responsive td{display:grid;grid-template-columns:minmax(105px,38%) minmax(0,1fr);gap:10px;border:0;padding:6px 3px;overflow-wrap:anywhere}table.responsive td:before{content:attr(data-label);color:var(--faint);font-size:.7rem;font-weight:700}table.responsive td:empty{display:none}.actions{flex-wrap:wrap}.group-body{padding:4px 14px 10px}}
+@media(max-width:900px){.app-shell{display:block}.sidebar{position:sticky;height:auto;padding:12px 16px 10px;border-right:0;border-bottom:1px solid var(--line-soft)}.sidebar-brand{padding:0 0 10px}.sidebar-brand .brand-mark{width:33px;height:33px}.nav-tabs{display:flex;overflow:auto;gap:6px;padding-bottom:2px}.nav-tabs button{white-space:nowrap;min-height:38px;padding:7px 10px}.workspace{padding:24px 20px 60px}.setup-only .workspace{padding:22px 20px 60px}.loading-bar{left:0}.login-shell{grid-template-columns:1fr;gap:30px;max-width:660px}.login-brand h1{font-size:clamp(2.2rem,9vw,3.6rem)}}
+@media(max-width:720px){body{font-size:14px}.workspace,.setup-only .workspace{padding:18px 12px 50px}.topbar{display:grid;gap:14px}.setup-only .topbar{align-items:start}.top-actions{width:100%}.sync-state{margin-right:auto;text-align:left;justify-items:start}.summary-grid,.content-grid.two,.usage-summary{grid-template-columns:1fr}.summary-card{min-height:122px}.summary-value{margin:12px 0 7px}.cost-banner,.section-intro,.panel-head,.group-card-head,.channel-card-head,.service-account-main,.service-account-heading{align-items:flex-start;flex-direction:column}.diagnostic-grid{grid-template-columns:repeat(2,1fr)}.form-grid,.price-form,.filter-grid,.service-settings-form{grid-template-columns:1fr}.service-settings-form>.credential-actions{grid-column:auto}.panel,.login-card{padding:16px;border-radius:15px}.login-shell{width:min(100% - 24px,660px);padding:30px 0}.login-brand{padding:8px}.channel-environment-nav{grid-template-columns:1fr;gap:10px}.refresh-action{width:100%}.channel-readiness{padding-bottom:16px}.environment-card,.channel-settings{border-radius:15px}.environment-head{padding:15px 16px 0}.environment-title{padding:10px 16px 14px}.environment-connections,.acceptance-routes{grid-template-columns:1fr}.environment-row,.connection-row{padding:14px 16px}.environment-row:first-child,.connection-row:first-child{border-right:0;border-bottom:1px solid var(--line-soft)}.environment-row{grid-template-columns:40px minmax(0,1fr)}.environment-row>.badge{grid-column:2;justify-self:start}.environment-footer{align-items:flex-start;flex-direction:column;padding:13px 16px}.connection-actions{grid-column:2}.acceptance-environment>.setup-checklist{grid-template-columns:1fr 1fr;padding:12px 16px}.setup-checklist li{justify-content:flex-start}.channel-settings-head{align-items:flex-start;padding:15px}.channel-panel>.panel-head,.channel-card{padding:15px}.table-scroll{overflow:visible}table.responsive thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}table.responsive,table.responsive tbody,table.responsive tr,table.responsive td{display:block;width:100%}table.responsive tr{padding:10px 0;border-bottom:1px solid var(--line-soft)}table.responsive tr:last-child{border-bottom:0}table.responsive td{display:grid;grid-template-columns:minmax(105px,38%) minmax(0,1fr);gap:10px;border:0;padding:6px 3px;overflow-wrap:anywhere}table.responsive td:before{content:attr(data-label);color:var(--faint);font-size:.7rem;font-weight:700}table.responsive td:empty{display:none}.actions{flex-wrap:wrap}.group-body{padding:4px 14px 10px}}
+@media(max-width:520px){.channel-environment-tab{min-height:54px;padding:10px 11px}.channel-environment-tab small{display:none}.channel-environment-tab>.badge{padding:3px 6px;font-size:.65rem}.route-map{grid-template-columns:minmax(0,1fr) 18px minmax(0,1fr)}.channel-settings-head{display:grid}.channel-settings-head button{justify-self:start}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition:none!important}}
 `;
 
 export const CONSOLE_JS = `"use strict";
 let csrf=null;
 let state={dashboard:null,economy:null,plans:[],prices:[],configuredModels:[],enrollments:[],attempts:[],usageSummary:null,audit:[],groupDetails:null,channels:null};
-let activeTab="overview",busy=false,groupLoading=false,channelLoading=false,activeLoad=null;
+let activeTab="overview",activeChannelEnvironment=null,channelSettingsTrigger=null,busy=false,groupLoading=false,channelLoading=false,activeLoad=null,authEpoch=0;
 const byId=(id)=>document.getElementById(id);
 const el=(tag,text,klass)=>{const node=document.createElement(tag);if(text!==undefined&&text!==null)node.textContent=String(text);if(klass)node.className=klass;return node};
 const labels={
@@ -427,7 +484,7 @@ const labels={
   outcome:{succeeded:"Berhasil",rejected:"Ditolak",failed:"Gagal"},
   source:{provider:"Dilaporkan provider",catalog:"Katalog saat request","current_catalog_estimate":"Estimasi tarif sekarang",unavailable:"Belum dapat dihitung",unpriced:"Belum bertarif"}
 };
-const pageCopy={overview:["Ringkasan","Kesehatan dan biaya operasional dalam 24 jam terakhir."],channels:["Kanal Harvy","Konfigurasikan kanal utama dan acceptance tanpa mencampur identitasnya."],access:["Akses","Atur pengguna, grup, paket, dan persetujuan evaluasi."],groups:["Grup","Pantau biaya grup dan bucket anggota pemicu secara pseudonim."],plans:["Paket","Lihat batas dan posisi katalog paket pilot."],prices:["Harga model","Tetapkan harga untuk model yang ditemukan dari environment."],usage:["Penggunaan","Telusuri attempt provider, token, dan asal biayanya."],audit:["Audit","Periksa perubahan operator tanpa membuka isi percakapan."]};
+const pageCopy={overview:["Ringkasan","Kesehatan dan biaya operasional dalam 24 jam terakhir."],channels:["Kanal","Hubungkan layanan dan lingkungan pengujian Harvy tanpa mencampur identitasnya."],access:["Akses","Atur pengguna, grup, paket, dan persetujuan evaluasi."],groups:["Grup","Pantau biaya grup dan bucket anggota pemicu secara pseudonim."],plans:["Paket","Lihat batas dan posisi katalog paket pilot."],prices:["Harga model","Tetapkan harga untuk model yang ditemukan dari environment."],usage:["Penggunaan","Telusuri attempt provider, token, dan asal biayanya."],audit:["Audit","Periksa perubahan operator tanpa membuka isi percakapan."]};
 class ApiError extends Error{constructor(message,status,code){super(message);this.status=status;this.code=code}}
 async function api(path,options={}){
   const headers={...(options.headers||{})};
@@ -470,7 +527,7 @@ function table(headers,rows,captionText){
   node.append(body);wrap.append(node);return wrap;
 }
 function setBusy(value,quiet=false){busy=value;byId("main-content").setAttribute("aria-busy",String(value));byId("loading-bar").classList.toggle("hidden",!value||quiet);byId("refresh").disabled=value;byId("refresh").setAttribute("aria-label",value?"Sedang menyegarkan data":"Segarkan data")}
-function showNotice(message){const box=byId("notice");box.textContent=message;box.classList.toggle("hidden",!message);clearTimeout(showNotice.timer);if(message)showNotice.timer=setTimeout(()=>box.classList.add("hidden"),5500)}
+function showNotice(message,tone="success"){const box=byId("notice");box.textContent=message;box.className="notice"+(tone==="warning"?" warning":"")+(message?"":" hidden");clearTimeout(showNotice.timer);if(message)showNotice.timer=setTimeout(()=>box.classList.add("hidden"),5500)}
 function userError(message){return Object.assign(new Error(message),{userFacing:true})}
 function safeErrorMessage(error){return error instanceof ApiError||error?.userFacing===true?error.message:"Antarmuka Console tidak dapat merender data. Muat ulang halaman. Kode: CONSOLE_UI_RENDER_FAILED."}
 function showGlobalError(error){if(!(error instanceof ApiError)&&error?.userFacing!==true)console.error("HARVY_CONSOLE_UI_RENDER_FAILED");byId("global-error-text").textContent=safeErrorMessage(error);byId("global-error").classList.remove("hidden")}
@@ -644,17 +701,46 @@ function renderPairingControls(prefix,item){
   const wasReady=card.dataset.ready==="true";card.classList.toggle("ready",ready);card.dataset.ready=String(ready);
   const setup=byId(prefix+"-setup")||byId(prefix+"-form");if(setup)setup.classList.toggle("hidden",stored||active);
   const recovery=stored&&(item.phase==="error"||item.session?.status==="rejected"),manage=byId(prefix+"-manage");if(manage){manage.classList.toggle("hidden",!stored||active);if(recovery&&!active)manage.open=true;else if(!stored||active)manage.open=false}
-  const manageSummary=byId(prefix+"-manage-summary");if(manageSummary){const subject=prefix==="whatsapp-harvy"?"sesi Harvy":"sesi tester";manageSummary.textContent=recovery?"Pulihkan "+subject:"Kelola "+subject}
+  const manageSummary=byId(prefix+"-manage-summary");if(manageSummary){const subject=prefix==="whatsapp-harvy"?"sesi Harvy":"sesi penguji";manageSummary.textContent=recovery?"Pulihkan "+subject:"Kelola "+subject}
   if(wasReady&&!ready){const dedicated=byId(prefix+"-dedicated");if(dedicated)dedicated.checked=false;const replaceConfirm=byId(prefix+"-replace-confirm");if(replaceConfirm)replaceConfirm.checked=false}
 }
+function setQrImageState(prefix,status){
+  const surface=byId(prefix+"-qr"),message=byId(prefix+"-qr-load-status"),retry=byId(prefix+"-qr-retry");
+  surface.dataset.loadState=status;surface.classList.toggle("qr-loading",status==="loading");surface.classList.toggle("qr-failed",status==="error");
+  message.textContent=status==="loading"?"Memuat QR…":status==="ready"?"QR siap dipindai.":status==="error"?"QR gagal dimuat. Pairing tetap berjalan.":"";
+  message.className="qr-load-status"+(status==="ready"?" good":status==="error"?" bad":"");retry.classList.toggle("hidden",status!=="error");retry.disabled=status==="loading";
+}
+function parseQrSvg(source){
+  if(typeof source!=="string"||source.length<100||source.length>500000)throw new Error("QR_SVG_INVALID_SIZE");
+  const parsed=new DOMParser().parseFromString(source,"image/svg+xml"),root=parsed.documentElement;
+  if(root.localName!=="svg"||root.namespaceURI!=="http://www.w3.org/2000/svg"||root.querySelector("parsererror,script,foreignObject,image,use,style"))throw new Error("QR_SVG_INVALID_ROOT");
+  const children=[...root.children],background=children[0],path=children[1],commands=path?.getAttribute("d")||"";
+  if(children.length!==2||background?.localName!=="rect"||path?.localName!=="path"||background.getAttribute("fill")!=="#fff"||path.getAttribute("fill")!=="#000"||!/^(?:M\\d+ \\d+h1v1h-1z)+$/u.test(commands))throw new Error("QR_SVG_INVALID_CONTENT");
+  for(const element of [root,...children])for(const attribute of [...element.attributes])if(attribute.name.toLowerCase().startsWith("on"))throw new Error("QR_SVG_EVENT_ATTRIBUTE");
+  root.removeAttribute("role");root.setAttribute("aria-hidden","true");root.setAttribute("focusable","false");
+  return document.importNode(root,true);
+}
+function requestQrImage(prefix,path,revision,attempt=0){
+  const surface=byId(prefix+"-qr"),stage=byId(prefix+"-qr-stage"),revisionKey=String(revision),requestId=String(Number(surface.dataset.requestId||"0")+1);
+  surface.dataset.path=path;surface.dataset.revision=revisionKey;surface.dataset.requestId=requestId;surface.dataset.attempt=String(attempt);surface.replaceChildren();setQrImageState(prefix,"loading");
+  const current=()=>surface.dataset.requestId===requestId&&surface.dataset.revision===revisionKey&&!stage.classList.contains("hidden");
+  const failed=()=>{if(!current())return;if(attempt<1){setTimeout(()=>{if(current())requestQrImage(prefix,path,revision,attempt+1)},220);return}setQrImageState(prefix,"error")};
+  const url=path+"?revision="+encodeURIComponent(revisionKey)+"&attempt="+attempt+"&request="+encodeURIComponent(requestId);
+  void fetch(url,{method:"GET",credentials:"same-origin",cache:"no-store",headers:{accept:"image/svg+xml"}}).then(async(response)=>{
+    if(response.status===401){if(current())showLogin();throw new Error("QR_AUTHENTICATION_REQUIRED")}
+    if(!response.ok||!String(response.headers.get("content-type")||"").toLowerCase().startsWith("image/svg+xml"))throw new Error("QR_RESPONSE_INVALID");
+    const svg=parseQrSvg(await response.text());if(!current())return;surface.replaceChildren(svg);setQrImageState(prefix,"ready");
+  }).catch(failed);
+}
+function retryQrImage(prefix){
+  const surface=byId(prefix+"-qr"),revision=Number(surface.dataset.revision),path=surface.dataset.path;
+  if(!path||!Number.isSafeInteger(revision)||revision<1)return;requestQrImage(prefix,path,revision,0);
+}
 function syncQr(prefix,item,path){
-  const stage=byId(prefix+"-qr-stage"),image=byId(prefix+"-qr");
-  const visible=item.qrAvailable===true&&item.phase==="awaiting_scan";
+  const stage=byId(prefix+"-qr-stage"),surface=byId(prefix+"-qr"),visible=item.qrAvailable===true&&item.phase==="awaiting_scan";
   stage.classList.toggle("hidden",!visible);
-  if(visible&&image.dataset.revision!==String(item.qrRevision)){
-    image.dataset.revision=String(item.qrRevision);image.src=path+"?revision="+encodeURIComponent(item.qrRevision);
-  }
-  if(!visible){image.removeAttribute("src");delete image.dataset.revision}
+  if(visible&&surface.dataset.revision!==String(item.qrRevision))requestQrImage(prefix,path,item.qrRevision);
+  if(!visible){surface.replaceChildren();for(const key of ["path","revision","requestId","attempt","loadState"])delete surface.dataset[key];setQrImageState(prefix,"idle")}
 }
 function renderPairing(prefix,item,qrPath){
   const [label,detail,tone]=pairingPresentation(item),status=byId(prefix+"-status");
@@ -666,11 +752,46 @@ function renderPairing(prefix,item,qrPath){
 function setChannelBadge(id,label,tone){const badge=byId(id);badge.textContent=label;badge.className="badge"+(tone?" "+tone:"")}
 function setConnectionStatus(id,label,tone){const status=byId(id);status.textContent=label;status.className="connection-status"+(tone?" "+tone:"")}
 function primaryTelegramPresentation(item){
-  if(item.source==="conflict"||item.phase==="error")return ["Perlu tindakan",item.source==="conflict"?"Credential Console dan environment bertentangan. Selesaikan satu sumber sebelum menjalankan Harvy.":"Token utama belum dapat diverifikasi. Periksa kembali token atau koneksi Telegram.","bad"];
+  if(item.source==="conflict"||item.phase==="error")return ["Perlu tindakan",item.source==="conflict"?"Credential Console dan environment bertentangan. Selesaikan satu sumber sebelum menjalankan Harvy.":"Token layanan belum dapat diverifikasi. Periksa kembali token atau koneksi Telegram.","bad"];
   if(item.phase==="validating")return ["Memverifikasi","Console sedang meminta bukti langsung dari Telegram.","warn"];
-  if(item.phase==="ready")return ["Bot valid",item.runtimeActive?(item.restartRequired?"Token valid tersimpan. Restart Harvy agar runtime memakainya.":"Token valid dan sedang dipakai runtime Harvy."):"Token valid tersimpan. Jalankan Harvy untuk mengaktifkan bot utama.","good"];
+  if(item.phase==="ready")return ["Bot valid",item.runtimeActive?(item.restartRequired?"Token valid tersimpan. Restart Harvy agar runtime memakainya.":"Token valid dan sedang dipakai runtime Harvy."):"Token valid tersimpan. Jalankan Harvy untuk mengaktifkan kanal Telegram.","good"];
   if(item.configured)return ["Credential tersimpan",item.source==="environment"?"Token masih berada di .env. Pindahkan ke Console agar hanya ada satu sumber credential.":item.runtimeActive&&item.restartRequired?"Perubahan tersimpan dan membutuhkan restart Harvy.":"Token tersimpan terenkripsi tetapi belum diperiksa pada proses Console ini.","warn"];
-  return ["Belum dikonfigurasi","Tambahkan token BotFather untuk bot Telegram utama.",""];
+  return ["Belum dikonfigurasi","Tambahkan token BotFather untuk bot Telegram layanan.",""];
+}
+function primaryWhatsAppPresentation(item){
+  if(item.source==="conflict"||item.configurationValid===false||item.phase==="error")return ["Perlu tindakan",item.source==="conflict"?"Konfigurasi Console dan environment bertumpuk. Selesaikan migrasi sebelum menjalankan Harvy.":"Satu sesi atau konfigurasi WhatsApp layanan perlu dipulihkan.","bad"];
+  if(item.phase==="checking")return ["Memeriksa","Console sedang memeriksa sesi WhatsApp layanan.","warn"];
+  if(item.runtimeActive&&!item.restartRequired)return [item.enabled?"Sedang digunakan":"Dinonaktifkan",item.enabled?String(item.accountCount||0)+" akun sedang dimiliki runtime Harvy.":"Armada tersimpan, tetapi layanan WhatsApp dinonaktifkan.",item.enabled?"good":"warn"];
+  if(item.phase==="ready")return [item.enabled?"Siap":"Dinonaktifkan",item.enabled?String(item.accountCount||0)+" akun siap digunakan setelah Harvy dijalankan.":"Sesi tersimpan dan kanal sengaja dinonaktifkan.",item.enabled?"good":"warn"];
+  if(item.source==="environment")return ["Masih dari .env","Pindahkan daftar akun dan pengaturan agar Console menjadi satu-satunya sumber.","warn"];
+  if(item.source==="console"&&(item.accounts||[]).length>0)return ["Belum lengkap","Selesaikan atau periksa sesi akun yang ditandai.","warn"];
+  return ["Belum dikonfigurasi","Tambahkan akun WhatsApp layanan dan pindai QR dari ponsel yang akan bertindak sebagai Harvy.",""];
+}
+function primaryWhatsAppPrefix(id){return "primary-whatsapp-account-"+String(id).toLocaleLowerCase("en-US")}
+function createPrimaryWhatsAppAccountNode(account){
+  const prefix=primaryWhatsAppPrefix(account.id),card=el("section",null,"service-account");card.id=prefix+"-card";card.dataset.accountId=account.id;
+  const main=el("div",null,"service-account-main"),copy=el("div",null,"service-account-copy"),name=el("strong",account.id),detail=el("p","Belum diperiksa.");detail.id=prefix+"-detail";const status=el("span","Memeriksa","badge");status.id=prefix+"-status";copy.append(name,detail);main.append(copy,status);
+  const actions=el("div",null,"service-account-actions"),pair=el("button","Lanjutkan pairing","ghost compact");pair.type="button";pair.dataset.primaryWhatsappAction="pair";pair.id=prefix+"-pair";const cancel=el("button","Batalkan operasi","ghost compact hidden");cancel.type="button";cancel.dataset.primaryWhatsappAction="cancel";cancel.id=prefix+"-cancel";actions.append(pair,cancel);
+  const qrStage=el("div",null,"qr-stage hidden");qrStage.id=prefix+"-qr-stage";const qr=el("div",null,"qr-image");qr.id=prefix+"-qr";qr.setAttribute("role","img");qr.setAttribute("aria-label","QR pairing akun WhatsApp layanan "+account.id);const qrHelp=el("p","Pindai dari WhatsApp → Perangkat tertaut."),qrStatus=el("p",null,"qr-load-status");qrStatus.id=prefix+"-qr-load-status";qrStatus.setAttribute("aria-live","polite");const retry=el("button","Coba muat QR lagi","ghost compact hidden");retry.type="button";retry.id=prefix+"-qr-retry";retry.dataset.primaryWhatsappAction="retry";qrStage.append(qr,qrHelp,qrStatus,retry);
+  const replaceManager=document.createElement("details");replaceManager.className="session-manager";replaceManager.id=prefix+"-replace-manager";const replaceSummary=el("summary","Pasangkan ulang sesi"),replaceBody=el("div",null,"session-manager-body"),replaceBox=el("div",null,"session-replace"),replaceText=el("p","Sesi lama dicabut lebih dulu. Alias dan routing Harvy tetap dipertahankan."),replaceLabel=el("label",null,"check-label"),replaceCheck=document.createElement("input");replaceCheck.type="checkbox";replaceCheck.id=prefix+"-replace-confirm";replaceLabel.append(replaceCheck,document.createTextNode("Saya siap memindai ulang akun layanan ini."));const replace=el("button","Cabut lalu pasangkan ulang");replace.type="button";replace.dataset.primaryWhatsappAction="replace";replace.id=prefix+"-replace";replaceBox.append(replaceText,replaceLabel,replace);replaceBody.append(replaceBox);replaceManager.append(replaceSummary,replaceBody);
+  const danger=document.createElement("details");danger.className="service-account-danger";const summary=el("summary","Hapus akun dari layanan"),warning=el("p","Sesi akan dicabut dari WhatsApp, lalu alias dikeluarkan dari armada Harvy."),label=el("label","Ketik "+account.id+" untuk mengonfirmasi"),input=document.createElement("input");input.autocomplete="off";input.id=prefix+"-remove-confirm";label.htmlFor=input.id;label.append(input);const remove=el("button","Cabut dan hapus","ghost compact");remove.type="button";remove.dataset.primaryWhatsappAction="remove";remove.id=prefix+"-remove";danger.append(summary,warning,label,remove);
+  card.append(main,actions,qrStage,replaceManager,danger);return card;
+}
+function renderPrimaryWhatsAppAccount(account,runtimeActive){
+  const list=byId("primary-whatsapp-account-list"),prefix=primaryWhatsAppPrefix(account.id);let card=byId(prefix+"-card");if(!card){card=createPrimaryWhatsAppAccountNode(account);list.append(card)}
+  card.dataset.accountId=account.id;const [baseLabel,baseDetail,tone]=pairingPresentation(account);let label=baseLabel,detail=baseDetail;
+  if(account.lifecycle==="pending"&&!pairingActive(account)){label=account.phase==="error"?"Pairing gagal":"Menunggu pairing";detail=account.phase==="error"?baseDetail:"Alias tersimpan aman, tetapi sesi ini belum diaktifkan."}
+  if(account.lifecycle==="removing"){label=pairingActive(account)?"Mencabut sesi":"Penghapusan tertunda";detail=pairingActive(account)?"Console sedang mencabut sesi sebelum menghapus alias.":"Lanjutkan penghapusan untuk membersihkan sesi dan alias."}
+  const accountTone=tone||(account.lifecycle!=="active"?"warn":"");setChannelBadge(prefix+"-status",label,accountTone);byId(prefix+"-detail").textContent=detail;
+  const busy=pairingActive(account),disabled=runtimeActive||busy;byId(prefix+"-pair").classList.toggle("hidden",account.lifecycle==="active"||account.lifecycle==="removing");byId(prefix+"-replace-manager").classList.toggle("hidden",account.lifecycle!=="active"||busy);byId(prefix+"-cancel").classList.toggle("hidden",!busy);byId(prefix+"-pair").disabled=disabled;byId(prefix+"-replace").disabled=disabled;byId(prefix+"-replace-confirm").disabled=disabled;byId(prefix+"-remove").disabled=runtimeActive||busy;
+  syncQr(prefix,account,"/api/v1/channel-setup/primary/whatsapp/accounts/"+encodeURIComponent(account.id)+"/qr.svg");card.classList.toggle("ready",account.lifecycle==="active"&&account.session?.status==="accepted");
+}
+function renderPrimaryWhatsAppFleet(whatsapp){
+  const [label,detail,tone]=primaryWhatsAppPresentation(whatsapp);setChannelBadge("primary-whatsapp-card-status",label,tone);byId("primary-whatsapp-card-detail").textContent=detail;byId("primary-whatsapp-card").classList.toggle("ready",whatsapp.phase==="ready"&&whatsapp.enabled===true);
+  const runtimeActive=whatsapp.runtimeActive===true;byId("primary-whatsapp-runtime-note").classList.toggle("hidden",!runtimeActive);const legacy=whatsapp.source==="environment"||whatsapp.source==="conflict"&&whatsapp.legacyEnvironment===true;byId("primary-whatsapp-migrate-zone").classList.toggle("hidden",!legacy);byId("primary-whatsapp-migrate").disabled=runtimeActive||whatsapp.migrationAvailable!==true;
+  const managed=whatsapp.source==="console"||whatsapp.source==="missing";byId("primary-whatsapp-managed-zone").classList.toggle("hidden",!managed);const settings=byId("primary-whatsapp-settings-form");if(!settings.contains(document.activeElement)){byId("primary-whatsapp-enabled").checked=whatsapp.enabled===true;byId("primary-whatsapp-private-enabled").checked=whatsapp.privateEnabled===true}settings.querySelectorAll("input,button").forEach((control)=>control.disabled=runtimeActive);
+  const accounts=Array.isArray(whatsapp.accounts)?whatsapp.accounts:[],list=byId("primary-whatsapp-account-list"),known=new Set(accounts.map((account)=>primaryWhatsAppPrefix(account.id)+"-card"));list.querySelectorAll(".service-account").forEach((node)=>{if(!known.has(node.id))node.remove()});list.querySelector(".service-account-empty")?.remove();if(accounts.length===0)list.append(el("div","Belum ada akun layanan. Tambahkan alias pertama untuk memulai pairing.","service-account-empty"));else accounts.forEach((account)=>renderPrimaryWhatsAppAccount(account,runtimeActive));
+  const active=accounts.filter((account)=>account.lifecycle==="active").length;setChannelBadge("primary-whatsapp-account-count",active+" aktif · "+accounts.length+" total",active>0?"good":"warn");byId("primary-whatsapp-account-add").disabled=runtimeActive||accounts.some(pairingActive);byId("primary-whatsapp-account-alias").disabled=runtimeActive;byId("primary-whatsapp-account-confirm").disabled=runtimeActive;byId("primary-whatsapp-verify").disabled=runtimeActive||active===0||accounts.some(pairingActive);
 }
 function renderPrimaryChannelBoundary(channels){
   const primary=channels.identityBoundary?.primary;
@@ -689,30 +810,25 @@ function renderPrimaryChannelBoundary(channels){
   byId("primary-telegram-delete-zone").classList.toggle("hidden",!managed);
   byId("primary-telegram-bot-save").disabled=busy;
   byId("primary-telegram-delete").disabled=busy;
-  byId("primary-telegram-bot-editor-summary").textContent=legacy?"Pindahkan token utama ke Console":managed?"Ganti atau kelola token utama":"Tambahkan token bot utama";
+  byId("primary-telegram-bot-editor-summary").textContent=legacy?"Pindahkan token layanan ke Console":managed?"Ganti atau kelola token layanan":"Tambahkan token bot layanan";
   if(source==="missing"||legacy||source==="conflict"||telegram.phase==="error")editor.open=true;else if(!wasConfigured)editor.open=false;
-  const primaryReady=byId("primary-ready");primaryReady.textContent=telegram.phase==="ready"?"Siap":telegram.configured?"Tersimpan":"Belum siap";primaryReady.className="badge "+(telegram.phase==="ready"?"good":telegram.phase==="error"||source==="conflict"?"bad":"warn");
-  const whatsapp=primary?.whatsapp;
-  if(whatsapp?.configurationValid===false){
-    setChannelBadge("primary-whatsapp-status","Konfigurasi tidak sah","bad");
-    byId("primary-whatsapp-detail").textContent="Deklarasi akun utama tidak dapat dibaca. Periksa konfigurasi WhatsApp sebelum menjalankan produk.";
-  }else if(whatsapp?.enabled===true&&whatsapp.accountCount>0){
-    setChannelBadge("primary-whatsapp-status",String(whatsapp.accountCount)+" akun dideklarasikan","good");
-    byId("primary-whatsapp-detail").textContent="WhatsApp utama aktif"+(whatsapp.privateEnabled?" termasuk privat":"")+". Ini status konfigurasi, bukan bukti session sudah tertaut.";
-  }else if((whatsapp?.accountCount||0)>0){
-    setChannelBadge("primary-whatsapp-status","Dinonaktifkan","warn");
-    byId("primary-whatsapp-detail").textContent="Akun utama dideklarasikan, tetapi adapter WhatsApp tidak aktif pada proses ini.";
-  }else{
-    setChannelBadge("primary-whatsapp-status","Belum diatur","warn");
-    byId("primary-whatsapp-detail").textContent="Belum ada akun WhatsApp utama yang dideklarasikan untuk proses ini.";
-  }
+  const primaryReady=byId("primary-ready");
+  const whatsapp=primary?.whatsapp||{};renderPrimaryWhatsAppFleet(whatsapp);const [whatsappLabel,whatsappDetail,whatsappTone]=primaryWhatsAppPresentation(whatsapp);setChannelBadge("primary-whatsapp-status",whatsappLabel,whatsappTone);byId("primary-whatsapp-detail").textContent=whatsappDetail;const sources=[telegram.source,whatsapp.source];byId("primary-config-source").textContent=sources.includes("conflict")?"Sumber konfigurasi perlu diselesaikan":sources.every((item)=>item==="console")?"Telegram dan WhatsApp dikelola Console":sources.includes("environment")?"Masih ada konfigurasi layanan di environment":"Konfigurasi layanan belum lengkap";
+  const whatsappConfigured=whatsapp.configurationValid!==false&&whatsapp.enabled===true&&(whatsapp.accountCount||0)>0&&(whatsapp.phase==="ready"||whatsapp.runtimeActive===true&&whatsapp.restartRequired!==true);
+  const primaryError=telegram.phase==="error"||source==="conflict"||whatsapp.configurationValid===false||whatsapp.phase==="error";
+  const primaryConfigured=telegram.configured===true&&whatsappConfigured;
+  const primaryLabel=primaryError?"Perlu tindakan":primaryConfigured?"Dikonfigurasi":"Belum lengkap";
+  const primaryTone=primaryError?"bad":primaryConfigured?"good":"warn";
+  setChannelBadge("primary-environment-status",primaryLabel,primaryTone);
+  setChannelBadge("service-tab-status",primaryError?"Perlu dicek":primaryLabel,primaryTone);
+  primaryReady.textContent=primaryLabel;primaryReady.className="badge "+primaryTone;
 }
 function renderSetupProgress(channels){
   const steps=[
     ["setup-step-telegram-bot",channels.telegram.bot.configured===true&&channels.telegram.bot.phase!=="error"],
-    ["setup-step-telegram-tester",channels.telegram.tester.configured===true&&channels.telegram.tester.phase!=="error"],
-    ["setup-step-whatsapp-harvy",channels.whatsapp.harvy.session?.status==="accepted"&&channels.whatsapp.harvy.phase!=="error"],
-    ["setup-step-whatsapp-tester",channels.whatsapp.tester.session?.status==="accepted"&&channels.whatsapp.tester.phase!=="error"],
+    ["setup-step-telegram-tester",channels.telegram.tester.configured===true&&!pairingActive(channels.telegram.tester)&&channels.telegram.tester.phase!=="error"],
+    ["setup-step-whatsapp-harvy",channels.whatsapp.harvy.session?.status==="accepted"&&!pairingActive(channels.whatsapp.harvy)&&channels.whatsapp.harvy.phase!=="error"],
+    ["setup-step-whatsapp-tester",channels.whatsapp.tester.session?.status==="accepted"&&!pairingActive(channels.whatsapp.tester)&&channels.whatsapp.tester.phase!=="error"],
   ];
   let ready=0;steps.forEach(([id,complete])=>{byId(id).classList.toggle("complete",complete);if(complete)ready+=1});
   setChannelBadge("setup-progress-badge",String(ready)+" dari 4 siap",ready===4?"good":"warn");
@@ -727,19 +843,21 @@ function renderChannelOverview(channels,readyCount){
   const whatsappRejected=channels.whatsapp.harvy.session?.status==="rejected"||channels.whatsapp.tester.session?.status==="rejected";
   const pairingInProgress=pairingActive(channels.telegram.tester)||pairingActive(channels.whatsapp.harvy)||pairingActive(channels.whatsapp.tester)||whatsappChecking||channels.telegram.bot.phase==="validating";
   const hasError=channels.telegram.bot.phase==="error"||channels.telegram.tester.phase==="error"||channels.whatsapp.harvy.phase==="error"||channels.whatsapp.tester.phase==="error"||whatsappRejected;
-  const root=byId("tab-channels"),settings=byId("channel-settings"),wasReady=settings.dataset.ready==="true",primaryTelegram=channels.identityBoundary?.primary?.telegram,primaryNeedsAction=primaryTelegram?.configured!==true||primaryTelegram?.phase==="error"||primaryTelegram?.source==="conflict"||primaryTelegram?.restartRequired===true;
+  const root=byId("tab-channels"),settings=byId("channel-settings");
   root.classList.toggle("ready-mode",allReady);settings.dataset.ready=String(allReady);
-  if(!allReady||primaryNeedsAction)settings.open=true;else if(!wasReady)settings.open=false;
+  const suggestedContext=!telegramReady?"telegram":!whatsappReady?"whatsapp":"telegram";
+  if(!settings.dataset.section)selectChannelSettings(suggestedContext);
+  if(activeChannelEnvironment===null)selectChannelEnvironment("service");
   if(allReady){
     byId("channel-readiness-mark").textContent="✓";
     byId("channel-readiness-label").textContent="Pemeriksaan live selesai";
-    byId("channel-readiness-title").textContent="Harvy siap diuji";
-    byId("channel-readiness-detail").textContent="Empat identitas tersedia dan kedua sesi WhatsApp diterima pada pemeriksaan terbaru.";
+    byId("channel-readiness-title").textContent="Siap untuk pengujian langsung";
+    byId("channel-readiness-detail").textContent="Telegram dan WhatsApp pengujian siap digunakan.";
   }else if(hasError){
     byId("channel-readiness-mark").textContent="!";
     byId("channel-readiness-label").textContent="Perlu tindakan";
-    byId("channel-readiness-title").textContent="Satu kanal perlu diperiksa";
-    byId("channel-readiness-detail").textContent="Buka pengaturan di bawah untuk melihat status aman dan mencoba kembali.";
+    byId("channel-readiness-title").textContent="Satu koneksi perlu perhatian";
+    byId("channel-readiness-detail").textContent="Buka koneksi yang ditandai untuk melihat penyebab dan mencoba kembali.";
   }else if(pairingInProgress){
     byId("channel-readiness-mark").textContent="…";
     byId("channel-readiness-label").textContent=whatsappChecking?"Pemeriksaan berlangsung":"Pairing berlangsung";
@@ -751,6 +869,9 @@ function renderChannelOverview(channels,readyCount){
     byId("channel-readiness-title").textContent="Selesaikan koneksi kanal";
     byId("channel-readiness-detail").textContent="Lengkapi identitas yang belum tersedia agar Telegram dan WhatsApp dapat diuji.";
   }
+  const testingLabel=allReady?"Siap":hasError?"Perlu dicek":pairingInProgress?"Menghubungkan":String(readyCount)+" dari 4";
+  const testingTone=allReady?"good":hasError?"bad":"warn";
+  setChannelBadge("testing-tab-status",testingLabel,testingTone);
   setConnectionStatus("telegram-route-status",telegramReady?"Siap":channels.telegram.bot.phase==="error"||channels.telegram.tester.phase==="error"?"Perlu tindakan":pairingActive(channels.telegram.tester)||channels.telegram.bot.phase==="validating"?"Menghubungkan":"Belum lengkap",telegramReady?"good":channels.telegram.bot.phase==="error"||channels.telegram.tester.phase==="error"?"bad":"warn");
   const whatsappUnreachable=channels.whatsapp.harvy.session?.status==="unreachable"||channels.whatsapp.tester.session?.status==="unreachable";
   setConnectionStatus("whatsapp-route-status",whatsappReady?"Sesi valid":whatsappRejected?"Sesi ditolak":whatsappChecking?"Memeriksa":channels.whatsapp.harvy.phase==="error"||channels.whatsapp.tester.phase==="error"?"Perlu tindakan":pairingActive(channels.whatsapp.harvy)||pairingActive(channels.whatsapp.tester)?"Menghubungkan":whatsappUnreachable?"Belum terverifikasi":"Belum lengkap",whatsappReady?"good":whatsappRejected||channels.whatsapp.harvy.phase==="error"||channels.whatsapp.tester.phase==="error"?"bad":"warn");
@@ -763,11 +884,11 @@ function renderChannels(){
   const bot=channels.telegram.bot,botStatus=byId("telegram-bot-status"),botReady=bot.configured===true;
   botStatus.textContent=bot.phase==="validating"?"Memverifikasi":bot.phase==="error"?"Ditolak":bot.configured?"Tersimpan":"Belum ada";
   botStatus.className="badge "+(bot.phase==="error"?"bad":bot.phase==="validating"?"warn":bot.configured?"good":"");
-  byId("telegram-bot-detail").textContent=bot.phase==="error"?(bot.errorCode?readable(bot.errorCode):"Token tidak dapat diverifikasi."):bot.configured?"Selesai. Token tersimpan terenkripsi dan tidak perlu dimasukkan ulang.":"Simpan token bot uji terpisah dari bot utama.";
+  byId("telegram-bot-detail").textContent=bot.phase==="error"?(bot.errorCode?readable(bot.errorCode):"Token tidak dapat diverifikasi."):bot.configured?"Selesai. Token tersimpan terenkripsi dan tidak perlu dimasukkan ulang.":"Simpan token bot pengujian yang terpisah dari layanan.";
   const botCard=byId("telegram-bot-card"),botEditor=byId("telegram-bot-editor"),botWasReady=botEditor.dataset.ready==="true";
   botCard.classList.toggle("ready",botReady);botEditor.dataset.ready=String(botReady);
   if(!botReady||bot.phase==="error")botEditor.open=true;else if(!botWasReady)botEditor.open=false;
-  byId("telegram-bot-editor-summary").textContent=botReady?"Ganti atau hapus token bot uji":"Tambahkan token bot uji";
+  byId("telegram-bot-editor-summary").textContent=botReady?"Ganti atau hapus token bot pengujian":"Tambahkan token bot pengujian";
   byId("telegram-bot-save").textContent=botReady?"Verifikasi dan ganti":"Verifikasi dan simpan";
   byId("telegram-bot-delete-zone").classList.toggle("hidden",!botReady);
   byId("telegram-bot-save").disabled=bot.phase==="validating";
@@ -778,6 +899,7 @@ function renderChannels(){
   byId("telegram-password-form").classList.toggle("hidden",channels.telegram.tester.phase!=="awaiting_password");
   renderPairing("whatsapp-harvy",channels.whatsapp.harvy,"/api/v1/channel-setup/whatsapp/harvy/qr.svg");
   renderPairing("whatsapp-tester",channels.whatsapp.tester,"/api/v1/channel-setup/whatsapp/tester/qr.svg");
+  setChannelBadge("whatsapp-ready",channels.whatsapp.ready?"2 sesi valid":"Belum lengkap",channels.whatsapp.ready?"good":"warn");
   const whatsappBusy=pairingActive(channels.whatsapp.harvy)||pairingActive(channels.whatsapp.tester);
   const whatsappVerifying=channels.whatsapp.harvy.session?.status==="checking"||channels.whatsapp.tester.session?.status==="checking";
   ["harvy","tester"].forEach((role)=>{byId("whatsapp-"+role+"-pair").disabled=whatsappBusy||whatsappVerifying||channels.whatsapp[role].configured===true;byId("whatsapp-"+role+"-replace").disabled=whatsappBusy||whatsappVerifying||channels.whatsapp[role].configured!==true;byId("whatsapp-"+role+"-revoke").disabled=whatsappBusy||whatsappVerifying});
@@ -788,7 +910,10 @@ async function loadChannels(quiet=false){
   catch(error){if(error?.status===401){showLogin();return}if(!quiet)showGlobalError(error)}
   finally{channelLoading=false}
 }
-async function verifyChannels(){clearGlobalError();const checks=[api("/api/v1/channel-setup/whatsapp/verify",{method:"POST",body:{}})],primary=state.channels?.identityBoundary?.primary?.telegram;if(primary?.configured===true&&primary.source!=="conflict")checks.push(api("/api/v1/channel-setup/primary/telegram/verify",{method:"POST",body:{}}));await Promise.all(checks);await loadChannels()}
+function channelVerificationActive(channels){const primaryWhatsapp=channels?.identityBoundary?.primary?.whatsapp;return channels?.identityBoundary?.primary?.telegram?.phase==="validating"||primaryWhatsapp?.phase==="checking"||(primaryWhatsapp?.accounts||[]).some((account)=>account.session?.status==="checking")||channels?.whatsapp?.harvy?.session?.status==="checking"||channels?.whatsapp?.tester?.session?.status==="checking"}
+function channelNeedsAttention(channels){const primary=channels?.identityBoundary?.primary?.telegram,primaryWhatsapp=channels?.identityBoundary?.primary?.whatsapp;return primary?.phase==="error"||primary?.source==="conflict"||primaryWhatsapp?.phase==="error"||primaryWhatsapp?.source==="conflict"||channels?.telegram?.bot?.phase==="error"||channels?.telegram?.tester?.phase==="error"||channels?.whatsapp?.ready!==true}
+async function waitForChannelVerification(){for(let attempt=0;attempt<50;attempt+=1){await loadChannels(true);if(!channelVerificationActive(state.channels))return true;await new Promise((resolve)=>setTimeout(resolve,400))}return false}
+async function verifyChannels(){clearGlobalError();const checks=[api("/api/v1/channel-setup/whatsapp/verify",{method:"POST",body:{}})],primary=state.channels?.identityBoundary?.primary?.telegram,primaryWhatsapp=state.channels?.identityBoundary?.primary?.whatsapp;if(primary?.configured===true&&primary.source!=="conflict")checks.push(api("/api/v1/channel-setup/primary/telegram/verify",{method:"POST",body:{}}));if(primaryWhatsapp?.source==="console"&&primaryWhatsapp.runtimeActive!==true&&(primaryWhatsapp.accountCount||0)>0)checks.push(api("/api/v1/channel-setup/primary/whatsapp/verify",{method:"POST",body:{}}));await Promise.all(checks);await loadChannels();return channelVerificationActive(state.channels)?waitForChannelVerification():true}
 function attemptCost(item){
   const view=item.costView;
   if(view?.source==="recorded")return stack(money(view.costUsdNanos),translated("source",item.cost.effectiveSource));
@@ -846,9 +971,9 @@ async function loadGroups(force=false){
   }finally{groupLoading=false;renderGroups()}
 }
 function showApp(){byId("login-view").classList.add("hidden");byId("app-view").classList.remove("hidden")}
-function showLogin(){csrf=null;byId("app-view").classList.add("hidden");byId("login-view").classList.remove("hidden")}
+function showLogin(){csrf=null;activeChannelEnvironment=null;channelSettingsTrigger=null;byId("channel-settings").classList.add("hidden");byId("app-view").classList.add("hidden");byId("login-view").classList.remove("hidden")}
 function configureConsoleMode(setupOnly){byId("app-view").classList.toggle("setup-only",setupOnly);document.querySelectorAll("[data-tab]").forEach((button)=>button.classList.toggle("hidden",setupOnly&&button.dataset.tab!=="channels"));if(!setupOnly)return;byId("health").textContent="Mode konfigurasi";byId("health").className="status-badge ready";byId("last-updated").textContent="Runtime tidak dipantau"}
-async function restore(){try{const session=await api("/api/v1/session");csrf=session.csrfToken;configureConsoleMode(session.setupOnly===true);showApp();if(session.setupOnly===true){switchTab("channels");return}await load();if(location.hash==="#channels")switchTab("channels")}catch(error){showLogin();if(error?.status!==401)byId("login-error").textContent=safeErrorMessage(error)}}
+async function restore(){const epoch=authEpoch;try{const session=await api("/api/v1/session");if(epoch!==authEpoch)return;csrf=session.csrfToken;configureConsoleMode(session.setupOnly===true);showApp();if(session.setupOnly===true){switchTab("channels");return}await load();if(epoch!==authEpoch)return;if(location.hash==="#channels")switchTab("channels")}catch(error){if(epoch!==authEpoch)return;showLogin();if(error?.status!==401)byId("login-error").textContent=safeErrorMessage(error)}}
 function switchTab(name,focus=false){
   activeTab=name;const tabs=[...document.querySelectorAll("[data-tab]")];
   tabs.forEach((button)=>{const selected=button.dataset.tab===name;button.classList.toggle("active",selected);button.setAttribute("aria-selected",String(selected));button.tabIndex=selected?0:-1;if(selected&&focus)button.focus()});
@@ -856,16 +981,33 @@ function switchTab(name,focus=false){
   const copy=pageCopy[name]||pageCopy.overview;byId("page-title").textContent=copy[0];byId("page-description").textContent=copy[1];if(name==="groups")loadGroups().catch(showGlobalError);if(name==="channels")loadChannels().catch(showGlobalError);
 }
 byId("login-form").addEventListener("submit",(event)=>{
-  event.preventDefault();const button=byId("login-submit");byId("login-error").textContent="";
-  withButton(button,"Memeriksa…",async()=>{const result=await api("/api/v1/session",{method:"POST",body:{token:byId("operator-token").value}});csrf=result.csrfToken;byId("operator-token").value="";configureConsoleMode(result.setupOnly===true);showApp();if(result.setupOnly===true)switchTab("channels");else await load()}).catch((error)=>{byId("global-error").classList.add("hidden");byId("login-error").textContent=safeErrorMessage(error)});
+  event.preventDefault();const button=byId("login-submit"),epoch=++authEpoch;byId("login-error").textContent="";
+  withButton(button,"Memeriksa…",async()=>{const result=await api("/api/v1/session",{method:"POST",body:{token:byId("operator-token").value}});if(epoch!==authEpoch)return;csrf=result.csrfToken;byId("operator-token").value="";configureConsoleMode(result.setupOnly===true);showApp();if(result.setupOnly===true)switchTab("channels");else await load()}).catch((error)=>{if(epoch!==authEpoch)return;byId("global-error").classList.add("hidden");byId("login-error").textContent=safeErrorMessage(error)});
 });
-byId("logout").addEventListener("click",()=>withButton(byId("logout"),"Keluar…",async()=>{await api("/api/v1/session",{method:"DELETE",body:{}}).catch(()=>{});showLogin()}).catch(()=>{}));
+byId("logout").addEventListener("click",()=>{const epoch=++authEpoch;withButton(byId("logout"),"Keluar…",async()=>{await api("/api/v1/session",{method:"DELETE",body:{}}).catch(()=>{});if(epoch===authEpoch)showLogin()}).catch(()=>{})});
 byId("refresh").addEventListener("click",()=>activeTab==="channels"?verifyChannels().catch(showGlobalError):load({forceGroups:activeTab==="groups"}));byId("retry-load").addEventListener("click",()=>activeTab==="channels"?verifyChannels().catch(showGlobalError):load({forceGroups:activeTab==="groups"}));
 byId("refresh-groups").addEventListener("click",()=>withButton(byId("refresh-groups"),"Menyegarkan…",()=>loadGroups(true)).catch(()=>{}));
-byId("channels-refresh").addEventListener("click",()=>withButton(byId("channels-refresh"),"Memeriksa…",async()=>{await verifyChannels();showNotice("Pemeriksaan koneksi kanal selesai.")}).catch(()=>{}));
-function openChannelSettings(channel){const settings=byId("channel-settings"),target=byId(channel+"-settings");settings.open=true;requestAnimationFrame(()=>{target.scrollIntoView({behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"start"});target.focus({preventScroll:true})})}
-byId("telegram-manage-open").addEventListener("click",()=>openChannelSettings("telegram"));
-byId("whatsapp-manage-open").addEventListener("click",()=>openChannelSettings("whatsapp"));
+byId("channels-refresh").addEventListener("click",()=>withButton(byId("channels-refresh"),"Memeriksa…",async()=>{const settled=await verifyChannels(),attention=channelNeedsAttention(state.channels);showNotice(!settled?"Pemeriksaan masih berjalan. Status akan diperbarui otomatis.":attention?"Pemeriksaan selesai. Satu koneksi perlu perhatian.":"Semua koneksi berhasil diperiksa.",!settled||attention?"warning":"success")}).catch(()=>{}));
+function selectChannelEnvironment(environment,focus=false){
+  activeChannelEnvironment=environment;const settings=byId("channel-settings");
+  document.querySelectorAll("[data-channel-environment]").forEach((button)=>{const active=button.dataset.channelEnvironment===environment;button.classList.toggle("active",active);button.setAttribute("aria-selected",String(active));button.tabIndex=active?0:-1;if(active&&focus)button.focus()});
+  document.querySelectorAll(".channel-environment-view").forEach((panel)=>{const active=panel.id==="channel-environment-"+environment+"-panel";panel.classList.toggle("active",active);panel.hidden=!active});
+  if(!settings.classList.contains("hidden")&&settings.dataset.environment!==environment){settings.classList.add("hidden");channelSettingsTrigger=null}
+}
+function selectChannelSettings(channel){
+  const labels={primary:"Kanal layanan",telegram:"Telegram · Pengujian",whatsapp:"WhatsApp · Pengujian"},settings=byId("channel-settings"),environment=channel==="primary"?"service":"testing";settings.dataset.section=channel;settings.dataset.environment=environment;byId("settings-context-label").textContent=labels[channel]||"Pilih kanal";
+  document.querySelectorAll(".settings-panel").forEach((panel)=>{const active=panel.id===channel+"-settings";panel.classList.toggle("active",active);panel.setAttribute("aria-hidden",String(!active))});
+}
+function openChannelSettings(channel,trigger){const environment=channel==="primary"?"service":"testing",settings=byId("channel-settings");channelSettingsTrigger=trigger||null;selectChannelEnvironment(environment);selectChannelSettings(channel);settings.classList.remove("hidden");requestAnimationFrame(()=>{settings.scrollIntoView({behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"start"});byId("channel-settings-close").focus({preventScroll:true})})}
+function closeChannelSettings(){byId("channel-settings").classList.add("hidden");const trigger=channelSettingsTrigger;channelSettingsTrigger=null;if(trigger&&document.contains(trigger))trigger.focus({preventScroll:true})}
+byId("primary-manage-open").addEventListener("click",(event)=>openChannelSettings("primary",event.currentTarget));
+byId("telegram-manage-open").addEventListener("click",(event)=>openChannelSettings("telegram",event.currentTarget));
+byId("whatsapp-manage-open").addEventListener("click",(event)=>openChannelSettings("whatsapp",event.currentTarget));
+byId("channel-settings-close").addEventListener("click",closeChannelSettings);
+document.querySelectorAll("[data-channel-environment]").forEach((button)=>{
+  button.addEventListener("click",()=>selectChannelEnvironment(button.dataset.channelEnvironment,true));
+  button.addEventListener("keydown",(event)=>{const tabs=[...document.querySelectorAll("[data-channel-environment]")],current=tabs.indexOf(button);let next=null;if(event.key==="ArrowRight")next=(current+1)%tabs.length;if(event.key==="ArrowLeft")next=(current-1+tabs.length)%tabs.length;if(event.key==="Home")next=0;if(event.key==="End")next=tabs.length-1;if(next!==null){event.preventDefault();selectChannelEnvironment(tabs[next].dataset.channelEnvironment,true)}});
+});
 document.querySelectorAll("[data-tab]").forEach((button)=>{
   button.addEventListener("click",()=>switchTab(button.dataset.tab));
   button.addEventListener("keydown",(event)=>{const tabs=[...document.querySelectorAll("[data-tab]")],current=tabs.indexOf(button);let next=null;if(event.key==="ArrowDown"||event.key==="ArrowRight")next=(current+1)%tabs.length;if(event.key==="ArrowUp"||event.key==="ArrowLeft")next=(current-1+tabs.length)%tabs.length;if(event.key==="Home")next=0;if(event.key==="End")next=tabs.length-1;if(next!==null){event.preventDefault();switchTab(tabs[next].dataset.tab,true)}});
@@ -876,16 +1018,21 @@ byId("enroll-form").addEventListener("submit",(event)=>{
 });
 byId("primary-telegram-bot-form").addEventListener("submit",(event)=>{
   event.preventDefault();const button=byId("primary-telegram-bot-save");
-  withButton(button,"Memverifikasi…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/telegram/bot-token",{method:"POST",body:{token:byId("primary-telegram-bot-token").value}});byId("primary-telegram-bot-token").value="";await loadChannels();showNotice(state.channels?.identityBoundary?.primary?.telegram?.restartRequired?"Token utama tersimpan. Restart Harvy untuk menerapkannya.":"Token utama berhasil diverifikasi dan disimpan.")}).catch(()=>{});
+  withButton(button,"Memverifikasi…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/telegram/bot-token",{method:"POST",body:{token:byId("primary-telegram-bot-token").value}});byId("primary-telegram-bot-token").value="";await loadChannels();showNotice(state.channels?.identityBoundary?.primary?.telegram?.restartRequired?"Token layanan tersimpan. Restart Harvy untuk menerapkannya.":"Token layanan berhasil diverifikasi dan disimpan.")}).catch(()=>{});
 });
-byId("primary-telegram-migrate").addEventListener("click",()=>{if(!byId("primary-telegram-migrate-confirm").checked){showGlobalError(userError("Konfirmasikan bahwa Console akan menjadi sumber credential Telegram utama."));return}withButton(byId("primary-telegram-migrate"),"Memindahkan…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/telegram/migrate",{method:"POST",body:{confirmation:"MIGRATE_PRIMARY_TELEGRAM_TO_CONSOLE"}});byId("primary-telegram-migrate-confirm").checked=false;await loadChannels();showNotice("Token utama dipindahkan ke penyimpanan terenkripsi dan dihapus dari .env.")}).catch(()=>{})});
-byId("primary-telegram-verify").addEventListener("click",()=>withButton(byId("primary-telegram-verify"),"Memeriksa…",async()=>{await api("/api/v1/channel-setup/primary/telegram/verify",{method:"POST",body:{}});await loadChannels();showNotice("Token Telegram utama diterima oleh platform.")}).catch(()=>{}));
-byId("primary-telegram-delete").addEventListener("click",()=>withButton(byId("primary-telegram-delete"),"Menghapus…",async()=>{await api("/api/v1/channel-setup/primary/telegram/bot-token",{method:"DELETE",body:{confirmation:byId("primary-telegram-delete-confirm").value}});byId("primary-telegram-delete-confirm").value="";await loadChannels();showNotice("Token Telegram utama dihapus. Simpan token baru sebelum menjalankan ulang Harvy.")}).catch(()=>{}));
+byId("primary-telegram-migrate").addEventListener("click",()=>{if(!byId("primary-telegram-migrate-confirm").checked){showGlobalError(userError("Konfirmasikan bahwa Console akan menjadi sumber credential Telegram layanan."));return}withButton(byId("primary-telegram-migrate"),"Memindahkan…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/telegram/migrate",{method:"POST",body:{confirmation:"MIGRATE_PRIMARY_TELEGRAM_TO_CONSOLE"}});byId("primary-telegram-migrate-confirm").checked=false;await loadChannels();showNotice("Token layanan dipindahkan ke penyimpanan terenkripsi dan dihapus dari .env.")}).catch(()=>{})});
+byId("primary-telegram-verify").addEventListener("click",()=>withButton(byId("primary-telegram-verify"),"Memeriksa…",async()=>{await api("/api/v1/channel-setup/primary/telegram/verify",{method:"POST",body:{}});await loadChannels();showNotice("Token Telegram layanan diterima oleh platform.")}).catch(()=>{}));
+byId("primary-telegram-delete").addEventListener("click",()=>withButton(byId("primary-telegram-delete"),"Menghapus…",async()=>{await api("/api/v1/channel-setup/primary/telegram/bot-token",{method:"DELETE",body:{confirmation:byId("primary-telegram-delete-confirm").value}});byId("primary-telegram-delete-confirm").value="";await loadChannels();showNotice("Token Telegram layanan dihapus. Simpan token baru sebelum menjalankan ulang Harvy.")}).catch(()=>{}));
+byId("primary-whatsapp-migrate").addEventListener("click",()=>{if(!byId("primary-whatsapp-migrate-confirm").checked){showGlobalError(userError("Konfirmasikan bahwa Console akan menjadi sumber daftar akun WhatsApp layanan."));return}withButton(byId("primary-whatsapp-migrate"),"Memindahkan…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/whatsapp/migrate",{method:"POST",body:{confirmation:"MIGRATE_PRIMARY_WHATSAPP_TO_CONSOLE"}});byId("primary-whatsapp-migrate-confirm").checked=false;await loadChannels();showNotice("Akun WhatsApp layanan dipindahkan ke Console. Nomor dan credential tetap tidak ditampilkan.")}).catch(()=>{})});
+byId("primary-whatsapp-settings-form").addEventListener("submit",(event)=>{event.preventDefault();const button=byId("primary-whatsapp-settings-save");withButton(button,"Menyimpan…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/whatsapp/settings",{method:"POST",body:{enabled:byId("primary-whatsapp-enabled").checked,privateEnabled:byId("primary-whatsapp-private-enabled").checked}});await loadChannels();showNotice("Pengaturan WhatsApp layanan tersimpan. Jalankan ulang Harvy untuk menerapkannya.")}).catch(()=>{})});
+byId("primary-whatsapp-verify").addEventListener("click",()=>withButton(byId("primary-whatsapp-verify"),"Memeriksa…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/whatsapp/verify",{method:"POST",body:{}});await loadChannels();showNotice("Pemeriksaan sesi WhatsApp layanan dimulai.")}).catch(()=>{}));
+byId("primary-whatsapp-account-form").addEventListener("submit",(event)=>{event.preventDefault();if(!byId("primary-whatsapp-account-confirm").checked){showGlobalError(userError("Konfirmasikan bahwa akun baru akan menerima pesan sebagai Harvy."));return}const button=byId("primary-whatsapp-account-add"),alias=byId("primary-whatsapp-account-alias").value;withButton(button,"Menyiapkan…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/whatsapp/accounts",{method:"POST",body:{alias,confirmation:"PAIR_PRIMARY_WHATSAPP_ACCOUNT"}});byId("primary-whatsapp-account-alias").value="";byId("primary-whatsapp-account-confirm").checked=false;await loadChannels();showNotice("Alias layanan disimpan. Tunggu QR lalu pindai dari akun WhatsApp Harvy.")}).catch(()=>{})});
+byId("primary-whatsapp-account-list").addEventListener("click",(event)=>{const button=event.target.closest("[data-primary-whatsapp-action]");if(!button)return;const card=button.closest(".service-account"),alias=card?.dataset.accountId,action=button.dataset.primaryWhatsappAction;if(!alias)return;const prefix=primaryWhatsAppPrefix(alias);if(action==="retry"){retryQrImage(prefix);return}if(action==="replace"&&!byId(prefix+"-replace-confirm").checked){showGlobalError(userError("Konfirmasikan bahwa akun "+alias+" siap dipindai ulang."));return}if(action==="remove"&&byId(prefix+"-remove-confirm").value!==alias){showGlobalError(userError("Ketik alias "+alias+" dengan tepat untuk menghapus akun."));return}const pendingLabel=action==="remove"?"Mencabut…":action==="cancel"?"Membatalkan…":"Memulai…";withButton(button,pendingLabel,async()=>{clearGlobalError();if(action==="pair")await api("/api/v1/channel-setup/primary/whatsapp/accounts/"+encodeURIComponent(alias)+"/pair",{method:"POST",body:{}});else if(action==="replace")await api("/api/v1/channel-setup/primary/whatsapp/accounts/"+encodeURIComponent(alias)+"/replace",{method:"POST",body:{confirmation:"REPLACE_PRIMARY_WHATSAPP_SESSION"}});else if(action==="cancel")await api("/api/v1/channel-setup/primary/whatsapp/accounts/"+encodeURIComponent(alias)+"/cancel",{method:"POST",body:{}});else if(action==="remove")await api("/api/v1/channel-setup/primary/whatsapp/accounts/"+encodeURIComponent(alias),{method:"DELETE",body:{confirmation:"REMOVE_PRIMARY_WHATSAPP_ACCOUNT"}});await loadChannels();showNotice(action==="remove"?"Pencabutan akun dimulai.":action==="cancel"?"Operasi dibatalkan.":"Pairing akun layanan dimulai; tunggu QR muncul.")}).catch(()=>{})});
 byId("telegram-bot-form").addEventListener("submit",(event)=>{
   event.preventDefault();const button=byId("telegram-bot-save");
-  withButton(button,"Memverifikasi…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/telegram/bot-token",{method:"POST",body:{token:byId("telegram-bot-token").value}});byId("telegram-bot-token").value="";await loadChannels();showNotice("Token bot uji berhasil diverifikasi dan disimpan.")}).catch(()=>{});
+  withButton(button,"Memverifikasi…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/telegram/bot-token",{method:"POST",body:{token:byId("telegram-bot-token").value}});byId("telegram-bot-token").value="";await loadChannels();showNotice("Token bot pengujian berhasil diverifikasi dan disimpan.")}).catch(()=>{});
 });
-byId("telegram-bot-delete").addEventListener("click",()=>withButton(byId("telegram-bot-delete"),"Menghapus…",async()=>{await api("/api/v1/channel-setup/telegram/bot-token",{method:"DELETE",body:{confirmation:byId("telegram-bot-delete-confirm").value}});byId("telegram-bot-delete-confirm").value="";await loadChannels();showNotice("Token bot uji dihapus.")}).catch(()=>{}));
+byId("telegram-bot-delete").addEventListener("click",()=>withButton(byId("telegram-bot-delete"),"Menghapus…",async()=>{await api("/api/v1/channel-setup/telegram/bot-token",{method:"DELETE",body:{confirmation:byId("telegram-bot-delete-confirm").value}});byId("telegram-bot-delete-confirm").value="";await loadChannels();showNotice("Token bot pengujian dihapus.")}).catch(()=>{}));
 byId("telegram-tester-form").addEventListener("submit",(event)=>{
   event.preventDefault();if(!byId("telegram-dedicated").checked){showGlobalError(userError("Konfirmasikan bahwa akun Telegram memang khusus pengujian."));return}const button=byId("telegram-tester-pair");
   withButton(button,"Memulai…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/telegram/tester/pair",{method:"POST",body:{apiId:Number(byId("telegram-api-id").value),apiHash:byId("telegram-api-hash").value,confirmation:"DEDICATED_TEST_ACCOUNT"}});byId("telegram-api-id").value="";byId("telegram-api-hash").value="";await loadChannels();showNotice("Pairing Telegram dimulai; tunggu QR muncul.")}).catch(()=>{});
@@ -894,13 +1041,14 @@ byId("telegram-password-form").addEventListener("submit",(event)=>{
   event.preventDefault();const button=byId("telegram-password-submit");withButton(button,"Mengirim…",async()=>{await api("/api/v1/channel-setup/telegram/tester/password",{method:"POST",body:{password:byId("telegram-password").value}});byId("telegram-password").value="";await loadChannels()}).catch(()=>{});
 });
 byId("telegram-tester-cancel").addEventListener("click",()=>withButton(byId("telegram-tester-cancel"),"Membatalkan…",async()=>{await api("/api/v1/channel-setup/telegram/tester/cancel",{method:"POST",body:{}});await loadChannels();showNotice("Pairing Telegram dibatalkan.")}).catch(()=>{}));
-byId("telegram-tester-delete").addEventListener("click",()=>withButton(byId("telegram-tester-delete"),"Memulai pencabutan…",async()=>{await api("/api/v1/channel-setup/telegram/tester",{method:"DELETE",body:{confirmation:byId("telegram-tester-delete-confirm").value}});byId("telegram-tester-delete-confirm").value="";await loadChannels();showNotice("Pencabutan session Telegram tester dimulai.")}).catch(()=>{}));
+byId("telegram-tester-delete").addEventListener("click",()=>withButton(byId("telegram-tester-delete"),"Memulai pencabutan…",async()=>{await api("/api/v1/channel-setup/telegram/tester",{method:"DELETE",body:{confirmation:byId("telegram-tester-delete-confirm").value}});byId("telegram-tester-delete-confirm").value="";await loadChannels();showNotice("Pencabutan sesi akun Telegram penguji dimulai.")}).catch(()=>{}));
+["telegram-tester","whatsapp-harvy","whatsapp-tester"].forEach((prefix)=>byId(prefix+"-qr-retry").addEventListener("click",()=>retryQrImage(prefix)));
 ["harvy","tester"].forEach((role)=>{
-  const roleLabel=role==="harvy"?"Harvy A":"tester B";
-  byId("whatsapp-"+role+"-pair").addEventListener("click",()=>{if(!byId("whatsapp-"+role+"-dedicated").checked){showGlobalError(userError("Konfirmasikan bahwa nomor WhatsApp "+roleLabel+" memang khusus pengujian."));return}const button=byId("whatsapp-"+role+"-pair");withButton(button,"Memulai…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/whatsapp/"+role+"/pair",{method:"POST",body:{confirmation:"DEDICATED_TEST_ACCOUNT"}});await loadChannels();showNotice("Pairing WhatsApp "+roleLabel+" dimulai; tunggu QR muncul.")}).catch(()=>{})});
-  byId("whatsapp-"+role+"-replace").addEventListener("click",()=>{if(!byId("whatsapp-"+role+"-replace-confirm").checked){showGlobalError(userError("Konfirmasikan bahwa nomor WhatsApp "+roleLabel+" siap dipasangkan ulang."));return}const button=byId("whatsapp-"+role+"-replace");withButton(button,"Menyiapkan…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/whatsapp/"+role+"/replace",{method:"POST",body:{confirmation:role==="harvy"?"REPLACE_WHATSAPP_HARVY_SESSION":"REPLACE_WHATSAPP_TESTER_SESSION"}});byId("whatsapp-"+role+"-replace-confirm").checked=false;await loadChannels();showNotice("Sesi lama sedang dicabut. QR baru akan muncul otomatis setelah aman.")}).catch(()=>{})});
-  byId("whatsapp-"+role+"-cancel").addEventListener("click",()=>withButton(byId("whatsapp-"+role+"-cancel"),"Membatalkan…",async()=>{await api("/api/v1/channel-setup/whatsapp/"+role+"/cancel",{method:"POST",body:{}});await loadChannels();showNotice("Operasi WhatsApp "+role+" dibatalkan.")}).catch(()=>{}));
-  byId("whatsapp-"+role+"-revoke").addEventListener("click",()=>withButton(byId("whatsapp-"+role+"-revoke"),"Memulai pencabutan…",async()=>{await api("/api/v1/channel-setup/whatsapp/"+role+"/session",{method:"DELETE",body:{confirmation:byId("whatsapp-"+role+"-revoke-confirm").value}});byId("whatsapp-"+role+"-revoke-confirm").value="";await loadChannels();showNotice("Pencabutan session WhatsApp "+role+" dimulai.")}).catch(()=>{}));
+  const roleLabel=role==="harvy"?"Harvy":"penguji";
+  byId("whatsapp-"+role+"-pair").addEventListener("click",()=>{if(!byId("whatsapp-"+role+"-dedicated").checked){showGlobalError(userError("Konfirmasikan bahwa akun WhatsApp "+roleLabel+" memang khusus pengujian."));return}const button=byId("whatsapp-"+role+"-pair");withButton(button,"Memulai…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/whatsapp/"+role+"/pair",{method:"POST",body:{confirmation:"DEDICATED_TEST_ACCOUNT"}});await loadChannels();showNotice("Pairing akun WhatsApp "+roleLabel+" dimulai; tunggu QR muncul.")}).catch(()=>{})});
+  byId("whatsapp-"+role+"-replace").addEventListener("click",()=>{if(!byId("whatsapp-"+role+"-replace-confirm").checked){showGlobalError(userError("Konfirmasikan bahwa akun WhatsApp "+roleLabel+" siap dipasangkan ulang."));return}const button=byId("whatsapp-"+role+"-replace");withButton(button,"Menyiapkan…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/whatsapp/"+role+"/replace",{method:"POST",body:{confirmation:role==="harvy"?"REPLACE_WHATSAPP_HARVY_SESSION":"REPLACE_WHATSAPP_TESTER_SESSION"}});byId("whatsapp-"+role+"-replace-confirm").checked=false;await loadChannels();showNotice("Sesi lama sedang dicabut. QR baru akan muncul otomatis setelah aman.")}).catch(()=>{})});
+  byId("whatsapp-"+role+"-cancel").addEventListener("click",()=>withButton(byId("whatsapp-"+role+"-cancel"),"Membatalkan…",async()=>{await api("/api/v1/channel-setup/whatsapp/"+role+"/cancel",{method:"POST",body:{}});await loadChannels();showNotice("Operasi akun WhatsApp "+roleLabel+" dibatalkan.")}).catch(()=>{}));
+  byId("whatsapp-"+role+"-revoke").addEventListener("click",()=>withButton(byId("whatsapp-"+role+"-revoke"),"Memulai pencabutan…",async()=>{await api("/api/v1/channel-setup/whatsapp/"+role+"/session",{method:"DELETE",body:{confirmation:byId("whatsapp-"+role+"-revoke-confirm").value}});byId("whatsapp-"+role+"-revoke-confirm").value="";await loadChannels();showNotice("Pencabutan sesi akun WhatsApp "+roleLabel+" dimulai.")}).catch(()=>{}));
 });
 byId("price-model").addEventListener("change",syncPriceInputs);byId("price-input").addEventListener("input",validatePriceForm);byId("price-output").addEventListener("input",validatePriceForm);
 byId("price-form").addEventListener("submit",(event)=>{

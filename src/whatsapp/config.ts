@@ -81,13 +81,8 @@ export function parseWhatsAppAccounts(
       );
     }
     const record = item as Record<string, unknown>;
-    const id = typeof record["id"] === "string" ? record["id"].trim() : "";
-    if (!/^[a-z][a-z0-9_-]{0,31}$/i.test(id)) {
-      throw whatsAppConfigurationError(
-        "CONFIG_WHATSAPP_ACCOUNT_ALIAS_INVALID",
-        `WHATSAPP_ACCOUNTS[${index}].id harus berupa alias operasional yang diawali huruf; setelahnya hanya boleh huruf, angka, _ atau - (maksimal 32). Jangan gunakan nomor telepon atau JID.`,
-      );
-    }
+    const id = parseWhatsAppAccountAlias(record["id"],
+      `WHATSAPP_ACCOUNTS[${index}].id`);
     const uniqueId = id.toLocaleLowerCase("en-US");
     if (seen.has(uniqueId)) {
       throw whatsAppConfigurationError(
@@ -97,17 +92,10 @@ export function parseWhatsAppAccounts(
     }
     seen.add(uniqueId);
 
-    const rawPhone =
-      typeof record["phoneNumber"] === "string"
-        ? record["phoneNumber"].trim()
-        : "";
-    const phoneNumber = rawPhone.replace(/[+\s()-]/g, "");
-    if (!/^[1-9]\d{7,14}$/.test(phoneNumber)) {
-      throw whatsAppConfigurationError(
-        "CONFIG_WHATSAPP_PHONE_INVALID",
-        `WHATSAPP_ACCOUNTS[${index}].phoneNumber harus E.164 8–15 digit tanpa awalan 0.`,
-      );
-    }
+    const phoneNumber = parseWhatsAppPhoneNumber(
+      record["phoneNumber"],
+      `WHATSAPP_ACCOUNTS[${index}].phoneNumber`,
+    );
     if (seenPhoneNumbers.has(phoneNumber)) {
       throw whatsAppConfigurationError(
         "CONFIG_WHATSAPP_PHONE_DUPLICATE",
@@ -118,6 +106,35 @@ export function parseWhatsAppAccounts(
 
     return { id, phoneNumber };
   });
+}
+
+export function parseWhatsAppAccountAlias(
+  value: unknown,
+  field = "Alias akun WhatsApp",
+): string {
+  const id = typeof value === "string" ? value.trim() : "";
+  if (!/^[a-z][a-z0-9_-]{0,31}$/iu.test(id)) {
+    throw whatsAppConfigurationError(
+      "CONFIG_WHATSAPP_ACCOUNT_ALIAS_INVALID",
+      `${field} harus berupa alias operasional yang diawali huruf; setelahnya hanya boleh huruf, angka, _ atau - (maksimal 32). Jangan gunakan nomor telepon atau JID.`,
+    );
+  }
+  return id;
+}
+
+export function parseWhatsAppPhoneNumber(
+  value: unknown,
+  field = "Nomor akun WhatsApp",
+): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const phoneNumber = raw.replace(/[+\s()-]/gu, "");
+  if (!/^[1-9]\d{7,14}$/u.test(phoneNumber)) {
+    throw whatsAppConfigurationError(
+      "CONFIG_WHATSAPP_PHONE_INVALID",
+      `${field} harus E.164 8–15 digit tanpa awalan 0.`,
+    );
+  }
+  return phoneNumber;
 }
 
 export function parsePairingMode(

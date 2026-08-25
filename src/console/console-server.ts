@@ -196,6 +196,7 @@ export class ConsoleServer {
     if (server) {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
       });
     }
     this.server = null;
@@ -395,6 +396,23 @@ export class ConsoleServer {
         200,
         "image/svg+xml; charset=utf-8",
         this.channelSetup.qrSvg("whatsapp", whatsappQr[1] as WhatsAppTestRole),
+      );
+      return;
+    }
+    const primaryWhatsAppQr = /^\/api\/v1\/channel-setup\/primary\/whatsapp\/accounts\/([^/]+)\/qr\.svg$/u.exec(
+      url.pathname,
+    );
+    if (primaryWhatsAppQr?.[1]) {
+      if (!this.channelSetup) {
+        throw new HttpError(503, "channel_setup_unavailable", "Pengelola kanal belum dikonfigurasi.");
+      }
+      sendText(
+        response,
+        200,
+        "image/svg+xml; charset=utf-8",
+        this.channelSetup.primaryWhatsAppQrSvg(
+          decodeWhatsAppAlias(primaryWhatsAppQr[1]),
+        ),
       );
       return;
     }
@@ -683,6 +701,150 @@ export class ConsoleServer {
           );
           sendJson(response, 200, { updated: true });
           return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/primary/whatsapp/verify" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(
+            session,
+            "channel_connection_verify",
+            "primary_whatsapp_fleet",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, []);
+              await setup.verifyPrimaryWhatsAppSessions();
+            },
+          );
+          sendJson(response, 202, { accepted: true });
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/primary/whatsapp/migrate" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(
+            session,
+            "channel_credential_update",
+            "primary_whatsapp_fleet",
+            async () => {
+              const body = await readJsonObject(request);
+              requireConfirmation(body, "MIGRATE_PRIMARY_WHATSAPP_TO_CONSOLE");
+              await setup.migratePrimaryWhatsAppFleet();
+            },
+          );
+          sendJson(response, 200, { migrated: true });
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/primary/whatsapp/settings" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(
+            session,
+            "channel_credential_update",
+            "primary_whatsapp_fleet",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, ["enabled", "privateEnabled"]);
+              await setup.updatePrimaryWhatsAppSettings({
+                enabled: readBoolean(body.enabled, "enabled"),
+                privateEnabled: readBoolean(
+                  body.privateEnabled,
+                  "privateEnabled",
+                ),
+              });
+            },
+          );
+          sendJson(response, 200, { updated: true });
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/primary/whatsapp/accounts" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(
+            session,
+            "channel_pairing_start",
+            "primary_whatsapp_account",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, ["alias", "confirmation"]);
+              requireConfirmation(
+                body,
+                "PAIR_PRIMARY_WHATSAPP_ACCOUNT",
+                ["alias"],
+              );
+              await setup.startPrimaryWhatsAppAccount(
+                readString(body.alias, "alias", 32),
+              );
+            },
+          );
+          sendJson(response, 202, { accepted: true });
+          return;
+        }
+        const primaryWhatsAppAccount = /^\/api\/v1\/channel-setup\/primary\/whatsapp\/accounts\/([^/]+)(?:\/(pair|replace|cancel))?$/u.exec(
+          url.pathname,
+        );
+        if (primaryWhatsAppAccount?.[1]) {
+          const alias = decodeWhatsAppAlias(primaryWhatsAppAccount[1]);
+          const action = primaryWhatsAppAccount[2];
+          if (request.method === "POST" && action === "pair") {
+            await this.runMutation(
+              session,
+              "channel_pairing_start",
+              "primary_whatsapp_account",
+              async () => {
+                const body = await readJsonObject(request);
+                assertExactKeys(body, []);
+                await setup.startPrimaryWhatsAppAccount(alias);
+              },
+            );
+            sendJson(response, 202, { accepted: true });
+            return;
+          }
+          if (request.method === "POST" && action === "replace") {
+            await this.runMutation(
+              session,
+              "channel_pairing_start",
+              "primary_whatsapp_account",
+              async () => {
+                const body = await readJsonObject(request);
+                requireConfirmation(body, "REPLACE_PRIMARY_WHATSAPP_SESSION");
+                await setup.startPrimaryWhatsAppReplace(alias);
+              },
+            );
+            sendJson(response, 202, { accepted: true });
+            return;
+          }
+          if (request.method === "POST" && action === "cancel") {
+            await this.runMutation(
+              session,
+              "channel_pairing_cancel",
+              "primary_whatsapp_account",
+              async () => {
+                const body = await readJsonObject(request);
+                assertExactKeys(body, []);
+                await setup.cancelPrimaryWhatsApp(alias);
+              },
+            );
+            sendJson(response, 200, { cancelled: true });
+            return;
+          }
+          if (request.method === "DELETE" && action === undefined) {
+            await this.runMutation(
+              session,
+              "channel_credential_revoke",
+              "primary_whatsapp_account",
+              async () => {
+                const body = await readJsonObject(request);
+                requireConfirmation(body, "REMOVE_PRIMARY_WHATSAPP_ACCOUNT");
+                await setup.startPrimaryWhatsAppRemoval(alias);
+              },
+            );
+            sendJson(response, 202, { accepted: true });
+            return;
+          }
         }
         if (
           url.pathname ===
@@ -1412,6 +1574,13 @@ function readString(value: unknown, field: string, maximum: number): string {
   return clean;
 }
 
+function readBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new HttpError(400, "invalid_field", `Field ${field} tidak sah.`);
+  }
+  return value;
+}
+
 function readNullableString(value: unknown, maximum: number): string | null {
   if (value === undefined || value === null || value === "") return null;
   return readString(value, "rate", maximum);
@@ -1542,10 +1711,80 @@ function decodeSafeRef(value: string): string {
   return decoded;
 }
 
+function decodeWhatsAppAlias(value: string): string {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new HttpError(400, "invalid_reference", "Alias akun tidak sah.");
+  }
+  if (!/^[a-z][a-z0-9_-]{0,31}$/iu.test(decoded)) {
+    throw new HttpError(400, "invalid_reference", "Alias akun tidak sah.");
+  }
+  return decoded;
+}
+
 function describeMutation(
   url: URL,
   method: string | undefined,
 ): MutationDescriptor {
+  if (
+    method === "POST" &&
+    url.pathname === "/api/v1/channel-setup/primary/whatsapp/verify"
+  ) {
+    return {
+      action: "channel_connection_verify",
+      targetRef: "primary_whatsapp_fleet",
+    };
+  }
+  if (
+    method === "POST" &&
+    (
+      url.pathname === "/api/v1/channel-setup/primary/whatsapp/migrate" ||
+      url.pathname === "/api/v1/channel-setup/primary/whatsapp/settings"
+    )
+  ) {
+    return {
+      action: "channel_credential_update",
+      targetRef: "primary_whatsapp_fleet",
+    };
+  }
+  if (
+    method === "POST" &&
+    (
+      url.pathname === "/api/v1/channel-setup/primary/whatsapp/accounts" ||
+      /\/channel-setup\/primary\/whatsapp\/accounts\/[^/]+\/(?:pair|replace)$/u.test(
+        url.pathname,
+      )
+    )
+  ) {
+    return {
+      action: "channel_pairing_start",
+      targetRef: "primary_whatsapp_account",
+    };
+  }
+  if (
+    method === "POST" &&
+    /\/channel-setup\/primary\/whatsapp\/accounts\/[^/]+\/cancel$/u.test(
+      url.pathname,
+    )
+  ) {
+    return {
+      action: "channel_pairing_cancel",
+      targetRef: "primary_whatsapp_account",
+    };
+  }
+  if (
+    method === "DELETE" &&
+    /\/channel-setup\/primary\/whatsapp\/accounts\/[^/]+$/u.test(
+      url.pathname,
+    )
+  ) {
+    return {
+      action: "channel_credential_revoke",
+      targetRef: "primary_whatsapp_account",
+    };
+  }
   if (
     method === "POST" &&
     url.pathname === "/api/v1/channel-setup/primary/telegram/verify"
@@ -1653,6 +1892,7 @@ function readOpaqueSecret(value: unknown, field: string, maximum: number): strin
 }
 
 function channelAuditTarget(pathname: string): string | null {
+  if (pathname.includes("/primary/whatsapp/")) return "primary_whatsapp_fleet";
   if (pathname.includes("/primary/telegram/")) return "primary_telegram_bot";
   if (pathname.includes("/telegram/bot-token")) return "telegram_bot";
   if (pathname.includes("/telegram/tester")) return "telegram_tester";

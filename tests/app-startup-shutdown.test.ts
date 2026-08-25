@@ -116,6 +116,7 @@ function isolatedRuntimeEnvironment(
     MEMORY_EMBEDDING_MODEL: "",
     WHATSAPP_ENABLED: "false",
     WHATSAPP_ACCOUNTS: "[]",
+    HARVY_WHATSAPP_CONFIG_EPHEMERAL: "live-acceptance-v1",
     WHATSAPP_GROUP_AGENT_RUN_ENABLED: "false",
     HARVY_CONSOLE_ENABLED: "false",
     HARVY_CONSOLE_TOKEN: "",

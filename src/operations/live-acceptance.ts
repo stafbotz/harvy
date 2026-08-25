@@ -360,6 +360,7 @@ export function isolatedRuntimeEnvironment(
     const phoneNumber = e164Digits(options.whatsapp.phoneNumber);
     env.WHATSAPP_ENABLED = "true";
     env.WHATSAPP_PRIVATE_ENABLED = "true";
+    env.HARVY_WHATSAPP_CONFIG_EPHEMERAL = "live-acceptance-v1";
     env.WHATSAPP_PAIRING_MODE = "qr";
     env.WHATSAPP_AUTH_FOLDER = resolve(options.whatsapp.authRoot);
     env.WHATSAPP_ACCOUNTS = JSON.stringify([{ id: alias, phoneNumber }]);
@@ -373,6 +374,7 @@ export function isolatedRuntimeEnvironment(
   } else {
     env.WHATSAPP_ENABLED = "false";
     env.WHATSAPP_PRIVATE_ENABLED = "false";
+    env.HARVY_WHATSAPP_CONFIG_EPHEMERAL = "live-acceptance-v1";
     delete env.WHATSAPP_ACCOUNTS;
   }
   return env;

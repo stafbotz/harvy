@@ -14,12 +14,28 @@ import {
   readEncryptedFileSecretSync,
 } from "../core/secret-store.js";
 import { writeDurableFileAtomic } from "../storage/durable-file.js";
+import {
+  parseEnabled,
+  parsePrivateEnabled,
+  parseWhatsAppAccountAlias,
+  parseWhatsAppAccounts,
+  parseWhatsAppPhoneNumber,
+} from "../whatsapp/config.js";
 
 const PRIMARY_TELEGRAM_BOT_SECRET_REF = "primary.telegram.bot.v1";
+const PRIMARY_WHATSAPP_FLEET_SECRET_REF = "primary.whatsapp.fleet.v1";
 const PRIMARY_TELEGRAM_BOT_TOKEN_PATTERN =
   /^\d{5,20}:[A-Za-z0-9_-]{20,160}$/u;
 const PRIMARY_TELEGRAM_ENV_LINE =
   /^\uFEFF?\s*(?:export\s+)?TELEGRAM_BOT_TOKEN\s*=/u;
+const PRIMARY_WHATSAPP_ENV_KEYS = [
+  "WHATSAPP_ENABLED",
+  "WHATSAPP_PRIVATE_ENABLED",
+  "WHATSAPP_ACCOUNTS",
+] as const;
+const PRIMARY_WHATSAPP_ENV_LINE =
+  /^\uFEFF?\s*(?:export\s+)?(?:WHATSAPP_ENABLED|WHATSAPP_PRIVATE_ENABLED|WHATSAPP_ACCOUNTS)\s*=/u;
+const PRIMARY_CHANNEL_FILE_QUEUES = new Map<string, Promise<void>>();
 
 export interface PrimaryChannelCredentialPaths {
   keyFile: string;
@@ -38,6 +54,31 @@ export interface PrimaryTelegramEnvironmentStatus {
   entryCount: number;
 }
 
+export type PrimaryWhatsAppFleetAccountState =
+  | "active"
+  | "pending"
+  | "removing";
+
+export interface PrimaryWhatsAppFleetAccount {
+  id: string;
+  phoneNumber: string | null;
+  state: PrimaryWhatsAppFleetAccountState;
+}
+
+export interface PrimaryWhatsAppFleetCredential {
+  version: 1;
+  enabled: boolean;
+  privateEnabled: boolean;
+  accounts: PrimaryWhatsAppFleetAccount[];
+}
+
+export interface PrimaryWhatsAppEnvironmentStatus {
+  declared: boolean;
+  migratable: boolean;
+  entryCount: number;
+  configurationValid: boolean;
+}
+
 export function primaryChannelCredentialPaths(
   repositoryRoot = process.cwd(),
 ): PrimaryChannelCredentialPaths {
@@ -54,16 +95,20 @@ export async function savePrimaryTelegramBotCredential(
   paths = primaryChannelCredentialPaths(),
 ): Promise<void> {
   const validated = validatePrimaryTelegramBotCredential(credential);
-  const store = await openPrimaryChannelStore(paths);
-  await store.put(PRIMARY_TELEGRAM_BOT_SECRET_REF, JSON.stringify(validated));
+  await withPrimaryChannelFileAccess(paths, async () => {
+    const store = await openPrimaryChannelStore(paths);
+    await store.put(PRIMARY_TELEGRAM_BOT_SECRET_REF, JSON.stringify(validated));
+  });
 }
 
 export async function loadPrimaryTelegramBotCredential(
   paths = primaryChannelCredentialPaths(),
 ): Promise<PrimaryTelegramBotCredential | null> {
-  const store = await openPrimaryChannelStore(paths);
-  const value = await store.get(PRIMARY_TELEGRAM_BOT_SECRET_REF);
-  return value === null ? null : parsePrimaryTelegramBotCredential(value);
+  return withPrimaryChannelFileAccess(paths, async () => {
+    const store = await openPrimaryChannelStore(paths);
+    const value = await store.get(PRIMARY_TELEGRAM_BOT_SECRET_REF);
+    return value === null ? null : parsePrimaryTelegramBotCredential(value);
+  });
 }
 
 export function loadPrimaryTelegramBotCredentialSync(
@@ -86,8 +131,57 @@ export function loadPrimaryTelegramBotCredentialSync(
 export async function deletePrimaryTelegramBotCredential(
   paths = primaryChannelCredentialPaths(),
 ): Promise<void> {
-  const store = await openPrimaryChannelStore(paths);
-  await store.delete(PRIMARY_TELEGRAM_BOT_SECRET_REF);
+  await withPrimaryChannelFileAccess(paths, async () => {
+    const store = await openPrimaryChannelStore(paths);
+    await store.delete(PRIMARY_TELEGRAM_BOT_SECRET_REF);
+  });
+}
+
+export async function savePrimaryWhatsAppFleetCredential(
+  credential: PrimaryWhatsAppFleetCredential,
+  paths = primaryChannelCredentialPaths(),
+): Promise<void> {
+  const validated = validatePrimaryWhatsAppFleetCredential(credential);
+  await withPrimaryChannelFileAccess(paths, async () => {
+    const store = await openPrimaryChannelStore(paths);
+    await store.put(PRIMARY_WHATSAPP_FLEET_SECRET_REF, JSON.stringify(validated));
+  });
+}
+
+export async function loadPrimaryWhatsAppFleetCredential(
+  paths = primaryChannelCredentialPaths(),
+): Promise<PrimaryWhatsAppFleetCredential | null> {
+  return withPrimaryChannelFileAccess(paths, async () => {
+    const store = await openPrimaryChannelStore(paths);
+    const value = await store.get(PRIMARY_WHATSAPP_FLEET_SECRET_REF);
+    return value === null ? null : parsePrimaryWhatsAppFleetCredential(value);
+  });
+}
+
+export function loadPrimaryWhatsAppFleetCredentialSync(
+  paths = primaryChannelCredentialPaths(),
+): PrimaryWhatsAppFleetCredential | null {
+  const key = loadPrimaryChannelKeySync(paths);
+  if (key === null) return null;
+  assertRegularCredentialFileSync(
+    paths.secretFile,
+    "PRIMARY_CHANNEL_SECRET_FILE_INVALID",
+  );
+  const value = readEncryptedFileSecretSync(
+    paths.secretFile,
+    key,
+    PRIMARY_WHATSAPP_FLEET_SECRET_REF,
+  );
+  return value === null ? null : parsePrimaryWhatsAppFleetCredential(value);
+}
+
+export async function deletePrimaryWhatsAppFleetCredential(
+  paths = primaryChannelCredentialPaths(),
+): Promise<void> {
+  await withPrimaryChannelFileAccess(paths, async () => {
+    const store = await openPrimaryChannelStore(paths);
+    await store.delete(PRIMARY_WHATSAPP_FLEET_SECRET_REF);
+  });
 }
 
 export async function primaryTelegramEnvironmentStatus(
@@ -100,6 +194,39 @@ export async function primaryTelegramEnvironmentStatus(
     declared: token !== null,
     migratable: token !== null && file.token !== null && secretEqual(token, file.token),
     entryCount: file.entryCount,
+  };
+}
+
+export async function primaryWhatsAppEnvironmentStatus(
+  environment: NodeJS.ProcessEnv = process.env,
+  paths = primaryChannelCredentialPaths(),
+): Promise<PrimaryWhatsAppEnvironmentStatus> {
+  const declared = primaryWhatsAppEnvironmentDeclared(environment);
+  const file = await readWhatsAppEnvironment(paths.environmentFile);
+  let processCredential: PrimaryWhatsAppFleetCredential | null = null;
+  let configurationValid = true;
+  try {
+    processCredential = legacyPrimaryWhatsAppFleetCredential(environment);
+  } catch {
+    configurationValid = false;
+  }
+  const expectedEntries = PRIMARY_WHATSAPP_ENV_KEYS.filter((key) =>
+    Boolean(environment[key]?.trim())
+  ).length;
+  const migratable = Boolean(
+    declared &&
+    configurationValid &&
+    processCredential &&
+    file.configuration &&
+    file.entryCount === expectedEntries &&
+    file.entriesUnique &&
+    samePrimaryWhatsAppFleet(processCredential, file.configuration),
+  );
+  return {
+    declared,
+    migratable,
+    entryCount: file.entryCount,
+    configurationValid,
   };
 }
 
@@ -154,6 +281,56 @@ export async function migratePrimaryTelegramBotCredentialFromEnvironment(
   delete environment.TELEGRAM_BOT_TOKEN;
 }
 
+/** Memindahkan konfigurasi akun WhatsApp legacy setelah sesi diverifikasi caller. */
+export async function migratePrimaryWhatsAppFleetFromEnvironment(
+  options: {
+    environment?: NodeJS.ProcessEnv;
+    paths?: PrimaryChannelCredentialPaths;
+  } = {},
+): Promise<PrimaryWhatsAppFleetCredential> {
+  const environment = options.environment ?? process.env;
+  const paths = options.paths ?? primaryChannelCredentialPaths();
+  let candidate: PrimaryWhatsAppFleetCredential;
+  try {
+    candidate = legacyPrimaryWhatsAppFleetCredential(environment) ??
+      (() => {
+        throw primaryCredentialError(
+          "PRIMARY_WHATSAPP_ENVIRONMENT_MISSING",
+          "Konfigurasi WhatsApp layanan tidak ditemukan di environment.",
+        );
+      })();
+  } catch (error) {
+    if (error instanceof Error && "code" in error) throw error;
+    throw primaryCredentialError(
+      "PRIMARY_WHATSAPP_ENVIRONMENT_INVALID",
+      "Konfigurasi WhatsApp layanan di environment tidak sah.",
+    );
+  }
+  const status = await primaryWhatsAppEnvironmentStatus(environment, paths);
+  if (!status.migratable) {
+    throw primaryCredentialError(
+      "PRIMARY_WHATSAPP_ENVIRONMENT_AMBIGUOUS",
+      "Sumber konfigurasi WhatsApp layanan tidak dapat dimigrasikan otomatis.",
+    );
+  }
+  const current = await loadPrimaryWhatsAppFleetCredential(paths);
+  if (current && !samePrimaryWhatsAppFleet(current, candidate)) {
+    throw primaryCredentialError(
+      "PRIMARY_WHATSAPP_CREDENTIAL_CONFLICT",
+      "Konfigurasi WhatsApp Console dan environment berbeda.",
+    );
+  }
+  await savePrimaryWhatsAppFleetCredential(candidate, paths);
+  const file = await readWhatsAppEnvironment(paths.environmentFile);
+  await writeDurableFileAtomic(
+    paths.environmentFile,
+    removeWhatsAppEnvironmentLines(file.contents),
+  );
+  await chmod(paths.environmentFile, 0o600).catch(() => undefined);
+  for (const key of PRIMARY_WHATSAPP_ENV_KEYS) delete environment[key];
+  return candidate;
+}
+
 /** Runtime utama memakai Console-managed credential; env tetap fallback legacy. */
 export function resolvePrimaryTelegramBotToken(
   environment: NodeJS.ProcessEnv = process.env,
@@ -190,6 +367,25 @@ export function resolvePrimaryTelegramBotToken(
   );
 }
 
+/** Runtime memakai armada Console; environment hanya fallback legacy/acceptance. */
+export function resolvePrimaryWhatsAppFleetCredential(
+  environment: NodeJS.ProcessEnv = process.env,
+  paths = primaryChannelCredentialPaths(),
+): PrimaryWhatsAppFleetCredential | null {
+  if (environment.HARVY_WHATSAPP_CONFIG_EPHEMERAL === "live-acceptance-v1") {
+    return legacyPrimaryWhatsAppFleetCredential(environment);
+  }
+  const managed = loadPrimaryWhatsAppFleetCredentialSync(paths);
+  const legacy = legacyPrimaryWhatsAppFleetCredential(environment);
+  if (managed && primaryWhatsAppEnvironmentDeclared(environment)) {
+    throw primaryCredentialError(
+      "CONFIG_WHATSAPP_CREDENTIAL_SOURCE_CONFLICT",
+      "Konfigurasi WhatsApp layanan tersedia di Console dan environment. Pindahkan atau hapus sumber legacy melalui npm run console:setup.",
+    );
+  }
+  return managed ?? legacy;
+}
+
 export function primaryTelegramBotToken(value: string): string {
   const normalized = value.trim();
   if (!PRIMARY_TELEGRAM_BOT_TOKEN_PATTERN.test(normalized)) {
@@ -210,6 +406,23 @@ async function openPrimaryChannelStore(
     "PRIMARY_CHANNEL_SECRET_FILE_INVALID",
   );
   return new EncryptedFileSecretStore(paths.secretFile, key);
+}
+
+function withPrimaryChannelFileAccess<T>(
+  paths: PrimaryChannelCredentialPaths,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const key = resolve(paths.secretFile);
+  const previous = PRIMARY_CHANNEL_FILE_QUEUES.get(key) ?? Promise.resolve();
+  const result = previous.then(operation, operation);
+  const settled = result.then(() => undefined, () => undefined);
+  PRIMARY_CHANNEL_FILE_QUEUES.set(key, settled);
+  void settled.then(() => {
+    if (PRIMARY_CHANNEL_FILE_QUEUES.get(key) === settled) {
+      PRIMARY_CHANNEL_FILE_QUEUES.delete(key);
+    }
+  });
+  return result;
 }
 
 async function loadOrCreatePrimaryChannelKey(file: string): Promise<Buffer> {
@@ -427,6 +640,234 @@ function parsePrimaryTelegramBotCredential(
     version: 1,
     botToken: record["botToken"],
   });
+}
+
+function validatePrimaryWhatsAppFleetCredential(
+  value: PrimaryWhatsAppFleetCredential,
+): PrimaryWhatsAppFleetCredential {
+  if (
+    !value || value.version !== 1 ||
+    typeof value.enabled !== "boolean" ||
+    typeof value.privateEnabled !== "boolean" ||
+    !Array.isArray(value.accounts)
+  ) {
+    throw primaryCredentialError(
+      "PRIMARY_WHATSAPP_FLEET_INVALID",
+      "Konfigurasi armada WhatsApp layanan tidak sah.",
+    );
+  }
+  const seen = new Set<string>();
+  const phones = new Set<string>();
+  const accounts = value.accounts.map((account) => {
+    if (!account || typeof account !== "object" || Array.isArray(account)) {
+      throw primaryCredentialError(
+        "PRIMARY_WHATSAPP_FLEET_INVALID",
+        "Konfigurasi akun WhatsApp layanan tidak sah.",
+      );
+    }
+    const keys = Object.keys(account);
+    if (keys.some((key) => !["id", "phoneNumber", "state"].includes(key))) {
+      throw primaryCredentialError(
+        "PRIMARY_WHATSAPP_FLEET_INVALID",
+        "Konfigurasi akun WhatsApp layanan memuat field yang tidak dikenal.",
+      );
+    }
+    let id: string;
+    try {
+      id = parseWhatsAppAccountAlias(account.id);
+    } catch {
+      throw primaryCredentialError(
+        "PRIMARY_WHATSAPP_ACCOUNT_ALIAS_INVALID",
+        "Alias akun WhatsApp layanan tidak sah.",
+      );
+    }
+    const folded = id.toLocaleLowerCase("en-US");
+    if (seen.has(folded)) {
+      throw primaryCredentialError(
+        "PRIMARY_WHATSAPP_ACCOUNT_ALIAS_DUPLICATE",
+        "Alias akun WhatsApp layanan harus unik.",
+      );
+    }
+    seen.add(folded);
+    if (!["active", "pending", "removing"].includes(account.state)) {
+      throw primaryCredentialError(
+        "PRIMARY_WHATSAPP_ACCOUNT_STATE_INVALID",
+        "Status akun WhatsApp layanan tidak sah.",
+      );
+    }
+    let phoneNumber: string | null = null;
+    if (account.phoneNumber !== null) {
+      try {
+        phoneNumber = parseWhatsAppPhoneNumber(account.phoneNumber);
+      } catch {
+        throw primaryCredentialError(
+          "PRIMARY_WHATSAPP_PHONE_INVALID",
+          "Identitas akun WhatsApp layanan tidak sah.",
+        );
+      }
+      if (phones.has(phoneNumber)) {
+        throw primaryCredentialError(
+          "PRIMARY_WHATSAPP_PHONE_DUPLICATE",
+          "Identitas akun WhatsApp layanan harus unik.",
+        );
+      }
+      phones.add(phoneNumber);
+    }
+    if (account.state === "active" && phoneNumber === null) {
+      throw primaryCredentialError(
+        "PRIMARY_WHATSAPP_ACTIVE_IDENTITY_MISSING",
+        "Akun WhatsApp aktif harus memiliki identitas terverifikasi.",
+      );
+    }
+    return {
+      id,
+      phoneNumber,
+      state: account.state,
+    } as PrimaryWhatsAppFleetAccount;
+  });
+  return {
+    version: 1,
+    enabled: value.enabled,
+    privateEnabled: value.privateEnabled,
+    accounts,
+  };
+}
+
+function parsePrimaryWhatsAppFleetCredential(
+  value: string,
+): PrimaryWhatsAppFleetCredential {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw primaryCredentialError(
+      "PRIMARY_WHATSAPP_FLEET_INVALID",
+      "Konfigurasi armada WhatsApp layanan tidak sah.",
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw primaryCredentialError(
+      "PRIMARY_WHATSAPP_FLEET_INVALID",
+      "Konfigurasi armada WhatsApp layanan tidak sah.",
+    );
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    Object.keys(record).some((key) =>
+      !["version", "enabled", "privateEnabled", "accounts"].includes(key)
+    ) ||
+    record["version"] !== 1 ||
+    typeof record["enabled"] !== "boolean" ||
+    typeof record["privateEnabled"] !== "boolean" ||
+    !Array.isArray(record["accounts"])
+  ) {
+    throw primaryCredentialError(
+      "PRIMARY_WHATSAPP_FLEET_INVALID",
+      "Konfigurasi armada WhatsApp layanan tidak sah.",
+    );
+  }
+  return validatePrimaryWhatsAppFleetCredential(
+    parsed as PrimaryWhatsAppFleetCredential,
+  );
+}
+
+function legacyPrimaryWhatsAppFleetCredential(
+  environment: NodeJS.ProcessEnv,
+): PrimaryWhatsAppFleetCredential | null {
+  if (!primaryWhatsAppEnvironmentDeclared(environment)) return null;
+  return validatePrimaryWhatsAppFleetCredential({
+    version: 1,
+    enabled: parseEnabled(environment.WHATSAPP_ENABLED),
+    privateEnabled: parsePrivateEnabled(environment.WHATSAPP_PRIVATE_ENABLED),
+    accounts: parseWhatsAppAccounts(environment.WHATSAPP_ACCOUNTS).map(
+      (account) => ({ ...account, state: "active" as const }),
+    ),
+  });
+}
+
+export function primaryWhatsAppFleetFromEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): PrimaryWhatsAppFleetCredential | null {
+  return legacyPrimaryWhatsAppFleetCredential(environment);
+}
+
+function primaryWhatsAppEnvironmentDeclared(
+  environment: NodeJS.ProcessEnv,
+): boolean {
+  return PRIMARY_WHATSAPP_ENV_KEYS.some((key) =>
+    Boolean(environment[key]?.trim())
+  );
+}
+
+async function readWhatsAppEnvironment(file: string): Promise<{
+  contents: string;
+  entryCount: number;
+  entriesUnique: boolean;
+  configuration: PrimaryWhatsAppFleetCredential | null;
+}> {
+  const metadata = await lstat(file).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!metadata) {
+    return {
+      contents: "",
+      entryCount: 0,
+      entriesUnique: true,
+      configuration: null,
+    };
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1) {
+    throw primaryCredentialError(
+      "PRIMARY_WHATSAPP_ENVIRONMENT_FILE_INVALID",
+      "Berkas environment tidak sah.",
+    );
+  }
+  const contents = await readFile(file, "utf8");
+  const counts = new Map<string, number>();
+  for (const line of contents.split(/\r?\n/u)) {
+    const match = /^\uFEFF?\s*(?:export\s+)?(WHATSAPP_ENABLED|WHATSAPP_PRIVATE_ENABLED|WHATSAPP_ACCOUNTS)\s*=/u.exec(line);
+    if (match?.[1]) counts.set(match[1], (counts.get(match[1]) ?? 0) + 1);
+  }
+  let parsed: NodeJS.ProcessEnv;
+  try {
+    parsed = parseEnv(contents);
+  } catch {
+    throw primaryCredentialError(
+      "PRIMARY_WHATSAPP_ENVIRONMENT_FILE_INVALID",
+      "Berkas environment tidak dapat dibaca dengan aman.",
+    );
+  }
+  let configuration: PrimaryWhatsAppFleetCredential | null = null;
+  try {
+    configuration = legacyPrimaryWhatsAppFleetCredential(parsed);
+  } catch {
+    configuration = null;
+  }
+  return {
+    contents,
+    entryCount: [...counts.values()].reduce((sum, value) => sum + value, 0),
+    entriesUnique: [...counts.values()].every((value) => value === 1),
+    configuration,
+  };
+}
+
+function removeWhatsAppEnvironmentLines(contents: string): string {
+  const newline = contents.includes("\r\n") ? "\r\n" : "\n";
+  const finalNewline = /\r?\n$/u.test(contents);
+  const filtered = contents.split(/\r?\n/u)
+    .filter((line) => !PRIMARY_WHATSAPP_ENV_LINE.test(line));
+  if (finalNewline && filtered.at(-1) === "") filtered.pop();
+  const rewritten = filtered.join(newline);
+  return finalNewline ? `${rewritten}${newline}` : rewritten;
+}
+
+function samePrimaryWhatsAppFleet(
+  left: PrimaryWhatsAppFleetCredential,
+  right: PrimaryWhatsAppFleetCredential,
+): boolean {
+  return JSON.stringify(validatePrimaryWhatsAppFleetCredential(left)) ===
+    JSON.stringify(validatePrimaryWhatsAppFleetCredential(right));
 }
 
 function optionalTelegramBotToken(value: string | undefined): string | null {

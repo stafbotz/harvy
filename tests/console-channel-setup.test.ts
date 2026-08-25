@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { ConsoleServer } from "../src/console/console-server.js";
-import { CONSOLE_HTML, CONSOLE_JS } from "../src/console/assets.js";
+import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "../src/console/assets.js";
 import { ControlPlaneService } from "../src/core/control-plane-service.js";
 import { UsageLedgerService } from "../src/core/usage-ledger-service.js";
 import {
@@ -133,10 +133,19 @@ describe("Harvy Console channel setup", () => {
           },
           whatsapp: {
             configurationValid: true,
-            enabled: true,
-            privateEnabled: true,
-            accountCount: 1,
-            declared: true,
+            enabled: false,
+            privateEnabled: false,
+            accountCount: 0,
+            declared: false,
+            configured: false,
+            source: "missing",
+            legacyEnvironment: false,
+            migrationAvailable: false,
+            runtimeActive: false,
+            restartRequired: false,
+            phase: "missing",
+            errorCode: null,
+            accounts: [],
           },
         },
       });
@@ -178,6 +187,43 @@ describe("Harvy Console channel setup", () => {
       assert.equal(managedStatus.identityBoundary.primary.telegram.source, "console");
       assert.equal(managedStatus.identityBoundary.primary.telegram.phase, "ready");
       assert.equal(JSON.stringify(managedStatus).includes(PRIMARY_BOT_TOKEN), false);
+      const primaryWhatsAppPairing = await mutation(
+        started.origin,
+        cookie,
+        csrf,
+        "/api/v1/channel-setup/primary/whatsapp/accounts",
+        {
+          method: "POST",
+          body: {
+            alias: "layanan",
+            confirmation: "PAIR_PRIMARY_WHATSAPP_ACCOUNT",
+          },
+        },
+      );
+      assert.equal(primaryWhatsAppPairing.response.status, 202);
+      await waitUntil(async () => {
+        const value = await authenticatedJson(
+          started.origin,
+          cookie,
+          "/api/v1/channel-setup",
+        );
+        return value.identityBoundary.primary.whatsapp.accounts?.[0]?.phase ===
+          "awaiting_scan";
+      });
+      const primaryQr = await fetch(
+        `${started.origin}/api/v1/channel-setup/primary/whatsapp/accounts/layanan/qr.svg`,
+        { headers: { cookie } },
+      );
+      assert.equal(primaryQr.status, 200);
+      assert.equal((await primaryQr.text()).includes(WHATSAPP_QR_PAYLOAD), false);
+      const primaryCancel = await mutation(
+        started.origin,
+        cookie,
+        csrf,
+        "/api/v1/channel-setup/primary/whatsapp/accounts/layanan/cancel",
+        { method: "POST", body: {} },
+      );
+      assert.equal(primaryCancel.response.status, 200);
       const verification = await mutation(
         started.origin,
         cookie,
@@ -233,7 +279,10 @@ describe("Harvy Console channel setup", () => {
       });
       assert.equal(qrResponse.status, 200);
       assert.match(qrResponse.headers.get("content-type") ?? "", /image\/svg\+xml/u);
-      assert.equal((await qrResponse.text()).includes(QR_PAYLOAD), false);
+      const qrSvg = await qrResponse.text();
+      assert.equal(qrSvg.includes(QR_PAYLOAD), false);
+      assert.match(qrSvg, /<path d="M/u);
+      assert.doesNotMatch(qrSvg, /<path d=""/u);
       assert.equal(
         (await fetch(`${started.origin}/api/v1/channel-setup/telegram/qr.svg`)).status,
         401,
@@ -268,7 +317,7 @@ describe("Harvy Console channel setup", () => {
         "/api/v1/channel-setup",
       ));
       assert.equal(whatsappStatus.includes(WHATSAPP_QR_PAYLOAD), false);
-      assert.deepEqual(whatsapp.events, ["revoke", "pair"]);
+      assert.deepEqual(whatsapp.events.slice(-2), ["revoke", "pair"]);
 
       const cancelReplacement = await mutation(
         started.origin,
@@ -333,6 +382,8 @@ describe("Harvy Console channel setup", () => {
         "detail",
         "qr-stage",
         "qr",
+        "qr-load-status",
+        "qr-retry",
         "cancel",
         "pair",
         "card",
@@ -368,6 +419,26 @@ describe("Harvy Console channel setup", () => {
     );
     assert.match(
       CONSOLE_JS,
+      /QR gagal dimuat\. Pairing tetap berjalan\./u,
+      "Kegagalan renderer QR tidak boleh tampil sebagai kotak putih tanpa penjelasan.",
+    );
+    assert.match(
+      CONSOLE_JS,
+      /fetch\(url,\{method:"GET",credentials:"same-origin",cache:"no-store"/u,
+      "QR harus diambil eksplisit agar status HTTP dan MIME dapat diverifikasi.",
+    );
+    assert.match(
+      CONSOLE_JS,
+      /surface\.replaceChildren\(svg\);setQrImageState\(prefix,"ready"\)/u,
+      "QR tervalidasi harus dipasang inline sebelum status siap ditampilkan.",
+    );
+    assert.doesNotMatch(
+      CONSOLE_HTML,
+      /<img id="(?:telegram-tester|whatsapp-(?:harvy|tester))-qr"/u,
+      "Surface QR tidak boleh kembali bergantung pada load elemen gambar opaque.",
+    );
+    assert.match(
+      CONSOLE_JS,
       /channels\.whatsapp\.ready===true/u,
       "Readiness WhatsApp harus berasal dari hasil pemeriksaan backend.",
     );
@@ -383,13 +454,53 @@ describe("Harvy Console channel setup", () => {
     );
     assert.match(
       CONSOLE_HTML,
-      /<details id="channel-settings" class="channel-settings">/u,
-      "Pengaturan credential harus menjadi progressive disclosure tertutup.",
+      /<section id="channel-settings" class="channel-settings hidden"/u,
+      "Pengaturan credential harus tersembunyi sampai operator memilih Kelola.",
     );
     assert.match(
       CONSOLE_JS,
-      /if\(!allReady\|\|primaryNeedsAction\)settings\.open=true;else if\(!wasReady\)settings\.open=false/u,
-      "Setup harus terbuka saat belum lengkap dan menutup setelah seluruh identitas tersedia.",
+      /settings\.classList\.remove\("hidden"\)/u,
+      "Panel pengaturan harus dibuka dari tindakan eksplisit operator.",
+    );
+    assert.match(
+      CONSOLE_HTML,
+      /data-channel-environment="service"[\s\S]*>Layanan<[\s\S]*data-channel-environment="testing"[\s\S]*>Pengujian</u,
+      "Kanal layanan dan pengujian harus menjadi dua tab halaman yang jelas.",
+    );
+    assert.match(
+      CONSOLE_JS,
+      /function selectChannelEnvironment\(environment,focus=false\)/u,
+      "Setup harus menampilkan satu lingkungan pada satu waktu.",
+    );
+    assert.match(
+      CONSOLE_JS,
+      /function selectChannelSettings\(channel\)/u,
+      "Pengelolaan koneksi harus menampilkan satu konteks kanal pada satu waktu.",
+    );
+    assert.match(
+      CONSOLE_HTML,
+      /id="primary-whatsapp-account-form"[\s\S]*id="primary-whatsapp-account-list"|id="primary-whatsapp-account-list"[\s\S]*id="primary-whatsapp-account-form"/u,
+      "Pengaturan layanan harus menyediakan armada WhatsApp multi-akun.",
+    );
+    assert.match(
+      CONSOLE_JS,
+      /function renderPrimaryWhatsAppFleet\(whatsapp\)/u,
+      "Status akun layanan harus dirender dari snapshot, bukan template statis.",
+    );
+    assert.match(
+      CONSOLE_CSS,
+      /\.setup-only \.sidebar\{display:none\}/u,
+      "Mode setup satu halaman tidak boleh menyisakan sidebar kosong.",
+    );
+    assert.doesNotMatch(
+      CONSOLE_HTML,
+      /Isi percakapan tidak ditampilkan di Console|Nomor (?:A|B)|Harvy uji A|tester B/u,
+      "Sidebar privasi dan label urutan A/B tidak boleh muncul pada UI setup.",
+    );
+    assert.match(
+      CONSOLE_JS,
+      /async function restore\(\)\{const epoch=authEpoch;[\s\S]*if\(epoch!==authEpoch\)return;showLogin\(\)/u,
+      "Respons restore lama tidak boleh mengembalikan UI ke login setelah autentikasi baru berhasil.",
     );
     assert.match(
       CONSOLE_JS,
@@ -491,6 +602,7 @@ async function authenticatedJson(
         privateEnabled: boolean;
         accountCount: number;
         declared: boolean;
+        accounts?: Array<{ phase: string }>;
       };
     };
   };

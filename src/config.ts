@@ -27,14 +27,14 @@ import type {
   ConfiguredModelSource,
 } from "./domain/control-plane.js";
 import {
-  parseEnabled,
   parseLiveExplorationMessageScope,
   parsePairingMode,
-  parsePrivateEnabled,
-  parseWhatsAppAccounts,
   type WhatsAppConfig,
 } from "./whatsapp/config.js";
-import { resolvePrimaryTelegramBotToken } from
+import {
+  resolvePrimaryTelegramBotToken,
+  resolvePrimaryWhatsAppFleetCredential,
+} from
   "./operations/primary-channel-credentials.js";
 
 /**
@@ -438,12 +438,18 @@ export function loadOperationalLogConfig(): OperationalLogOptions {
 }
 
 function loadWhatsAppConfig(): WhatsAppConfig {
-  const enabled = parseEnabled(process.env.WHATSAPP_ENABLED);
-  const accounts = parseWhatsAppAccounts(process.env.WHATSAPP_ACCOUNTS);
+  const fleet = resolvePrimaryWhatsAppFleetCredential();
+  const enabled = fleet?.enabled ?? false;
+  const accounts = fleet?.accounts
+    .filter((account) => account.state === "active")
+    .map((account) => ({
+      id: account.id,
+      phoneNumber: account.phoneNumber!,
+    })) ?? [];
   if (enabled && accounts.length === 0) {
     throw configurationError(
       "CONFIG_WHATSAPP_ACCOUNTS_MISSING",
-      "WHATSAPP_ACCOUNTS wajib berisi minimal satu akun ketika WhatsApp aktif.",
+      "WhatsApp layanan aktif tetapi belum memiliki sesi siap pakai. Selesaikan pairing melalui npm run console:setup.",
     );
   }
 
@@ -464,9 +470,7 @@ function loadWhatsAppConfig(): WhatsAppConfig {
 
   return {
     enabled,
-    privateEnabled: parsePrivateEnabled(
-      process.env.WHATSAPP_PRIVATE_ENABLED,
-    ),
+    privateEnabled: fleet?.privateEnabled ?? false,
     accounts,
     pairingMode: parsePairingMode(process.env.WHATSAPP_PAIRING_MODE),
     authFolder: resolve(

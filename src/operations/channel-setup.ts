@@ -31,18 +31,29 @@ import { installThirdPartyConsoleSecretGuard } from
 import {
   parseEnabled,
   parsePrivateEnabled,
+  parseWhatsAppAccountAlias,
   parseWhatsAppAccounts,
 } from "../whatsapp/config.js";
-import { isWhatsAppCredentialReady } from "../whatsapp/auth-credential.js";
 import {
+  isWhatsAppCredentialReady,
+  whatsAppCredentialJids,
+} from "../whatsapp/auth-credential.js";
+import {
+  loadPrimaryWhatsAppFleetCredential,
   deletePrimaryTelegramBotCredential,
   loadPrimaryTelegramBotCredential,
   migratePrimaryTelegramBotCredentialFromEnvironment,
+  migratePrimaryWhatsAppFleetFromEnvironment,
   primaryChannelCredentialPaths,
   primaryTelegramBotToken,
   primaryTelegramEnvironmentStatus,
+  primaryWhatsAppEnvironmentStatus,
+  primaryWhatsAppFleetFromEnvironment,
   savePrimaryTelegramBotCredential,
+  savePrimaryWhatsAppFleetCredential,
   type PrimaryChannelCredentialPaths,
+  type PrimaryWhatsAppFleetAccount,
+  type PrimaryWhatsAppFleetCredential,
 } from "./primary-channel-credentials.js";
 
 const DEFAULT_PAIRING_TIMEOUT_MS = 5 * 60_000;
@@ -77,6 +88,11 @@ export type WhatsAppSessionVerificationStatus =
   | "accepted"
   | "rejected"
   | "unreachable";
+
+export interface PrimaryWhatsAppAccountSnapshot extends WhatsAppPairingSnapshot {
+  id: string;
+  lifecycle: "active" | "pending" | "removing";
+}
 
 export interface WhatsAppSessionVerificationSnapshot {
   status: WhatsAppSessionVerificationStatus;
@@ -127,6 +143,15 @@ export interface PrimaryChannelConfigurationSnapshot {
     privateEnabled: boolean;
     accountCount: number;
     declared: boolean;
+    configured?: boolean;
+    source?: "console" | "environment" | "missing" | "conflict";
+    legacyEnvironment?: boolean;
+    migrationAvailable?: boolean;
+    runtimeActive?: boolean;
+    restartRequired?: boolean;
+    phase?: "missing" | "unchecked" | "checking" | "ready" | "error";
+    errorCode?: string | null;
+    accounts?: PrimaryWhatsAppAccountSnapshot[];
   };
 }
 
@@ -202,6 +227,8 @@ export interface ChannelSetupServiceOptions {
   environment?: NodeJS.ProcessEnv;
   primaryRuntimeActive?: boolean;
   primaryTelegramRuntimeToken?: string | null;
+  primaryWhatsAppAuthRoot?: string;
+  primaryWhatsAppRuntimeFingerprint?: string | null;
 }
 
 interface WhatsAppVerificationState {
@@ -225,6 +252,14 @@ interface PrimaryTelegramEnvironmentObservation {
   errorCode: string | null;
 }
 
+interface PrimaryWhatsAppEnvironmentObservation {
+  configuration: PrimaryWhatsAppFleetCredential | null;
+  declared: boolean;
+  migratable: boolean;
+  configurationValid: boolean;
+  errorCode: string | null;
+}
+
 export class ChannelSetupError extends Error {
   constructor(
     readonly code: string,
@@ -236,9 +271,9 @@ export class ChannelSetupError extends Error {
 }
 
 /**
- * Mengelola credential khusus live acceptance. Snapshot tidak pernah membawa
- * token, session, nomor, JID, atau payload QR; QR hanya tersedia sebagai SVG
- * sementara melalui endpoint Console yang sudah terautentikasi.
+ * Mengelola credential kanal layanan dan live acceptance. Snapshot tidak
+ * pernah membawa token, session, nomor, JID, atau payload QR; QR hanya tersedia
+ * sebagai SVG sementara melalui endpoint Console yang sudah terautentikasi.
  */
 export class ChannelSetupService {
   private readonly paths: LiveAcceptancePaths;
@@ -253,6 +288,8 @@ export class ChannelSetupService {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly primaryRuntimeActive: boolean;
   private readonly primaryTelegramRuntimeFingerprint: string | null;
+  private readonly primaryWhatsAppAuthRoot: string;
+  private readonly primaryWhatsAppRuntimeFingerprint: string | null;
   private readonly telegramState = emptyPairingState();
   private readonly whatsappState: Record<WhatsAppTestRole, PairingState> = {
     harvy: emptyPairingState(),
@@ -274,10 +311,21 @@ export class ChannelSetupService {
   private lock: LocalRuntimeLock | null = null;
   private initialization: Promise<void> | null = null;
   private readonly whatsappOperations = new Map<WhatsAppTestRole, ActiveOperation>();
+  private readonly primaryWhatsAppState = new Map<string, PairingState>();
+  private readonly primaryWhatsAppVerificationState = new Map<
+    string,
+    WhatsAppVerificationState
+  >();
+  private readonly primaryWhatsAppOperations = new Map<string, ActiveOperation>();
+  private readonly primaryWhatsAppVerificationOperations = new Map<
+    string,
+    WhatsAppVerificationOperation
+  >();
   private readonly whatsappVerificationOperations = new Map<
     WhatsAppTestRole,
     WhatsAppVerificationOperation
   >();
+  private primaryWhatsAppMutationActive = false;
   private botPhase: "idle" | "validating" | "error" = "idle";
   private botErrorCode: string | null = null;
   private primaryBotPhase: "idle" | "validating" | "ready" | "error" = "idle";
@@ -307,6 +355,13 @@ export class ChannelSetupService {
       options.primaryTelegramRuntimeToken?.trim()
         ? credentialFingerprint(options.primaryTelegramRuntimeToken)
         : null;
+    this.primaryWhatsAppAuthRoot = resolve(
+      options.primaryWhatsAppAuthRoot ??
+        this.environment.WHATSAPP_AUTH_FOLDER ??
+        "./data/whatsapp-auth",
+    );
+    this.primaryWhatsAppRuntimeFingerprint =
+      options.primaryWhatsAppRuntimeFingerprint ?? null;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs < 1_000) {
       throw new Error("Timeout pairing minimal 1000 ms.");
     }
@@ -362,6 +417,7 @@ export class ChannelSetupService {
       whatsappTester,
       primaryTelegramCredential,
       primaryTelegramEnvironment,
+      primaryWhatsApp,
     ] = await Promise.all([
       this.withCredentialAccess(() => Promise.all([
         loadTelegramBotCredential(this.paths),
@@ -371,6 +427,7 @@ export class ChannelSetupService {
       this.whatsapp.configured(this.paths.whatsappTesterAuth),
       loadPrimaryTelegramBotCredential(this.primaryCredentialPaths),
       this.observePrimaryTelegramEnvironment(),
+      this.primaryWhatsAppSnapshot(),
     ]);
     const botConfigured = bot !== null;
     const testerConfigured = tester !== null;
@@ -401,6 +458,7 @@ export class ChannelSetupService {
         primary: {
           ...this.primaryChannels,
           telegram: primaryTelegram,
+          whatsapp: primaryWhatsApp,
         },
       },
       telegram: {
@@ -433,7 +491,10 @@ export class ChannelSetupService {
    */
   async verifyWhatsAppSessions(): Promise<void> {
     this.assertReady();
-    if (this.whatsappOperations.size > 0) {
+    if (
+      this.whatsappOperations.size > 0 ||
+      this.primaryWhatsAppOperations.size > 0
+    ) {
       throw conflict(
         "CHANNEL_WHATSAPP_OPERATION_ACTIVE",
         "Selesaikan operasi WhatsApp sebelum memeriksa koneksi.",
@@ -447,6 +508,264 @@ export class ChannelSetupService {
     this.reconcileWhatsAppVerification("tester", testerConfigured);
     if (harvyConfigured) this.startWhatsAppVerification("harvy", true);
     if (testerConfigured) this.startWhatsAppVerification("tester", true);
+  }
+
+  async verifyPrimaryWhatsAppSessions(): Promise<void> {
+    const release = this.beginPrimaryWhatsAppMutation();
+    try {
+      this.assertReady();
+      this.assertPrimaryWhatsAppMutable();
+      this.assertNoPrimaryWhatsAppOperation();
+      const fleet = await this.requireManagedPrimaryWhatsAppFleet();
+      for (const account of fleet.accounts) {
+        if (account.state !== "active") continue;
+        const configured = await this.whatsapp.configured(
+          this.primaryWhatsAppAccountFolder(account.id),
+        );
+        this.reconcilePrimaryWhatsAppVerification(account.id, configured);
+        if (configured) {
+          this.startPrimaryWhatsAppVerification(account.id, true);
+        }
+      }
+    } finally {
+      release();
+    }
+  }
+
+  async migratePrimaryWhatsAppFleet(): Promise<void> {
+    const release = this.beginPrimaryWhatsAppMutation();
+    try {
+      this.assertReady();
+      this.assertPrimaryWhatsAppMutable();
+      this.assertNoPrimaryWhatsAppOperation();
+      const observation = await this.observePrimaryWhatsAppEnvironment();
+      if (
+        !observation.configuration ||
+        !observation.migratable ||
+        !observation.configurationValid
+      ) {
+        throw rejected(
+          "PRIMARY_WHATSAPP_ENVIRONMENT_NOT_MIGRATABLE",
+          "Konfigurasi WhatsApp environment tidak dapat dipindahkan otomatis.",
+        );
+      }
+      for (const account of observation.configuration.accounts) {
+        const folder = this.primaryWhatsAppAccountFolder(account.id);
+        if (!await this.whatsapp.configured(folder)) {
+          throw rejected(
+            "PRIMARY_WHATSAPP_SESSION_MISSING",
+            "Setiap akun legacy harus mempunyai sesi lokal yang lengkap sebelum dipindahkan.",
+          );
+        }
+        const identity = await readWhatsAppAuthIdentity(folder);
+        if (identity.phoneNumber !== account.phoneNumber) {
+          throw rejected(
+            "PRIMARY_WHATSAPP_SESSION_IDENTITY_MISMATCH",
+            "Identitas sesi lokal tidak sama dengan konfigurasi akun legacy.",
+          );
+        }
+      }
+      await this.assertDistinctPrimaryWhatsAppIdentities(
+        observation.configuration.accounts,
+      );
+      try {
+        await migratePrimaryWhatsAppFleetFromEnvironment({
+          environment: this.environment,
+          paths: this.primaryCredentialPaths,
+        });
+      } catch (error) {
+        throw serviceFailure(
+          safeOperationCode(error, "PRIMARY_WHATSAPP_MIGRATION_FAILED"),
+          "Konfigurasi WhatsApp layanan belum berhasil dipindahkan.",
+        );
+      }
+    } finally {
+      release();
+    }
+  }
+
+  async updatePrimaryWhatsAppSettings(input: {
+    enabled: boolean;
+    privateEnabled: boolean;
+  }): Promise<void> {
+    const release = this.beginPrimaryWhatsAppMutation();
+    try {
+      this.assertReady();
+      this.assertPrimaryWhatsAppMutable();
+      this.assertNoPrimaryWhatsAppOperation();
+      if (
+        typeof input.enabled !== "boolean" ||
+        typeof input.privateEnabled !== "boolean"
+      ) {
+        throw rejected(
+          "PRIMARY_WHATSAPP_SETTINGS_INVALID",
+          "Pengaturan WhatsApp layanan tidak sah.",
+        );
+      }
+      const fleet = await this.requireManagedPrimaryWhatsAppFleet(true);
+      const active = fleet.accounts.filter((account) =>
+        account.state === "active"
+      );
+      if (input.enabled && active.length === 0) {
+        throw rejected(
+          "PRIMARY_WHATSAPP_ACTIVE_ACCOUNT_MISSING",
+          "Pasangkan sedikitnya satu akun layanan sebelum mengaktifkan WhatsApp.",
+        );
+      }
+      await this.withCredentialAccess(() => savePrimaryWhatsAppFleetCredential({
+        ...fleet,
+        enabled: input.enabled,
+        privateEnabled: input.privateEnabled,
+      }, this.primaryCredentialPaths));
+    } finally {
+      release();
+    }
+  }
+
+  async startPrimaryWhatsAppAccount(aliasValue: string): Promise<void> {
+    const release = this.beginPrimaryWhatsAppMutation();
+    try {
+      this.assertReady();
+      this.assertPrimaryWhatsAppMutable();
+      this.assertNoPrimaryWhatsAppOperation();
+      const id = primaryWhatsAppAlias(aliasValue);
+      const fleet = await this.requireManagedPrimaryWhatsAppFleet(true);
+      const existing = fleet.accounts.find((account) =>
+        sameAlias(account.id, id)
+      );
+      if (existing?.state === "active") {
+        throw conflict(
+          "PRIMARY_WHATSAPP_ACCOUNT_ALREADY_ACTIVE",
+          "Akun layanan ini sudah aktif. Gunakan pasangan ulang untuk mengganti sesinya.",
+        );
+      }
+      if (existing?.state === "removing") {
+        throw conflict(
+          "PRIMARY_WHATSAPP_ACCOUNT_REMOVAL_PENDING",
+          "Selesaikan penghapusan akun sebelum memasangkannya kembali.",
+        );
+      }
+      const accountId = existing?.id ?? id;
+      if (!existing) {
+        await this.withCredentialAccess(() => savePrimaryWhatsAppFleetCredential({
+          ...fleet,
+          accounts: [...fleet.accounts, {
+            id: accountId,
+            phoneNumber: null,
+            state: "pending" as const,
+          }],
+        }, this.primaryCredentialPaths));
+      }
+      this.beginPrimaryWhatsAppPairing(accountId, false);
+    } finally {
+      release();
+    }
+  }
+
+  async startPrimaryWhatsAppReplace(aliasValue: string): Promise<void> {
+    const release = this.beginPrimaryWhatsAppMutation();
+    try {
+      this.assertReady();
+      this.assertPrimaryWhatsAppMutable();
+      this.assertNoPrimaryWhatsAppOperation();
+      const id = primaryWhatsAppAlias(aliasValue);
+      const fleet = await this.requireManagedPrimaryWhatsAppFleet();
+      const account = fleet.accounts.find((candidate) =>
+        sameAlias(candidate.id, id)
+      );
+      if (!account || account.state !== "active") {
+        throw rejected(
+          "PRIMARY_WHATSAPP_ACCOUNT_NOT_ACTIVE",
+          "Akun layanan aktif tidak ditemukan.",
+        );
+      }
+      await this.withCredentialAccess(() => savePrimaryWhatsAppFleetCredential({
+        ...fleet,
+        accounts: fleet.accounts.map((candidate) =>
+          sameAlias(candidate.id, id)
+            ? { ...candidate, state: "pending" as const }
+            : candidate
+        ),
+      }, this.primaryCredentialPaths));
+      this.beginPrimaryWhatsAppPairing(account.id, true);
+    } finally {
+      release();
+    }
+  }
+
+  async startPrimaryWhatsAppRemoval(aliasValue: string): Promise<void> {
+    const release = this.beginPrimaryWhatsAppMutation();
+    try {
+      this.assertReady();
+      this.assertPrimaryWhatsAppMutable();
+      this.assertNoPrimaryWhatsAppOperation();
+      const id = primaryWhatsAppAlias(aliasValue);
+      const fleet = await this.requireManagedPrimaryWhatsAppFleet();
+      const account = fleet.accounts.find((candidate) =>
+        sameAlias(candidate.id, id)
+      );
+      if (!account) {
+        throw rejected(
+          "PRIMARY_WHATSAPP_ACCOUNT_MISSING",
+          "Akun WhatsApp layanan tidak ditemukan.",
+        );
+      }
+      if (account.state !== "removing") {
+        await this.withCredentialAccess(() => savePrimaryWhatsAppFleetCredential({
+          ...fleet,
+          accounts: fleet.accounts.map((candidate) =>
+            sameAlias(candidate.id, id)
+              ? { ...candidate, state: "removing" as const }
+              : candidate
+          ),
+        }, this.primaryCredentialPaths));
+      }
+      const operation = this.createOperation();
+      this.primaryWhatsAppOperations.set(account.id, operation);
+      setPairingState(this.primaryWhatsAppPairingState(account.id), "revoking");
+      operation.task = this.runPrimaryWhatsAppRemoval(account.id, operation);
+    } finally {
+      release();
+    }
+  }
+
+  async cancelPrimaryWhatsApp(aliasValue: string): Promise<void> {
+    const release = this.beginPrimaryWhatsAppMutation();
+    try {
+      this.assertReady();
+      const id = this.primaryWhatsAppKnownId(primaryWhatsAppAlias(aliasValue));
+      const operation = this.primaryWhatsAppOperations.get(id);
+      if (!operation) {
+        setPairingState(this.primaryWhatsAppPairingState(id), "idle");
+        return;
+      }
+      operation.cancelled = true;
+      clearQr(this.primaryWhatsAppPairingState(id));
+      operation.controller.abort();
+      const settled = await settleCancellation(operation.task);
+      if (!settled && this.currentPrimaryWhatsApp(id, operation)) {
+        setPairingError(
+          this.primaryWhatsAppPairingState(id),
+          "PRIMARY_WHATSAPP_CANCEL_PENDING",
+        );
+      }
+    } finally {
+      release();
+    }
+  }
+
+  primaryWhatsAppQrSvg(aliasValue: string): string {
+    this.assertReady();
+    const id = this.primaryWhatsAppKnownId(primaryWhatsAppAlias(aliasValue));
+    const state = this.primaryWhatsAppState.get(id);
+    if (!state?.qr || !state.qrExpiresAt || state.qrExpiresAt <= this.now()) {
+      throw new ChannelSetupError(
+        "CHANNEL_PAIRING_QR_UNAVAILABLE",
+        404,
+        "QR tidak tersedia atau sudah kedaluwarsa.",
+      );
+    }
+    return renderQrSvg(state.qr);
   }
 
   async setPrimaryTelegramBotToken(value: string): Promise<void> {
@@ -678,7 +997,10 @@ export class ChannelSetupService {
 
   startWhatsApp(role: WhatsAppTestRole): void {
     this.assertReady();
-    if (this.whatsappOperations.size > 0) {
+    if (
+      this.whatsappOperations.size > 0 ||
+      this.primaryWhatsAppOperations.size > 0
+    ) {
       throw conflict("CHANNEL_WHATSAPP_OPERATION_ACTIVE", "Selesaikan satu operasi WhatsApp sebelum memulai role lain.");
     }
     this.assertNoWhatsAppVerification();
@@ -690,7 +1012,10 @@ export class ChannelSetupService {
 
   startWhatsAppRevoke(role: WhatsAppTestRole): void {
     this.assertReady();
-    if (this.whatsappOperations.size > 0) {
+    if (
+      this.whatsappOperations.size > 0 ||
+      this.primaryWhatsAppOperations.size > 0
+    ) {
       throw conflict("CHANNEL_WHATSAPP_OPERATION_ACTIVE", "Selesaikan satu operasi WhatsApp sebelum mencabut role lain.");
     }
     this.assertNoWhatsAppVerification();
@@ -702,7 +1027,10 @@ export class ChannelSetupService {
 
   startWhatsAppReplace(role: WhatsAppTestRole): void {
     this.assertReady();
-    if (this.whatsappOperations.size > 0) {
+    if (
+      this.whatsappOperations.size > 0 ||
+      this.primaryWhatsAppOperations.size > 0
+    ) {
       throw conflict("CHANNEL_WHATSAPP_OPERATION_ACTIVE", "Selesaikan satu operasi WhatsApp sebelum mengganti sesi.");
     }
     this.assertNoWhatsAppVerification();
@@ -766,7 +1094,16 @@ export class ChannelSetupService {
       operation.controller.abort();
       tasks.push(operation.task);
     }
+    for (const operation of this.primaryWhatsAppOperations.values()) {
+      operation.cancelled = true;
+      operation.controller.abort();
+      tasks.push(operation.task);
+    }
     for (const operation of this.whatsappVerificationOperations.values()) {
+      operation.controller.abort();
+      tasks.push(operation.task);
+    }
+    for (const operation of this.primaryWhatsAppVerificationOperations.values()) {
       operation.controller.abort();
       tasks.push(operation.task);
     }
@@ -776,6 +1113,314 @@ export class ChannelSetupService {
     const lock = this.lock;
     this.lock = null;
     await lock?.release();
+  }
+
+  private async observePrimaryWhatsAppEnvironment(): Promise<
+    PrimaryWhatsAppEnvironmentObservation
+  > {
+    try {
+      const status = await primaryWhatsAppEnvironmentStatus(
+        this.environment,
+        this.primaryCredentialPaths,
+      );
+      let configuration: PrimaryWhatsAppFleetCredential | null = null;
+      try {
+        configuration = primaryWhatsAppFleetFromEnvironment(this.environment);
+      } catch (error) {
+        return {
+          configuration: null,
+          declared: status.declared,
+          migratable: false,
+          configurationValid: false,
+          errorCode: safeOperationCode(
+            error,
+            "PRIMARY_WHATSAPP_ENVIRONMENT_INVALID",
+          ),
+        };
+      }
+      return {
+        configuration,
+        declared: status.declared,
+        migratable: status.migratable,
+        configurationValid: status.configurationValid,
+        errorCode: status.configurationValid
+          ? status.entryCount > 3
+            ? "PRIMARY_WHATSAPP_ENVIRONMENT_AMBIGUOUS"
+            : null
+          : "PRIMARY_WHATSAPP_ENVIRONMENT_INVALID",
+      };
+    } catch (error) {
+      return {
+        configuration: null,
+        declared: [
+          this.environment.WHATSAPP_ENABLED,
+          this.environment.WHATSAPP_PRIVATE_ENABLED,
+          this.environment.WHATSAPP_ACCOUNTS,
+        ].some((value) => Boolean(value?.trim())),
+        migratable: false,
+        configurationValid: false,
+        errorCode: safeOperationCode(
+          error,
+          "PRIMARY_WHATSAPP_ENVIRONMENT_INVALID",
+        ),
+      };
+    }
+  }
+
+  private async primaryWhatsAppSnapshot(): Promise<
+    PrimaryChannelConfigurationSnapshot["whatsapp"]
+  > {
+    const [managed, environment] = await Promise.all([
+      loadPrimaryWhatsAppFleetCredential(this.primaryCredentialPaths),
+      this.observePrimaryWhatsAppEnvironment(),
+    ]);
+    const sourceConflict = Boolean(managed && environment.declared);
+    const source = sourceConflict || environment.errorCode
+      ? "conflict" as const
+      : managed
+        ? "console" as const
+        : environment.configuration
+          ? "environment" as const
+          : "missing" as const;
+    const fleet = managed ?? environment.configuration;
+    const accounts = fleet?.accounts ?? [];
+    const now = this.now();
+    const sessionObservations = await Promise.all(accounts.map(async (account) => {
+      if (
+        account.state !== "active" ||
+        this.primaryWhatsAppOperations.has(account.id)
+      ) {
+        return { configured: false, errorCode: null };
+      }
+      try {
+        return {
+          configured: await this.whatsapp.configured(
+            this.primaryWhatsAppAccountFolder(account.id),
+          ),
+          errorCode: null,
+        };
+      } catch (error) {
+        return {
+          configured: false,
+          errorCode: safeOperationCode(
+            error,
+            "PRIMARY_WHATSAPP_SESSION_OBSERVATION_FAILED",
+          ),
+        };
+      }
+    }));
+    const accountSnapshots = accounts.map((account, index) => {
+      const observation = sessionObservations[index];
+      const isConfigured = observation?.configured === true;
+      const state = this.primaryWhatsAppPairingState(account.id);
+      const verification = this.primaryWhatsAppSessionState(account.id);
+      this.reconcilePrimaryWhatsAppVerification(account.id, isConfigured);
+      if (
+        source === "console" &&
+        account.state === "active" &&
+        !this.primaryRuntimeActive
+      ) {
+        this.maybeVerifyPrimaryWhatsApp(account.id, isConfigured, now);
+      }
+      const snapshot = publicWhatsAppPairingState(
+        state,
+        verification,
+        isConfigured,
+        now,
+      );
+      if (observation?.errorCode) {
+        snapshot.phase = "error";
+        snapshot.errorCode = observation.errorCode;
+        snapshot.session = {
+          status: "unreachable",
+          checkedAt: null,
+          errorCode: observation.errorCode,
+        };
+      }
+      return {
+        id: account.id,
+        lifecycle: account.state,
+        ...snapshot,
+      } satisfies PrimaryWhatsAppAccountSnapshot;
+    });
+    this.prunePrimaryWhatsAppState(new Set(accounts.map((account) => account.id)));
+    const activeAccounts = accounts.filter((account) => account.state === "active");
+    const fingerprint = fleet
+      ? primaryWhatsAppRuntimeFingerprint({
+          enabled: fleet.enabled,
+          privateEnabled: fleet.privateEnabled,
+          accounts: activeAccounts.flatMap((account) =>
+            account.phoneNumber
+              ? [{ id: account.id, phoneNumber: account.phoneNumber }]
+              : []
+          ),
+        })
+      : null;
+    const restartRequired = this.primaryRuntimeActive &&
+      this.primaryWhatsAppRuntimeFingerprint !== fingerprint;
+    const busy = accountSnapshots.some((account) =>
+      pairingActiveState(account.phase) || account.session.status === "checking"
+    );
+    const sessionsReady = activeAccounts.length > 0 && accountSnapshots
+      .filter((account) => account.lifecycle === "active")
+      .every((account) =>
+        account.configured &&
+        (
+          this.primaryRuntimeActive && !restartRequired ||
+          account.session.status === "accepted"
+        )
+      );
+    const hasSessionError = accountSnapshots.some((account) =>
+      account.phase === "error" ||
+      account.session.status === "rejected"
+    );
+    const phase = source === "conflict" || hasSessionError
+      ? "error" as const
+      : !fleet || activeAccounts.length === 0
+        ? "missing" as const
+        : busy
+          ? "checking" as const
+          : sessionsReady
+            ? "ready" as const
+            : "unchecked" as const;
+    return {
+      configurationValid: source !== "conflict" && environment.configurationValid,
+      enabled: fleet?.enabled ?? false,
+      privateEnabled: fleet?.privateEnabled ?? false,
+      accountCount: activeAccounts.length,
+      declared: fleet !== null,
+      configured: managed !== null,
+      source,
+      legacyEnvironment: environment.declared,
+      migrationAvailable: environment.migratable &&
+        (!managed || sameFleetConfiguration(managed, environment.configuration)),
+      runtimeActive: this.primaryRuntimeActive,
+      restartRequired,
+      phase,
+      errorCode: sourceConflict
+        ? "PRIMARY_WHATSAPP_CREDENTIAL_SOURCE_CONFLICT"
+        : environment.errorCode,
+      accounts: accountSnapshots,
+    };
+  }
+
+  private async requireManagedPrimaryWhatsAppFleet(
+    allowCreate = false,
+  ): Promise<PrimaryWhatsAppFleetCredential> {
+    const environment = await this.observePrimaryWhatsAppEnvironment();
+    if (environment.declared) {
+      throw conflict(
+        "PRIMARY_WHATSAPP_ENVIRONMENT_PRESENT",
+        "Pindahkan konfigurasi WhatsApp dari environment ke Console terlebih dahulu.",
+      );
+    }
+    const managed = await loadPrimaryWhatsAppFleetCredential(
+      this.primaryCredentialPaths,
+    );
+    if (managed) return managed;
+    if (allowCreate) {
+      return {
+        version: 1,
+        enabled: false,
+        privateEnabled: true,
+        accounts: [],
+      };
+    }
+    throw rejected(
+      "PRIMARY_WHATSAPP_FLEET_MISSING",
+      "Armada WhatsApp layanan belum dikelola Console.",
+    );
+  }
+
+  private assertPrimaryWhatsAppMutable(): void {
+    if (this.primaryRuntimeActive) {
+      throw conflict(
+        "PRIMARY_WHATSAPP_RUNTIME_ACTIVE",
+        "Hentikan runtime Harvy lalu jalankan npm run console:setup untuk mengubah sesi layanan.",
+      );
+    }
+  }
+
+  private beginPrimaryWhatsAppMutation(): () => void {
+    if (this.primaryWhatsAppMutationActive) {
+      throw conflict(
+        "PRIMARY_WHATSAPP_MUTATION_ACTIVE",
+        "Tunggu perubahan WhatsApp layanan sebelumnya selesai.",
+      );
+    }
+    this.primaryWhatsAppMutationActive = true;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.primaryWhatsAppMutationActive = false;
+    };
+  }
+
+  private assertNoPrimaryWhatsAppOperation(): void {
+    if (
+      this.whatsappOperations.size > 0 ||
+      this.primaryWhatsAppOperations.size > 0
+    ) {
+      throw conflict(
+        "PRIMARY_WHATSAPP_OPERATION_ACTIVE",
+        "Selesaikan operasi WhatsApp yang sedang berjalan terlebih dahulu.",
+      );
+    }
+    if (
+      this.whatsappVerificationOperations.size > 0 ||
+      this.primaryWhatsAppVerificationOperations.size > 0
+    ) {
+      throw conflict(
+        "PRIMARY_WHATSAPP_VERIFICATION_ACTIVE",
+        "Tunggu pemeriksaan koneksi WhatsApp selesai.",
+      );
+    }
+  }
+
+  private primaryWhatsAppAccountFolder(id: string): string {
+    const alias = primaryWhatsAppAlias(id);
+    const folder = resolve(this.primaryWhatsAppAuthRoot, alias);
+    if (dirname(folder) !== this.primaryWhatsAppAuthRoot) {
+      throw rejected(
+        "PRIMARY_WHATSAPP_ACCOUNT_ALIAS_INVALID",
+        "Alias akun WhatsApp layanan tidak sah.",
+      );
+    }
+    return folder;
+  }
+
+  private primaryWhatsAppKnownId(id: string): string {
+    return [
+      ...this.primaryWhatsAppOperations.keys(),
+      ...this.primaryWhatsAppState.keys(),
+      ...this.primaryWhatsAppVerificationState.keys(),
+    ].find((candidate) => sameAlias(candidate, id)) ?? id;
+  }
+
+  private primaryWhatsAppPairingState(id: string): PairingState {
+    const current = this.primaryWhatsAppState.get(id);
+    if (current) return current;
+    const created = emptyPairingState();
+    this.primaryWhatsAppState.set(id, created);
+    return created;
+  }
+
+  private primaryWhatsAppSessionState(id: string): WhatsAppVerificationState {
+    const current = this.primaryWhatsAppVerificationState.get(id);
+    if (current) return current;
+    const created = emptyWhatsAppVerificationState();
+    this.primaryWhatsAppVerificationState.set(id, created);
+    return created;
+  }
+
+  private prunePrimaryWhatsAppState(known: Set<string>): void {
+    for (const id of this.primaryWhatsAppState.keys()) {
+      if (!known.has(id) && !this.primaryWhatsAppOperations.has(id)) {
+        this.primaryWhatsAppState.delete(id);
+        this.primaryWhatsAppVerificationState.delete(id);
+      }
+    }
   }
 
   private async observePrimaryTelegramEnvironment(): Promise<
@@ -994,7 +1639,10 @@ export class ChannelSetupService {
   }
 
   private assertNoWhatsAppVerification(): void {
-    if (this.whatsappVerificationOperations.size > 0) {
+    if (
+      this.whatsappVerificationOperations.size > 0 ||
+      this.primaryWhatsAppVerificationOperations.size > 0
+    ) {
       throw conflict(
         "CHANNEL_WHATSAPP_VERIFICATION_ACTIVE",
         "Tunggu pemeriksaan koneksi WhatsApp selesai.",
@@ -1115,6 +1763,345 @@ export class ChannelSetupService {
     operation: WhatsAppVerificationOperation,
   ): boolean {
     return this.whatsappVerificationOperations.get(role)?.id === operation.id;
+  }
+
+  private reconcilePrimaryWhatsAppVerification(
+    id: string,
+    configured: boolean,
+  ): void {
+    const state = this.primaryWhatsAppSessionState(id);
+    if (!configured) {
+      if (!this.primaryWhatsAppVerificationOperations.has(id)) {
+        resetWhatsAppVerificationState(state);
+      }
+      return;
+    }
+    if (state.status === "missing") {
+      state.status = "unchecked";
+      state.checkedAt = null;
+      state.errorCode = null;
+    }
+  }
+
+  private maybeVerifyPrimaryWhatsApp(
+    id: string,
+    configured: boolean,
+    now: number,
+  ): void {
+    if (
+      !configured ||
+      this.whatsappOperations.size > 0 ||
+      this.primaryWhatsAppOperations.size > 0 ||
+      this.primaryWhatsAppVerificationOperations.has(id) ||
+      this.primaryWhatsAppPairingState(id).phase === "error"
+    ) return;
+    const verification = this.primaryWhatsAppSessionState(id);
+    const stale = verification.checkedAt !== null &&
+      now - verification.checkedAt >= this.whatsappVerificationTtlMs;
+    if (verification.status === "unchecked" || stale) {
+      this.startPrimaryWhatsAppVerification(id, false);
+    }
+  }
+
+  private startPrimaryWhatsAppVerification(id: string, force: boolean): void {
+    if (this.primaryWhatsAppVerificationOperations.has(id)) return;
+    if (
+      this.whatsappOperations.size > 0 ||
+      this.primaryWhatsAppOperations.size > 0
+    ) {
+      if (force) {
+        throw conflict(
+          "PRIMARY_WHATSAPP_OPERATION_ACTIVE",
+          "Selesaikan operasi WhatsApp sebelum memeriksa koneksi.",
+        );
+      }
+      return;
+    }
+    const controller = new AbortController();
+    const operation: WhatsAppVerificationOperation = {
+      id: ++this.sequence,
+      controller,
+      timer: setTimeout(() => undefined, this.whatsappVerificationTimeoutMs),
+      task: Promise.resolve(),
+      timedOut: false,
+    };
+    clearTimeout(operation.timer);
+    operation.timer = setTimeout(() => {
+      operation.timedOut = true;
+      controller.abort();
+    }, this.whatsappVerificationTimeoutMs);
+    operation.timer.unref();
+    this.primaryWhatsAppVerificationOperations.set(id, operation);
+    const state = this.primaryWhatsAppSessionState(id);
+    state.status = "checking";
+    state.errorCode = null;
+    operation.task = this.runPrimaryWhatsAppVerification(id, operation);
+  }
+
+  private async runPrimaryWhatsAppVerification(
+    id: string,
+    operation: WhatsAppVerificationOperation,
+  ): Promise<void> {
+    try {
+      const status = await this.whatsapp.probe({
+        authFolder: this.primaryWhatsAppAccountFolder(id),
+        signal: operation.controller.signal,
+      });
+      if (!this.currentPrimaryWhatsAppVerification(id, operation)) return;
+      setWhatsAppVerificationResult(
+        this.primaryWhatsAppSessionState(id),
+        status,
+        this.now(),
+        status === "rejected" ? "PRIMARY_WHATSAPP_SESSION_REJECTED" : null,
+      );
+    } catch (error) {
+      if (!this.currentPrimaryWhatsAppVerification(id, operation)) return;
+      if (this.closed && operation.controller.signal.aborted) return;
+      const code = operation.timedOut
+        ? "PRIMARY_WHATSAPP_VERIFICATION_TIMEOUT"
+        : safeOperationCode(error, "PRIMARY_WHATSAPP_VERIFICATION_UNAVAILABLE");
+      setWhatsAppVerificationResult(
+        this.primaryWhatsAppSessionState(id),
+        isWhatsAppSessionRejection(code) ? "rejected" : "unreachable",
+        this.now(),
+        code,
+      );
+    } finally {
+      clearTimeout(operation.timer);
+      if (this.currentPrimaryWhatsAppVerification(id, operation)) {
+        this.primaryWhatsAppVerificationOperations.delete(id);
+      }
+    }
+  }
+
+  private currentPrimaryWhatsAppVerification(
+    id: string,
+    operation: WhatsAppVerificationOperation,
+  ): boolean {
+    return this.primaryWhatsAppVerificationOperations.get(id)?.id ===
+      operation.id;
+  }
+
+  private beginPrimaryWhatsAppPairing(id: string, replace: boolean): void {
+    const operation = this.createOperation();
+    this.primaryWhatsAppOperations.set(id, operation);
+    setPairingState(
+      this.primaryWhatsAppPairingState(id),
+      replace ? "revoking" : "connecting",
+    );
+    operation.task = this.runPrimaryWhatsAppPairing(id, operation, replace);
+  }
+
+  private async runPrimaryWhatsAppPairing(
+    id: string,
+    operation: ActiveOperation,
+    replace: boolean,
+  ): Promise<void> {
+    const authFolder = this.primaryWhatsAppAccountFolder(id);
+    try {
+      const configured = await this.whatsapp.configured(authFolder);
+      if (configured && !replace) {
+        const identity = await readWhatsAppAuthIdentity(authFolder);
+        await this.assertDistinctPrimaryWhatsAppIdentity(id, identity.jids);
+        await this.activatePrimaryWhatsAppAccount(id, identity.phoneNumber);
+      } else {
+        await this.whatsapp.revoke({
+          authFolder,
+          authRoot: this.primaryWhatsAppAuthRoot,
+          signal: operation.controller.signal,
+        });
+        if (!this.currentPrimaryWhatsApp(id, operation) || operation.cancelled) {
+          return;
+        }
+        setPairingState(this.primaryWhatsAppPairingState(id), "connecting");
+        await this.whatsapp.pair({
+          authFolder,
+          otherAuthFolder: this.paths.whatsappHarvyAuth,
+          signal: operation.controller.signal,
+          onQr: (value) => {
+            if (
+              !this.currentPrimaryWhatsApp(id, operation) ||
+              operation.cancelled ||
+              operation.controller.signal.aborted
+            ) return;
+            setQr(
+              this.primaryWhatsAppPairingState(id),
+              value,
+              this.now() + this.timeoutMs,
+            );
+          },
+        });
+        if (!this.currentPrimaryWhatsApp(id, operation) || operation.cancelled) {
+          return;
+        }
+        const identity = await readWhatsAppAuthIdentity(authFolder);
+        await this.assertDistinctPrimaryWhatsAppIdentity(id, identity.jids);
+        await this.activatePrimaryWhatsAppAccount(id, identity.phoneNumber);
+      }
+      if (!this.currentPrimaryWhatsApp(id, operation)) return;
+      setPairingState(this.primaryWhatsAppPairingState(id), "paired");
+      setWhatsAppVerificationResult(
+        this.primaryWhatsAppSessionState(id),
+        "accepted",
+        this.now(),
+        null,
+      );
+    } catch (error) {
+      if (!this.currentPrimaryWhatsApp(id, operation)) return;
+      if (operation.cancelled) {
+        setPairingState(this.primaryWhatsAppPairingState(id), "idle");
+      } else {
+        setPairingError(
+          this.primaryWhatsAppPairingState(id),
+          operation.timedOut
+            ? "PRIMARY_WHATSAPP_PAIRING_TIMEOUT"
+            : safeOperationCode(error, "PRIMARY_WHATSAPP_PAIRING_FAILED"),
+        );
+      }
+    } finally {
+      clearTimeout(operation.timer);
+      if (this.currentPrimaryWhatsApp(id, operation)) {
+        this.primaryWhatsAppOperations.delete(id);
+      }
+    }
+  }
+
+  private async activatePrimaryWhatsAppAccount(
+    id: string,
+    phoneNumber: string,
+  ): Promise<void> {
+    const fleet = await loadPrimaryWhatsAppFleetCredential(
+      this.primaryCredentialPaths,
+    );
+    if (!fleet) {
+      throw blocked("PRIMARY_WHATSAPP_FLEET_MISSING");
+    }
+    const found = fleet.accounts.some((account) => sameAlias(account.id, id));
+    if (!found) throw blocked("PRIMARY_WHATSAPP_ACCOUNT_MISSING");
+    await this.withCredentialAccess(() => savePrimaryWhatsAppFleetCredential({
+      ...fleet,
+      enabled: true,
+      privateEnabled: fleet.privateEnabled,
+      accounts: fleet.accounts.map((account) =>
+        sameAlias(account.id, id)
+          ? { id: account.id, phoneNumber, state: "active" as const }
+          : account
+      ),
+    }, this.primaryCredentialPaths));
+  }
+
+  private async runPrimaryWhatsAppRemoval(
+    id: string,
+    operation: ActiveOperation,
+  ): Promise<void> {
+    try {
+      await this.whatsapp.revoke({
+        authFolder: this.primaryWhatsAppAccountFolder(id),
+        authRoot: this.primaryWhatsAppAuthRoot,
+        signal: operation.controller.signal,
+      });
+      if (!this.currentPrimaryWhatsApp(id, operation) || operation.cancelled) {
+        return;
+      }
+      const fleet = await loadPrimaryWhatsAppFleetCredential(
+        this.primaryCredentialPaths,
+      );
+      if (!fleet) throw blocked("PRIMARY_WHATSAPP_FLEET_MISSING");
+      const accounts = fleet.accounts.filter((account) =>
+        !sameAlias(account.id, id)
+      );
+      const hasActive = accounts.some((account) => account.state === "active");
+      await this.withCredentialAccess(() => savePrimaryWhatsAppFleetCredential({
+        ...fleet,
+        enabled: hasActive ? fleet.enabled : false,
+        accounts,
+      }, this.primaryCredentialPaths));
+      setPairingState(this.primaryWhatsAppPairingState(id), "idle");
+      resetWhatsAppVerificationState(this.primaryWhatsAppSessionState(id));
+    } catch (error) {
+      if (!this.currentPrimaryWhatsApp(id, operation)) return;
+      if (operation.cancelled) {
+        setPairingState(this.primaryWhatsAppPairingState(id), "idle");
+      } else {
+        setPairingError(
+          this.primaryWhatsAppPairingState(id),
+          operation.timedOut
+            ? "PRIMARY_WHATSAPP_REMOVAL_TIMEOUT"
+            : safeOperationCode(error, "PRIMARY_WHATSAPP_REMOVAL_FAILED"),
+        );
+      }
+    } finally {
+      clearTimeout(operation.timer);
+      if (this.currentPrimaryWhatsApp(id, operation)) {
+        this.primaryWhatsAppOperations.delete(id);
+      }
+    }
+  }
+
+  private currentPrimaryWhatsApp(
+    id: string,
+    operation: ActiveOperation,
+  ): boolean {
+    return this.primaryWhatsAppOperations.get(id)?.id === operation.id;
+  }
+
+  private async assertDistinctPrimaryWhatsAppIdentity(
+    id: string,
+    jids: readonly string[],
+  ): Promise<void> {
+    const fleet = await loadPrimaryWhatsAppFleetCredential(
+      this.primaryCredentialPaths,
+    );
+    const folders = [
+      this.paths.whatsappHarvyAuth,
+      this.paths.whatsappTesterAuth,
+      ...(fleet?.accounts ?? [])
+        .filter((account) => !sameAlias(account.id, id))
+        .map((account) => this.primaryWhatsAppAccountFolder(account.id)),
+    ];
+    const own = new Set(jids);
+    for (const folder of folders) {
+      const other = await readWhatsAppAuthIdentityIfReady(folder);
+      if (other && other.jids.some((jid) => own.has(jid))) {
+        throw rejected(
+          "PRIMARY_WHATSAPP_IDENTITY_DUPLICATE",
+          "Setiap akun WhatsApp layanan dan pengujian harus memakai identitas berbeda.",
+        );
+      }
+    }
+  }
+
+  private async assertDistinctPrimaryWhatsAppIdentities(
+    accounts: readonly PrimaryWhatsAppFleetAccount[],
+  ): Promise<void> {
+    const identities: Array<{ id: string; jids: string[] }> = [];
+    for (const account of accounts) {
+      const identity = await readWhatsAppAuthIdentity(
+        this.primaryWhatsAppAccountFolder(account.id),
+      );
+      const seen = new Set(identities.flatMap((item) => item.jids));
+      if (identity.jids.some((jid) => seen.has(jid))) {
+        throw rejected(
+          "PRIMARY_WHATSAPP_IDENTITY_DUPLICATE",
+          "Setiap akun WhatsApp layanan harus memakai identitas berbeda.",
+        );
+      }
+      identities.push({ id: account.id, jids: identity.jids });
+    }
+    for (const identity of identities) {
+      const acceptance = await Promise.all([
+        readWhatsAppAuthIdentityIfReady(this.paths.whatsappHarvyAuth),
+        readWhatsAppAuthIdentityIfReady(this.paths.whatsappTesterAuth),
+      ]);
+      if (acceptance.some((candidate) =>
+        candidate?.jids.some((jid) => identity.jids.includes(jid))
+      )) {
+        throw rejected(
+          "PRIMARY_WHATSAPP_IDENTITY_DUPLICATE",
+          "Akun WhatsApp layanan harus berbeda dari akun pengujian.",
+        );
+      }
+    }
   }
 
   private async runTelegramPairing(
@@ -1418,6 +2405,24 @@ export function primaryChannelConfigurationFromEnvironment(
   }
 }
 
+export function primaryWhatsAppRuntimeFingerprint(input: {
+  enabled: boolean;
+  privateEnabled: boolean;
+  accounts: readonly { id: string; phoneNumber: string }[];
+}): string {
+  const payload = {
+    enabled: input.enabled,
+    privateEnabled: input.privateEnabled,
+    accounts: [...input.accounts]
+      .map((account) => ({
+        id: account.id.toLocaleLowerCase("en-US"),
+        phoneNumber: account.phoneNumber,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id, "en-US")),
+  };
+  return credentialFingerprint(JSON.stringify(payload));
+}
+
 export class LiveTelegramPairingAdapter implements TelegramPairingAdapter {
   async validateBotToken(token: string, signal: AbortSignal): Promise<void> {
     const bot = new Bot(token);
@@ -1642,7 +2647,7 @@ export class LiveWhatsAppPairingAdapter implements WhatsAppPairingAdapter {
           await resetWhatsAppAuthDirectory(input.authFolder, input.authRoot);
           return;
         }
-        await connection.socket.logout("Sesi uji dicabut dari Harvy Console.");
+        await connection.socket.logout("Sesi dicabut dari Harvy Console.");
         await connection.authWrite();
         await resetWhatsAppAuthDirectory(input.authFolder, input.authRoot);
         return;
@@ -1773,9 +2778,11 @@ async function resetWhatsAppAuthDirectory(
 ): Promise<void> {
   const target = resolve(path);
   const parent = resolve(expectedParent);
+  const child = target.slice(parent.length + 1);
   if (
     dirname(target) !== parent ||
-    (target !== resolve(parent, "harvy") && target !== resolve(parent, "tester"))
+    !/^[a-z][a-z0-9_-]{0,31}$/iu.test(child) ||
+    resolve(parent, child) !== target
   ) {
     throw blocked("CHANNEL_WHATSAPP_RESET_TARGET_INVALID");
   }
@@ -1783,7 +2790,85 @@ async function resetWhatsAppAuthDirectory(
   if (metadata?.isSymbolicLink() || (metadata && !metadata.isDirectory())) {
     throw blocked("CHANNEL_WHATSAPP_RESET_TARGET_INVALID");
   }
-  await rm(target, { recursive: true, force: true });
+  await rm(target, {
+    recursive: true,
+    force: true,
+    maxRetries: 3,
+    retryDelay: 100,
+  });
+}
+
+function primaryWhatsAppAlias(value: string): string {
+  try {
+    return parseWhatsAppAccountAlias(value);
+  } catch {
+    throw rejected(
+      "PRIMARY_WHATSAPP_ACCOUNT_ALIAS_INVALID",
+      "Alias harus diawali huruf dan hanya memakai huruf, angka, _ atau - (maksimal 32).",
+    );
+  }
+}
+
+function sameAlias(left: string, right: string): boolean {
+  return left.toLocaleLowerCase("en-US") ===
+    right.toLocaleLowerCase("en-US");
+}
+
+function pairingActiveState(phase: ChannelPairingPhase): boolean {
+  return phase === "connecting" ||
+    phase === "awaiting_scan" ||
+    phase === "awaiting_password" ||
+    phase === "revoking";
+}
+
+function sameFleetConfiguration(
+  left: PrimaryWhatsAppFleetCredential,
+  right: PrimaryWhatsAppFleetCredential | null,
+): boolean {
+  if (!right) return false;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+async function readWhatsAppAuthIdentity(authFolder: string): Promise<{
+  phoneNumber: string;
+  jids: string[];
+}> {
+  const identity = await readWhatsAppAuthIdentityIfReady(authFolder);
+  if (!identity) {
+    throw blocked("PRIMARY_WHATSAPP_SESSION_IDENTITY_MISSING");
+  }
+  return identity;
+}
+
+async function readWhatsAppAuthIdentityIfReady(authFolder: string): Promise<{
+  phoneNumber: string;
+  jids: string[];
+} | null> {
+  const metadata = await lstat(authFolder).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!metadata) return null;
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw blocked("CHANNEL_WHATSAPP_AUTH_DIRECTORY_INVALID");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(
+      await readFile(join(authFolder, "creds.json"), "utf8"),
+    ) as unknown;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return null;
+    throw blocked("CHANNEL_WHATSAPP_CREDENTIAL_INVALID");
+  }
+  if (!isWhatsAppCredentialReady(parsed)) return null;
+  const jids = whatsAppCredentialJids(parsed);
+  const phoneJid = jids.find((jid) => jid.endsWith("@s.whatsapp.net"));
+  const phoneNumber = phoneJid?.slice(0, -"@s.whatsapp.net".length) ?? "";
+  if (!/^[1-9]\d{7,14}$/u.test(phoneNumber)) {
+    throw blocked("PRIMARY_WHATSAPP_PHONE_IDENTITY_MISSING");
+  }
+  return { phoneNumber, jids };
 }
 
 function emptyPairingState(): PairingState {

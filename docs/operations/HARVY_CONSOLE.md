@@ -45,19 +45,27 @@ npm run console:setup
 
 Mode ini memakai server Console, login, Origin, CSRF, rate limit, CSP, dan audit
 yang sama, tetapi control-plane pendampingnya berada di direktori sementara.
-URL diarahkan ke tab **Kanal**. Token bot Telegram utama ditulis ke store
-credential utama lokal; token bot acceptance, session tester, dan dua session
-WhatsApp ditulis ke storage live-acceptance yang berbeda. Keduanya permanen
-dan diabaikan Git; dashboard sementara bukan sumber status produk.
+URL diarahkan ke tab **Kanal**. Token bot Telegram serta armada akun WhatsApp
+layanan ditulis ke store credential layanan lokal; token bot pengujian, session
+penguji, dan dua session WhatsApp acceptance ditulis ke storage live-acceptance
+yang berbeda. Keduanya permanen dan diabaikan Git; dashboard sementara bukan
+sumber status produk. Mode setup juga memegang lock runtime utama, sehingga
+sesi layanan tidak pernah dipasangkan, dicabut, atau diperiksa oleh dua proses
+Baileys sekaligus. Hentikan Harvy sebelum membuka mode ini.
 
-Tab ini sengaja memperlihatkan dua boundary. Sisi **Harvy utama** mengelola
-token BotFather utama, tetapi snapshot browser hanya membawa sumber, fase
-verifikasi, status runtime, dan kebutuhan restart—tidak pernah nilai token,
-nomor, alias, atau path. Token yang lolos verifikasi disimpan dengan AES-GCM di
+Mode setup tidak memakai sidebar satu-item. Dua tab halaman dengan lebar setara
+memisahkan **Layanan** dari **Pengujian**, dan badge pada keduanya tetap memberi
+ringkasan keadaan lingkungan yang sedang tidak dibuka. Tab **Layanan** mengelola
+token BotFather dan armada WhatsApp layanan. Snapshot browser hanya membawa
+sumber, fase verifikasi, status runtime, kebutuhan restart, alias operasional,
+dan lifecycle akun—tidak pernah nilai token, nomor, JID, atau path. Token serta
+metadata armada yang lolos validasi disimpan dengan AES-GCM di
 `secrets/primary-channels.secrets.json`; kunci lokal terpisah berada di
-`secrets/primary-channels.key`. Sisi **Acceptance** memakai bot Telegram, akun
-Telegram tester, dan dua session WhatsApp sendiri. Console menolak bot utama
-dan bot acceptance yang identik.
+`secrets/primary-channels.key`; material linked-device tetap berada per alias di
+`data/whatsapp-auth/`. Tab **Pengujian** memakai bot Telegram, akun
+Telegram penguji, dan dua session WhatsApp sendiri. Console menolak bot layanan
+dan bot pengujian yang identik, serta menolak identitas WhatsApp layanan yang
+sama dengan akun acceptance atau akun layanan lain.
 
 Instalasi lama yang masih mempunyai `TELEGRAM_BOT_TOKEN` di `.env` mendapat
 aksi migrasi eksplisit. Migrasi hanya berjalan bila ada tepat satu entri yang
@@ -67,8 +75,37 @@ Console dan environment yang berbeda gagal tertutup. Setelah token diubah pada
 runtime aktif, Console meminta restart; ia tidak mengklaim proses lama sudah
 memakai credential baru.
 
-Saat belum lengkap, **Pengaturan akun dan sesi** terbuka agar pairing yang
-masih diperlukan langsung terlihat. Untuk WhatsApp, Console memisahkan
+Instalasi lama dengan `WHATSAPP_ENABLED`, `WHATSAPP_PRIVATE_ENABLED`, dan
+`WHATSAPP_ACCOUNTS` mendapat migrasi eksplisit yang serupa. Console hanya
+menawarkan migrasi bila ketiga sumber tidak ambigu; setiap folder session harus
+lengkap dan nomor di credential harus cocok dengan deklarasi legacy. Store
+terenkripsi ditulis lebih dulu, lalu tiga baris legacy dihapus atomik dari
+`.env`. `WHATSAPP_AUTH_FOLDER` tetap boleh dipakai sebagai tuning path; nilai
+default `./data/whatsapp-auth` tidak perlu ditulis di environment.
+
+Untuk menambah nomor layanan, buka **Layanan → Kelola kanal**, beri alias
+operasional yang stabil, lalu pindai QR dari akun WhatsApp yang akan bertindak
+sebagai Harvy. Console tidak meminta nomor dan tidak menampilkannya kembali.
+Setiap akun melewati lifecycle durable `pending → active`; runtime hanya memuat
+akun `active`. Penggantian menurunkan akun ke `pending` sebelum logout dan QR
+baru, sedangkan penghapusan memakai `removing` sebelum revoke. Karena itu crash
+di tengah operasi terlihat dan dapat dilanjutkan, bukan diam-diam mengaktifkan
+session setengah jadi. Sakelar layanan dan percakapan pribadi berlaku untuk
+seluruh armada setelah restart.
+
+Seluruh mutasi armada dijalankan satu per satu. Polling status tidak membaca
+folder session yang sedang dipasangkan, diganti, atau dicabut; reset folder
+mengulang kegagalan filesystem Windows yang bersifat sementara. Akses ke file
+credential kanal utama juga diserialkan per path agar penyimpanan Telegram dan
+WhatsApp tidak saling menimpa ketika terjadi bersamaan. Kontrak ini berlaku di
+dalam proses; lock runtime utama tetap wajib untuk mencegah dua proses membuka
+session layanan yang sama.
+
+Ringkasan kanal tetap tenang saat belum lengkap: masalah terlihat pada badge dan
+tombol **Selesaikan**, sedangkan **Pengaturan koneksi** baru muncul setelah
+operator memilih **Kelola**. Hanya satu dari kanal layanan, Telegram pengujian,
+atau WhatsApp pengujian yang terlihat pada satu waktu; form token dan
+pairing tetap tersembunyi setelah credential tersedia. Untuk WhatsApp, Console memisahkan
 `credential tersimpan` dari validitas session: credential yang ditemukan
 menjalani handshake bounded ke platform dan memperoleh state `Memeriksa sesi`,
 `Sesi valid`, `Sesi ditolak`, atau `Belum terverifikasi`. Hasil diterima
@@ -76,12 +113,13 @@ dicache lima menit; tombol **Periksa sesi WhatsApp** memaksa pemeriksaan baru.
 Gangguan jaringan tidak disamakan dengan session ditolak.
 
 Setelah empat identitas siap—termasuk kedua session WhatsApp diterima pada
-pemeriksaan terbaru—pengaturan menutup dan surface utama hanya menampilkan dua alur:
-`Akun Telegram tester → Bot Harvy uji` serta
-`Nomor WhatsApp tester B → Nomor Harvy uji A`. Status `Harvy siap diuji` kini
-berarti material empat identitas tersedia dan kedua handshake WhatsApp terbaru
-diterima. Ia tetap bukan bukti pengiriman B→A, kualitas respons, atau session
-Telegram yang direvalidasi setelah proses restart; itu baru dibuktikan runner.
+pemeriksaan terbaru—tab Pengujian menampilkan dua alur berbasis peran:
+`Penguji (Akun Telegram) → Harvy (Bot Telegram)` serta
+`Penguji (Akun WhatsApp) → Harvy (Akun WhatsApp)`. Status **Siap untuk pengujian
+langsung** berarti material empat identitas tersedia dan kedua handshake
+WhatsApp terbaru diterima. Ia tetap bukan bukti pengiriman penguji→Harvy, kualitas
+respons, atau session Telegram yang direvalidasi setelah proses restart; itu
+baru dibuktikan runner.
 
 Mode setup dan tab Kanal runtime memegang satu lock credential lintas
 proses. Console kedua serta runner acceptance akan gagal tertutup selama lock
@@ -92,7 +130,13 @@ QR Telegram/WhatsApp hanya disimpan di memori selama operasi aktif. Endpoint
 status tidak mengembalikan payload QR, token, session, `api_hash`, nomor, atau
 JID. Endpoint QR mengubah payload menjadi matriks SVG dan hanya dapat dibaca
 oleh sesi operator. Token dan session tersimpan tidak pernah dikirim kembali
-ke browser. Pencabutan session mencoba logout ke platform sebelum credential
+ke browser. Console mengambil SVG dengan `fetch`, memvalidasi struktur terbatas
+`svg`/`rect`/`path`, lalu menyisipkannya langsung ke permukaan QR; status HTTP
+atau MIME yang salah tidak lagi dapat menjadi kotak gambar putih. Browser baru
+menyatakan QR siap setelah SVG tervalidasi dan terpasang; satu kegagalan
+sementara dicoba ulang sekali. Bila tetap gagal, Console
+menampilkan **Coba muat QR lagi** tanpa memulai ulang atau mencabut pairing.
+Pencabutan session mencoba logout ke platform sebelum credential
 lokal dihapus dan gagal tertutup bila logout tidak dapat dibuktikan. Bila
 perangkat sudah dicabut dari ponsel, status terminal `loggedOut` dihitung
 sebagai bukti pencabutan; operator dapat memilih **Pasangkan ulang** dan Console
@@ -111,6 +155,42 @@ npm run test:console-browser
 
 Command ini memakai server serta storage sementara dan tidak melakukan pairing
 atau mengirim pesan ke platform.
+
+Untuk audit read-only terhadap credential dan session yang benar-benar sudah
+dipasangkan, tutup Console setup lain lalu jalankan:
+
+```powershell
+npm run test:console-browser:live
+```
+
+Mode live membuka Edge/Chromium, mengunjungi tiga konteks **Kelola**, memaksa
+pemeriksaan Telegram dan WhatsApp nyata, serta memeriksa layout desktop/mobile.
+Ia tidak menekan aksi pairing, penggantian, pencabutan, atau penghapusan dan
+tidak mengirim pesan. Command dapat melaporkan `Sesi ditolak`; itu adalah bukti
+platform atas session saat ini, bukan kegagalan renderer Console.
+
+Saat Console setup sedang hidup dan QR pairing memang aktif, renderer QR live
+dapat diaudit pada proses dan credential yang sama tanpa mencetak atau menyimpan
+payload QR:
+
+```powershell
+npm run test:console-browser:external-qr
+```
+
+Audit ini masuk sebagai operator, membuka panel WhatsApp, lalu membuktikan SVG
+inline mempunyai ukuran layar, warna hitam/putih, serta modul QR nonkosong. Ia
+tidak memulai atau membatalkan pairing.
+
+Saat `console:setup` hidup, surface akun layanan yang nyata dapat diaudit tanpa
+mutasi atau refleksi identifier:
+
+```powershell
+npm run test:console-browser:external-service
+```
+
+Audit ini masuk melalui browser nyata, membuka **Layanan**, memastikan sumber
+legacy/Console disajikan jujur, memeriksa kesimetrian kartu dan overflow pada
+desktop/mobile, lalu keluar tanpa pairing, revoke, atau perubahan pengaturan.
 
 ## Yang dapat diatur
 
@@ -139,6 +219,9 @@ atau mengirim pesan ke platform.
   tanpa memantulkan secret ke browser. Backup lokal terenkripsi memasukkan key
   dan ciphertext sebagai dua slot credential; media eksternal dan restore
   lintas mesin tetap tanggung jawab operator.
+- Memigrasikan daftar akun WhatsApp layanan dari `.env`, menambah banyak akun
+  beralias, memeriksa session ke platform, memasangkan ulang, mencabut akun,
+  serta mengatur aktivasi grup/privat tanpa menampilkan nomor atau JID.
 
 Tidak ada checkout, pembayaran, auto-renew, invoice, refund, webhook, atau SLA
 komersial pada versi ini. Paket berstatus `pilot` adalah hipotesis produk.

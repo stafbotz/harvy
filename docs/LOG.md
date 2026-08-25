@@ -57,13 +57,44 @@ memakai hasil lima menit agar tidak membuka socket tiap 1,5 detik.
 Token bot Telegram utama kini diverifikasi dan disimpan AES-GCM oleh Console,
 terpisah dari bot acceptance. Migrasi menulis store sebelum menghapus satu
 entri `.env` secara atomik; konflik sumber dan file link gagal tertutup.
+Armada WhatsApp layanan kini mengikuti kontrak yang sama: Console menyimpan
+metadata multi-akun terenkripsi, memasangkan QR per alias, memeriksa session,
+serta menyediakan replace/revoke dan sakelar privat tanpa memantulkan nomor.
+Lifecycle `pending|active|removing` mencegah runtime memuat akun setengah jadi;
+mode setup memegang runtime lock utama. Instalasi nyata dimigrasikan melalui UI
+dari tiga field WhatsApp legacy menjadi satu akun Console-managed aktif tanpa
+mencabut session. Mutasi armada serta akses file credential kanal utama kini
+diserialkan; polling melewati folder session yang sedang dimutasi dan reset
+folder mengulang error filesystem Windows sementara. Ini menutup race antara
+pairing/revoke/probe dan antara penulisan Telegram/WhatsApp pada store yang sama.
+Surface Kanal kini memisahkan **Layanan** dan **Pengujian** sebagai tab halaman
+yang simetris. Mode setup membuang sidebar satu-item, memakai label peran
+Penguji→Harvy tanpa A/B, hanya menampilkan detail setelah tindakan **Kelola**,
+dan memberi hasil warning ketika probe menemukan masalah. Pesan privasi global
+dipindahkan dari sidebar ke konteks Audit. Epoch autentikasi mencegah respons restore lama
+mengembalikan UI ke login setelah login operator baru berhasil. QR tidak lagi
+diam sebagai kotak putih setelah request gagal: Console mengambil SVG sendiri,
+menolak status/MIME/struktur yang tidak sah, lalu memasang SVG tervalidasi secara
+inline. Retry otomatis dibatasi satu kali dan retry manual tidak mengulang pairing.
 
 Verified: migrasi token utama nyata lulus tanpa refleksi; `.env` kini 0 entri,
 bootstrap membaca store, backup drill aktual dan smoke Edge desktop/mobile
-lulus, serta gerbang penuh 1865/1865. Probe WhatsApp nyata sebelumnya
-menunjukkan A tersimpan tetapi ditolak dan B diterima tanpa identifier/secret.
+lulus, serta gerbang penuh 1870/1870 dalam 227 suite. Smoke interaksi baru lulus tiga run
+beruntun; audit Edge read-only atas credential nyata kembali membuktikan
+Telegram siap, akun Harvy tersimpan tetapi ditolak, dan akun penguji diterima tanpa
+identifier/secret. Smoke Edge juga memblokir dua request QR lalu membuktikan
+error terlihat dan payload panjang pulih sebagai QR inline. Audit Edge pada
+pairing WhatsApp nyata membuktikan permukaan 320×320, opacity penuh, warna
+hitam/putih, dan lebih dari dua ribu modul tanpa mencetak payload QR.
+Smoke armada layanan juga lulus interaksi pengaturan dan layout desktop/mobile;
+audit browser pada Console setup nyata membuktikan state legacy migratable lalu
+state Console-managed setelah migrasi tanpa identifier.
+Setelah pairing diperbaiki, audit read-only current build memberi ringkasan
+acceptance WhatsApp `Sesi_valid`; akun layanan Console-managed juga lulus probe
+langsung dengan status `ready`.
 
-Not verified: restart/delivery bot utama pascamigrasi dan journey WhatsApp B→A.
+Not verified: restart/delivery WhatsApp layanan dari source Console-managed,
+penambahan nomor layanan nyata kedua, dan journey WhatsApp penguji→Harvy.
 
 ## 2026-08-25 — Eksplorasi Telegram v3 dan receipt task setelah commit
 
@@ -347,50 +378,3 @@ Telegram production, harga/latency, dan konfigurasi gate aktif nyata.
 Next: jalankan provider smoke dengan exact role bindings/profile yang disetujui
 sebelum mengaktifkan gate. Integrasi ResourceRequest scheduler dan planner tool
 discovery tetap pekerjaan terpisah.
-
-## 2026-08-22 — Percakapan semantic-first dan interruptible lintas kanal
-
-Scope: kebijakan batas giliran, lifecycle progress, presentasi respons,
-adapter Telegram dan WhatsApp privat/grup, evaluator, tes, dan dokumentasi
-kontrak percakapan.
-
-Changed: seluruh batch, konteks ringkas, dan timing kini menjadi dasar
-assessment semantik `complete|open|incomplete|urgent`; guard lokal dibatasi
-pada bentuk deterministik sempit. Pesan yang masuk saat pekerjaan aktif
-dibedakan menjadi addition, correction, redirect, atau independent supaya
-pekerjaan stale dapat dibatalkan tanpa mematikan percakapan independen.
-Progress memakai satu surface sementara setelah grace period dan hanya
-mengumumkan fase kerja yang benar-benar berjalan. Telegram dan WhatsApp memakai
-planner presentasi bersama tanpa batas personality tiga bubble, memeriksa fence
-sebelum setiap bubble/efek, serta hanya mencatat history dan usage yang
-benar-benar terkirim. Grup WhatsApp tetap diam untuk arus ambient.
-
-Verified: suite terarah PASS 386/386 dalam 21 suite; `npm run check` PASS;
-`npm test` PASS 1.614/1.614 dalam 202 suite; `git diff --check` PASS selain
-warning line-ending Windows.
-
-Not verified: provider/model live, akun Telegram nyata, akun WhatsApp nyata,
-reconnect, edit/delete status, dan interupsi delivery pada jaringan nyata.
-
-## 2026-08-22 — WhatsApp pribadi opt-in dan default-off
-
-Scope: konfigurasi dan transport WhatsApp, percakapan privat, consent, safety,
-context/memory/history, usage/funding, tes, dan dokumentasi kanal.
-
-Changed: `WHATSAPP_PRIVATE_ENABLED` ditambahkan dengan default `false`. Saat
-mati, transport membuang chat pribadi sebelum callback tetapi grup tetap
-berjalan. Saat aktif, pesan pribadi memakai consent `SETUJU`, core percakapan
-dan safety yang sama, scope data WhatsApp terisolasi, kontrol teks izin/memori,
-penghapusan penuh dengan konfirmasi exact, serta settlement history balasan dan
-usage hanya setelah send berhasil.
-Surface khusus Telegram seperti tombol, ZIP/coding, task/reminder, dan sesi
-interaktif belum dipindahkan.
-
-Verified: tes terarah WhatsApp PASS 63/63 dalam 4 suite; `npm run check` dan
-`npm run build` PASS; `npm test` PASS 1.586/1.586 dalam 200 suite;
-`npm run context:check` PASS (6.088 byte, estimasi 1.522 token) dengan warning
-bahwa snapshot CURRENT 21 Agustus mendahului entri ini;
-`git diff --check` PASS selain warning line-ending Windows.
-
-Not verified: akun WhatsApp nyata, reconnect/delivery live, banyak nomor nyata,
-provider/model live, dan parity surface khusus Telegram.

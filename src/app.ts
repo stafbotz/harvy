@@ -79,7 +79,10 @@ import {
 import { EncryptedFileSecretStore } from "./core/secret-store.js";
 import { groupRuntimeAdmission } from "./core/group-runtime-policy.js";
 import { ConsoleServer } from "./console/console-server.js";
-import { ChannelSetupService } from "./operations/channel-setup.js";
+import {
+  ChannelSetupService,
+  primaryWhatsAppRuntimeFingerprint,
+} from "./operations/channel-setup.js";
 import { installThirdPartyConsoleSecretGuard } from
   "./observability/third-party-console-guard.js";
 import { startCheckInWorker } from "./reminders/checkin-worker.js";
@@ -1082,6 +1085,10 @@ const channelSetup = config.controlPlane.console.enabled
   ? new ChannelSetupService({
       primaryRuntimeActive: true,
       primaryTelegramRuntimeToken: config.telegramBotToken,
+      primaryWhatsAppAuthRoot: config.whatsapp.authFolder,
+      primaryWhatsAppRuntimeFingerprint: primaryWhatsAppRuntimeFingerprint(
+        config.whatsapp,
+      ),
       primaryChannels: {
         telegram: { declared: Boolean(config.telegramBotToken) },
         whatsapp: {

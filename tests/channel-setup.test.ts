@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, it } from "node:test";
 import { DisconnectReason } from "baileys";
 import {
@@ -20,6 +20,7 @@ import {
 } from "../src/operations/live-acceptance.js";
 import {
   loadPrimaryTelegramBotCredential,
+  loadPrimaryWhatsAppFleetCredential,
   primaryChannelCredentialPaths,
 } from "../src/operations/primary-channel-credentials.js";
 
@@ -219,6 +220,194 @@ describe("ChannelSetupService", () => {
       service.startWhatsAppRevoke("harvy");
       await waitUntil(async () => !(await service.snapshot()).whatsapp.harvy.configured);
       assert.deepEqual(whatsapp.revokedRoles, ["harvy"]);
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("mengelola armada WhatsApp layanan multi-akun melalui state pending lalu active", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-channel-primary-whatsapp-"));
+    const authRoot = join(root, "service-auth");
+    const whatsapp = new ManagedWhatsAppAdapter();
+    const service = new ChannelSetupService({
+      paths: liveAcceptancePaths(root),
+      ...isolatedPrimaryChannelOptions(root),
+      primaryWhatsAppAuthRoot: authRoot,
+      telegramAdapter: new ControlledTelegramAdapter(),
+      whatsappAdapter: whatsapp,
+      pairingTimeoutMs: 10_000,
+    });
+    try {
+      await service.initialize();
+      await service.updatePrimaryWhatsAppSettings({
+        enabled: false,
+        privateEnabled: false,
+      });
+      const initialPairing = service.startPrimaryWhatsAppAccount("layanan");
+      await assert.rejects(
+        service.startPrimaryWhatsAppAccount("kelas"),
+        (error: unknown) =>
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "PRIMARY_WHATSAPP_MUTATION_ACTIVE",
+      );
+      await initialPairing;
+      await waitUntil(async () =>
+        (await service.snapshot()).identityBoundary.primary.whatsapp
+          .accounts?.[0]?.phase === "awaiting_scan"
+      );
+      const scanning = await service.snapshot();
+      assert.equal(JSON.stringify(scanning).includes(whatsapp.qr), false);
+      assert.equal(JSON.stringify(scanning).includes("628123456789"), false);
+      assert.doesNotMatch(
+        service.primaryWhatsAppQrSvg("LAYANAN"),
+        new RegExp(whatsapp.qr, "u"),
+      );
+
+      whatsapp.finishPairing("layanan", "628123456789");
+      await waitUntil(
+        async () =>
+          (await service.snapshot()).identityBoundary.primary.whatsapp
+            .accounts?.[0]?.lifecycle === "active",
+        () => describePrimaryWhatsApp(service),
+      );
+      const pairedAccount = (await service.snapshot()).identityBoundary.primary
+        .whatsapp.accounts?.[0];
+      assert.equal(
+        pairedAccount?.lifecycle,
+        "active",
+        JSON.stringify(pairedAccount),
+      );
+      assert.deepEqual(
+        (await loadPrimaryWhatsAppFleetCredential(
+          primaryChannelCredentialPaths(root),
+        ))?.accounts,
+        [{ id: "layanan", phoneNumber: "628123456789", state: "active" }],
+      );
+      assert.equal(
+        (await loadPrimaryWhatsAppFleetCredential(
+          primaryChannelCredentialPaths(root),
+        ))?.privateEnabled,
+        false,
+      );
+
+      whatsapp.configuredError = {
+        folder: join(authRoot, "layanan"),
+        code: "CHANNEL_WHATSAPP_AUTH_DIRECTORY_INVALID",
+      };
+      const unreadable = (await service.snapshot()).identityBoundary.primary
+        .whatsapp.accounts?.[0];
+      assert.equal(unreadable?.phase, "error");
+      assert.equal(
+        unreadable?.errorCode,
+        "CHANNEL_WHATSAPP_AUTH_DIRECTORY_INVALID",
+      );
+      assert.equal(unreadable?.session.status, "unreachable");
+      whatsapp.configuredError = null;
+
+      await service.startPrimaryWhatsAppAccount("kelas");
+      await waitUntil(async () =>
+        (await service.snapshot()).identityBoundary.primary.whatsapp
+          .accounts?.some((account) =>
+            account.id === "kelas" && account.phase === "awaiting_scan"
+          ) === true
+      );
+      await service.cancelPrimaryWhatsApp("KELAS");
+      await service.startPrimaryWhatsAppAccount("KELAS");
+      await waitUntil(async () =>
+        (await service.snapshot()).identityBoundary.primary.whatsapp
+          .accounts?.some((account) =>
+            account.id === "kelas" && account.phase === "awaiting_scan"
+          ) === true
+      );
+      whatsapp.finishPairing("kelas", "628111111111");
+      await waitUntil(
+        async () =>
+          (await service.snapshot()).identityBoundary.primary.whatsapp
+            .accountCount === 2,
+        () => describePrimaryWhatsApp(service),
+      );
+      await service.updatePrimaryWhatsAppSettings({
+        enabled: true,
+        privateEnabled: false,
+      });
+      assert.equal(
+        (await loadPrimaryWhatsAppFleetCredential(
+          primaryChannelCredentialPaths(root),
+        ))?.privateEnabled,
+        false,
+      );
+
+      await service.startPrimaryWhatsAppRemoval("kelas");
+      await waitUntil(
+        async () =>
+          (await service.snapshot()).identityBoundary.primary.whatsapp
+            .accounts?.some((account) => account.id === "kelas") === false,
+        () => describePrimaryWhatsApp(service),
+      );
+      const afterRemoval = (await service.snapshot()).identityBoundary.primary
+        .whatsapp;
+      assert.equal(
+        afterRemoval.accounts?.some((account) => account.id === "kelas"),
+        false,
+        JSON.stringify(afterRemoval.accounts),
+      );
+      assert.equal(
+        (await service.snapshot()).identityBoundary.primary.whatsapp.accountCount,
+        1,
+      );
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("memigrasikan sesi WhatsApp layanan legacy hanya setelah identitas lokal cocok", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-channel-primary-whatsapp-migrate-"));
+    const authRoot = join(root, "service-auth");
+    const primaryPaths = primaryChannelCredentialPaths(root);
+    const accounts = JSON.stringify([
+      { id: "utama", phoneNumber: "628123456789" },
+    ]);
+    const environment: NodeJS.ProcessEnv = {
+      WHATSAPP_ENABLED: "true",
+      WHATSAPP_PRIVATE_ENABLED: "true",
+      WHATSAPP_ACCOUNTS: accounts,
+      WHATSAPP_AUTH_FOLDER: authRoot,
+    };
+    await writeFile(
+      primaryPaths.environmentFile,
+      `WHATSAPP_ENABLED=true\nWHATSAPP_PRIVATE_ENABLED=true\nWHATSAPP_ACCOUNTS=${accounts}\n`,
+      "utf8",
+    );
+    await writeWhatsAppCredential(join(authRoot, "utama"), "628123456789");
+    const service = new ChannelSetupService({
+      paths: liveAcceptancePaths(root),
+      primaryCredentialPaths: primaryPaths,
+      environment,
+      primaryWhatsAppAuthRoot: authRoot,
+      telegramAdapter: new ControlledTelegramAdapter(),
+      whatsappAdapter: new ManagedWhatsAppAdapter(),
+      pairingTimeoutMs: 10_000,
+    });
+    try {
+      await service.initialize();
+      assert.equal(
+        (await service.snapshot()).identityBoundary.primary.whatsapp.source,
+        "environment",
+      );
+      await service.migratePrimaryWhatsAppFleet();
+      const after = (await service.snapshot()).identityBoundary.primary.whatsapp;
+      assert.equal(after.source, "console");
+      assert.equal(after.accountCount, 1);
+      assert.equal(environment.WHATSAPP_ACCOUNTS, undefined);
+      assert.equal(
+        (await readFile(primaryPaths.environmentFile, "utf8")).includes(
+          "WHATSAPP_",
+        ),
+        false,
+      );
     } finally {
       await service.close();
       await rm(root, { recursive: true, force: true });
@@ -750,6 +939,97 @@ class ControlledWhatsAppAdapter implements WhatsAppPairingAdapter {
   }
 }
 
+class ManagedWhatsAppAdapter implements WhatsAppPairingAdapter {
+  readonly qr = "primary-whatsapp-qr-secret";
+  configuredError: { folder: string; code: string } | null = null;
+  private readonly mutatingFolders = new Set<string>();
+  private readonly pairing = new Map<string, {
+    gate: ReturnType<typeof deferred<void>>;
+    phoneNumber: string | null;
+  }>();
+
+  async configured(authFolder: string): Promise<boolean> {
+    if (this.mutatingFolders.has(authFolder)) {
+      throw Object.assign(new Error("TEST_CONFIGURED_DURING_MUTATION"), {
+        code: "TEST_CONFIGURED_DURING_MUTATION",
+      });
+    }
+    if (this.configuredError?.folder === authFolder) {
+      throw Object.assign(new Error(this.configuredError.code), {
+        code: this.configuredError.code,
+      });
+    }
+    try {
+      const value = JSON.parse(
+        await readFile(join(authFolder, "creds.json"), "utf8"),
+      ) as { registered?: boolean; me?: { id?: string } };
+      return value.registered === true && Boolean(value.me?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  async probe(): Promise<"accepted"> {
+    return "accepted";
+  }
+
+  async pair(input: {
+    authFolder: string;
+    signal: AbortSignal;
+    onQr(value: string): void;
+  }): Promise<void> {
+    const entry = {
+      gate: deferred<void>(),
+      phoneNumber: null as string | null,
+    };
+    this.pairing.set(input.authFolder, entry);
+    input.onQr(this.qr);
+    await Promise.race([entry.gate.promise, abortPromise(input.signal)]);
+    assert.ok(entry.phoneNumber);
+    await writeWhatsAppCredential(input.authFolder, entry.phoneNumber);
+  }
+
+  async revoke(input: { authFolder: string }): Promise<void> {
+    this.mutatingFolders.add(input.authFolder);
+    try {
+      await new Promise<void>((resolveWait) => setImmediate(resolveWait));
+      await rm(input.authFolder, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 25,
+      });
+    } finally {
+      this.mutatingFolders.delete(input.authFolder);
+    }
+  }
+
+  finishPairing(alias: string, phoneNumber: string): void {
+    const entry = [...this.pairing.entries()].find(([folder]) =>
+      basename(folder).toLocaleLowerCase("en-US") ===
+        alias.toLocaleLowerCase("en-US")
+    )?.[1];
+    assert.ok(entry);
+    entry.phoneNumber = phoneNumber;
+    entry.gate.resolve();
+  }
+}
+
+async function writeWhatsAppCredential(
+  folder: string,
+  phoneNumber: string,
+): Promise<void> {
+  await mkdir(folder, { recursive: true });
+  await writeFile(
+    join(folder, "creds.json"),
+    JSON.stringify({
+      registered: true,
+      me: { id: `${phoneNumber}:1@s.whatsapp.net` },
+    }),
+    "utf8",
+  );
+}
+
 function abortPromise(signal: AbortSignal): Promise<never> {
   return new Promise((_, rejectAbort) => {
     const reject = (): void => rejectAbort(Object.assign(new Error("aborted"), {
@@ -770,10 +1050,32 @@ function deferred<T>() {
   return { promise, resolve: resolveValue, reject: rejectValue };
 }
 
-async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+async function waitUntil(
+  predicate: () => Promise<boolean>,
+  diagnostic?: () => Promise<string>,
+): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  do {
     if (await predicate()) return;
-    await new Promise<void>((resolveWait) => setImmediate(resolveWait));
-  }
-  throw new Error("Kondisi test tidak tercapai.");
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 10));
+  } while (Date.now() < deadline);
+  const detail = diagnostic ? ` ${await diagnostic()}` : "";
+  throw new Error(`Kondisi test tidak tercapai.${detail}`);
+}
+
+async function describePrimaryWhatsApp(
+  service: ChannelSetupService,
+): Promise<string> {
+  const whatsapp = (await service.snapshot()).identityBoundary.primary.whatsapp;
+  return JSON.stringify({
+    accountCount: whatsapp.accountCount,
+    accounts: whatsapp.accounts?.map((account) => ({
+      id: account.id,
+      lifecycle: account.lifecycle,
+      phase: account.phase,
+      errorCode: account.errorCode,
+      sessionStatus: account.session.status,
+      sessionErrorCode: account.session.errorCode,
+    })),
+  });
 }

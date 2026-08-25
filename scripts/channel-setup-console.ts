@@ -8,18 +8,30 @@ import {
 } from "../src/operations/live-acceptance.js";
 import { ChannelSetupService } from "../src/operations/channel-setup.js";
 import {
+  acquireLocalRuntimeLock,
+  localRuntimeLockPath,
+  type LocalRuntimeLock,
+} from "../src/core/local-runtime-lock.js";
+import {
   operatorSecretChannelAvailable,
   presentOperatorSecret,
 } from "../src/observability/operator-secret.js";
 import { FileControlPlaneRepository } from "../src/storage/file-control-plane-repository.js";
 import { FileUsageLedgerRepository } from "../src/storage/file-usage-ledger-repository.js";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 async function main(): Promise<void> {
   loadRepositoryEnvironment();
   const temporaryRoot = await createIsolatedRuntimeRoot();
   let server: ConsoleServer | null = null;
+  let runtimeLock: LocalRuntimeLock | null = null;
   try {
+    runtimeLock = await acquireLocalRuntimeLock(
+      localRuntimeLockPath(resolve(
+        process.env.CONTROL_PLANE_FILE ?? "./data/control-plane.json",
+      )),
+      "setup",
+    );
     const controlPlane = new ControlPlaneService(
       new FileControlPlaneRepository(join(temporaryRoot, "console-control.json")),
       {
@@ -88,6 +100,7 @@ async function main(): Promise<void> {
     await waitForShutdown();
   } finally {
     await server?.close().catch(() => undefined);
+    await runtimeLock?.release().catch(() => undefined);
     await removeIsolatedRuntimeRoot(temporaryRoot);
   }
 }
