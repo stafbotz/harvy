@@ -1,6 +1,6 @@
 # Status — Platform dan Operasi Runtime
 
-Refreshed: 23 Agustus 2026 pada restart, backup, dan provider-response recovery.
+Refreshed: 24 Agustus 2026 pada live crash/restart, backup drill, dan provider.
 Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 
 ## Keadaan saat ini
@@ -66,12 +66,17 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
   staging tersinkron lalu publikasi hard-link no-replace, sehingga proses tidak
   menerbitkan authority file setengah tertulis. Lock milik PID mati direklamasi
   otomatis secara fail-closed.
+- Fault acceptance satu kali membuktikan supervisor memulai child kedua dan
+  kanal kembali menjawab lewat akun Telegram maupun WhatsApp nyata. Kedua run
+  mencatat attempt 1/2 ready, restart terjadwal, shutdown bersih, dan state
+  acceptance terhapus. Ini bukan bukti crash pada exact send/receipt window.
 - Backup lokal mengenkripsi seluruh archive dengan AES-256-GCM, mencatat hash
   dan inventaris target logis, menolak symlink/traversal serta mutasi sumber,
   dan hanya restore ke direktori baru. Verifikasi/restore mendekripsi sebagai
   stream tanpa membuat archive plaintext sementara. Drill terbaru pada state
-  Harvy terkonfigurasi berhasil create→verify→restore 1.411 entry/3.942.048
-  byte dan membersihkan artifact uji.
+  Harvy terkonfigurasi berhasil create→verify→restore 3.588 entry/4.371.589
+  byte dari 14 target yang hadir (18 target terdaftar) dan membersihkan artifact
+  uji. Kunci drill dibuat acak di memori dan dihapus, bukan kunci operasional.
 
 ## Batas dan defect aktif
 
@@ -100,7 +105,8 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
   `src/core/local-runtime-lock.ts`,
   `src/core/telemetry-service.ts`, `src/core/coding-runtime-composition.ts`,
   `src/observability/`, `src/operations/local-backup.ts`,
-  `src/operations/runtime-supervisor.ts`, `scripts/dev-runner.ts`.
+  `src/operations/runtime-supervisor.ts`, `scripts/dev-runner.ts`, dan
+  `scripts/local-backup-drill.ts`.
 - Tes: `tests/client.test.ts`, `tests/ai-config.test.ts`,
   `tests/secret-store.test.ts`, `tests/key-pool.test.ts`,
   `tests/local-runtime-lock.test.ts`, `tests/operational-logger.test.ts`,

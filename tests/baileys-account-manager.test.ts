@@ -281,6 +281,43 @@ describe("armada akun Baileys", () => {
     await manager.stop();
   });
 
+  it("mendeduplikasi replay pesan grup berdasarkan scope dan ID", async () => {
+    const received: string[] = [];
+    const sockets: FakeSocket[] = [];
+    const manager = new BaileysAccountManager(
+      { ...config(), accounts: [config().accounts[0]!] },
+      {
+        ...noOpEvents(),
+        onMessage: async (incoming) => {
+          received.push(incoming.messageId);
+        },
+      },
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.ev.emit("groups.upsert", [metadata()]);
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [incomingMessage("replay-sama")],
+    });
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [incomingMessage("replay-sama")],
+    });
+    await manager.drainEvents();
+
+    assert.deepEqual(received, ["replay-sama"]);
+    await manager.stop();
+  });
+
   it("menjawab pesan privat dan mendeduplikasi upsert", async () => {
     const privateMessages: string[] = [];
     const groupMessages: string[] = [];
@@ -343,6 +380,7 @@ describe("armada akun Baileys", () => {
     assert.equal(socket.sentMessages.length, 1);
     assert.equal(socket.sentMessages[0]?.jid, "628777777777@s.whatsapp.net");
     assert.match(socket.sentMessages[0]?.text ?? "", /^\*Penggunaan Harvy\*/u);
+    assert.equal(socket.sentMessages[0]?.requestedMessageId, null);
     assert.equal(delivered, 1);
     assert.equal(deliveryFailed, 0);
     assert.deepEqual(lifecycle, [
@@ -356,6 +394,77 @@ describe("armada akun Baileys", () => {
       "private-delivery-attempted",
       "private-delivery-succeeded",
     ]);
+    await manager.stop();
+  });
+
+  it("mengisolasi ingress dan outbound privat exploratory pada scope run", async () => {
+    const scope = "HARVYEXP123456789ABC";
+    const received: string[] = [];
+    const lifecycle: string[] = [];
+    const sockets: FakeSocket[] = [];
+    const manager = new BaileysAccountManager(
+      {
+        ...config(),
+        privateEnabled: true,
+        liveExplorationMessageScope: scope,
+        accounts: [config().accounts[0]!],
+      },
+      {
+        ...noOpEvents(),
+        onPrivateMessage: async (incoming) => {
+          received.push(incoming.messageId);
+          return { text: "Balasan current run" };
+        },
+        onPrivateLifecycle: (_accountId, stage) => lifecycle.push(stage),
+      },
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.ev.emit("connection.update", { connection: "open" });
+    const privateMessage = (id: string): WAMessage => ({
+      key: {
+        id,
+        remoteJid: "628777777777@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: 1_775_000_000,
+      message: { conversation: "pesan acceptance" },
+    });
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [privateMessage("HARVYEXPAAAAAAAAAAAAT00000000000")],
+    });
+    const currentId = `${scope}T00000000000`;
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [privateMessage(currentId)],
+    });
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [privateMessage(currentId)],
+    });
+    await manager.drainEvents();
+
+    assert.deepEqual(received, [currentId]);
+    assert.equal(
+      lifecycle.filter((stage) =>
+        stage === "private-causal-fence-rejected"
+      ).length,
+      1,
+    );
+    assert.equal(socket.sentMessages.length, 1);
+    assert.match(
+      socket.sentMessages[0]?.requestedMessageId ?? "",
+      /^HARVYEXP123456789ABCH[A-F0-9]{11}$/u,
+    );
     await manager.stop();
   });
 

@@ -3,11 +3,13 @@ import { spawn, type ChildProcess } from "node:child_process";
 const CONTROL_READY = "harvy-dev-control-ready";
 const CONTROL_SHUTDOWN = "harvy-dev-shutdown";
 const CHANNEL_READY = "harvy-runtime-channel-ready";
+const CHANNEL_STATUS = "harvy-runtime-channel-status";
 const ACCEPTANCE_TRACE = "harvy-live-acceptance-trace";
 const PRIVATE_TRACE_STAGES = new Set([
   "private-upsert-notify",
   "private-upsert-append",
   "private-candidate",
+  "private-causal-fence-rejected",
   "private-normalized",
   "private-handler-returned",
   "private-pipeline-failed",
@@ -27,6 +29,8 @@ export interface RuntimeSupervisorOptions {
   crashWindowMs?: number;
   maxCrashes?: number;
   shutdownTimeoutMs?: number;
+  /** Fault injection satu kali untuk acceptance; jangan pasang pada runtime normal. */
+  acceptanceFaultSignal?: AbortSignal;
   onEvent?: (event: RuntimeSupervisorEvent) => void;
 }
 
@@ -40,12 +44,27 @@ export type RuntimeSupervisorEvent =
       accountId: string;
     }
   | {
+      type: "channel-status";
+      attempt: number;
+      channel: "whatsapp";
+      accountId: string;
+      status:
+        | "connecting"
+        | "open"
+        | "retrying"
+        | "pairing"
+        | "stopped"
+        | "needs-operator";
+      reason: number | null;
+    }
+  | {
       type: "acceptance-trace";
       attempt: number;
       channel: "whatsapp";
       accountId: string;
       stage: string;
     }
+  | { type: "acceptance-fault-injected"; attempt: number }
   | {
       type: "child-restart-scheduled";
       attempt: number;
@@ -99,7 +118,21 @@ export function superviseRuntime(
     restartTimer = null;
     shutdownTimer = null;
     options.signal?.removeEventListener("abort", stop);
+    options.acceptanceFaultSignal?.removeEventListener(
+      "abort",
+      injectAcceptanceFault,
+    );
     resolveResult(code);
+  };
+
+  const injectAcceptanceFault = (): void => {
+    if (stopping || finished) return;
+    const active = child;
+    if (
+      !active || active.exitCode !== null || active.signalCode !== null
+    ) return;
+    options.onEvent?.({ type: "acceptance-fault-injected", attempt });
+    active.kill("SIGKILL");
   };
 
   const stop = (): void => {
@@ -215,6 +248,17 @@ export function superviseRuntime(
         });
         return;
       }
+      if (isChannelStatusMessage(message)) {
+        options.onEvent?.({
+          type: "channel-status",
+          attempt,
+          channel: message.channel,
+          accountId: message.accountId,
+          status: message.status,
+          reason: message.reason,
+        });
+        return;
+      }
       if (isAcceptanceTraceMessage(message)) {
         options.onEvent?.({
           type: "acceptance-trace",
@@ -245,6 +289,11 @@ export function superviseRuntime(
   };
 
   options.signal?.addEventListener("abort", stop, { once: true });
+  options.acceptanceFaultSignal?.addEventListener(
+    "abort",
+    injectAcceptanceFault,
+    { once: true },
+  );
   if (stopping) finish(0);
   else launch();
   return result;
@@ -256,7 +305,8 @@ function isAcceptanceTraceMessage(message: object & { type: unknown }): message 
   accountId: string;
   stage: string;
 } {
-  return message.type === ACCEPTANCE_TRACE &&
+  return exactMessageKeys(message, ["accountId", "channel", "stage", "type"]) &&
+    message.type === ACCEPTANCE_TRACE &&
     "channel" in message &&
     message.channel === "whatsapp" &&
     "accountId" in message &&
@@ -275,6 +325,7 @@ function isChannelReadyMessage(message: object & { type: unknown }): message is 
   accountId: string;
 } {
   if (
+    !exactMessageKeys(message, ["accountId", "channel", "type"]) ||
     message.type !== CHANNEL_READY ||
     !("channel" in message) ||
     message.channel !== "whatsapp" ||
@@ -284,6 +335,48 @@ function isChannelReadyMessage(message: object & { type: unknown }): message is 
     return false;
   }
   return /^[a-z][a-z0-9_-]{0,31}$/iu.test(message.accountId);
+}
+
+function isChannelStatusMessage(message: object & { type: unknown }): message is {
+  type: typeof CHANNEL_STATUS;
+  channel: "whatsapp";
+  accountId: string;
+  status:
+    | "connecting"
+    | "open"
+    | "retrying"
+    | "pairing"
+    | "stopped"
+    | "needs-operator";
+  reason: number | null;
+} {
+  if (
+    !exactMessageKeys(
+      message,
+      ["accountId", "channel", "reason", "status", "type"],
+    ) ||
+    message.type !== CHANNEL_STATUS ||
+    !("channel" in message) || message.channel !== "whatsapp" ||
+    !("accountId" in message) || typeof message.accountId !== "string" ||
+    !/^[a-z][a-z0-9_-]{0,31}$/iu.test(message.accountId) ||
+    !("status" in message) ||
+    (message.status !== "connecting" && message.status !== "open" &&
+      message.status !== "retrying" && message.status !== "pairing" &&
+      message.status !== "stopped" && message.status !== "needs-operator") ||
+    !("reason" in message) ||
+    (message.reason !== null && !Number.isSafeInteger(message.reason))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function exactMessageKeys(
+  message: object,
+  expected: readonly string[],
+): boolean {
+  return Object.keys(message).sort().join("\0") ===
+    [...expected].sort().join("\0");
 }
 
 function positive(value: number | undefined, fallback: number, name: string): number {

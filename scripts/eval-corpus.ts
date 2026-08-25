@@ -26,6 +26,10 @@ export interface ConversationEvalCase {
   forbidAdvice?: boolean;
   expectNoButtons?: boolean;
   expectedSessionSignal?: SessionSignal | null;
+  expectedMemory?: {
+    kind: "profile" | "preference" | "routine" | "context" | "personal";
+    terms: readonly string[];
+  };
   requiredTopicGroups?: readonly (readonly string[])[];
   minTopicGroups?: number;
 }
@@ -323,6 +327,42 @@ export const CONVERSATION_EVAL_CASES: readonly ConversationEvalCase[] = [
   },
   { id: "memory-list", message: "apa yang kamu ingat tentang aku?", expectedIntent: "memory", expectedRisk: "biasa", expectedRoute: "memory-control" },
   { id: "memory-forget", message: "lupakan catatan tentang sekolahku", expectedIntent: "memory", expectedRisk: "biasa", expectedRoute: "memory-control" },
+  {
+    id: "memory-learning-preference",
+    message: "Aku lebih suka belajar dengan contoh konkret daripada definisi panjang.",
+    expectedIntent: ["smalltalk", "feeling"],
+    expectedRisk: "biasa",
+    expectedRoute: "conversation",
+    expectedMemory: {
+      kind: "preference",
+      terms: ["contoh", "definisi"],
+    },
+  },
+  {
+    id: "memory-learning-preference-after-session",
+    message: "Aku lebih suka belajar dengan contoh konkret daripada definisi panjang.",
+    expectedIntent: ["smalltalk", "feeling"],
+    expectedRisk: "biasa",
+    expectedRoute: "conversation",
+    history: [
+      {
+        role: "user",
+        text: "Aku kewalahan dengan audit acceptance. Bantu aku mulai satu langkah kecil.",
+      },
+      {
+        role: "harvy",
+        text: "Kita bisa mulai dengan memeriksa satu kriteria acceptance paling penting.",
+      },
+      {
+        role: "user",
+        text: "Oke, sesi dan check-in ini berhenti.",
+      },
+    ],
+    expectedMemory: {
+      kind: "preference",
+      terms: ["contoh", "definisi"],
+    },
+  },
   { id: "data-export", message: "aku mau ekspor semua dataku", expectedIntent: "control", expectedRisk: "biasa", expectedRoute: "control" },
   { id: "timezone", message: "ubah zona waktuku ke WITA", expectedIntent: "control", expectedRisk: "biasa", expectedRoute: "control" },
   {

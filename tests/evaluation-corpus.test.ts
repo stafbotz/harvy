@@ -10,8 +10,8 @@ import {
 } from "../scripts/eval-corpus.js";
 
 describe("corpus evaluasi percakapan", () => {
-  it("memuat 42 skenario sintetis lintas jalur utama", () => {
-    assert.equal(CONVERSATION_EVAL_CASES.length, 42);
+  it("memuat 44 skenario sintetis lintas jalur utama", () => {
+    assert.equal(CONVERSATION_EVAL_CASES.length, 44);
     const ids = new Set(CONVERSATION_EVAL_CASES.map((testCase) => testCase.id));
     for (const required of [
       "priority-no-write",
@@ -21,6 +21,8 @@ describe("corpus evaluasi percakapan", () => {
       "history-reference",
       "session-new-topic",
       "human-bridge",
+      "memory-learning-preference",
+      "memory-learning-preference-after-session",
     ]) {
       assert.equal(ids.has(required), true, `kasus ${required} hilang`);
     }

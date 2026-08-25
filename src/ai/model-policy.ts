@@ -207,6 +207,20 @@ export function requiresPlannedExecution(
   return assessment.planningRequired && !mechanical;
 }
 
+/**
+ * Surface deterministik cocok untuk navigasi/state read yang benar-benar
+ * mekanis. Permintaan normal atau deep tetap dijawab oleh model meski semantic
+ * extractor keliru mengusulkan domain menu/account.
+ */
+export function allowsDeterministicSurface(
+  assessment: RoutingAssessment | null | undefined,
+): boolean {
+  if (!assessment || assessment.confidence < 0.55) return false;
+  if (requiresPlannedExecution(assessment)) return false;
+  return assessment.complexity === "mechanical" ||
+    assessment.transformationMechanical;
+}
+
 /** Adapter kompatibilitas untuk surface yang masih memakai dua mode agent. */
 export function selectAgentMode(input: RoutingInput): AgentRoutingMode {
   return selectGlobalRoute(input) === "orchestrate"

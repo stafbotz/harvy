@@ -23,7 +23,14 @@ export type ImmediateUnderstandingRoute =
       reference: SemanticReference;
     }
   | { kind: "control"; action: ControlAction }
+  | { kind: "show-tasks" }
+  | { kind: "complete-task"; target: string | null }
   | { kind: "save-task"; task: ExtractedTask }
+  | {
+      kind: "update-task";
+      target: string | null;
+      task: ExtractedTask;
+    }
   | { kind: "conversation" };
 
 /**
@@ -75,6 +82,70 @@ export function immediateUnderstandingRoute(
     )
   ) {
     return { kind: "control", action: understanding.controlAction };
+  }
+
+  if (
+    (understanding.intent === "task" ||
+      understanding.intent === "question" ||
+      understanding.intent === "request") &&
+    semanticOperationAuthorized(
+      originalMessage,
+      understanding.semanticOperation,
+      {
+        domain: "task",
+        operations: ["list"],
+        minConfidence: 0.85,
+        explicitness: ["explicit"],
+        references: ["none", "current", "recent", "all"],
+      },
+    )
+  ) {
+    return { kind: "show-tasks" };
+  }
+
+  if (
+    (understanding.intent === "task" ||
+      understanding.intent === "request") &&
+    semanticOperationAuthorized(
+      originalMessage,
+      understanding.semanticOperation,
+      {
+        domain: "task",
+        operations: ["complete"],
+        minConfidence: 0.9,
+        explicitness: ["explicit"],
+        references: ["none", "current", "recent", "quoted"],
+      },
+    )
+  ) {
+    return {
+      kind: "complete-task",
+      target: understanding.semanticOperation?.target ?? null,
+    };
+  }
+
+  if (
+    understanding.intent === "task" &&
+    understanding.task &&
+    (understanding.task.dueAt !== null ||
+      understanding.task.remindAt !== null) &&
+    semanticOperationAuthorized(
+      originalMessage,
+      understanding.semanticOperation,
+      {
+        domain: "task",
+        operations: ["update"],
+        minConfidence: 0.9,
+        explicitness: ["explicit"],
+        references: ["none", "current", "recent", "quoted"],
+      },
+    )
+  ) {
+    return {
+      kind: "update-task",
+      target: understanding.semanticOperation?.target ?? null,
+      task: understanding.task,
+    };
   }
 
   if (

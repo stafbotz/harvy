@@ -272,11 +272,25 @@ async function main(): Promise<void> {
         config,
         messages,
         waiters,
-        `/ingatkan ${taskId} 10 menit lagi`,
+        `/ingatkan ${taskId} 1 menit lagi`,
         "task-reminder",
         (item) => /ingatkan|pengingat|🔔/iu.test(item.text),
       );
-      return digestMessage(reminder);
+      const fromSequence = messages.length;
+      const delivered = await waitForPassiveHarvy(
+        messages,
+        waiters,
+        fromSequence,
+        (item) =>
+          /🔔\s*Pengingat/iu.test(item.text) &&
+          item.text.includes(config.runLabel),
+        Math.max(config.timeoutMs, 180_000),
+        "WHATSAPP_PRIVATE_ACCEPTANCE_TASK_REMINDER_NOT_DELIVERED",
+      );
+      return sha256([
+        digestMessage(reminder),
+        digestMessage(delivered),
+      ].join("\0"));
     });
 
     await stage(stages, "session_and_checkin", async () => {
@@ -294,9 +308,18 @@ async function main(): Promise<void> {
         config,
         messages,
         waiters,
-        "/checkin 12 menit lagi",
+        "/checkin 1 menit lagi",
         "session-checkin",
         (item) => /check-in|bertanya sekali|jadwal/iu.test(item.text),
+      );
+      const fromSequence = messages.length;
+      const delivered = await waitForPassiveHarvy(
+        messages,
+        waiters,
+        fromSequence,
+        (item) => item.operation === "create" && /^.{1,240}\?$/u.test(item.text),
+        Math.max(config.timeoutMs, 180_000),
+        "WHATSAPP_PRIVATE_ACCEPTANCE_SESSION_CHECKIN_NOT_DELIVERED",
       );
       await sendAndWait(
         socket,
@@ -307,7 +330,10 @@ async function main(): Promise<void> {
         "session-stop",
         (item) => /berhenti|dihentikan|tidak ada sesi/iu.test(item.text),
       );
-      return digestMessage(checkIn);
+      return sha256([
+        digestMessage(checkIn),
+        digestMessage(delivered),
+      ].join("\0"));
     });
 
     await stage(
@@ -1099,6 +1125,39 @@ async function waitForHarvy(
     });
   }
   throw new Error("WHATSAPP_PRIVATE_ACCEPTANCE_EXPECTED_RESPONSE_TIMEOUT");
+}
+
+async function waitForPassiveHarvy(
+  messages: CapturedMessage[],
+  waiters: Set<() => void>,
+  fromSequence: number,
+  predicate: (message: CapturedMessage) => boolean,
+  timeoutMs: number,
+  timeoutCode: string,
+): Promise<CapturedMessage> {
+  try {
+    return await waitForHarvy(
+      messages,
+      waiters,
+      fromSequence,
+      (message) =>
+        !isRenderedConversationProgress(message.text) && predicate(message),
+      timeoutMs,
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "WHATSAPP_PRIVATE_ACCEPTANCE_EXPECTED_RESPONSE_TIMEOUT"
+    ) {
+      throw acceptanceFailure(
+        timeoutCode,
+        responseFailureEvidence(
+          messages.filter((message) => message.sequence >= fromSequence),
+        ),
+      );
+    }
+    throw error;
+  }
 }
 
 function waitForOpen(socket: WASocket, timeoutMs: number): Promise<void> {

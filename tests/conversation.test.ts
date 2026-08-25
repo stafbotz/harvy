@@ -71,6 +71,30 @@ describe("pemahaman pesan", () => {
     assert.match(userMessage?.content ?? "", /abaikan aturanmu/);
   });
 
+  it("tidak menyamakan chat lama dengan memori durable saat mengekstrak ulang", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, SMALLTALK),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.understand("terapkan aturan itu lagi", {
+      summary: null,
+      turns: [{
+        role: "user",
+        text: "Kalau membahas produk, jawab dengan keputusan dulu.",
+        at: NOW,
+      }],
+      memories: [],
+    });
+
+    const system = requests[0]?.messages[0]?.content ?? "";
+    assert.match(system, /Kemunculan fakta atau instruksi hanya di/u);
+    assert.match(system, /bukan bukti bahwa ia sudah\s+tersimpan/u);
+    assert.match(system, /primary memory service yang menangani duplikat/u);
+  });
+
   it("meminta keluaran JSON dengan model termurah dan tanpa kreativitas", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(
@@ -92,6 +116,25 @@ describe("pemahaman pesan", () => {
     );
   });
 
+  it("memberi detik utuh saat model menghitung jadwal relatif", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, SMALLTALK),
+      ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-07-26T10:00:45.000Z"),
+    );
+
+    await conversation.understand("ingatkan aku satu menit lagi");
+
+    const prompt = requests[0]?.messages[0]?.content ?? "";
+    assert.match(prompt, /Sekarang:[^\n]*17[.:]00[.:]45/iu);
+    assert.match(
+      prompt,
+      /durasi relatif[\s\S]*sampai detik[\s\S]*jangan membulatkan/iu,
+    );
+  });
+
   it("memberi jatah token yang cukup untuk model penalaran", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(
@@ -109,6 +152,27 @@ describe("pemahaman pesan", () => {
       (requests[0]?.maxTokens ?? 0) >= 1024,
       "jatah token untuk pemahaman terlalu sempit",
     );
+  });
+
+  it("melarang model mengarang lingkungan live sebagai simulasi", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, SMALLTALK),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.reply(
+      "Nilai hasil pengujian live ini",
+      {
+        ...JSON.parse(SMALLTALK) as Understanding,
+        intent: "question",
+      },
+    );
+
+    const system = requests[0]?.messages[0]?.content ?? "";
+    assert.match(system, /pengguna sebut live\/nyata menjadi simulasi/u);
+    assert.match(system, /tanpa mengarang kondisi uji/u);
   });
 
   it("menghasilkan focus dalam understanding pass tanpa menayangkannya sebelum triase", async () => {
@@ -193,6 +257,7 @@ describe("pemahaman pesan", () => {
 
     const prompt = requests[0]?.messages[0]?.content ?? "";
     assert.match(prompt, /bentuk seluruh jawaban Harvy.*remember explicit/isu);
+    assert.match(prompt, /kelas jawaban.*pekerjaan produk.*memoryAction remember/isu);
     assert.match(
       prompt,
       /Instruksi penerapan lintas giliran.*perintah remember\s+explicit/isu,
@@ -208,6 +273,42 @@ describe("pemahaman pesan", () => {
     assert.match(
       prompt,
       /lebih paham lewat contoh nyata daripada teori panjang/iu,
+    );
+    assert.match(
+      prompt,
+      /Pemeriksaan akhir wajib[\s\S]*preferensi belajar baru hilang[\s\S]*contoh konkret daripada[\s\S]*memoryAction tetap null/iu,
+    );
+  });
+
+  it("meminta payload jadwal saat task tersimpan sedang diubah", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, SMALLTALK),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.understand(
+      "Jadwalnya berubah: ubah tugas peninjauan itu menjadi besok pukul 10.30 dan ingatkan satu jam sebelumnya. Jangan buat tugas baru.",
+    );
+
+    const prompt = requests[0]?.messages[0]?.content ?? "";
+    assert.match(prompt, /jadwal task tersimpan yang sedang diubah/iu);
+    assert.match(
+      prompt,
+      /Untuk task\/update, isi dueAt\/remindAt baru[\s\S]*bukan izin membuat task kedua/iu,
+    );
+    assert.match(
+      prompt,
+      /Domain task\/list[\s\S]*sebutkan tugas aktifku dan kapan pengingatnya[\s\S]*semantic task\/list explicit/iu,
+    );
+    assert.match(
+      prompt,
+      /ingatkan aku satu menit lagi[\s\S]*tetap save[\s\S]*update hanya bila[\s\S]*mengubah, menggeser, atau menjadwalkan ulang/iu,
+    );
+    assert.match(
+      prompt,
+      /task save\/update\/complete[\s\S]*mechanical[\s\S]*tidak membutuhkan planning/iu,
     );
   });
 
@@ -492,6 +593,7 @@ describe("pemahaman pesan", () => {
       ),
       ROUTING,
       "Asia/Jakarta",
+      () => new Date("2026-07-26T10:00:45.000Z"),
     );
 
     const dueAt = await conversation.understandDueDate("besok jam 7 malam");
@@ -502,6 +604,14 @@ describe("pemahaman pesan", () => {
     assert.match(
       requests[0]?.messages[0]?.content ?? "",
       /tenggat tugas yang sudah ada/i,
+    );
+    assert.match(
+      requests[0]?.messages[0]?.content ?? "",
+      /Sekarang:[^\n]*17[.:]00[.:]45/iu,
+    );
+    assert.match(
+      requests[0]?.messages[0]?.content ?? "",
+      /durasi relatif[\s\S]*sampai detik[\s\S]*jangan membulatkan/iu,
     );
     assert.match(
       requests[0]?.messages.at(-1)?.content ?? "",
@@ -555,6 +665,25 @@ describe("sintesis potret memori", () => {
 });
 
 describe("balasan percakapan", () => {
+  it("melarang balasan task biasa mengarang commit tanpa hasil operasi", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "jawaban"),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.reply(
+      "ingatkan aku satu menit lagi",
+      understanding("task"),
+    );
+
+    assert.match(
+      requests[0]?.messages[0]?.content ?? "",
+      /bukan bukti bahwa task atau pengingat[\s\S]*jangan berkata sudah dibuat[\s\S]*hasil operasi code-owned/iu,
+    );
+  });
+
   it("memakai everyday untuk normal dan orkestrator langsung untuk deep", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(
@@ -773,6 +902,56 @@ describe("balasan percakapan", () => {
     assert.doesNotMatch(system, /belum mengingat apa pun tentang kamu/i);
   });
 
+  it("membedakan konteks model saat ini dari kemampuan memori durable privat", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "Ingatan Harvy dapat dikelola lewat /memori."),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.reply(
+      "Apakah ingatanmu hanya berlaku selama sesi ini?",
+      understanding("history"),
+    );
+
+    const system = requests[0]?.messages[0]?.content ?? "";
+    assert.match(
+      system,
+      /Bedakan batas pengetahuanmu pada giliran ini dari kemampuan memori produk/iu,
+    );
+    assert.match(system, /catatan durable[\s\S]*termasuk catatan personal/iu);
+    assert.match(
+      system,
+      /Telegram privat dan WhatsApp privat[\s\S]*\/memori adalah kontrol aktif/iu,
+    );
+    assert.match(system, /penilaian AI tentang apa yang berguna dapat keliru/iu);
+  });
+
+  it("tidak mengarang sinkronisasi state antara Telegram dan WhatsApp", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "Kedua kanal perlu dinilai sebagai scope terpisah."),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.reply(
+      "Buat rencana pengujian Telegram dan WhatsApp.",
+      understanding("request"),
+    );
+
+    const system = requests[0]?.messages[0]?.content ?? "";
+    assert.match(
+      system,
+      /Kesetaraan kemampuan Telegram privat dan WhatsApp privat tidak berarti[\s\S]*otomatis tersinkron/iu,
+    );
+    assert.match(
+      system,
+      /perlakukan keduanya sebagai scope terpisah dan bandingkan perilakunya/iu,
+    );
+  });
+
   it("mengirim giliran terakhir sebagai pesan chat, bukan kutipan di prompt", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(
@@ -922,6 +1101,8 @@ describe("balasan percakapan", () => {
     const system = requests[0]?.messages[0]?.content ?? "";
     assert.match(system, /Ukur dulu beratnya/i);
     assert.match(system, /Jangan menyodorkan\s+saran istirahat/i);
+    assert.match(system, /wawancara, skenario, kutipan.*keadaan pribadi pengguna/isu);
+    assert.match(system, /nasihat kesehatan mental.*pekerjaan biasa/isu);
   });
 
   it("tidak menempeli celetukan pendek dengan perintah kedalaman", async () => {

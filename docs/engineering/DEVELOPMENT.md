@@ -84,8 +84,8 @@ boleh dihapus sebelum PID pemilik dipastikan sudah mati.
 
 ## Konfigurasi environment
 
-Konfigurasi runtime berasal dari `.env` (lihat `.env.example`):
-`TELEGRAM_BOT_TOKEN`, `DATA_FILE`, `MEMORY_FILE`, `HISTORY_FILE`,
+Konfigurasi runtime umumnya berasal dari `.env` (lihat `.env.example`):
+`DATA_FILE`, `MEMORY_FILE`, `HISTORY_FILE`,
 `MEMORY_FOLDER`, `PROFILE_FILE`, `SESSION_FILE`, `AGENT_RUN_FILE`, `TELEMETRY_FILE`,
 `TELEMETRY_RETENTION_DAYS`, `DEFAULT_TIMEZONE`, `REMINDER_INTERVAL_MS`, serta
 kelompok `AI_*` termasuk `AI_BASE_URL`, batas token 24 jam, dan harga input /
@@ -113,6 +113,13 @@ kegagalan upstream Baileys. Log operasional memakai `APP_ENV`, `RELEASE_SHA`, `L
 `LOG_FOLDER`, retensi, batas segmen/total/antrean, format console, dan
 `LOG_FILE_REQUIRED`.
 
+Token bot Telegram utama adalah pengecualian: atur lewat
+`npm run console:setup`. Runtime membacanya dari store AES-GCM lokal
+`secrets/primary-channels.*`; nilai environment hanya fallback legacy untuk
+migrasi dan konflik dua sumber menggagalkan startup. Runtime acceptance boleh
+meneruskan token bot uji lewat environment child bertanda sempit, tetapi tidak
+menulisnya ke `.env` atau memakai store utama.
+
 Economy/funding memakai `HARVY_ECONOMY_FILE`,
 `HARVY_BYOK_SECRET_FILE`, dan optional `HARVY_BYOK_MASTER_KEY_B64` (32 byte;
 tanpa key BYOK fail-closed). `HARVY_PAYMENT_GATEWAY_MODE` default `disabled`;
@@ -136,8 +143,8 @@ persetujuan, preferensi waktu, dan tombstone penghapusan; menghapusnya membuat
 semua pengguna diminta menyetujui ketentuannya lagi. `AGENT_RUN_FILE` memuat
 permintaan, observation internal, jawaban, dan progress checkpoint yang sedang
 menunggu; perlakukan sebagai data pribadi dan jangan menyalinnya ke log.
-Berkas `.env` dibaca lewat
-`process.loadEnvFile()`, tanpa dependency tambahan.
+Berkas `.env` dibaca lewat `process.loadEnvFile()`, tanpa dependency tambahan;
+credential Telegram utama kemudian di-resolve dari store Console.
 
 Coding runtime production adalah opt-in lewat
 `HARVY_CODING_RUNTIME_ENABLED=true`. Ia memerlukan state root terpisah,

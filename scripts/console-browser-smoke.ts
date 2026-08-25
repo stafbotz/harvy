@@ -17,6 +17,10 @@ import {
   saveTelegramBotCredential,
   saveTelegramTesterCredential,
 } from "../src/operations/live-acceptance.js";
+import {
+  primaryChannelCredentialPaths,
+  savePrimaryTelegramBotCredential,
+} from "../src/operations/primary-channel-credentials.js";
 import { FileControlPlaneRepository } from "../src/storage/file-control-plane-repository.js";
 import { FileUsageLedgerRepository } from "../src/storage/file-usage-ledger-repository.js";
 
@@ -127,8 +131,11 @@ async function main(): Promise<void> {
   let browser: ChildProcess | null = null;
   let client: CdpClient | null = null;
   let server: ConsoleServer | null = null;
+  let whatsapp: EmptyWhatsAppAdapter | null = null;
   try {
-    server = await createConsole(root);
+    const fixture = await createConsole(root);
+    server = fixture.server;
+    whatsapp = fixture.whatsapp;
     const started = await server.start();
     server.markReady();
     const launched = await launchBrowser(join(root, "browser-profile"));
@@ -159,9 +166,11 @@ async function main(): Promise<void> {
       client,
       `(() => {
         const app=document.getElementById("app-view");
-        const whatsapp=document.getElementById("whatsapp-tester-status");
+        const whatsappHarvy=document.getElementById("whatsapp-harvy-status");
+        const whatsappTester=document.getElementById("whatsapp-tester-status");
         return app && !app.classList.contains("hidden") &&
-          whatsapp && whatsapp.textContent !== "Memeriksa";
+          whatsappHarvy?.textContent === "Sesi valid" &&
+          whatsappTester?.textContent === "Sesi valid";
       })()`,
       "CONSOLE_BROWSER_CHANNEL_RENDER_TIMEOUT",
     );
@@ -219,17 +228,17 @@ async function main(): Promise<void> {
     }))()`);
     assert.equal(desktopState.activePanel, true);
     assert.equal(desktopState.globalErrorHidden, true);
-    assert.equal(desktopState.primaryTelegram, "Dikonfigurasi");
+    assert.equal(desktopState.primaryTelegram, "Credential tersimpan");
     assert.equal(desktopState.primaryWhatsApp, "1 akun dideklarasikan");
     assert.equal(desktopState.telegramBot, "Tersimpan");
-    assert.equal(desktopState.telegramTester, "Tersedia");
-    assert.equal(desktopState.whatsappHarvy, "Tersedia");
-    assert.equal(desktopState.whatsappTester, "Tersedia");
-    assert.equal(desktopState.progress, "4 dari 4 tersedia");
-    assert.equal(desktopState.pageTitle, "Kanal pengujian");
+    assert.equal(desktopState.telegramTester, "Credential tersimpan");
+    assert.equal(desktopState.whatsappHarvy, "Sesi valid");
+    assert.equal(desktopState.whatsappTester, "Sesi valid");
+    assert.equal(desktopState.progress, "4 dari 4 siap");
+    assert.equal(desktopState.pageTitle, "Kanal Harvy");
     assert.equal(desktopState.readinessTitle, "Harvy siap diuji");
     assert.equal(desktopState.telegramRoute, "Siap");
-    assert.equal(desktopState.whatsappRoute, "Siap");
+    assert.equal(desktopState.whatsappRoute, "Sesi valid");
     assert.equal(desktopState.settingsOpen, false);
     assert.equal(desktopState.readyMode, true);
     assert.equal(desktopState.readyCards, 4);
@@ -242,6 +251,46 @@ async function main(): Promise<void> {
     assert.equal(desktopState.whatsappTesterManageHidden, false);
     assert.deepEqual(desktopState.browserErrors, []);
     assert.deepEqual(client.runtimeFailures, []);
+
+    whatsapp.setProbeOutcome("harvy", "rejected");
+    await evaluate(client, `document.getElementById("channels-refresh").click()`);
+    await waitForEvaluation(
+      client,
+      `(() => {
+        const status=document.getElementById("whatsapp-harvy-status");
+        const detail=document.getElementById("whatsapp-harvy-detail");
+        const route=document.getElementById("whatsapp-route-status");
+        const manage=document.getElementById("whatsapp-harvy-manage");
+        return status?.textContent==="Sesi ditolak" &&
+          detail?.textContent.includes("WhatsApp menolaknya") &&
+          route?.textContent==="Sesi ditolak" && manage?.open===true;
+      })()`,
+      "CONSOLE_BROWSER_WHATSAPP_REJECTED_STATE_TIMEOUT",
+    );
+    const rejectedState = await evaluate<{
+      readyMode: boolean;
+      setupHidden: boolean;
+      manageHidden: boolean;
+      internalCodeVisible: boolean;
+    }>(client, `(() => ({
+      readyMode:document.getElementById("tab-channels").classList.contains("ready-mode"),
+      setupHidden:document.getElementById("whatsapp-harvy-setup").classList.contains("hidden"),
+      manageHidden:document.getElementById("whatsapp-harvy-manage").classList.contains("hidden"),
+      internalCodeVisible:document.getElementById("whatsapp-harvy-detail").textContent.includes("CHANNEL_WHATSAPP"),
+    }))()`);
+    assert.equal(rejectedState.readyMode, false);
+    assert.equal(rejectedState.setupHidden, true);
+    assert.equal(rejectedState.manageHidden, false);
+    assert.equal(rejectedState.internalCodeVisible, false);
+
+    whatsapp.setProbeOutcome("harvy", "accepted");
+    await evaluate(client, `document.getElementById("channels-refresh").click()`);
+    await waitForEvaluation(
+      client,
+      `document.getElementById("whatsapp-harvy-status")?.textContent==="Sesi valid" &&
+        document.getElementById("whatsapp-route-status")?.textContent==="Sesi valid"`,
+      "CONSOLE_BROWSER_WHATSAPP_REVERIFIED_STATE_TIMEOUT",
+    );
 
     const screenshotPath = process.env.HARVY_CONSOLE_SCREENSHOT?.trim();
     if (screenshotPath) {
@@ -353,8 +402,16 @@ async function main(): Promise<void> {
   }
 }
 
-async function createConsole(root: string): Promise<ConsoleServer> {
+async function createConsole(root: string): Promise<{
+  server: ConsoleServer;
+  whatsapp: EmptyWhatsAppAdapter;
+}> {
   const paths = liveAcceptancePaths(join(root, "acceptance"));
+  const primaryPaths = primaryChannelCredentialPaths(root);
+  await savePrimaryTelegramBotCredential({
+    version: 1,
+    botToken: `987654321:${"p".repeat(32)}`,
+  }, primaryPaths);
   await saveTelegramBotCredential({
     version: 1,
     botToken: "123456789:abcdefghijklmnopqrstuvwxyz_ABCDE",
@@ -390,10 +447,13 @@ async function createConsole(root: string): Promise<ConsoleServer> {
     control,
     { retentionDays: 1 },
   );
+  const whatsapp = new EmptyWhatsAppAdapter();
   const channels = new ChannelSetupService({
     paths,
+    primaryCredentialPaths: primaryPaths,
+    environment: {},
     telegramAdapter: new EmptyTelegramAdapter(),
-    whatsappAdapter: new EmptyWhatsAppAdapter(),
+    whatsappAdapter: whatsapp,
     primaryChannels: {
       telegram: { declared: true },
       whatsapp: {
@@ -405,7 +465,7 @@ async function createConsole(root: string): Promise<ConsoleServer> {
       },
     },
   });
-  return new ConsoleServer(
+  const server = new ConsoleServer(
     control,
     ledger,
     {
@@ -419,6 +479,7 @@ async function createConsole(root: string): Promise<ConsoleServer> {
     null,
     channels,
   );
+  return { server, whatsapp };
 }
 
 class EmptyTelegramAdapter implements TelegramPairingAdapter {
@@ -431,8 +492,18 @@ class EmptyTelegramAdapter implements TelegramPairingAdapter {
 
 class EmptyWhatsAppAdapter implements WhatsAppPairingAdapter {
   private revokeAttempts = 0;
+  private readonly probeOutcomes = new Map<
+    "harvy" | "tester",
+    "accepted" | "rejected"
+  >();
   async configured(): Promise<boolean> {
     return true;
+  }
+  async probe(input: {
+    authFolder: string;
+  }): Promise<"accepted" | "rejected"> {
+    const role = input.authFolder.endsWith("harvy") ? "harvy" : "tester";
+    return this.probeOutcomes.get(role) ?? "accepted";
   }
   async pair(input: {
     signal: AbortSignal;
@@ -455,6 +526,13 @@ class EmptyWhatsAppAdapter implements WhatsAppPairingAdapter {
         code: "CHANNEL_WHATSAPP_CONNECTION_CLOSED",
       });
     }
+  }
+
+  setProbeOutcome(
+    role: "harvy" | "tester",
+    outcome: "accepted" | "rejected",
+  ): void {
+    this.probeOutcomes.set(role, outcome);
   }
 }
 
@@ -621,6 +699,9 @@ async function removeTemporaryRoot(root: string): Promise<void> {
 }
 
 await main().catch((error: unknown) => {
+  if (process.env.HARVY_CONSOLE_SMOKE_DEBUG === "1" && error instanceof Error) {
+    process.stderr.write(`${error.stack ?? error.message}\n`);
+  }
   const code = error instanceof Error && /^[A-Z][A-Z0-9_:.-]{2,199}$/u.test(error.message)
     ? error.message
     : "CONSOLE_BROWSER_SMOKE_FAILED";

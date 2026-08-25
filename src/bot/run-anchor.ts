@@ -83,9 +83,20 @@ export function runFailureCopy(run: ActiveAgentRun): string {
   if (run.status === "partial") {
     return "Sebagian pekerjaan sempat berjalan, tetapi hasil pengiriman terakhir tidak dapat dipastikan. Aku tidak akan mengirim ulang otomatis karena itu bisa menduplikasi hasil.";
   }
-  return run.lastError?.code === "input_expired"
-    ? "Pekerjaan berhenti karena pertanyaan yang dibutuhkan tidak terjawab sebelum checkpoint kedaluwarsa."
-    : "Pekerjaan berhenti sebelum menghasilkan jawaban yang dapat dipercaya. Aku tidak akan mengarang hasilnya.";
+  switch (run.lastError?.code) {
+    case "input_expired":
+      return "Pekerjaan berhenti karena pertanyaan yang dibutuhkan tidak terjawab sebelum checkpoint kedaluwarsa.";
+    case "usage_anti_abuse":
+      return "Pekerjaan belum selesai karena batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan.";
+    case "usage_wallet_disabled":
+      return "Pekerjaan belum selesai karena saldo tambah compute belum diizinkan untuk dipakai otomatis. Aktifkan funding atau gunakan provider sendiri untuk melanjutkan.";
+    case "usage_byok_unavailable":
+      return "Pekerjaan belum selesai karena provider milikmu belum cocok untuk tingkat pekerjaan ini. Pilih provider lain atau gunakan compute Harvy secara eksplisit.";
+    case "usage_allowance_exhausted":
+      return "Pekerjaan belum selesai karena kapasitas Harvy-funded periode ini sudah terpakai. Gunakan BYOK, tambah compute, atau tunggu kapasitas diperbarui.";
+    default:
+      return "Pekerjaan berhenti sebelum menghasilkan jawaban yang dapat dipercaya. Aku tidak akan mengarang hasilnya.";
+  }
 }
 
 function runTitle(request: string): string {

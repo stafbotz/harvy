@@ -64,6 +64,108 @@ describe("routing hasil pemahaman di adapter bot", () => {
     );
   });
 
+  it("membawa perubahan jadwal task eksplisit tanpa membuat task kedua", () => {
+    const message =
+      "ubah tugas peninjauan itu menjadi besok pukul 10.30 dan ingatkan satu jam sebelumnya";
+    const extracted = {
+      title: "Tugas peninjauan",
+      dueAt: new Date("2026-08-25T03:30:00.000Z"),
+      remindAt: new Date("2026-08-25T02:30:00.000Z"),
+      importance: 2 as const,
+    };
+    assert.deepEqual(
+      immediateUnderstandingRoute(sample({
+        intent: "task",
+        taskAction: "save",
+        task: extracted,
+        semanticOperation: semantic(
+          "task",
+          "update",
+          message,
+          "tugas peninjauan",
+          "explicit",
+          "recent",
+        ),
+      }), message),
+      {
+        kind: "update-task",
+        target: "tugas peninjauan",
+        task: extracted,
+      },
+    );
+    assert.deepEqual(
+      immediateUnderstandingRoute(sample({
+        intent: "task",
+        taskAction: "save",
+        task: extracted,
+        semanticOperation: semantic(
+          "task",
+          "update",
+          message,
+          "tugas peninjauan",
+          "implicit",
+          "recent",
+        ),
+      }), message),
+      { kind: "conversation" },
+    );
+  });
+
+  it("membawa penyelesaian task natural ke mutasi state yang eksplisit", () => {
+    const message = "Tandai tugas mencatat hasil restart itu selesai.";
+    assert.deepEqual(
+      immediateUnderstandingRoute(sample({
+        intent: "request",
+        semanticOperation: semantic(
+          "task",
+          "complete",
+          message,
+          "mencatat hasil restart",
+          "explicit",
+          "recent",
+        ),
+      }), message),
+      { kind: "complete-task", target: "mencatat hasil restart" },
+    );
+    assert.deepEqual(
+      immediateUnderstandingRoute(sample({
+        intent: "request",
+        semanticOperation: semantic(
+          "task",
+          "complete",
+          message,
+          "mencatat hasil restart",
+          "implicit",
+          "recent",
+        ),
+      }), message),
+      { kind: "conversation" },
+    );
+  });
+
+  it("membawa permintaan natural membaca task ke surface state", () => {
+    const message =
+      "Sekarang sebutkan tugas aktifku dan kapan pengingatnya.";
+    assert.deepEqual(
+      immediateUnderstandingRoute(sample({
+        intent: "request",
+        routingAssessment: {
+          complexity: "mechanical",
+          ambiguity: "low",
+          planningRequired: false,
+          emotionalNuance: "low",
+          executionSize: "small",
+          factualStakes: "low",
+          transformationMechanical: true,
+          toolNeed: "internal_state",
+          confidence: 0.98,
+        },
+        semanticOperation: semantic("task", "list", message, null),
+      }), message),
+      { kind: "show-tasks" },
+    );
+  });
+
   it("memerlukan intent, action, dan semantic operation yang sejalan", () => {
     const listMessage = "show me what you remember about me";
     assert.deepEqual(

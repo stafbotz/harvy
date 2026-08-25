@@ -1,11 +1,69 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  automaticMemoryCandidateAuthorized,
   deriveMemoryMetadata,
+  exactExplicitMemoryCandidate,
   inferExplicitResponsePreference,
 } from "../src/core/memory-candidate.js";
 
 describe("deriveMemoryMetadata", () => {
+  it("hanya mengizinkan auto-memory grounded tentang pengguna yang tidak sesaat", () => {
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Aku biasanya paling fokus belajar pagi.",
+      {
+        sourceEvidence: "Aku biasanya paling fokus belajar pagi",
+        sourceSubject: "self",
+        durability: "durable",
+      },
+    ), true);
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Besok harus bangun pagi, malam ini belajar atau tidur?",
+      {
+        sourceEvidence: "Besok harus bangun pagi",
+        sourceSubject: "self",
+        durability: "transient",
+      },
+    ), false);
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Tolong buat acceptance reminder untuk Harvy.",
+      {
+        sourceEvidence: "acceptance reminder untuk Harvy",
+        sourceSubject: "work",
+        durability: "bounded",
+      },
+    ), false);
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Warna favoritku biru.",
+      {
+        sourceEvidence: "warna favoritku hijau",
+        sourceSubject: "self",
+        durability: "durable",
+      },
+    ), false, "evidence yang tidak ada di current turn harus gagal tertutup");
+  });
+
+  it("memakai span explicit exact saat satu parafrasa model tidak cocok leksikal", () => {
+    const requested =
+      "kalau membantu pekerjaan produk, jawab dengan keputusan utama dulu lalu alasan singkat; jangan buka dengan empati generik";
+    assert.deepEqual(
+      exactExplicitMemoryCandidate(requested, [{
+        kind: "preference",
+        content:
+          "Untuk pekerjaan produk, beri keputusan utama lalu alasan singkat tanpa empati generik.",
+      }]),
+      { kind: "preference", content: requested },
+    );
+    assert.equal(
+      exactExplicitMemoryCandidate(requested, [
+        { kind: "preference", content: "Kandidat satu" },
+        { kind: "context", content: "Kandidat dua" },
+      ]),
+      null,
+      "lebih dari satu kandidat tidak boleh memperoleh scope explicit yang sama",
+    );
+  });
+
   it("membentuk authority lokal hanya untuk instruksi bentuk jawaban lintas giliran", () => {
     assert.deepEqual(
       inferExplicitResponsePreference(

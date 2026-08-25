@@ -16,6 +16,7 @@ import {
   withUsageAttribution,
 } from "../ai/usage-attribution.js";
 import {
+  allowsDeterministicSurface,
   requiresPlannedExecution,
   selectGlobalRoute,
 } from "../ai/model-policy.js";
@@ -68,7 +69,9 @@ import {
   isSensitiveMemory,
 } from "../core/memory-policy.js";
 import {
+  automaticMemoryCandidateAuthorized,
   deriveMemoryMetadata,
+  exactExplicitMemoryCandidate,
   inferExplicitResponsePreference,
 } from "../core/memory-candidate.js";
 import {
@@ -96,6 +99,10 @@ import {
   mailboxKindForRelation,
 } from "../core/run-mailbox-policy.js";
 import {
+  ActiveRunIngressBarrier,
+  type ActiveRunIngressReservation,
+} from "../core/active-run-ingress-barrier.js";
+import {
   hasExplicitImmediateDangerSignal,
   hasExplicitSupportTriageSignal,
   needsConditionalReplyReview,
@@ -114,6 +121,7 @@ import {
   sessionAppliesToMessage,
 } from "../core/session-policy.js";
 import type { TaskService } from "../core/task-service.js";
+import { resolveActiveTaskReference } from "../core/task-reference.js";
 import {
   UsageLimitError,
   type TelemetryService,
@@ -146,6 +154,7 @@ import type {
 import type { StudentTask } from "../domain/task.js";
 import {
   semanticConfidenceBucket,
+  semanticOperationContextAvailable,
   semanticOperationAuthorized,
   semanticOperationForExactCommand,
 } from "../domain/semantic-operation.js";
@@ -516,20 +525,6 @@ export function createBot(
       }
       return;
     }
-    if (economy) {
-      const support = await economy.supportPrompt(ownerId);
-      if (support) {
-        try {
-          await ctx.reply(support);
-        } catch (error) {
-          logger.warn(
-            "support_prompt_delivery_failed",
-            "Pemberitahuan dukungan sukarela tidak terkirim.",
-            { error },
-          );
-        }
-      }
-    }
   };
   const noteTurnSignal = async (
     ownerId: string,
@@ -592,6 +587,7 @@ export function createBot(
     string,
     { runId: string; controller: AbortController; promise: Promise<void> }
   >();
+  const activeRunIngress = new ActiveRunIngressBarrier();
   const activeCodingWork = new Set<Promise<void>>();
   const codingAnchors = new Map<
     string,
@@ -1401,6 +1397,21 @@ export function createBot(
     const ownerId = ownerOf(ctx);
     const text = ctx.message.text.trim();
 
+    // Telegram tidak menerima tanda hubung pada registrasi command native,
+    // tetapi shortcut yang sama dengan WhatsApp tetap harus bekerja ketika
+    // diketik langsung. Jalurnya hanya membuka konfirmasi bertoken; data baru
+    // dihapus setelah tombol YES yang sama dengan kontrol menu dipilih.
+    if (/^\/hapus-data(?:@[A-Za-z0-9_]+)?$/iu.test(text)) {
+      enqueueBotAction(
+        ctx,
+        ownerId,
+        "cancel",
+        "Perintah /hapus-data gagal:",
+        () => showControl(ctx, ownerId, "delete-all"),
+      );
+      return;
+    }
+
     if (text.startsWith("/")) {
       enqueueBotAction(
         ctx,
@@ -1751,11 +1762,86 @@ export function createBot(
   ): Promise<void> {
     return enqueueOnboardingOperation(ownerId, async () => {
       if (await consentGate(ownerId)) {
+        const runIngress = await reserveActiveRunIngress(ctx, ownerId);
+        if (runIngress) {
+          const queuedAt = Date.now();
+          await messageBatcher.drainAndRun(ownerId, () =>
+            processBoundActiveRunIngress(
+              ctx,
+              ownerId,
+              text,
+              runIngress,
+              queuedAt,
+            )
+          );
+          return;
+        }
         messageBatcher.enqueue(ownerId, text, ctx, ctx.update.update_id);
         return;
       }
       await beginOnboarding(ctx, ownerId, text);
     });
+  }
+
+  async function reserveActiveRunIngress(
+    ctx: Context,
+    ownerId: string,
+  ): Promise<ActiveRunIngressReservation | null> {
+    const quoted = quotedMessageId(ctx);
+    if (!quoted) return null;
+    const run = await activeRunForIngress(ownerId);
+    if (!run?.anchor.messageId || run.anchor.messageId !== quoted) return null;
+    return activeRunIngress.reserve(run.runId);
+  }
+
+  async function processBoundActiveRunIngress(
+    ctx: Context,
+    ownerId: string,
+    text: string,
+    reservation: ActiveRunIngressReservation,
+    queuedAt: number,
+  ): Promise<void> {
+    const turnId = randomUUID();
+    const startedAt = Date.now();
+    let outcome: "completed" | "failed" = "completed";
+    await telemetry.beginTurn(ownerId, turnId);
+    try {
+      await withUsageAttribution(
+        {
+          turnId,
+          subjectKind: "private",
+          channel: "telegram",
+          actorAliases: [],
+        },
+        () => handleFreeText(
+          ctx,
+          ownerId,
+          text,
+          {},
+          ctx.update.update_id,
+          hasExplicitImmediateDangerSignal(text),
+          false,
+        ),
+      );
+    } catch (error) {
+      outcome = "failed";
+      throw error;
+    } finally {
+      activeRunIngress.release(reservation);
+      const endedAt = Date.now();
+      await telemetry.recordTurn({
+        turnId,
+        ownerId,
+        subjectKind: "private",
+        channel: "telegram",
+        outcome,
+        bubbleCount: 1,
+        batchWaitMs: 0,
+        queueWaitMs: Math.max(0, startedAt - queuedAt),
+        handlingLatencyMs: Math.max(0, endedAt - startedAt),
+        totalLatencyMs: Math.max(0, endedAt - queuedAt),
+      });
+    }
   }
 
   function enqueueOnboardingOperation(
@@ -2061,6 +2147,7 @@ export function createBot(
     let activeRunLaunch: ActiveAgentRun | null = null;
     let activeRunLaunched = false;
     let activeRunSurfaceReply = false;
+    let activeRunMemoryNotice: string | null = null;
     const requestRiskTriage = (): Promise<RiskTriage | null> =>
       conversation
         .triageRisk(text, ownerId, context, runtime.signal)
@@ -2229,12 +2316,25 @@ export function createBot(
     // reads fresh state from its owner-scoped service.
     if (understanding && triage.level === "biasa") {
       const semantic = understanding.semanticOperation;
-      if (semantic && semanticOperationAuthorized(text, semantic, {
+      // Surface account/menu adalah jawaban mekanis. Bila assessment yang sama
+      // mengatakan pengguna meminta analisis atau pekerjaan berencana, proposal
+      // semantic yang kebetulan menyerupai "usage" tidak boleh membajak turn
+      // menjadi dashboard statis. Agent tetap dapat membaca state lewat tool
+      // bila pekerjaan kompleks itu memang memerlukannya.
+      const deterministicSurfaceEligible = allowsDeterministicSurface(
+        understanding.routingAssessment,
+      );
+      if (
+        deterministicSurfaceEligible && semantic && semanticOperationContextAvailable(
+          semantic,
+          context.interactions,
+        ) && semanticOperationAuthorized(text, semantic, {
         domain: "menu",
         operations: ["show", "show-help", "show-category"],
         minConfidence: 0.75,
         explicitness: ["explicit", "contextual"],
-      })) {
+        })
+      ) {
         const rendered = semantic.operation === "show-help"
           ? renderHelpMessage(commandOptions, "telegram")
           : semantic.operation === "show-category" && semantic.target
@@ -2275,12 +2375,21 @@ export function createBot(
         return;
       }
 
-      if (economyCommands) {
-        const accountReply = await economyCommands.handle(
-          ownerId,
-          { rawText: text, semanticOperation: semantic },
-          currentTurnId() ?? `telegram:${firstIngressUpdateId}`,
-        );
+      if (deterministicSurfaceEligible && economyCommands) {
+        const accountReply = semanticOperationContextAvailable(
+            semantic,
+            context.interactions,
+          )
+          ? await economyCommands.handle(
+              ownerId,
+              {
+                rawText: text,
+                semanticOperation: semantic,
+                recentInteractions: context.interactions ?? [],
+              },
+              currentTurnId() ?? `telegram:${firstIngressUpdateId}`,
+            )
+          : null;
         if (accountReply) {
           if (!(await runtimeIsCurrent(runtime))) return;
           await ctx.reply(accountReply);
@@ -2385,7 +2494,13 @@ export function createBot(
       const requiresAgentPlanning = !guidedSmallStep &&
         requiresPlannedExecution(understanding.routingAssessment);
       const proposedRoute = immediateUnderstandingRoute(understanding, text);
-      const proposedRouteAllowed = proposedRoute.kind === "save-task"
+      const proposedRouteAllowed = proposedRoute.kind === "show-tasks"
+        ? effectPermissions.generalState && allowsDeterministicSurface(
+            understanding.routingAssessment,
+          )
+        : proposedRoute.kind === "save-task" ||
+          proposedRoute.kind === "update-task" ||
+          proposedRoute.kind === "complete-task"
         ? effectPermissions.ordinaryTask
         : proposedRoute.kind === "memory-control"
           ? effectPermissions.explicitControl
@@ -2398,12 +2513,63 @@ export function createBot(
       const deterministicTimeControl = proposedRoute.kind === "control" &&
         (proposedRoute.action === "timezone" ||
           proposedRoute.action === "quiet-hours");
+      const deterministicTaskMutation = proposedRoute.kind === "update-task" ||
+        proposedRoute.kind === "complete-task";
+      const deterministicTaskRead = proposedRoute.kind === "show-tasks";
       const route =
         proposedRouteAllowed &&
-          (!requiresLiveState || deterministicTimeControl) &&
+          (!requiresLiveState || deterministicTimeControl ||
+            deterministicTaskMutation || deterministicTaskRead) &&
           !requiresAgentPlanning
           ? proposedRoute
           : ({ kind: "conversation" } as const);
+      logger.info(
+        "semantic_route_evaluated",
+        "Proposal semantic Telegram privat selesai dipagari kode.",
+        {
+          route: proposedRoute.kind,
+          operation: route.kind,
+          outcome: understanding.intent,
+          reason: [
+            `payload-${understanding.task ? "t" : "n"}${understanding.task?.dueAt ? "d" : "n"}${understanding.task?.remindAt ? "r" : "n"}`,
+            `explicit-${understanding.semanticOperation?.explicitness ?? "none"}`,
+            `reference-${understanding.semanticOperation?.reference ?? "none"}`,
+            `allowed-${proposedRouteAllowed ? "1" : "0"}`,
+            `live-${requiresLiveState ? "1" : "0"}`,
+            `planning-${requiresAgentPlanning ? "1" : "0"}`,
+          ].join("."),
+          decision: [
+            `intent-${understanding.intent}`,
+            `semantic-${understanding.semanticOperation?.domain ?? "none"}-${understanding.semanticOperation?.operation ?? "none"}`,
+            `explicit-${understanding.semanticOperation?.explicitness ?? "none"}`,
+            `reference-${understanding.semanticOperation?.reference ?? "none"}`,
+            `payload-${understanding.task ? "t" : "n"}${understanding.task?.dueAt ? "d" : "n"}${understanding.task?.remindAt ? "r" : "n"}`,
+            `proposed-${proposedRoute.kind}`,
+            `selected-${route.kind}`,
+            `allowed-${proposedRouteAllowed ? "1" : "0"}`,
+            `live-${requiresLiveState ? "1" : "0"}`,
+            `planning-${requiresAgentPlanning ? "1" : "0"}`,
+          ].join("."),
+          semanticDomain: understanding.semanticOperation?.domain ?? "none",
+          semanticOperation:
+            understanding.semanticOperation?.operation ?? "none",
+          confidenceBucket: semanticConfidenceBucket(
+            understanding.semanticOperation,
+          ),
+          semanticExplicitness:
+            understanding.semanticOperation?.explicitness ?? "none",
+          semanticReference:
+            understanding.semanticOperation?.reference ?? "none",
+          proposedRoute: proposedRoute.kind,
+          selectedRoute: route.kind,
+          proposedRouteAllowed,
+          requiresLiveState,
+          requiresAgentPlanning,
+          taskPayloadPresent: Boolean(understanding.task),
+          duePresent: Boolean(understanding.task?.dueAt),
+          reminderPresent: Boolean(understanding.task?.remindAt),
+        },
+      );
 
       if (route.kind === "memory-control") {
         if (!(await runtimeIsCurrent(runtime))) return;
@@ -2476,6 +2642,145 @@ export function createBot(
         return;
       }
 
+      if (route.kind === "show-tasks") {
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await clearPending(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await sendTaskList(ctx, ownerId, text);
+        return;
+      }
+
+      if (route.kind === "complete-task") {
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await clearPending(ownerId);
+        const active = await tasks.listActive(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
+        const selected = resolveActiveTaskReference(active, route.target);
+        if (!selected) {
+          const response = active.length === 0
+            ? "Belum ada tugas aktif yang bisa diselesaikan."
+            : "Aku belum yakin tugas mana yang ingin kamu selesaikan. Sebut judulnya lebih spesifik.";
+          await ctx.reply(response);
+          await history.append(ownerId, "harvy", response);
+          return;
+        }
+        if (!(await runtimeIsCurrent(runtime))) return;
+        const completed = await tasks.complete(ownerId, selected.id);
+        if (!completed) {
+          const response =
+            "Tugas itu sudah berubah sebelum sempat kuselesaikan. Buka daftar tugas agar aku memakai state terbaru.";
+          await ctx.reply(response);
+          await history.append(ownerId, "harvy", response);
+          return;
+        }
+        const stableBody = `Tugas selesai\n${completed.title}`;
+        const response = await presentPrivateOperation(ownerId, {
+          kind: "task-completed",
+          outcome: "success",
+          userMessage: text,
+          stableBody,
+          fallbackText: taskCompletedHeading(completed.title),
+        }, {
+          context,
+          style: profile.stylePreference,
+          timeZone,
+          runtime,
+        });
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await ctx.reply(response);
+        await history.append(ownerId, "harvy", response);
+        return;
+      }
+
+      if (route.kind === "update-task") {
+        if (!(await runtimeIsCurrent(runtime))) return;
+        await clearPending(ownerId);
+        const active = await tasks.listActive(ownerId);
+        if (!(await runtimeIsCurrent(runtime))) return;
+        const selected = resolveActiveTaskReference(active, route.target);
+        if (!selected) {
+          const response = active.length === 0
+            ? "Belum ada tugas aktif yang bisa diubah."
+            : "Aku belum yakin tugas mana yang ingin kamu ubah. Sebut judulnya lebih spesifik.";
+          await ctx.reply(response);
+          await history.append(ownerId, "harvy", response);
+          return;
+        }
+        if (
+          route.task.remindAt &&
+          (route.task.remindAt.getTime() <= Date.now() ||
+            isInQuietHours(
+              route.task.remindAt,
+              timeZone,
+              profile.quietHours,
+            ))
+        ) {
+          const response = route.task.remindAt.getTime() <= Date.now()
+            ? "Waktu pengingat itu sudah lewat. Pilih waktu yang masih akan datang."
+            : "Waktu pengingat itu masuk jam tenangmu. Aku tidak menggesernya diam-diam; pilih waktu lain.";
+          await ctx.reply(response);
+          await history.append(ownerId, "harvy", response);
+          return;
+        }
+        const updated = await tasks.updateSchedule(ownerId, selected.id, {
+          ...(route.task.dueAt ? { dueAt: route.task.dueAt } : {}),
+          ...(route.task.remindAt
+            ? { reminderAt: route.task.remindAt }
+            : {}),
+          expected: {
+            dueAt: selected.dueAt,
+            reminderAt: selected.reminderAt,
+          },
+        });
+        if (!updated) {
+          const response =
+            "Tugas itu berubah sebelum jadwal baru sempat disimpan. Coba ulangi agar aku memakai state terbaru.";
+          await ctx.reply(response);
+          await history.append(ownerId, "harvy", response);
+          return;
+        }
+        const rollback = async (): Promise<void> => {
+          await tasks.updateSchedule(ownerId, selected.id, {
+            dueAt: selected.dueAt ? new Date(selected.dueAt) : null,
+            reminderAt: selected.reminderAt
+              ? new Date(selected.reminderAt)
+              : null,
+            expected: {
+              dueAt: updated.dueAt,
+              reminderAt: updated.reminderAt,
+            },
+          }).catch(() => null);
+        };
+        if (!(await runtimeIsCurrent(runtime))) {
+          await rollback();
+          return;
+        }
+        const stableBody = formatTask(updated, timeZone);
+        const response = await presentPrivateOperation(ownerId, {
+          kind: "task-due-updated",
+          outcome: "success",
+          userMessage: text,
+          stableBody,
+          fallbackText: [
+            "Jadwal tugasnya sudah aku ubah.",
+            "",
+            stableBody,
+          ].join("\n"),
+        }, {
+          context,
+          style: profile.stylePreference,
+          timeZone,
+          runtime,
+        });
+        if (!(await runtimeIsCurrent(runtime))) {
+          await rollback();
+          return;
+        }
+        await ctx.reply(response, { reply_markup: taskActions(updated) });
+        await history.append(ownerId, "harvy", response);
+        return;
+      }
+
       const explicitSmallStepSession =
         guidedSmallStep &&
         route.kind === "conversation";
@@ -2526,8 +2831,10 @@ export function createBot(
       const proposedMemories: ExtractedMemory[] = explicitResponsePreference
         ? [explicitResponsePreference]
         : [...understanding.memories];
-      const derivedMemoryCandidates = effectPermissions.generalState
-          && !requiresAgentPlanning
+      // Sama seperti WhatsApp privat, fakta stabil dari current turn diproses
+      // sebelum jalur agent dipilih. Kedalaman pekerjaan tidak membatalkan
+      // authority onboarding atau instruksi preferensi yang eksplisit.
+      const initialDerivedMemoryCandidates = effectPermissions.generalState
         ? proposedMemories.map((memory) => ({
             ...memory,
             ...deriveMemoryMetadata(memory.kind, memory.content, text),
@@ -2550,12 +2857,35 @@ export function createBot(
           effectPermissions.generalState
         ? explicitMemoryRememberAuthority(
             text,
-            derivedMemoryCandidates,
+            initialDerivedMemoryCandidates,
             understanding.semanticOperation,
           )
         : null;
+      const exactExplicitFallback = explicitRemember &&
+          !explicitRemember.forbiddenSecret &&
+          explicitRemember.candidateIndexes.length === 0 &&
+          (understanding.semanticOperation?.reference === "none" ||
+            understanding.semanticOperation?.reference === "quoted")
+        ? exactExplicitMemoryCandidate(
+            explicitRemember.requestedText,
+            proposedMemories,
+          )
+        : null;
+      const derivedMemoryCandidates = exactExplicitFallback
+        ? [{
+            ...exactExplicitFallback,
+            ...deriveMemoryMetadata(
+              exactExplicitFallback.kind,
+              exactExplicitFallback.content,
+              text,
+            ),
+            ...(storedUserTurn
+              ? { sourceSequences: [storedUserTurn.sequence] }
+              : {}),
+          }]
+        : initialDerivedMemoryCandidates;
       const explicitlyConsented = new Set(
-        explicitRemember?.candidateIndexes ?? [],
+        exactExplicitFallback ? [0] : (explicitRemember?.candidateIndexes ?? []),
       );
       if (explicitResponsePreference && !explicitResponsePreferenceForbidden) {
         const index = derivedMemoryCandidates.findIndex((memory) =>
@@ -2569,12 +2899,20 @@ export function createBot(
         explicitRememberSignaled &&
         (!explicitRemember ||
           (!explicitRemember.forbiddenSecret &&
-            explicitRemember.candidateIndexes.length === 0));
+            explicitRemember.candidateIndexes.length === 0 &&
+            !exactExplicitFallback));
       const explicitRequestUnresolved = Boolean(
         explicitRememberSignaled &&
         explicitRemember &&
           !explicitRemember.forbiddenSecret &&
-          explicitRemember.candidateIndexes.length === 0,
+          explicitRemember.candidateIndexes.length === 0 &&
+          !exactExplicitFallback,
+      );
+      const rejectedAutomaticMemoryCandidate = derivedMemoryCandidates.some(
+        (memory, index) =>
+          !explicitlyConsented.has(index) &&
+          (!automaticMemoryCandidateAuthorized(text, memory) ||
+            containsForbiddenMemorySecret(memory.content)),
       );
       const memoryCandidates: AuthorizedMemoryCandidate[] =
         explicitRemember?.forbiddenSecret ||
@@ -2586,6 +2924,10 @@ export function createBot(
               memory,
               explicitRequest: explicitlyConsented.has(index),
             }))
+            .filter(({ memory, explicitRequest }) =>
+              explicitRequest ||
+              automaticMemoryCandidateAuthorized(text, memory)
+            )
             // Primary MemoryService menolak lagi. Filter ini juga mencegah
             // candidate credential membayar classifier privasi kedua.
             .filter(({ memory }) =>
@@ -2599,7 +2941,9 @@ export function createBot(
       );
       const remembered = explicitAuthorityMissing
         ? { ...storedMemories, uncommitted: true }
-        : storedMemories;
+        : rejectedAutomaticMemoryCandidate
+          ? { ...storedMemories, uncommitted: true }
+          : storedMemories;
       if (!(await runtimeIsCurrent(runtime))) {
         await rollbackOrdinaryMemories(ownerId, remembered.saved);
         await telemetry.discardUndelivered?.(ownerId, currentTurnId());
@@ -2634,6 +2978,12 @@ export function createBot(
           reply = MEMORY_SECRET_REJECTION;
         } else if (explicitRequestUnresolved || explicitCommitMissing) {
           reply = MEMORY_SAVE_UNAVAILABLE;
+        } else if (route.kind === "save-task") {
+          // Task belum menjadi fakta sebelum primary store commit. Telegram
+          // menyuarakan receipt melalui presentPrivateOperation sesudah save,
+          // sama seperti WhatsApp privat; balasan bebas pre-commit dapat
+          // mengarang status atau berkontradiksi dengan kartu task.
+          reply = null;
         } else if (effectPermissions.generalState && isDirectTimeQuestion(text)) {
           reply = conversation.deterministicTimeReply(timeZone);
         } else if (
@@ -2748,6 +3098,14 @@ export function createBot(
                       ? "Aku belum menyelesaikan run ini sebelum batas waktunya. Aku tidak akan mengarang hasilnya."
                       : agentResult.reason.startsWith("budget_")
                         ? "Aku menghentikan run saat batas kerja kumulatifnya tercapai. Aku tidak akan mengarang atau meneruskan hasil setengah jadi."
+                      : agentResult.reason === "usage_anti_abuse"
+                        ? "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan."
+                      : agentResult.reason === "usage_wallet_disabled"
+                        ? "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Aktifkan funding atau gunakan provider sendiri untuk melanjutkan."
+                      : agentResult.reason === "usage_byok_unavailable"
+                        ? "Provider milikmu belum cocok untuk pekerjaan ini. Pilih provider lain atau gunakan compute Harvy secara eksplisit."
+                      : agentResult.reason === "usage_allowance_exhausted"
+                        ? "Kapasitas Harvy-funded periode ini sudah terpakai. Gunakan BYOK, tambah compute, atau tunggu kapasitas diperbarui."
                       : agentResult.reason === "cycle"
                         ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
                         : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
@@ -2792,9 +3150,18 @@ export function createBot(
             },
           );
         }
-        reply = normalizeTelegramText(reply);
-        reply = withEmergencyAvailability(reply, triage);
-        reply = await guardReply(ownerId, text, reply, triage, context, runtime);
+        if (reply !== null) {
+          reply = normalizeTelegramText(reply);
+          reply = withEmergencyAvailability(reply, triage);
+          reply = await guardReply(
+            ownerId,
+            text,
+            reply,
+            triage,
+            context,
+            runtime,
+          );
+        }
       } catch (error) {
         if (!(await runtimeIsCurrent(runtime))) {
           await rollbackOrdinaryMemories(ownerId, remembered.saved);
@@ -2837,7 +3204,8 @@ export function createBot(
       }
       if (
         reply &&
-        remembered.acknowledgements.length > 0
+        remembered.acknowledgements.length > 0 &&
+        !activeRunLaunch
       ) {
         reply = normalizeMemoryWriteEmoji(reply);
       }
@@ -2850,7 +3218,11 @@ export function createBot(
         reply = withoutUnconfirmedMemoryWriteClaims(reply) ||
           "Aku dengar yang kamu ceritakan.";
       }
-      if (
+      if (activeRunLaunch && remembered.acknowledgements.length > 0) {
+        activeRunMemoryNotice = normalizeMemoryWriteEmoji(
+          memoryFallbackAcknowledgement(remembered),
+        );
+      } else if (
         reply &&
         remembered.acknowledgements.length > 0 &&
         !replyAcknowledgesMemoryWrite(reply)
@@ -2862,7 +3234,9 @@ export function createBot(
         ].join("\n");
       }
       let memoryNoticeDelivered = remembered.saved.length === 0;
-      const memoryNoticeItems = memoryNoticeItemsForReply(reply, remembered);
+      const memoryNoticeItems = activeRunMemoryNotice
+        ? []
+        : memoryNoticeItemsForReply(reply, remembered);
 
       let adaptiveKeyboard: InlineKeyboard | undefined;
 
@@ -2941,6 +3315,10 @@ export function createBot(
               await rollbackOrdinaryMemories(ownerId, remembered.saved);
               await telemetry.discardUndelivered?.(ownerId, currentTurnId());
               return;
+            }
+            if (activeRunLaunch && activeRunMemoryNotice) {
+              await ctx.reply(activeRunMemoryNotice);
+              memoryNoticeDelivered = true;
             }
             const sent = activeRunLaunch
               ? await sendRunAnchor(ctx, reply, runtime)
@@ -3116,7 +3494,7 @@ export function createBot(
             reply.slice(0, 160),
           );
         }
-      } else {
+      } else if (route.kind !== "save-task") {
         await telemetry.discardUndelivered?.(ownerId, currentTurnId());
       }
 
@@ -3138,6 +3516,11 @@ export function createBot(
             route.task,
             reply ? undefined : taskSavedHeading(),
             runtime,
+            {
+              userMessage: text,
+              context,
+              style: profile.stylePreference,
+            },
           );
           if (!taskDelivered) {
             if (!memoryNoticeDelivered) {
@@ -3148,6 +3531,10 @@ export function createBot(
           if (!reply) {
             await sendMemoryNotes(ctx, memoryNoticeItems);
             memoryNoticeDelivered = true;
+            if (debitDeliveredReply) {
+              await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
+            }
+            await memories.markUsed(context.memories);
           }
         } catch (error) {
           if (!memoryNoticeDelivered) {
@@ -3580,6 +3967,7 @@ export function createBot(
         attempt.checkpoint,
         attempt.answer,
       );
+      await activeRunIngress.waitForIdle(runId);
 
       if (result.status === "completed") {
         try {
@@ -3592,7 +3980,10 @@ export function createBot(
               checkpoint: result.checkpoint,
               reply: result.reply,
             },
-            () => sendActiveRunMessage(attempt.run, result.reply),
+            async () => {
+              await activeRunIngress.waitForIdle(runId);
+              return sendActiveRunMessage(attempt.run, result.reply);
+            },
           );
           await updateActiveRunAnchor(completed);
           await history.append(ownerId, "harvy", result.reply);
@@ -3628,7 +4019,10 @@ export function createBot(
               prompt: result.prompt,
               acceptAnswersAfterUpdateId: latestTelegramUpdateId,
             },
-            () => sendActiveRunMessage(attempt.run, result.prompt),
+            async () => {
+              await activeRunIngress.waitForIdle(runId);
+              return sendActiveRunMessage(attempt.run, result.prompt);
+            },
           );
           await updateActiveRunAnchor(waiting);
           await history.append(ownerId, "harvy", result.prompt);
@@ -3663,6 +4057,16 @@ export function createBot(
         if (failed) await updateActiveRunAnchor(failed);
         return;
       }
+
+      logger.warn(
+        "active_run_stopped",
+        "Active AgentRun Telegram dihentikan oleh guard runtime.",
+        {
+          reason: result.reason,
+          outcome: result.trace.at(-1)?.outcome,
+          count: result.trace.length,
+        },
+      );
 
       const settled = await agentRuns.settleActiveStopped(
         "telegram",
@@ -3841,6 +4245,7 @@ export function createBot(
 
   async function stopActiveAgentWork(): Promise<void> {
     stoppingActiveAgentWork = true;
+    activeRunIngress.releaseAll();
     const work = [...activeAgentWork.values()];
     for (const active of work) active.controller.abort();
     await Promise.allSettled(work.map((active) => active.promise));
@@ -4258,6 +4663,14 @@ export function createBot(
         ? "Waktu run sebelumnya sudah habis, jadi aku tidak melanjutkannya seolah hasilnya masih segar. Coba minta lagi kalau kamu masih perlu."
         : result.reason.startsWith("budget_")
           ? "Batas kerja kumulatif run sebelumnya sudah tercapai, jadi aku tidak melanjutkan hasil setengah jadi. Coba minta lagi kalau kamu masih perlu."
+        : result.reason === "usage_anti_abuse"
+          ? "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan."
+        : result.reason === "usage_wallet_disabled"
+          ? "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Aktifkan funding atau gunakan provider sendiri untuk melanjutkan."
+        : result.reason === "usage_byok_unavailable"
+          ? "Provider milikmu belum cocok untuk pekerjaan ini. Pilih provider lain atau gunakan compute Harvy secara eksplisit."
+        : result.reason === "usage_allowance_exhausted"
+          ? "Kapasitas Harvy-funded periode ini sudah terpakai. Gunakan BYOK, tambah compute, atau tunggu kapasitas diperbarui."
         : result.reason === "cycle"
           ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
           : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
@@ -5075,6 +5488,11 @@ export function createBot(
     extracted: ExtractedTask,
     heading?: string,
     runtime: ConversationRuntime = {},
+    presentation?: {
+      userMessage: string;
+      context: HarvyContext;
+      style: StylePreference | null;
+    },
   ): Promise<boolean> {
     const profile = await profiles.load(ownerId);
     if (!(await runtimeIsCurrent(runtime))) return false;
@@ -5125,13 +5543,19 @@ export function createBot(
       ? await presentPrivateOperation(ownerId, {
           kind: "task-created",
           outcome: "success",
-          userMessage: extracted.title,
+          userMessage: presentation?.userMessage ?? extracted.title,
           stableBody: factBody,
           fallbackText,
           allowedNextSteps: task.reminderAt
             ? []
             : ["Kalau perlu, pilih kapan Harvy harus mengingatkan."],
-        }, { timeZone, runtime })
+        }, {
+          ...(presentation
+            ? { context: presentation.context, style: presentation.style }
+            : {}),
+          timeZone,
+          runtime,
+        })
       : fallbackText;
     if (!(await runtimeIsCurrent(runtime))) {
       try {
@@ -5225,7 +5649,7 @@ export function createBot(
         await safeEdit(
           ctx,
           rendered,
-          target === "settings"
+          target === "settings" || target === "memory"
             ? dataControlActions()
             : menuActions(commandOptions),
         );
@@ -6392,7 +6816,11 @@ export function createBot(
     );
   }
 
-  async function sendTaskList(ctx: Context, ownerId: string): Promise<void> {
+  async function sendTaskList(
+    ctx: Context,
+    ownerId: string,
+    sourceText = "/tugas",
+  ): Promise<void> {
     const active = await tasks.listActive(ownerId);
     const timeZone = await timeZoneFor(ownerId);
 
@@ -6401,7 +6829,7 @@ export function createBot(
       const response = await presentPrivateOperation(ownerId, {
         kind: "empty-state",
         outcome: "information",
-        userMessage: "/tugas",
+        userMessage: sourceText,
         stableBody: "Tugas aktif: tidak ada.",
         fallbackText,
         allowedNextSteps: [
@@ -6424,7 +6852,7 @@ export function createBot(
     const response = await presentPrivateOperation(ownerId, {
       kind: "task-list",
       outcome: "information",
-      userMessage: "/tugas",
+      userMessage: sourceText,
       stableBody: [
         "Tugas aktif",
         "",

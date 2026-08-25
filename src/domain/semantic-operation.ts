@@ -73,6 +73,11 @@ export interface SemanticOperation {
   confidence: number;
 }
 
+export interface SemanticInteractionReference {
+  domain: SemanticDomain;
+  operation: SemanticOperationName;
+}
+
 const DOMAIN_OPERATIONS = Object.freeze({
   usage: ["show-summary", "show-details"],
   billing: [
@@ -224,6 +229,25 @@ export function semanticOperationAuthorized(
     return false;
   }
   return true;
+}
+
+/**
+ * A model may propose that a short turn refers to a recent deterministic
+ * surface, but it cannot create that navigation state by assertion alone.
+ * Contextual routing is therefore allowed only when code has a matching,
+ * bounded interaction receipt from this process.
+ */
+export function semanticOperationContextAvailable(
+  semantic: SemanticOperation | null | undefined,
+  interactions: readonly SemanticInteractionReference[] | null | undefined,
+): boolean {
+  if (!semantic || semantic.explicitness !== "contextual") return true;
+  const allowedDomains: readonly SemanticDomain[] = semantic.domain === "billing"
+    ? ["billing", "usage"]
+    : [semantic.domain];
+  return (interactions ?? []).some((interaction) =>
+    allowedDomains.includes(interaction.domain)
+  );
 }
 
 export function semanticEvidenceMatches(

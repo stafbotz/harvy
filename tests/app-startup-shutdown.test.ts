@@ -6,9 +6,11 @@ import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 // Full-suite Windows runs compile/import hundreds of modules concurrently.
-// Keep the lifecycle assertion strict, but do not classify cold-import
-// contention as a control-plane failure; the shutdown deadline remains 10 s.
-const CONTROL_READY_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000;
+// On a two-core host the child can spend more than 30 s waiting for its cold
+// module graph while another test worker is saturated. Keep readiness bounded,
+// but do not classify pre-control import contention as a control-plane failure;
+// the actual shutdown deadline below remains a strict 10 s.
+const CONTROL_READY_TIMEOUT_MS = process.platform === "win32" ? 60_000 : 10_000;
 
 describe("application startup shutdown barrier", () => {
   it("tidak menjadi ready dan melepas lock ketika dev-stop tiba saat startup", async () => {
@@ -100,7 +102,8 @@ function isolatedRuntimeEnvironment(
     ...process.env,
     HARVY_DEV_RUNNER: "1",
     APP_ENV: "development",
-    TELEGRAM_BOT_TOKEN: "123456789:test-token",
+    TELEGRAM_BOT_TOKEN: `123456789:${"t".repeat(32)}`,
+    HARVY_TELEGRAM_TOKEN_EPHEMERAL: "live-acceptance-v1",
     AI_MODE: "testing",
     GOOGLE_AI_STUDIO_API_KEYS: "test-key",
     AI_MODEL_TESTING: "test-model",

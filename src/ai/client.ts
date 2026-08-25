@@ -2152,6 +2152,16 @@ function shouldOpenPrimaryCircuit(
   request: ChatRequest,
   primaryKeyCount: number,
 ): boolean {
+  // Turn-boundary memakai deadline pendek demi responsivitas bubble. Timeout
+  // lokal classifier itu bukan bukti bahwa primary tidak sehat untuk request
+  // lanjutan seperti understanding atau risk triage.
+  if (
+    request.usage?.purpose === "turn-boundary" &&
+    error instanceof Error &&
+    error.name === "AbortError"
+  ) {
+    return false;
+  }
   if (isProviderWideFailure(error)) return true;
   if (!(error instanceof AiError) || error.status !== 429) return false;
 

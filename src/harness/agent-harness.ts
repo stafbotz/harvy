@@ -264,6 +264,7 @@ export type AgentRunResult =
         | "capability_changed"
         | "stale"
         | "invalid_checkpoint"
+        | AgentUsageLimitReason
         | RunBudgetExhaustionReason;
       checkpoint: AgentRunCheckpoint;
       trace: readonly AgentTraceEvent[];
@@ -318,6 +319,12 @@ type FreshnessState =
   | "cancelled"
   | "deadline"
   | "budget_deadline";
+
+export type AgentUsageLimitReason =
+  | "usage_allowance_exhausted"
+  | "usage_wallet_disabled"
+  | "usage_byok_unavailable"
+  | "usage_anti_abuse";
 
 /**
  * Kernel agent channel-neutral. Current Harvy workflows belum memberinya tool;
@@ -1718,6 +1725,7 @@ function abortReason(
   | "deadline"
   | "stale"
   | "invalid_planner_output"
+  | AgentUsageLimitReason
   | RunBudgetExhaustionReason {
   if (signal?.aborted) return "cancelled";
   if (now().getTime() >= deadlineAt) {
@@ -1733,10 +1741,30 @@ function abortReason(
   if (error instanceof Error && error.name === "AbortError") {
     return budgetOwnsDeadline ? "budget_deadline" : "deadline";
   }
+  const usageLimit = usageLimitReason(error);
+  if (usageLimit) return usageLimit;
   const overage = runBudget.workOverageReason();
   if (overage) return overage;
   if (runBudget.isTimeExhausted()) return "budget_deadline";
   return "invalid_planner_output";
+}
+
+function usageLimitReason(error: unknown): AgentUsageLimitReason | null {
+  if (!error || typeof error !== "object" || Array.isArray(error)) return null;
+  const record = error as Record<string, unknown>;
+  if (record["name"] !== "UsageLimitError") return null;
+  switch (record["reason"]) {
+    case "anti_abuse":
+      return "usage_anti_abuse";
+    case "wallet_disabled":
+      return "usage_wallet_disabled";
+    case "byok_unavailable":
+      return "usage_byok_unavailable";
+    case "wallet_empty":
+    case "allowance_exhausted":
+    default:
+      return "usage_allowance_exhausted";
+  }
 }
 
 async function boundedCall<T>(

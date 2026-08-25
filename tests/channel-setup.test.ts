@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -18,8 +18,13 @@ import {
   loadTelegramTesterCredential,
   saveTelegramTesterCredential,
 } from "../src/operations/live-acceptance.js";
+import {
+  loadPrimaryTelegramBotCredential,
+  primaryChannelCredentialPaths,
+} from "../src/operations/primary-channel-credentials.js";
 
 const BOT_TOKEN = "123456789:abcdefghijklmnopqrstuvwxyz_ABCDE";
+const PRIMARY_BOT_TOKEN = `987654321:${"p".repeat(32)}`;
 const API_HASH = "0123456789abcdef0123456789abcdef";
 const SESSION = "session-value-that-must-stay-encrypted";
 
@@ -31,6 +36,7 @@ describe("ChannelSetupService", () => {
     const whatsapp = new ControlledWhatsAppAdapter();
     const service = new ChannelSetupService({
       paths,
+      ...isolatedPrimaryChannelOptions(root),
       telegramAdapter: telegram,
       whatsappAdapter: whatsapp,
       pairingTimeoutMs: 10_000,
@@ -80,6 +86,108 @@ describe("ChannelSetupService", () => {
     }
   });
 
+  it("memigrasikan token Telegram utama dari .env ke store Console tanpa refleksi", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-channel-primary-migrate-"));
+    const paths = liveAcceptancePaths(root);
+    const primaryPaths = primaryChannelCredentialPaths(root);
+    const environment: NodeJS.ProcessEnv = {
+      TELEGRAM_BOT_TOKEN: PRIMARY_BOT_TOKEN,
+    };
+    await writeFile(
+      primaryPaths.environmentFile,
+      `AI_MODE=testing\nTELEGRAM_BOT_TOKEN=${PRIMARY_BOT_TOKEN}\n`,
+      "utf8",
+    );
+    const telegram = new ControlledTelegramAdapter();
+    const service = new ChannelSetupService({
+      paths,
+      primaryCredentialPaths: primaryPaths,
+      environment,
+      telegramAdapter: telegram,
+      whatsappAdapter: new ControlledWhatsAppAdapter(),
+      pairingTimeoutMs: 10_000,
+    });
+    try {
+      await service.initialize();
+      const before = await service.snapshot();
+      assert.deepEqual(before.identityBoundary.primary.telegram, {
+        declared: true,
+        configured: true,
+        source: "environment",
+        legacyEnvironment: true,
+        migrationAvailable: true,
+        runtimeActive: false,
+        restartRequired: false,
+        phase: "unchecked",
+        errorCode: null,
+      });
+      assert.equal(JSON.stringify(before).includes(PRIMARY_BOT_TOKEN), false);
+
+      await service.migratePrimaryTelegramBotToken();
+
+      assert.equal(environment.TELEGRAM_BOT_TOKEN, undefined);
+      assert.equal(
+        (await readFile(primaryPaths.environmentFile, "utf8")).includes(
+          "TELEGRAM_BOT_TOKEN",
+        ),
+        false,
+      );
+      assert.equal(
+        (await loadPrimaryTelegramBotCredential(primaryPaths))?.botToken,
+        PRIMARY_BOT_TOKEN,
+      );
+      const after = await service.snapshot();
+      assert.deepEqual(after.identityBoundary.primary.telegram, {
+        declared: true,
+        configured: true,
+        source: "console",
+        legacyEnvironment: false,
+        migrationAvailable: false,
+        runtimeActive: false,
+        restartRequired: false,
+        phase: "ready",
+        errorCode: null,
+      });
+      assert.deepEqual(telegram.validatedTokens, [PRIMARY_BOT_TOKEN]);
+
+      await assert.rejects(
+        service.setTelegramBotToken(PRIMARY_BOT_TOKEN),
+        (error: unknown) =>
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "CHANNEL_TELEGRAM_BOT_MUST_DIFFER_FROM_PRIMARY",
+      );
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("menandai restart bila credential Console berbeda dari runtime Telegram utama", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-channel-primary-restart-"));
+    const service = new ChannelSetupService({
+      paths: liveAcceptancePaths(root),
+      ...isolatedPrimaryChannelOptions(root),
+      primaryRuntimeActive: true,
+      primaryTelegramRuntimeToken: BOT_TOKEN,
+      telegramAdapter: new ControlledTelegramAdapter(),
+      whatsappAdapter: new ControlledWhatsAppAdapter(),
+      pairingTimeoutMs: 10_000,
+    });
+    try {
+      await service.initialize();
+      await service.setPrimaryTelegramBotToken(PRIMARY_BOT_TOKEN);
+      const telegram = (await service.snapshot()).identityBoundary.primary.telegram;
+      assert.equal(telegram?.source, "console");
+      assert.equal(telegram?.phase, "ready");
+      assert.equal(telegram?.runtimeActive, true);
+      assert.equal(telegram?.restartRequired, true);
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("mengelola dua role WhatsApp tanpa memantulkan QR atau identitas", async () => {
     const root = await mkdtemp(join(tmpdir(), "harvy-channel-whatsapp-"));
     const paths = liveAcceptancePaths(root);
@@ -87,6 +195,7 @@ describe("ChannelSetupService", () => {
     const whatsapp = new ControlledWhatsAppAdapter();
     const service = new ChannelSetupService({
       paths,
+      ...isolatedPrimaryChannelOptions(root),
       telegramAdapter: telegram,
       whatsappAdapter: whatsapp,
       pairingTimeoutMs: 10_000,
@@ -116,12 +225,86 @@ describe("ChannelSetupService", () => {
     }
   });
 
+  it("membedakan credential lokal dari sesi WhatsApp yang benar-benar diterima", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-channel-whatsapp-probe-"));
+    const paths = liveAcceptancePaths(root);
+    const whatsapp = new ControlledWhatsAppAdapter();
+    whatsapp.seedSession(paths.whatsappHarvyAuth, "rejected");
+    whatsapp.seedSession(paths.whatsappTesterAuth, "accepted");
+    const checkedAt = Date.parse("2026-08-25T12:00:00.000Z");
+    const service = new ChannelSetupService({
+      paths,
+      ...isolatedPrimaryChannelOptions(root),
+      telegramAdapter: new ControlledTelegramAdapter(),
+      whatsappAdapter: whatsapp,
+      pairingTimeoutMs: 10_000,
+      whatsappVerificationTimeoutMs: 1_000,
+      whatsappVerificationTtlMs: 60_000,
+      now: () => checkedAt,
+    });
+    try {
+      await service.initialize();
+      await waitUntil(async () => {
+        const snapshot = await service.snapshot();
+        return snapshot.whatsapp.harvy.session.status === "rejected" &&
+          snapshot.whatsapp.tester.session.status === "accepted";
+      });
+
+      const snapshot = await service.snapshot();
+      assert.equal(snapshot.whatsapp.harvy.configured, true);
+      assert.equal(snapshot.whatsapp.harvy.phase, "paired");
+      assert.deepEqual(snapshot.whatsapp.harvy.session, {
+        status: "rejected",
+        checkedAt: "2026-08-25T12:00:00.000Z",
+        errorCode: "CHANNEL_WHATSAPP_SESSION_REJECTED",
+      });
+      assert.equal(snapshot.whatsapp.tester.configured, true);
+      assert.equal(snapshot.whatsapp.tester.session.status, "accepted");
+      assert.equal(snapshot.whatsapp.ready, false);
+      assert.equal(JSON.stringify(snapshot).includes("harvy-probe-identity"), false);
+
+      const probesBeforeRefresh = whatsapp.events.filter((event) =>
+        event.startsWith("probe:")
+      ).length;
+      await service.snapshot();
+      await service.snapshot();
+      assert.equal(
+        whatsapp.events.filter((event) => event.startsWith("probe:")).length,
+        probesBeforeRefresh,
+        "Polling snapshot tidak boleh membuka handshake baru sebelum TTL habis.",
+      );
+      await service.verifyWhatsAppSessions();
+      await waitUntil(async () =>
+        whatsapp.events.filter((event) => event.startsWith("probe:")).length ===
+          probesBeforeRefresh + 2 &&
+        (await service.snapshot()).whatsapp.tester.session.status === "accepted"
+      );
+
+      whatsapp.setProbeOutcome(paths.whatsappHarvyAuth, "unreachable");
+      await service.verifyWhatsAppSessions();
+      await waitUntil(async () =>
+        (await service.snapshot()).whatsapp.harvy.session.status === "unreachable"
+      );
+      const unavailable = await service.snapshot();
+      assert.equal(unavailable.whatsapp.harvy.configured, true);
+      assert.equal(
+        unavailable.whatsapp.harvy.session.errorCode,
+        "CHANNEL_WHATSAPP_VERIFICATION_UNAVAILABLE",
+      );
+      assert.equal(unavailable.whatsapp.ready, false);
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("mengganti sesi WhatsApp secara logout-first lalu membuka QR baru", async () => {
     const root = await mkdtemp(join(tmpdir(), "harvy-channel-whatsapp-replace-"));
     const paths = liveAcceptancePaths(root);
     const whatsapp = new ControlledWhatsAppAdapter();
     const service = new ChannelSetupService({
       paths,
+      ...isolatedPrimaryChannelOptions(root),
       telegramAdapter: new ControlledTelegramAdapter(),
       whatsappAdapter: whatsapp,
       pairingTimeoutMs: 10_000,
@@ -167,6 +350,7 @@ describe("ChannelSetupService", () => {
     const telegram = new ControlledTelegramAdapter();
     const service = new ChannelSetupService({
       paths,
+      ...isolatedPrimaryChannelOptions(root),
       telegramAdapter: telegram,
       whatsappAdapter: new ControlledWhatsAppAdapter(),
       pairingTimeoutMs: 10_000,
@@ -192,6 +376,7 @@ describe("ChannelSetupService", () => {
     const telegram = new LateTelegramAdapter();
     const service = new ChannelSetupService({
       paths,
+      ...isolatedPrimaryChannelOptions(root),
       telegramAdapter: telegram,
       whatsappAdapter: new ControlledWhatsAppAdapter(),
       pairingTimeoutMs: 10_000,
@@ -229,6 +414,7 @@ describe("ChannelSetupService", () => {
     }, paths);
     const service = new ChannelSetupService({
       paths,
+      ...isolatedPrimaryChannelOptions(root),
       telegramAdapter: telegram,
       whatsappAdapter: new ControlledWhatsAppAdapter(),
       pairingTimeoutMs: 10_000,
@@ -254,6 +440,7 @@ describe("ChannelSetupService", () => {
     const telegram = new ControlledTelegramAdapter();
     const service = new ChannelSetupService({
       paths,
+      ...isolatedPrimaryChannelOptions(root),
       telegramAdapter: telegram,
       whatsappAdapter: new ControlledWhatsAppAdapter(),
       pairingTimeoutMs: 10_000,
@@ -289,11 +476,13 @@ describe("ChannelSetupService", () => {
     const paths = liveAcceptancePaths(root);
     const first = new ChannelSetupService({
       paths,
+      ...isolatedPrimaryChannelOptions(root),
       telegramAdapter: new ControlledTelegramAdapter(),
       whatsappAdapter: new ControlledWhatsAppAdapter(),
     });
     const second = new ChannelSetupService({
       paths,
+      ...isolatedPrimaryChannelOptions(root),
       telegramAdapter: new ControlledTelegramAdapter(),
       whatsappAdapter: new ControlledWhatsAppAdapter(),
     });
@@ -386,6 +575,14 @@ describe("ChannelSetupService", () => {
       "logged_out",
     );
     assert.equal(
+      whatsappSetupCloseOutcome(DisconnectReason.badSession),
+      "logged_out",
+    );
+    assert.equal(
+      whatsappSetupCloseOutcome(DisconnectReason.multideviceMismatch),
+      "logged_out",
+    );
+    assert.equal(
       whatsappSetupCloseOutcome(DisconnectReason.restartRequired),
       "restart",
     );
@@ -397,15 +594,24 @@ describe("ChannelSetupService", () => {
   });
 });
 
+function isolatedPrimaryChannelOptions(root: string) {
+  return {
+    primaryCredentialPaths: primaryChannelCredentialPaths(root),
+    environment: {} as NodeJS.ProcessEnv,
+  };
+}
+
 class ControlledTelegramAdapter implements TelegramPairingAdapter {
   readonly qr = "tg://login?token=secret-qr-payload";
   readonly scanned = deferred<void>();
   receivedPassword: string | null = null;
   aborted = false;
   failRevoke = false;
+  readonly validatedTokens: string[] = [];
 
   async validateBotToken(token: string, _signal: AbortSignal): Promise<void> {
-    assert.equal(token, BOT_TOKEN);
+    this.validatedTokens.push(token);
+    assert.match(token, /^\d{5,20}:[A-Za-z0-9_-]{20,160}$/u);
   }
 
   async pairTester(input: {
@@ -464,10 +670,32 @@ class ControlledWhatsAppAdapter implements WhatsAppPairingAdapter {
   readonly revokedRoles: string[] = [];
   readonly events: string[] = [];
   private readonly configuredFolders = new Set<string>();
+  private readonly probeOutcomes = new Map<
+    string,
+    "accepted" | "rejected" | "unreachable"
+  >();
   private readonly pairing = new Map<string, ReturnType<typeof deferred<void>>>();
 
   async configured(authFolder: string): Promise<boolean> {
     return this.configuredFolders.has(authFolder);
+  }
+
+  async probe(input: {
+    authFolder: string;
+    signal: AbortSignal;
+  }): Promise<"accepted" | "rejected"> {
+    assert.equal(input.signal.aborted, false);
+    this.events.push(
+      `probe:${input.authFolder.endsWith("harvy") ? "harvy" : "tester"}`,
+    );
+    const outcome = this.probeOutcomes.get(input.authFolder) ?? "accepted";
+    if (outcome === "unreachable") {
+      throw Object.assign(
+        new Error("CHANNEL_WHATSAPP_VERIFICATION_UNAVAILABLE"),
+        { code: "CHANNEL_WHATSAPP_VERIFICATION_UNAVAILABLE" },
+      );
+    }
+    return outcome;
   }
 
   async pair(input: {
@@ -504,6 +732,21 @@ class ControlledWhatsAppAdapter implements WhatsAppPairingAdapter {
     const entry = [...this.pairing.entries()].find(([path]) => path.endsWith(role));
     assert.ok(entry);
     entry[1].resolve();
+  }
+
+  seedSession(
+    authFolder: string,
+    outcome: "accepted" | "rejected" | "unreachable",
+  ): void {
+    this.configuredFolders.add(authFolder);
+    this.probeOutcomes.set(authFolder, outcome);
+  }
+
+  setProbeOutcome(
+    authFolder: string,
+    outcome: "accepted" | "rejected" | "unreachable",
+  ): void {
+    this.probeOutcomes.set(authFolder, outcome);
   }
 }
 

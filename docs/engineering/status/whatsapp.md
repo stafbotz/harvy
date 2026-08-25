@@ -1,9 +1,8 @@
 # Status — WhatsApp
 
-Refreshed: 24 Agustus 2026 pada auto-memory privat berbasis onboarding. Angka
-gerbang penuh terbaru dicatat di `docs/LOG.md`; policy memori current build
-sudah terbukti live, sedangkan full run current build masih gagal di stage
-safety nonkrisis dan bukti grup, reconnect, coding, serta GitHub belum lengkap.
+Refreshed: 24 Agustus 2026 pada full acceptance privat, crash/restart, dan scope
+grup dua-akun. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; coding,
+GitHub, multi-human, dan crash pada exact delivery window belum lengkap.
 
 ## Keadaan saat ini
 
@@ -224,6 +223,11 @@ safety nonkrisis dan bukti grup, reconnect, coding, serta GitHub belum lengkap.
   quote correction, duplicate replay, status quote, emergency routing, dan
   admin cancel; harness sengaja berakhir non-sukses bila scope participant,
   crash/reconnect, waiting input, atau workspace publish belum dijalankan.
+- `npm run acceptance:whatsapp-group:managed` membuat grup disposable dari dua
+  akun acceptance, menyalakan build terisolasi, lalu selalu remove/leave dan
+  membuang state. Scope ini boleh lulus sebagai `passed_partial_live_scope`
+  hanya bila delapan stage dua-akun dan cleanup seluruhnya lulus; hasilnya tidak
+  boleh dipromosikan menjadi acceptance multi-human atau group-coding.
 - `npm run acceptance:whatsapp-private` memakai akun tester terpisah yang sudah
   paired, dua konfirmasi environment explicit, dan output tanpa JID/nomor/isi
   pesan/path auth. Implementasi saat ini menguji consent+menu, task+reminder,
@@ -250,16 +254,31 @@ safety nonkrisis dan bukti grup, reconnect, coding, serta GitHub belum lengkap.
   akhir memakai stanza ID berbeda; memakai ulang ID sebelumnya membuat dedupe
   ingress secara benar menelan cleanup kedua dan sekarang menjadi regresi yang
   ditutup oleh harness.
-- Baseline akun nyata 23 Agustus 2026 pada policy sebelumnya lulus 10/10. Rerun
-  current build 24 Agustus meluluskan reset akun khusus, consent+menu, pembuatan
-  tugas natural, reminder, sesi+check-in, auto-memory preference implicit
-  beserta acknowledgement dan recall, serta planning durable. Sebanyak 16
-  ingress menjadi `notify` dan 28/28 delivery call berhasil tanpa pipeline/
-  delivery failure; planning sekitar 16 detik memakai satu Run Anchor yang
-  dipin, diedit, dan dilepas dengan kualitas 3/3/3. Stage safety nonkrisis lalu
-  timeout, jadi run bukan full pass; cleanup, shutdown, dan penghapusan isolated
-  state tetap lulus. Ack tertinggi `none`. Receipt tidak membawa isi pesan atau
-  identifier akun.
+- Build yang diuji oleh managed private acceptance pada 24 Agustus lulus 10/10
+  lewat tester B menuju Harvy uji A:
+  reset, consent/menu, task+reminder jatuh tempo, sesi+check-in jatuh tempo,
+  auto-memory+acknowledgement+recall, planning 3/3/3, safety, ekspor, dan cleanup.
+  Trace mencatat 31/31 delivery call tanpa pipeline failure serta create/edit/
+  delete dan pin/unpin anchor exact. Fault acceptance dua-probe juga lulus
+  dengan satu crash child, satu restart, attempt 1/2 ready, 8/8 delivery,
+  shutdown, dan penghapusan state terisolasi.
+- Exploratory journey bounded `wa-adaptive-20260824-d` menyelesaikan 18/18
+  giliran dengan response surface, 71 surface event, satu restart, dan shutdown
+  bersih tanpa quarantine. Assessment manual `completed` memberi skor
+  `4/4/3/4/4/5/5`, tetapi tetap menandai `generic-output` dan `other-observed`.
+  Journey ini menemukan respons awal terlalu abstrak/ambang overlap serta
+  presentasi task `tanpa tenggat` berdampingan dengan reminder.
+- Scope grup nyata dua-akun lulus remove/re-add+notice, exact start/anchor,
+  ambient isolation, quoted correction dengan duplicate replay ber-ID sama,
+  status quote, emergency yang tidak masuk work lane, dan admin cancel. Defect
+  replay ditemukan pada ingress Baileys grup dan ditutup dengan deduplikasi
+  tuple scope+message ID; rerun live menghasilkan satu acknowledgement dan
+  cleanup grup/state lulus.
+- Sampel model grup current meluluskan ambient 30/30 pada 15 topik dan direct
+  15/15 setelah dua respons tanpa finish marker diulang terarah. Decision
+  ambient tidak mempunyai false-positive/false-negative pada sampel, p95 2.045
+  ms; direct p95 awal 3.749 ms. Namun ambient membawa 16 warning jangkar topik
+  dan direct dua warning, sehingga kualitas semantik luas belum dianggap tuntas.
 - Readiness credential tidak hanya memakai flag `registered`: Baileys 7 rc14
   pada QR menyimpan identitas, account signature, dan signal identity hasil
   pair-success tetapi membiarkan flag itu `false`. Console, runtime utama,
@@ -271,27 +290,30 @@ safety nonkrisis dan bukti grup, reconnect, coding, serta GitHub belum lengkap.
 
 ## Batas dan defect aktif
 
-- Policy auto-memory versi 8 sudah diuji ulang melalui dua akun nyata. Rerun
-  current build lulus reset, onboarding/menu, task, reminder, sesi/check-in,
-  auto-memory implicit+acknowledgement+recall, dan planning durable; ia kemudian
-  timeout pada assertion safety nonkrisis meski beberapa surface respons masuk.
-  Cleanup akhir, shutdown, dan penghapusan isolated state lulus. Karena itu run
-  ini bukan full pass. Acceptance juga belum menunggu reminder/check-in
-  proaktif benar-benar jatuh tempo, sehingga copy notifikasi dinamisnya masih
-  baru dibuktikan otomatis.
-- Notice/privacy terbaru, memory member/room, timing ambient, removal, safety,
-  dan shutdown belum diuji end-to-end di grup nyata.
+- Policy auto-memory versi 8 dan full private flow sudah diuji ulang melalui dua
+  akun nyata, termasuk reminder/check-in proaktif, safety, ekspor, cleanup, dan
+  restart child. Interupsi di tengah burst/provider, network disconnect murni,
+  serta crash tepat di antara send dan receipt masih belum dibuktikan.
+- Grup nyata sudah membuktikan notice, ambient isolation, removal/re-add,
+  safety, GroupAgentRun correction/status/cancel, duplicate ID, dan shutdown
+  pada scope dua-akun. Memory member/room, adaptive timing luas, peserta manusia
+  kedua, assigned question/answer, crash/reconnect delivery, dan workspace
+  publish belum diuji live.
 - WhatsApp privat sudah mempunyai parity otomatis untuk percakapan, task dan
   reminder, sesi dan check-in, memori/safety/kontrol data, ekspor, Workspace
   ZIP, private coding, GitHub, dan active AgentRun durable. Pairing serta runner
   dua akun khusus kini tersedia. WhatsApp A Harvy uji dan WhatsApp B tester
   telah mencapai durable pair-success nyata dengan credential terpisah.
-  Baseline lama membuktikan percakapan/task/session/memory/safety/planning/
-  export/delete. Current build membuktikan kembali semuanya sampai planning dan
-  policy memori baru, tetapi belum meluluskan safety/export sebagai satu run
-  penuh; receipt server accepted tersedia sedangkan ack tertinggi current run
-  tetap `none`. Reconnect, interupsi burst, Workspace/CodingRun/GitHub, dan
-  kualitas UX dogfood tetap belum terbukti.
+  Build acceptance tersebut membuktikan percakapan/task/session/memory/safety/planning/
+  export/delete sebagai satu run penuh dan percakapan sesudah restart child.
+  Interupsi burst, Workspace/CodingRun/GitHub, exact crash window, network
+  disconnect, dan kualitas UX dogfood tetap belum terbukti.
+- Rerun exact build sesudah perbaikan presentasi task belum mencapai percakapan:
+  WhatsApp menolak linked session Harvy A sebagai `needs-operator` reason `401`.
+  Runner exploratory sekarang mengekspos status koneksi content-free dan gagal
+  cepat tanpa menggantung, tetapi A perlu dipasangkan ulang sebelum B dapat
+  memverifikasi perubahan tersebut live. Credential-ready lokal tetap bukan
+  bukti transport-ready.
 - Percobaan tersebut juga membuktikan dependency Signal dapat menulis object
   session kriptografis langsung ke stdout meski logger Baileys silent. Guard
   call-site sekarang membuang direct console output itu. Session tester sudah
@@ -306,28 +328,30 @@ safety nonkrisis dan bukti grup, reconnect, coding, serta GitHub belum lengkap.
   tetap tidak boleh dianggap bukti transport-ready. Tidak ada failover atau
   rebind otomatis antar-account.
 - Pending confirmation dan authority epoch grup tidak durable lintas restart.
-- Group AgentRun dan group-coding composition dibuktikan otomatis, belum diuji
-  fault/live end-to-end lengkap pada WhatsApp nyata. Flag tetap opt-in; tidak
-  ada klaim deduplikasi server, reconnect delivery, atau kualitas executor pada
-  grup nyata.
+- GroupAgentRun sudah diuji live parsial pada grup nyata, termasuk kualitas
+  target/correction/status/cancel serta deduplikasi ingress satu connection.
+  Group-coding, multi-human, fault/reconnect delivery, dan deduplikasi server
+  lintas reconnect belum diuji end-to-end. Flag tetap opt-in.
 - Cleanup retry durable hanya terkoordinasi dalam satu proses. Startup menahan
   WhatsApp dan reaktivasi ditahan bila intent tidak dapat dituntaskan; retry
   aktivasi otomatis tetap in-memory. Belum ada lease/supervisor multi-instance,
-  bukti crash/restart nyata, atau fault-injection crash setelah commit binding.
+  bukti crash/restart pada lifecycle cleanup, atau fault-injection crash setelah
+  commit binding. Fault private idle/reconnect tidak menutup window ini.
 - Adapter file hanya satu proses dan belum mempunyai lease/outbox/dispatcher
   atau reconciler multi-instance. Crash antara send dan receipt ditutup
   konservatif sebagai `unknown|partial` tanpa retry; belum ada reconciliation
-  eksternal. ID deterministik Baileys baru diuji dengan fake socket dan belum
-  membuktikan deduplikasi WhatsApp live/reconnect.
+  eksternal. Duplicate inbound ID sudah dibuktikan live dalam satu connection;
+  ID outbound deterministik dan deduplikasi lintas reconnect tetap belum
+  dibuktikan live.
 - Edit, delete, reset, alias, dan self-delete belum mempunyai kompensasi generik
   bila acknowledgment gagal sesudah mutasi commit.
 - Store sosial legacy masih memakai PN/LID mentah untuk bridging; semantic
   record baru memakai alias hash scoped. Account linking lintas kanal belum ada.
 - Satu stream grup belum mempunyai conversation disentanglement sempurna. Quote
   control-copy sengaja dikirim tanpa quote bila cache raw 60 detik kedaluwarsa.
-- Adaptive timing, selective safety/privacy, emergency ACK, dan authority-first
-  preflight, semantic boundary, serta per-bubble interruption belum diuji di
-  grup nyata.
+- Satu skenario safety dan authority-first removal sudah lulus di grup nyata;
+  adaptive timing luas, selective privacy, emergency ACK latency, semantic
+  boundary ragam natural, serta per-bubble interruption belum diuji lengkap.
 
 ## Bukti dan pointer
 

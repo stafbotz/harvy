@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { lstat, mkdir, readFile, rm } from "node:fs/promises";
@@ -33,8 +34,20 @@ import {
   parseWhatsAppAccounts,
 } from "../whatsapp/config.js";
 import { isWhatsAppCredentialReady } from "../whatsapp/auth-credential.js";
+import {
+  deletePrimaryTelegramBotCredential,
+  loadPrimaryTelegramBotCredential,
+  migratePrimaryTelegramBotCredentialFromEnvironment,
+  primaryChannelCredentialPaths,
+  primaryTelegramBotToken,
+  primaryTelegramEnvironmentStatus,
+  savePrimaryTelegramBotCredential,
+  type PrimaryChannelCredentialPaths,
+} from "./primary-channel-credentials.js";
 
 const DEFAULT_PAIRING_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_WHATSAPP_VERIFICATION_TIMEOUT_MS = 12_000;
+const DEFAULT_WHATSAPP_VERIFICATION_TTL_MS = 5 * 60_000;
 const TELEGRAM_API_HASH_PATTERN = /^[a-f0-9]{32}$/iu;
 const TELEGRAM_BOT_TOKEN_PATTERN = /^\d{5,20}:[A-Za-z0-9_-]{20,160}$/u;
 
@@ -57,6 +70,24 @@ export interface ChannelPairingSnapshot {
   errorCode: string | null;
 }
 
+export type WhatsAppSessionVerificationStatus =
+  | "missing"
+  | "unchecked"
+  | "checking"
+  | "accepted"
+  | "rejected"
+  | "unreachable";
+
+export interface WhatsAppSessionVerificationSnapshot {
+  status: WhatsAppSessionVerificationStatus;
+  checkedAt: string | null;
+  errorCode: string | null;
+}
+
+export interface WhatsAppPairingSnapshot extends ChannelPairingSnapshot {
+  session: WhatsAppSessionVerificationSnapshot;
+}
+
 export interface ChannelSetupSnapshot {
   identityBoundary: {
     mode: "isolated_acceptance";
@@ -71,12 +102,24 @@ export interface ChannelSetupSnapshot {
     };
     tester: ChannelPairingSnapshot;
   };
-  whatsapp: Record<WhatsAppTestRole, ChannelPairingSnapshot>;
+  whatsapp: {
+    ready: boolean;
+    harvy: WhatsAppPairingSnapshot;
+    tester: WhatsAppPairingSnapshot;
+  };
 }
 
 export interface PrimaryChannelConfigurationSnapshot {
   telegram: {
     declared: boolean;
+    configured?: boolean;
+    source?: "console" | "environment" | "missing" | "conflict";
+    legacyEnvironment?: boolean;
+    migrationAvailable?: boolean;
+    runtimeActive?: boolean;
+    restartRequired?: boolean;
+    phase?: "missing" | "unchecked" | "validating" | "ready" | "error";
+    errorCode?: string | null;
   };
   whatsapp: {
     configurationValid: boolean;
@@ -106,6 +149,10 @@ export interface TelegramPairingAdapter {
 
 export interface WhatsAppPairingAdapter {
   configured(authFolder: string): Promise<boolean>;
+  probe(input: {
+    authFolder: string;
+    signal: AbortSignal;
+  }): Promise<"accepted" | "rejected">;
   pair(input: {
     authFolder: string;
     otherAuthFolder: string;
@@ -147,8 +194,35 @@ export interface ChannelSetupServiceOptions {
   telegramAdapter?: TelegramPairingAdapter;
   whatsappAdapter?: WhatsAppPairingAdapter;
   pairingTimeoutMs?: number;
+  whatsappVerificationTimeoutMs?: number;
+  whatsappVerificationTtlMs?: number;
   now?: () => number;
   primaryChannels?: PrimaryChannelConfigurationSnapshot;
+  primaryCredentialPaths?: PrimaryChannelCredentialPaths;
+  environment?: NodeJS.ProcessEnv;
+  primaryRuntimeActive?: boolean;
+  primaryTelegramRuntimeToken?: string | null;
+}
+
+interface WhatsAppVerificationState {
+  status: WhatsAppSessionVerificationStatus;
+  checkedAt: number | null;
+  errorCode: string | null;
+}
+
+interface WhatsAppVerificationOperation {
+  id: number;
+  controller: AbortController;
+  timer: NodeJS.Timeout;
+  task: Promise<void>;
+  timedOut: boolean;
+}
+
+interface PrimaryTelegramEnvironmentObservation {
+  token: string | null;
+  declared: boolean;
+  migratable: boolean;
+  errorCode: string | null;
 }
 
 export class ChannelSetupError extends Error {
@@ -171,22 +245,44 @@ export class ChannelSetupService {
   private readonly telegram: TelegramPairingAdapter;
   private readonly whatsapp: WhatsAppPairingAdapter;
   private readonly timeoutMs: number;
+  private readonly whatsappVerificationTimeoutMs: number;
+  private readonly whatsappVerificationTtlMs: number;
   private readonly now: () => number;
   private readonly primaryChannels: PrimaryChannelConfigurationSnapshot;
+  private readonly primaryCredentialPaths: PrimaryChannelCredentialPaths;
+  private readonly environment: NodeJS.ProcessEnv;
+  private readonly primaryRuntimeActive: boolean;
+  private readonly primaryTelegramRuntimeFingerprint: string | null;
   private readonly telegramState = emptyPairingState();
   private readonly whatsappState: Record<WhatsAppTestRole, PairingState> = {
     harvy: emptyPairingState(),
     tester: emptyPairingState(),
   };
+  private readonly whatsappVerificationState: Record<
+    WhatsAppTestRole,
+    WhatsAppVerificationState
+  > = {
+    harvy: emptyWhatsAppVerificationState(),
+    tester: emptyWhatsAppVerificationState(),
+  };
   private telegramOperation: ActiveOperation | null = null;
   private botValidation: AbortController | null = null;
   private botValidationTask: Promise<void> | null = null;
+  private primaryBotValidation: AbortController | null = null;
+  private primaryBotValidationTask: Promise<void> | null = null;
   private credentialQueue: Promise<unknown> = Promise.resolve();
   private lock: LocalRuntimeLock | null = null;
   private initialization: Promise<void> | null = null;
   private readonly whatsappOperations = new Map<WhatsAppTestRole, ActiveOperation>();
+  private readonly whatsappVerificationOperations = new Map<
+    WhatsAppTestRole,
+    WhatsAppVerificationOperation
+  >();
   private botPhase: "idle" | "validating" | "error" = "idle";
   private botErrorCode: string | null = null;
+  private primaryBotPhase: "idle" | "validating" | "ready" | "error" = "idle";
+  private primaryBotErrorCode: string | null = null;
+  private primaryBotCheckedFingerprint: string | null = null;
   private sequence = 0;
   private closed = false;
 
@@ -195,11 +291,38 @@ export class ChannelSetupService {
     this.telegram = options.telegramAdapter ?? new LiveTelegramPairingAdapter();
     this.whatsapp = options.whatsappAdapter ?? new LiveWhatsAppPairingAdapter();
     this.timeoutMs = options.pairingTimeoutMs ?? DEFAULT_PAIRING_TIMEOUT_MS;
+    this.whatsappVerificationTimeoutMs =
+      options.whatsappVerificationTimeoutMs ??
+      DEFAULT_WHATSAPP_VERIFICATION_TIMEOUT_MS;
+    this.whatsappVerificationTtlMs = options.whatsappVerificationTtlMs ??
+      DEFAULT_WHATSAPP_VERIFICATION_TTL_MS;
     this.now = options.now ?? (() => Date.now());
     this.primaryChannels = options.primaryChannels ??
       primaryChannelConfigurationFromEnvironment();
+    this.primaryCredentialPaths = options.primaryCredentialPaths ??
+      primaryChannelCredentialPaths();
+    this.environment = options.environment ?? process.env;
+    this.primaryRuntimeActive = options.primaryRuntimeActive ?? false;
+    this.primaryTelegramRuntimeFingerprint =
+      options.primaryTelegramRuntimeToken?.trim()
+        ? credentialFingerprint(options.primaryTelegramRuntimeToken)
+        : null;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs < 1_000) {
       throw new Error("Timeout pairing minimal 1000 ms.");
+    }
+    if (
+      !Number.isFinite(this.whatsappVerificationTimeoutMs) ||
+      this.whatsappVerificationTimeoutMs < 1_000
+    ) {
+      throw new Error("Timeout pemeriksaan WhatsApp minimal 1000 ms.");
+    }
+    if (
+      !Number.isFinite(this.whatsappVerificationTtlMs) ||
+      this.whatsappVerificationTtlMs < this.whatsappVerificationTimeoutMs
+    ) {
+      throw new Error(
+        "Masa berlaku pemeriksaan WhatsApp harus melampaui timeout pemeriksaan.",
+      );
     }
   }
 
@@ -233,20 +356,52 @@ export class ChannelSetupService {
 
   async snapshot(): Promise<ChannelSetupSnapshot> {
     this.assertReady();
-    const [[bot, tester], whatsappHarvy, whatsappTester] = await Promise.all([
+    const [
+      [bot, tester],
+      whatsappHarvy,
+      whatsappTester,
+      primaryTelegramCredential,
+      primaryTelegramEnvironment,
+    ] = await Promise.all([
       this.withCredentialAccess(() => Promise.all([
         loadTelegramBotCredential(this.paths),
         loadTelegramTesterCredential(this.paths),
       ])),
       this.whatsapp.configured(this.paths.whatsappHarvyAuth),
       this.whatsapp.configured(this.paths.whatsappTesterAuth),
+      loadPrimaryTelegramBotCredential(this.primaryCredentialPaths),
+      this.observePrimaryTelegramEnvironment(),
     ]);
     const botConfigured = bot !== null;
     const testerConfigured = tester !== null;
+    const now = this.now();
+    this.reconcileWhatsAppVerification("harvy", whatsappHarvy);
+    this.reconcileWhatsAppVerification("tester", whatsappTester);
+    this.maybeVerifyWhatsApp("harvy", whatsappHarvy, now);
+    this.maybeVerifyWhatsApp("tester", whatsappTester, now);
+    const whatsappHarvySnapshot = publicWhatsAppPairingState(
+      this.whatsappState.harvy,
+      this.whatsappVerificationState.harvy,
+      whatsappHarvy,
+      now,
+    );
+    const whatsappTesterSnapshot = publicWhatsAppPairingState(
+      this.whatsappState.tester,
+      this.whatsappVerificationState.tester,
+      whatsappTester,
+      now,
+    );
+    const primaryTelegram = this.primaryTelegramSnapshot(
+      primaryTelegramCredential?.botToken ?? null,
+      primaryTelegramEnvironment,
+    );
     return {
       identityBoundary: {
         mode: "isolated_acceptance",
-        primary: this.primaryChannels,
+        primary: {
+          ...this.primaryChannels,
+          telegram: primaryTelegram,
+        },
       },
       telegram: {
         ready: botConfigured && testerConfigured,
@@ -259,13 +414,153 @@ export class ChannelSetupService {
               : botConfigured ? "ready" : "missing",
           errorCode: this.botErrorCode,
         },
-        tester: publicPairingState(this.telegramState, testerConfigured, this.now()),
+        tester: publicPairingState(this.telegramState, testerConfigured, now),
       },
       whatsapp: {
-        harvy: publicPairingState(this.whatsappState.harvy, whatsappHarvy, this.now()),
-        tester: publicPairingState(this.whatsappState.tester, whatsappTester, this.now()),
+        ready:
+          whatsappPairingReady(whatsappHarvySnapshot) &&
+          whatsappPairingReady(whatsappTesterSnapshot),
+        harvy: whatsappHarvySnapshot,
+        tester: whatsappTesterSnapshot,
       },
     };
+  }
+
+  /**
+   * Memulai handshake baru untuk semua credential WhatsApp acceptance yang
+   * tersimpan. Method ini tidak menunggu jaringan selesai; snapshot berikutnya
+   * akan bergerak dari checking ke accepted/rejected/unreachable.
+   */
+  async verifyWhatsAppSessions(): Promise<void> {
+    this.assertReady();
+    if (this.whatsappOperations.size > 0) {
+      throw conflict(
+        "CHANNEL_WHATSAPP_OPERATION_ACTIVE",
+        "Selesaikan operasi WhatsApp sebelum memeriksa koneksi.",
+      );
+    }
+    const [harvyConfigured, testerConfigured] = await Promise.all([
+      this.whatsapp.configured(this.paths.whatsappHarvyAuth),
+      this.whatsapp.configured(this.paths.whatsappTesterAuth),
+    ]);
+    this.reconcileWhatsAppVerification("harvy", harvyConfigured);
+    this.reconcileWhatsAppVerification("tester", testerConfigured);
+    if (harvyConfigured) this.startWhatsAppVerification("harvy", true);
+    if (testerConfigured) this.startWhatsAppVerification("tester", true);
+  }
+
+  async setPrimaryTelegramBotToken(value: string): Promise<void> {
+    this.assertReady();
+    this.assertPrimaryTelegramIdle();
+    const environment = await this.observePrimaryTelegramEnvironment();
+    if (environment.declared) {
+      throw conflict(
+        "PRIMARY_TELEGRAM_ENVIRONMENT_PRESENT",
+        "Pindahkan token environment ke Console sebelum menggantinya.",
+      );
+    }
+    let token: string;
+    try {
+      token = primaryTelegramBotToken(value);
+    } catch {
+      throw rejected(
+        "PRIMARY_TELEGRAM_BOT_TOKEN_INVALID",
+        "Format token bot Telegram utama tidak sah.",
+      );
+    }
+    await this.assertPrimaryTelegramDistinctFromAcceptance(token);
+    await this.validatePrimaryTelegramBotToken(token);
+    try {
+      await savePrimaryTelegramBotCredential(
+        { version: 1, botToken: token },
+        this.primaryCredentialPaths,
+      );
+      this.primaryBotPhase = "ready";
+      this.primaryBotErrorCode = null;
+      this.primaryBotCheckedFingerprint = credentialFingerprint(token);
+    } catch (error) {
+      this.primaryBotPhase = "error";
+      this.primaryBotErrorCode = safeOperationCode(
+        error,
+        "PRIMARY_TELEGRAM_CREDENTIAL_WRITE_FAILED",
+      );
+      throw serviceFailure(
+        this.primaryBotErrorCode,
+        "Token utama sudah valid tetapi belum dapat disimpan.",
+      );
+    }
+  }
+
+  async migratePrimaryTelegramBotToken(): Promise<void> {
+    this.assertReady();
+    this.assertPrimaryTelegramIdle();
+    const environment = await this.observePrimaryTelegramEnvironment();
+    if (!environment.token || !environment.migratable) {
+      throw rejected(
+        "PRIMARY_TELEGRAM_ENVIRONMENT_NOT_MIGRATABLE",
+        "Token environment tidak dapat dipindahkan otomatis.",
+      );
+    }
+    await this.assertPrimaryTelegramDistinctFromAcceptance(environment.token);
+    await this.validatePrimaryTelegramBotToken(environment.token);
+    try {
+      await migratePrimaryTelegramBotCredentialFromEnvironment({
+        environment: this.environment,
+        paths: this.primaryCredentialPaths,
+      });
+      this.primaryBotPhase = "ready";
+      this.primaryBotErrorCode = null;
+      this.primaryBotCheckedFingerprint = credentialFingerprint(
+        environment.token,
+      );
+    } catch (error) {
+      this.primaryBotPhase = "error";
+      this.primaryBotErrorCode = safeOperationCode(
+        error,
+        "PRIMARY_TELEGRAM_MIGRATION_FAILED",
+      );
+      throw serviceFailure(
+        this.primaryBotErrorCode,
+        "Token Telegram utama belum berhasil dipindahkan.",
+      );
+    }
+  }
+
+  async verifyPrimaryTelegramBotToken(): Promise<void> {
+    this.assertReady();
+    this.assertPrimaryTelegramIdle();
+    const credential = await loadPrimaryTelegramBotCredential(
+      this.primaryCredentialPaths,
+    );
+    const environment = await this.observePrimaryTelegramEnvironment();
+    const token = this.effectivePrimaryTelegramToken(
+      credential?.botToken ?? null,
+      environment,
+    );
+    if (!token) {
+      throw rejected(
+        "PRIMARY_TELEGRAM_CREDENTIAL_MISSING",
+        "Token Telegram utama belum tersedia.",
+      );
+    }
+    await this.assertPrimaryTelegramDistinctFromAcceptance(token);
+    await this.validatePrimaryTelegramBotToken(token);
+  }
+
+  async deletePrimaryTelegramBotToken(): Promise<void> {
+    this.assertReady();
+    this.assertPrimaryTelegramIdle();
+    const environment = await this.observePrimaryTelegramEnvironment();
+    if (environment.declared) {
+      throw conflict(
+        "PRIMARY_TELEGRAM_ENVIRONMENT_PRESENT",
+        "Token environment harus dipindahkan atau dihapus lebih dulu.",
+      );
+    }
+    await deletePrimaryTelegramBotCredential(this.primaryCredentialPaths);
+    this.primaryBotPhase = "idle";
+    this.primaryBotErrorCode = null;
+    this.primaryBotCheckedFingerprint = null;
   }
 
   async setTelegramBotToken(value: string): Promise<void> {
@@ -277,6 +572,7 @@ export class ChannelSetupService {
     if (!TELEGRAM_BOT_TOKEN_PATTERN.test(token)) {
       throw rejected("CHANNEL_TELEGRAM_BOT_TOKEN_INVALID", "Format token bot Telegram tidak sah.");
     }
+    await this.assertAcceptanceTelegramDistinctFromPrimary(token);
     this.botPhase = "validating";
     this.botErrorCode = null;
     const controller = new AbortController();
@@ -385,6 +681,7 @@ export class ChannelSetupService {
     if (this.whatsappOperations.size > 0) {
       throw conflict("CHANNEL_WHATSAPP_OPERATION_ACTIVE", "Selesaikan satu operasi WhatsApp sebelum memulai role lain.");
     }
+    this.assertNoWhatsAppVerification();
     const operation = this.createOperation();
     this.whatsappOperations.set(role, operation);
     setPairingState(this.whatsappState[role], "connecting");
@@ -396,6 +693,7 @@ export class ChannelSetupService {
     if (this.whatsappOperations.size > 0) {
       throw conflict("CHANNEL_WHATSAPP_OPERATION_ACTIVE", "Selesaikan satu operasi WhatsApp sebelum mencabut role lain.");
     }
+    this.assertNoWhatsAppVerification();
     const operation = this.createOperation();
     this.whatsappOperations.set(role, operation);
     setPairingState(this.whatsappState[role], "revoking");
@@ -407,6 +705,7 @@ export class ChannelSetupService {
     if (this.whatsappOperations.size > 0) {
       throw conflict("CHANNEL_WHATSAPP_OPERATION_ACTIVE", "Selesaikan satu operasi WhatsApp sebelum mengganti sesi.");
     }
+    this.assertNoWhatsAppVerification();
     const operation = this.createOperation();
     this.whatsappOperations.set(role, operation);
     setPairingState(this.whatsappState[role], "revoking");
@@ -452,8 +751,10 @@ export class ChannelSetupService {
     if (this.closed) return;
     this.closed = true;
     this.botValidation?.abort();
+    this.primaryBotValidation?.abort();
     const tasks: Promise<void>[] = [];
     if (this.botValidationTask) tasks.push(this.botValidationTask);
+    if (this.primaryBotValidationTask) tasks.push(this.primaryBotValidationTask);
     if (this.telegramOperation) {
       this.telegramOperation.cancelled = true;
       this.telegramOperation.passwordWaiter?.reject(aborted());
@@ -465,12 +766,211 @@ export class ChannelSetupService {
       operation.controller.abort();
       tasks.push(operation.task);
     }
+    for (const operation of this.whatsappVerificationOperations.values()) {
+      operation.controller.abort();
+      tasks.push(operation.task);
+    }
     await Promise.allSettled(tasks);
     await this.credentialQueue.catch(() => undefined);
     await this.initialization?.catch(() => undefined);
     const lock = this.lock;
     this.lock = null;
     await lock?.release();
+  }
+
+  private async observePrimaryTelegramEnvironment(): Promise<
+    PrimaryTelegramEnvironmentObservation
+  > {
+    const raw = this.environment.TELEGRAM_BOT_TOKEN;
+    try {
+      const status = await primaryTelegramEnvironmentStatus(
+        this.environment,
+        this.primaryCredentialPaths,
+      );
+      return {
+        token: raw?.trim() ? primaryTelegramBotToken(raw) : null,
+        declared: status.declared,
+        migratable: status.migratable,
+        errorCode: status.entryCount > 1
+          ? "PRIMARY_TELEGRAM_ENVIRONMENT_AMBIGUOUS"
+          : null,
+      };
+    } catch (error) {
+      return {
+        token: null,
+        declared: Boolean(raw?.trim()),
+        migratable: false,
+        errorCode: safeOperationCode(
+          error,
+          "PRIMARY_TELEGRAM_ENVIRONMENT_INVALID",
+        ),
+      };
+    }
+  }
+
+  private primaryTelegramSnapshot(
+    managedToken: string | null,
+    environment: PrimaryTelegramEnvironmentObservation,
+  ): PrimaryChannelConfigurationSnapshot["telegram"] {
+    const sourceConflict = Boolean(
+      managedToken && environment.token && managedToken !== environment.token,
+    );
+    const source = sourceConflict || environment.errorCode
+      ? "conflict" as const
+      : managedToken
+        ? "console" as const
+        : environment.token
+          ? "environment" as const
+          : "missing" as const;
+    const token = source === "console"
+      ? managedToken
+      : source === "environment"
+        ? environment.token
+        : null;
+    const fingerprint = token ? credentialFingerprint(token) : null;
+    if (
+      this.primaryBotPhase !== "validating" &&
+      this.primaryBotCheckedFingerprint !== fingerprint
+    ) {
+      this.primaryBotPhase = "idle";
+      this.primaryBotErrorCode = null;
+      this.primaryBotCheckedFingerprint = null;
+    }
+    const configured = token !== null;
+    const phase = source === "conflict"
+      ? "error" as const
+      : !configured
+        ? "missing" as const
+        : this.primaryBotPhase === "validating"
+          ? "validating" as const
+          : this.primaryBotPhase === "ready" &&
+              this.primaryBotCheckedFingerprint === fingerprint
+            ? "ready" as const
+            : this.primaryBotPhase === "error" &&
+                this.primaryBotCheckedFingerprint === fingerprint
+              ? "error" as const
+              : "unchecked" as const;
+    return {
+      declared: configured,
+      configured,
+      source,
+      legacyEnvironment: environment.declared,
+      migrationAvailable: source === "environment" && environment.migratable,
+      runtimeActive: this.primaryRuntimeActive,
+      restartRequired: this.primaryRuntimeActive &&
+        this.primaryTelegramRuntimeFingerprint !== fingerprint,
+      phase,
+      errorCode: sourceConflict
+        ? "PRIMARY_TELEGRAM_CREDENTIAL_SOURCE_CONFLICT"
+        : environment.errorCode ?? this.primaryBotErrorCode,
+    };
+  }
+
+  private effectivePrimaryTelegramToken(
+    managedToken: string | null,
+    environment: PrimaryTelegramEnvironmentObservation,
+  ): string | null {
+    if (environment.errorCode) {
+      throw conflict(
+        environment.errorCode,
+        "Konfigurasi environment Telegram utama tidak sah.",
+      );
+    }
+    if (
+      managedToken && environment.token && managedToken !== environment.token
+    ) {
+      throw conflict(
+        "PRIMARY_TELEGRAM_CREDENTIAL_SOURCE_CONFLICT",
+        "Credential Console dan environment berbeda.",
+      );
+    }
+    return managedToken ?? environment.token;
+  }
+
+  private assertPrimaryTelegramIdle(): void {
+    if (this.primaryBotValidation) {
+      throw conflict(
+        "PRIMARY_TELEGRAM_VALIDATION_ACTIVE",
+        "Pemeriksaan bot Telegram utama masih berjalan.",
+      );
+    }
+  }
+
+  private async validatePrimaryTelegramBotToken(token: string): Promise<void> {
+    const controller = new AbortController();
+    const fingerprint = credentialFingerprint(token);
+    this.primaryBotValidation = controller;
+    this.primaryBotPhase = "validating";
+    this.primaryBotErrorCode = null;
+    this.primaryBotCheckedFingerprint = fingerprint;
+    const timer = setTimeout(
+      () => controller.abort(),
+      Math.min(this.timeoutMs, 12_000),
+    );
+    timer.unref();
+    const task = (async () => {
+      try {
+        await this.telegram.validateBotToken(token, controller.signal);
+        assertNotAborted(controller.signal);
+        this.primaryBotPhase = "ready";
+      } catch (error) {
+        this.primaryBotPhase = "error";
+        this.primaryBotErrorCode = safeOperationCode(
+          error,
+          controller.signal.aborted
+            ? "PRIMARY_TELEGRAM_VALIDATION_TIMEOUT"
+            : "PRIMARY_TELEGRAM_BOT_TOKEN_REJECTED",
+        );
+        throw serviceFailure(
+          this.primaryBotErrorCode,
+          "Bot Telegram utama ditolak atau tidak dapat diverifikasi.",
+        );
+      } finally {
+        clearTimeout(timer);
+        if (this.primaryBotValidation === controller) {
+          this.primaryBotValidation = null;
+        }
+      }
+    })();
+    this.primaryBotValidationTask = task;
+    try {
+      await task;
+    } finally {
+      if (this.primaryBotValidationTask === task) {
+        this.primaryBotValidationTask = null;
+      }
+    }
+  }
+
+  private async assertPrimaryTelegramDistinctFromAcceptance(
+    token: string,
+  ): Promise<void> {
+    const acceptance = await loadTelegramBotCredential(this.paths);
+    if (acceptance?.botToken === token) {
+      throw rejected(
+        "PRIMARY_TELEGRAM_BOT_MUST_DIFFER_FROM_ACCEPTANCE",
+        "Bot Telegram utama harus berbeda dari bot acceptance.",
+      );
+    }
+  }
+
+  private async assertAcceptanceTelegramDistinctFromPrimary(
+    token: string,
+  ): Promise<void> {
+    const managed = await loadPrimaryTelegramBotCredential(
+      this.primaryCredentialPaths,
+    );
+    const environment = await this.observePrimaryTelegramEnvironment();
+    const primary = this.effectivePrimaryTelegramToken(
+      managed?.botToken ?? null,
+      environment,
+    );
+    if (primary === token) {
+      throw rejected(
+        "CHANNEL_TELEGRAM_BOT_MUST_DIFFER_FROM_PRIMARY",
+        "Bot acceptance harus berbeda dari bot Telegram utama.",
+      );
+    }
   }
 
   private createOperation(): ActiveOperation {
@@ -491,6 +991,130 @@ export class ChannelSetupService {
     }, this.timeoutMs);
     operation.timer.unref();
     return operation;
+  }
+
+  private assertNoWhatsAppVerification(): void {
+    if (this.whatsappVerificationOperations.size > 0) {
+      throw conflict(
+        "CHANNEL_WHATSAPP_VERIFICATION_ACTIVE",
+        "Tunggu pemeriksaan koneksi WhatsApp selesai.",
+      );
+    }
+  }
+
+  private reconcileWhatsAppVerification(
+    role: WhatsAppTestRole,
+    configured: boolean,
+  ): void {
+    const state = this.whatsappVerificationState[role];
+    if (!configured) {
+      if (!this.whatsappVerificationOperations.has(role)) {
+        resetWhatsAppVerificationState(state);
+      }
+      return;
+    }
+    if (state.status === "missing") {
+      state.status = "unchecked";
+      state.checkedAt = null;
+      state.errorCode = null;
+    }
+  }
+
+  private maybeVerifyWhatsApp(
+    role: WhatsAppTestRole,
+    configured: boolean,
+    now: number,
+  ): void {
+    if (
+      !configured ||
+      this.whatsappOperations.size > 0 ||
+      this.whatsappVerificationOperations.has(role) ||
+      this.whatsappState[role].phase === "error"
+    ) return;
+    const verification = this.whatsappVerificationState[role];
+    const stale = verification.checkedAt !== null &&
+      now - verification.checkedAt >= this.whatsappVerificationTtlMs;
+    if (verification.status === "unchecked" || stale) {
+      this.startWhatsAppVerification(role, false);
+    }
+  }
+
+  private startWhatsAppVerification(
+    role: WhatsAppTestRole,
+    force: boolean,
+  ): void {
+    if (this.whatsappVerificationOperations.has(role)) return;
+    if (this.whatsappOperations.size > 0) {
+      if (force) {
+        throw conflict(
+          "CHANNEL_WHATSAPP_OPERATION_ACTIVE",
+          "Selesaikan operasi WhatsApp sebelum memeriksa koneksi.",
+        );
+      }
+      return;
+    }
+    const controller = new AbortController();
+    const operation: WhatsAppVerificationOperation = {
+      id: ++this.sequence,
+      controller,
+      timer: setTimeout(() => undefined, this.whatsappVerificationTimeoutMs),
+      task: Promise.resolve(),
+      timedOut: false,
+    };
+    clearTimeout(operation.timer);
+    operation.timer = setTimeout(() => {
+      operation.timedOut = true;
+      controller.abort();
+    }, this.whatsappVerificationTimeoutMs);
+    operation.timer.unref();
+    this.whatsappVerificationOperations.set(role, operation);
+    const state = this.whatsappVerificationState[role];
+    state.status = "checking";
+    state.errorCode = null;
+    operation.task = this.runWhatsAppVerification(role, operation);
+  }
+
+  private async runWhatsAppVerification(
+    role: WhatsAppTestRole,
+    operation: WhatsAppVerificationOperation,
+  ): Promise<void> {
+    try {
+      const status = await this.whatsapp.probe({
+        authFolder: whatsappAuthFolder(role, this.paths),
+        signal: operation.controller.signal,
+      });
+      if (!this.currentWhatsAppVerification(role, operation)) return;
+      setWhatsAppVerificationResult(
+        this.whatsappVerificationState[role],
+        status,
+        this.now(),
+        status === "rejected" ? "CHANNEL_WHATSAPP_SESSION_REJECTED" : null,
+      );
+    } catch (error) {
+      if (!this.currentWhatsAppVerification(role, operation)) return;
+      if (this.closed && operation.controller.signal.aborted) return;
+      const code = operation.timedOut
+        ? "CHANNEL_WHATSAPP_VERIFICATION_TIMEOUT"
+        : safeOperationCode(error, "CHANNEL_WHATSAPP_VERIFICATION_UNAVAILABLE");
+      setWhatsAppVerificationResult(
+        this.whatsappVerificationState[role],
+        isWhatsAppSessionRejection(code) ? "rejected" : "unreachable",
+        this.now(),
+        code,
+      );
+    } finally {
+      clearTimeout(operation.timer);
+      if (this.currentWhatsAppVerification(role, operation)) {
+        this.whatsappVerificationOperations.delete(role);
+      }
+    }
+  }
+
+  private currentWhatsAppVerification(
+    role: WhatsAppTestRole,
+    operation: WhatsAppVerificationOperation,
+  ): boolean {
+    return this.whatsappVerificationOperations.get(role)?.id === operation.id;
   }
 
   private async runTelegramPairing(
@@ -682,6 +1306,12 @@ export class ChannelSetupService {
       return;
     }
     setPairingState(this.whatsappState[role], "paired");
+    setWhatsAppVerificationResult(
+      this.whatsappVerificationState[role],
+      "accepted",
+      this.now(),
+      null,
+    );
   }
 
   private async runWhatsAppRevoke(
@@ -701,6 +1331,7 @@ export class ChannelSetupService {
         return;
       }
       setPairingState(this.whatsappState[role], "idle");
+      resetWhatsAppVerificationState(this.whatsappVerificationState[role]);
     } catch (error) {
       if (!this.currentWhatsApp(role, operation)) return;
       if (operation.cancelled) setPairingState(this.whatsappState[role], "idle");
@@ -907,6 +1538,41 @@ export class LiveWhatsAppPairingAdapter implements WhatsAppPairingAdapter {
       throw blocked("CHANNEL_WHATSAPP_CREDENTIAL_INVALID");
     }
     return isWhatsAppCredentialReady(parsed);
+  }
+
+  async probe(input: {
+    authFolder: string;
+    signal: AbortSignal;
+  }): Promise<"accepted" | "rejected"> {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      assertNotAborted(input.signal);
+      const connection = await openWhatsAppSocket(input.authFolder);
+      try {
+        let outcome: "open" | "restart" | "logged_out";
+        try {
+          outcome = await waitForWhatsAppConnection(
+            connection.socket,
+            input.signal,
+            () => {
+              throw blocked("CHANNEL_WHATSAPP_SESSION_REJECTED");
+            },
+          );
+        } catch (error) {
+          if (
+            safeOperationCode(error, "CHANNEL_WHATSAPP_VERIFICATION_UNAVAILABLE") ===
+              "CHANNEL_WHATSAPP_SESSION_REJECTED"
+          ) return "rejected";
+          throw error;
+        }
+        await connection.authWrite();
+        if (outcome === "restart") continue;
+        if (outcome === "logged_out") return "rejected";
+        return "accepted";
+      } finally {
+        await connection.socket.end(undefined).catch(() => undefined);
+      }
+    }
+    throw blocked("CHANNEL_WHATSAPP_VERIFICATION_RESTART_LIMIT");
   }
 
   async pair(input: {
@@ -1149,6 +1815,62 @@ function publicPairingState(
   };
 }
 
+function publicWhatsAppPairingState(
+  pairing: PairingState,
+  verification: WhatsAppVerificationState,
+  configured: boolean,
+  now: number,
+): WhatsAppPairingSnapshot {
+  return {
+    ...publicPairingState(pairing, configured, now),
+    session: {
+      status: configured ? verification.status : "missing",
+      checkedAt: verification.checkedAt === null
+        ? null
+        : new Date(verification.checkedAt).toISOString(),
+      errorCode: verification.errorCode,
+    },
+  };
+}
+
+function whatsappPairingReady(snapshot: WhatsAppPairingSnapshot): boolean {
+  return snapshot.configured &&
+    snapshot.phase === "paired" &&
+    snapshot.session.status === "accepted";
+}
+
+function emptyWhatsAppVerificationState(): WhatsAppVerificationState {
+  return {
+    status: "missing",
+    checkedAt: null,
+    errorCode: null,
+  };
+}
+
+function resetWhatsAppVerificationState(
+  state: WhatsAppVerificationState,
+): void {
+  state.status = "missing";
+  state.checkedAt = null;
+  state.errorCode = null;
+}
+
+function setWhatsAppVerificationResult(
+  state: WhatsAppVerificationState,
+  status: "accepted" | "rejected" | "unreachable",
+  checkedAt: number,
+  errorCode: string | null,
+): void {
+  state.status = status;
+  state.checkedAt = checkedAt;
+  state.errorCode = errorCode;
+}
+
+function isWhatsAppSessionRejection(code: string): boolean {
+  return code === "CHANNEL_WHATSAPP_SESSION_REJECTED" ||
+    code === "CHANNEL_WHATSAPP_SESSION_REVOKED";
+}
+
 function setPairingState(
   state: PairingState,
   phase: ChannelPairingPhase,
@@ -1231,6 +1953,10 @@ function safeOperationCode(error: unknown, fallback: string): string {
     : fallback;
 }
 
+function credentialFingerprint(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
 function rejected(code: string, message: string): ChannelSetupError {
   return new ChannelSetupError(code, 400, message);
 }
@@ -1282,7 +2008,11 @@ export function whatsappSetupCloseOutcome(
   reason: number | null,
 ): "restart" | "logged_out" | "closed" {
   if (reason === DisconnectReason.restartRequired) return "restart";
-  if (reason === DisconnectReason.loggedOut) return "logged_out";
+  if (
+    reason === DisconnectReason.loggedOut ||
+    reason === DisconnectReason.badSession ||
+    reason === DisconnectReason.multideviceMismatch
+  ) return "logged_out";
   return "closed";
 }
 

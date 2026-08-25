@@ -51,7 +51,13 @@ export function helpActions(): InlineKeyboard {
 }
 
 export function formatTask(task: StudentTask, timeZone: string): string {
-  const details = [IMPORTANCE_LABEL[task.importance], formatDue(task, timeZone)];
+  const details = [IMPORTANCE_LABEL[task.importance]];
+
+  if (task.dueAt) {
+    details.push(formatDue(task, timeZone));
+  } else if (!task.reminderAt) {
+    details.push("tanpa tenggat");
+  }
 
   if (task.reminderAt) {
     if (

@@ -110,6 +110,8 @@ describe("catatan memori pada balasan", () => {
       true,
     );
     assert.equal(replyAcknowledgesMemoryWrite("Oke, aku mencatat yang ini."), true);
+    assert.equal(replyAcknowledgesMemoryWrite("Aturan baru dicatat untuk ke depan."), true);
+    assert.equal(replyAcknowledgesMemoryWrite("Aturan itu belum dicatat."), false);
     assert.equal(replyAcknowledgesMemoryWrite("Aku perbarui yang dulu 📍"), true);
     assert.equal(replyAcknowledgesMemoryWrite("Mulai sekarang aku panggil Hafizh."), true);
     assert.equal(replyAcknowledgesMemoryWrite("Tenang, aku nggak bakal lupa."), true);
@@ -208,7 +210,9 @@ describe("tombol fitur Harvy Loop", () => {
       },
     };
 
-    assert.match(formatTask(task, "Asia/Jakarta"), /tidak pasti.*atur ulang/iu);
+    const renderedTask = formatTask(task, "Asia/Jakarta");
+    assert.match(renderedTask, /tidak pasti.*atur ulang/iu);
+    assert.doesNotMatch(renderedTask, /tanpa tenggat/iu);
     assert.match(formatSession(active, "Asia/Jakarta"), /tidak pasti.*jadwalkan ulang/iu);
   });
 

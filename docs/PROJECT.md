@@ -1,6 +1,6 @@
 # Harvy — Keputusan Proyek dan Backlog
 
-Terakhir diperbarui: 23 Agustus 2026.
+Terakhir diperbarui: 25 Agustus 2026.
 
 ## Identitas dan produk
 
@@ -47,10 +47,10 @@ jujur, tidak manipulatif, dan menghormati kendali pengguna.
 
 | Pengalaman | Kanal | Status |
 |---|---|---|
-| Harvy pribadi | Telegram | Kanal produk aktif; baseline full sebelum perubahan memori lulus 8/8, current build lulus focus auto-memory implicit+recall 3/3 lewat akun tester nyata tetapi rerun full masih tertahan timeout sesi/check-in; dogfood tujuh hari belum selesai |
+| Harvy pribadi | Telegram | Kanal produk aktif; full-acceptance 24 Agustus lulus 8/8. Full exploratory v3 25 Agustus meliputi tugas nyata, koreksi, burst, jeda, topic-return, re-entry, restart, dan cleanup, tetapi menemukan kualitas reasoning lemah serta reminder terlalu awal. Dua focused rerun menutup presisi detik dan false task acknowledgement pada build yang diuji: task pra-consent benar-benar tersimpan, `/tugas` konsisten, reminder datang sekitar 64,6 detik setelah pemrosesan dilanjutkan, dan completion tombol berhasil. Dogfood tujuh hari serta exact send/receipt crash window belum selesai |
 | Harvy di grup | Telegram | Nanti; belum dimulai |
-| Harvy di grup | WhatsApp melalui Baileys | Kanal produk beta lokal; tidak dibekukan. Satu bukti grup nyata lama ada, tetapi latest build belum menjalani acceptance lengkap |
-| Harvy pribadi | WhatsApp melalui Baileys | Kanal produk beta lokal opt-in; capability personal/coding setara Telegram dan dua akun uji sudah paired. Current build membuktikan auto-memory implicit+recall serta planning live, tetapi full run berhenti pada stage safety nonkrisis; reconnect dan CodingRun/GitHub live belum selesai |
+| Harvy di grup | WhatsApp melalui Baileys | Kanal produk beta lokal; tidak dibekukan. Build acceptance 24 Agustus lulus scope nyata dua-akun untuk lifecycle, notice, GroupAgentRun, safety, dan duplicate replay; multi-human, memory grup, reconnect/crash delivery, serta group-coding belum selesai |
+| Harvy pribadi | WhatsApp melalui Baileys | Kanal produk beta lokal opt-in; capability personal/coding setara Telegram dan dua akun uji sudah pernah paired. Build full-acceptance 24 Agustus lulus 10/10, reminder/check-in jatuh tempo, serta percakapan sesudah crash/restart; exact tree sesudah perbaikan berikutnya belum direrun karena sesi Harvy A ditolak 401. Interupsi burst, network disconnect, exact send/receipt crash window, dan CodingRun/GitHub live belum selesai |
 | Visualisasi | Web | Setelah alur chat terbukti perlu |
 
 WhatsApp dirancang untuk dapat memakai **banyak nomor Harvy**. Setiap nomor
@@ -291,8 +291,9 @@ benar, dan pengguna dapat memahami urutan prioritas tanpa penjelasan tambahan.
   analitik, dan pesan berikutnya menunggu tombol persetujuan. Persetujuan kini
   dapat ditarik dari dalam chat tanpa menghapus data. Versi 5 juga menjelaskan
   fan-out 2–3 worker untuk permintaan kompleks yang aman; worker tidak mendapat
-  memori, riwayat, credential, atau tool. Perubahan terakhir ini sudah teruji
-  otomatis, tetapi belum diuji lewat Telegram.
+  memori, riwayat, credential, atau tool. Onboarding/consent current sudah
+  dibuktikan lewat Telegram dan WhatsApp privat nyata; fan-out worker serta
+  penarikan consent pada ragam luas tetap baru teruji otomatis.
 - [x] Pengalaman pengguna pertama: Harvy berkenalan sebelum menjelaskan cara
   pakai, dipicu kontak pertama dan bukan oleh `/start`. Pesan yang telanjur
   dikirim ditahan lalu diproses sendiri setelah persetujuan.

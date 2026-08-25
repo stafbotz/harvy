@@ -17,6 +17,37 @@ export interface WhatsAppConfig {
   groupFile: string;
   reconnectBaseMs: number;
   reconnectMaxMs: number;
+  /** Scope kausal private yang hanya sah pada exploratory live acceptance. */
+  liveExplorationMessageScope?: string | null;
+}
+
+export function parseLiveExplorationMessageScope(
+  value: string | undefined,
+  gate: {
+    environment: string | undefined;
+    release: string | undefined;
+    trace: string | undefined;
+  },
+): string | null {
+  if (!value?.trim()) return null;
+  if (
+    gate.environment !== "development" ||
+    gate.release !== "live-acceptance" ||
+    gate.trace !== "content-free-v1"
+  ) {
+    throw whatsAppConfigurationError(
+      "CONFIG_WHATSAPP_LIVE_EXPLORATION_SCOPE_FORBIDDEN",
+      "Scope exploratory WhatsApp hanya boleh aktif pada live acceptance development.",
+    );
+  }
+  const normalized = value.trim();
+  if (!/^HARVYEXP[A-F0-9]{12}$/u.test(normalized)) {
+    throw whatsAppConfigurationError(
+      "CONFIG_WHATSAPP_LIVE_EXPLORATION_SCOPE_INVALID",
+      "Scope exploratory WhatsApp tidak sah.",
+    );
+  }
+  return normalized;
 }
 
 export function parseWhatsAppAccounts(

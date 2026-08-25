@@ -221,6 +221,11 @@ describe("triase risiko", () => {
   it("prompt acute risk tidak lagi merangkap classifier privasi", () => {
     assert.doesNotMatch(RISK_TRIAGE_PROMPT, /"sensitif"/u);
     assert.match(RISK_TRIAGE_PROMPT, /pipeline lain/u);
+    assert.match(RISK_TRIAGE_PROMPT, /Pertahankan atribusi/iu);
+    assert.match(
+      RISK_TRIAGE_PROMPT,
+      /mahasiswa yang gagal deadline.*biasa/isu,
+    );
   });
 
   it("menolak tingkat yang tidak dikenal, bukan menebaknya aman", () => {

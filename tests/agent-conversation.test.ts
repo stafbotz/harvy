@@ -127,6 +127,77 @@ describe("Conversation agent runtime", () => {
     assert.match(toolResult.content, /settings\.time\.get\.result/u);
   });
 
+  it("memaksa live-state tool secara portabel saat model tidak mendukung named choice", async () => {
+    const requests: ChatRequest[] = [];
+    const routing: RoutingConfig = {
+      ...PRODUCTION_ROUTING,
+      providerId: "openrouter",
+      modelProfiles: new ModelProfileRegistry([{
+        id: "efficient-model",
+        provider: "openrouter",
+        verification: "explicit",
+        reasoning: {
+          mandatory: false,
+          defaultEffort: "low",
+          supportedEfforts: ["low"],
+          wireFormat: "openrouter-reasoning",
+        },
+        supports: {
+          tools: true,
+          toolChoice: true,
+          namedToolChoice: false,
+          structuredOutput: true,
+          temperature: true,
+        },
+        continuation: {
+          preserveReasoning: true,
+          preserveAssistantMessage: true,
+        },
+        contextWindow: 100_000,
+        maxOutputTokens: 32_768,
+      }]),
+    };
+    const conversation = fixture(
+      requests,
+      [
+        {
+          kind: "action",
+          capabilityId: "settings.time.get",
+          capabilityVersion: "1",
+          input: {},
+        },
+        { kind: "final", reply: "Sekarang pukul 12.00 WIB." },
+      ],
+      [executor("settings.time.get", {
+        kind: "settings.time.get.result",
+        local: "Senin, 24 Agustus 2026 pukul 12.00 WIB",
+      })],
+      routing,
+    );
+
+    const result = await conversation.agent(
+      "sekarang jam berapa?",
+      "tools",
+      undefined,
+      { ownerId: "student", channel: "whatsapp" },
+    );
+
+    assert.equal(result.status, "completed");
+    assert.equal(requests[0]?.toolChoice, "required");
+    assert.deepEqual(
+      requests[0]?.tools?.map((tool) => tool.function.name),
+      ["harvy_settings_time_get_v1"],
+    );
+    assert.deepEqual(
+      requests[1]?.tools?.map((tool) => tool.function.name),
+      [
+        "harvy_final_v1",
+        "harvy_need_input_v1",
+        "harvy_settings_time_get_v1",
+      ],
+    );
+  });
+
   it("meneruskan observation native pada konteks dua giliran tanpa cycle", async () => {
     const requests: ChatRequest[] = [];
     const conversation = fixture(
@@ -627,7 +698,7 @@ describe("Conversation agent runtime", () => {
     );
     assert.deepEqual(
       requests.map((request) => request.maxTokens),
-      [32_768, 32_768],
+      [16_384, 32_768],
     );
     assert.deepEqual(
       requests.map((request) => request.execution?.budgetClass),
@@ -1611,7 +1682,7 @@ describe("model agent worker envelope", () => {
     );
     assert.deepEqual(
       plannerRequests.map((request) => request.maxTokens),
-      [32_768, 32_768],
+      [16_384, 32_768],
     );
     assert.deepEqual(
       plannerRequests.map((request) => request.execution?.budgetClass),

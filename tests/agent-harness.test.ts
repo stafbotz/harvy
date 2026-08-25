@@ -7,6 +7,7 @@ import {
 } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { privateAgentScope } from "../src/harness/scope.js";
+import { UsageLimitError } from "../src/core/telemetry-service.js";
 
 const FIXED_NOW = () => new Date("2026-07-31T10:00:00.000Z");
 
@@ -554,6 +555,22 @@ describe("agent harness", () => {
     assert.equal(result.status, "stopped");
     if (result.status === "stopped") {
       assert.equal(result.reason, "invalid_planner_output");
+    }
+  });
+
+  it("tidak menyamarkan penolakan kapasitas sebagai output planner rusak", async () => {
+    const result = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "buat rencana panjang",
+      planner: async () => {
+        throw new UsageLimitError("anti_abuse");
+      },
+      now: FIXED_NOW,
+    });
+
+    assert.equal(result.status, "stopped");
+    if (result.status === "stopped") {
+      assert.equal(result.reason, "usage_anti_abuse");
     }
   });
 

@@ -346,6 +346,50 @@ describe("file agent run repository", () => {
     }
   });
 
+  it("menerima procedure dan error lesson AgentRun dengan provenance record sendiri", async () => {
+    const file = await temporaryFile();
+    const service = new AgentRunService(
+      new FileAgentRunRepository(file),
+      () => new Date("2026-08-09T05:00:00.000Z"),
+    );
+    const started = await service.startActive({
+      channel: "telegram",
+      ownerId: "alice",
+      request: "Lanjutkan evaluasi produk.",
+      mode: "orchestrate",
+      intent: "request",
+      timeZone: "Asia/Jakarta",
+      style: "advice",
+      context: {
+        summary: null,
+        turns: [],
+        memories: [],
+        retrieved: ["procedure", "error-lesson"].map((source) => ({
+          id: `${source}:learned-record`,
+          sources: [source as "procedure" | "error-lesson"],
+          text: "Evidence hasil AgentRun",
+          score: 0.8,
+          validFrom: "2026-08-09T04:00:00.000Z",
+          validUntil: null,
+          status: "active" as const,
+          sensitivity: "normal" as const,
+          sourceEpisodeIds: [],
+          sourceSequences: [],
+          sourceMemoryIds: [],
+        })),
+      },
+      chatId: "alice",
+      turnId: "turn-learned-provenance",
+    });
+
+    assert.equal(started.status, "started");
+    assert.deepEqual(
+      (await service.loadActive("telegram", "alice"))?.context.retrieved
+        ?.map((evidence) => evidence.id),
+      ["procedure:learned-record", "error-lesson:learned-record"],
+    );
+  });
+
   it("menolak horizon di atas sepuluh menit dan elemen checkpoint rusak", async () => {
     const file = await temporaryFile();
     const repository = new FileAgentRunRepository(file);

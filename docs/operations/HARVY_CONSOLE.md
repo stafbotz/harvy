@@ -45,27 +45,45 @@ npm run console:setup
 
 Mode ini memakai server Console, login, Origin, CSRF, rate limit, CSP, dan audit
 yang sama, tetapi control-plane pendampingnya berada di direktori sementara.
-URL diarahkan ke tab **Kanal pengujian**. Token bot Telegram, session tester,
-dan dua session WhatsApp tetap ditulis ke storage live-acceptance lokal yang
-permanen; dashboard sementara bukan sumber status produk.
+URL diarahkan ke tab **Kanal**. Token bot Telegram utama ditulis ke store
+credential utama lokal; token bot acceptance, session tester, dan dua session
+WhatsApp ditulis ke storage live-acceptance yang berbeda. Keduanya permanen
+dan diabaikan Git; dashboard sementara bukan sumber status produk.
 
-Tab ini sengaja memperlihatkan dua boundary. Sisi **Produk utama** hanya
-meringkas konfigurasi proses dari environment sebagai boolean dan jumlah akun;
-ia tidak membaca kembali token, nomor, alias, atau path. Label
-`dikonfigurasi`/`dideklarasikan` bukan bukti bahwa session platform sudah
-tertaut. Sisi **Lingkungan uji** memakai bot Telegram, akun Telegram tester,
-dan dua session WhatsApp acceptance sendiri. Console tidak menyalin atau
-memakai ulang credential utama ke namespace acceptance.
+Tab ini sengaja memperlihatkan dua boundary. Sisi **Harvy utama** mengelola
+token BotFather utama, tetapi snapshot browser hanya membawa sumber, fase
+verifikasi, status runtime, dan kebutuhan restart—tidak pernah nilai token,
+nomor, alias, atau path. Token yang lolos verifikasi disimpan dengan AES-GCM di
+`secrets/primary-channels.secrets.json`; kunci lokal terpisah berada di
+`secrets/primary-channels.key`. Sisi **Acceptance** memakai bot Telegram, akun
+Telegram tester, dan dua session WhatsApp sendiri. Console menolak bot utama
+dan bot acceptance yang identik.
+
+Instalasi lama yang masih mempunyai `TELEGRAM_BOT_TOKEN` di `.env` mendapat
+aksi migrasi eksplisit. Migrasi hanya berjalan bila ada tepat satu entri yang
+sama dengan environment proses, memverifikasi bot ke Telegram, menulis store
+terenkripsi lebih dahulu, lalu menghapus baris `.env` secara atomik. Sumber
+Console dan environment yang berbeda gagal tertutup. Setelah token diubah pada
+runtime aktif, Console meminta restart; ia tidak mengklaim proses lama sudah
+memakai credential baru.
 
 Saat belum lengkap, **Pengaturan akun dan sesi** terbuka agar pairing yang
-masih diperlukan langsung terlihat. Setelah empat identitas tersedia,
-pengaturan itu menutup dan surface utama hanya menampilkan dua alur:
-`Akun Telegram tester → Bot Harvy uji` serta
-`Nomor WhatsApp tester B → Nomor Harvy uji A`. Status `Harvy siap diuji`
-berarti material credential lokal tersedia; koneksi ulang dan pengiriman pesan
-nyata baru terbukti ketika runner acceptance dijalankan.
+masih diperlukan langsung terlihat. Untuk WhatsApp, Console memisahkan
+`credential tersimpan` dari validitas session: credential yang ditemukan
+menjalani handshake bounded ke platform dan memperoleh state `Memeriksa sesi`,
+`Sesi valid`, `Sesi ditolak`, atau `Belum terverifikasi`. Hasil diterima
+dicache lima menit; tombol **Periksa sesi WhatsApp** memaksa pemeriksaan baru.
+Gangguan jaringan tidak disamakan dengan session ditolak.
 
-Mode setup dan tab Kanal pengujian runtime memegang satu lock credential lintas
+Setelah empat identitas siap—termasuk kedua session WhatsApp diterima pada
+pemeriksaan terbaru—pengaturan menutup dan surface utama hanya menampilkan dua alur:
+`Akun Telegram tester → Bot Harvy uji` serta
+`Nomor WhatsApp tester B → Nomor Harvy uji A`. Status `Harvy siap diuji` kini
+berarti material empat identitas tersedia dan kedua handshake WhatsApp terbaru
+diterima. Ia tetap bukan bukti pengiriman B→A, kualitas respons, atau session
+Telegram yang direvalidasi setelah proses restart; itu baru dibuktikan runner.
+
+Mode setup dan tab Kanal runtime memegang satu lock credential lintas
 proses. Console kedua serta runner acceptance akan gagal tertutup selama lock
 aktif. Tutup Console sebelum menjalankan acceptance agar session tidak berubah
 di tengah percakapan nyata.
@@ -117,6 +135,10 @@ atau mengirim pesan ke platform.
 - Memverifikasi dan mengganti token bot Telegram uji, memasangkan akun Telegram
   tester (termasuk 2FA tanpa persist password), serta memasangkan atau mencabut
   dua role WhatsApp live acceptance yang wajib berbeda.
+- Memverifikasi, menyimpan, mengganti, atau menghapus token bot Telegram utama
+  tanpa memantulkan secret ke browser. Backup lokal terenkripsi memasukkan key
+  dan ciphertext sebagai dua slot credential; media eksternal dan restore
+  lintas mesin tetap tanggung jawab operator.
 
 Tidak ada checkout, pembayaran, auto-renew, invoice, refund, webhook, atau SLA
 komersial pada versi ini. Paket berstatus `pilot` adalah hipotesis produk.

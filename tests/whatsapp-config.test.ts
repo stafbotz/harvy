@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   parseEnabled,
+  parseLiveExplorationMessageScope,
   parsePairingMode,
   parsePrivateEnabled,
   parseWhatsAppAccounts,
@@ -85,5 +86,41 @@ describe("konfigurasi WhatsApp", () => {
     assert.equal(parsePairingMode("QR"), "qr");
     assert.equal(parsePairingMode("code"), "code");
     assert.throws(() => parsePairingMode("otomatis"), /qr atau code/i);
+  });
+
+  it("mengaktifkan scope exploratory hanya pada gate acceptance exact", () => {
+    const scope = "HARVYEXP123456789ABC";
+    assert.equal(
+      parseLiveExplorationMessageScope(scope, {
+        environment: "development",
+        release: "live-acceptance",
+        trace: "content-free-v1",
+      }),
+      scope,
+    );
+    assert.equal(
+      parseLiveExplorationMessageScope(undefined, {
+        environment: "production",
+        release: "release",
+        trace: undefined,
+      }),
+      null,
+    );
+    assert.throws(
+      () => parseLiveExplorationMessageScope(scope, {
+        environment: "production",
+        release: "live-acceptance",
+        trace: "content-free-v1",
+      }),
+      /hanya boleh aktif/u,
+    );
+    assert.throws(
+      () => parseLiveExplorationMessageScope("HARVYEXPnot-valid", {
+        environment: "development",
+        release: "live-acceptance",
+        trace: "content-free-v1",
+      }),
+      /tidak sah/u,
+    );
   });
 });

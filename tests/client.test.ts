@@ -1716,6 +1716,76 @@ describe("AiClient", () => {
     assert.equal(fallbackCalls, 1);
   });
 
+  it("timeout turn-boundary tidak membuka circuit untuk classifier lanjutan", async () => {
+    let primaryCalls = 0;
+    let fallbackCalls = 0;
+    globalThis.fetch = async (input, init) => {
+      if (String(input).startsWith("https://primary.invalid/")) {
+        primaryCalls += 1;
+        if (primaryCalls === 1) {
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            const rejectAbort = (): void => {
+              const error = new Error("aborted by turn-boundary timeout");
+              error.name = "AbortError";
+              reject(error);
+            };
+            if (signal?.aborted) rejectAbort();
+            else signal?.addEventListener("abort", rejectAbort, { once: true });
+          });
+        }
+        return chatResponse(`primary-${primaryCalls}`);
+      }
+      fallbackCalls += 1;
+      return chatResponse("fallback");
+    };
+    const client = new AiClient({
+      baseUrl: "https://primary.invalid/v1",
+      keys: new ApiKeyPool(["utama"]),
+      fallback: testFallback({ cooldownMs: 30_000 }),
+    });
+    const usage = (purpose: AiUsageContext["purpose"]): AiUsageContext => ({
+      ownerId: "telegram:group-1",
+      tier: "cheap",
+      purpose,
+      safetyCritical: purpose === "risk-triage",
+      requestId: `request-${purpose}`,
+      turnId: null,
+      model: "model-utama",
+      maxTokens: 100,
+      inputTokenEstimate: 10,
+    });
+
+    assert.equal(
+      await client.complete({
+        model: "model-utama",
+        messages: [{ role: "user", content: "boundary" }],
+        timeoutMs: 5,
+        maxAttempts: 1,
+        usage: usage("turn-boundary"),
+      }),
+      "fallback",
+    );
+    assert.equal(
+      await client.complete({
+        model: "model-utama",
+        messages: [{ role: "user", content: "understanding" }],
+        usage: usage("understanding"),
+      }),
+      "primary-2",
+    );
+    assert.equal(
+      await client.complete({
+        model: "model-utama",
+        messages: [{ role: "user", content: "risk triage" }],
+        usage: usage("risk-triage"),
+      }),
+      "primary-3",
+    );
+    assert.equal(primaryCalls, 3);
+    assert.equal(fallbackCalls, 1);
+  });
+
   it("menganggap 5xx provider-wide dan tidak menghabiskan kunci utama lain", async () => {
     const authorizations: string[] = [];
     globalThis.fetch = async (_input, init) => {

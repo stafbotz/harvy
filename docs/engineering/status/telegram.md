@@ -1,8 +1,9 @@
 # Status — Telegram Privat
 
-Refreshed: 24 Agustus 2026 pada auto-memory privat berbasis onboarding.
-Angka gerbang penuh terbaru dicatat di `docs/LOG.md`; focus live policy baru
-sudah lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
+Refreshed: 25 Agustus 2026 pada full exploratory v3, reminder relatif,
+commit-first task receipt, dan crash/restart privat. Angka gerbang penuh
+terbaru dicatat di `docs/LOG.md`;
+dogfood tujuh hari dan coding/GitHub live belum selesai.
 
 ## Keadaan saat ini
 
@@ -17,6 +18,12 @@ sudah lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
   menghasilkan receipt content-free, lalu memakai kontrol produk untuk cleanup.
   Pairing dan run penuh sudah dilakukan pada 23 Agustus 2026; credential uji
   tetap terpisah dari bot utama.
+- Bot Telegram utama tidak lagi bergantung pada plaintext
+  `TELEGRAM_BOT_TOKEN` di `.env`. Console memverifikasi dan menyimpan token pada
+  store AES-GCM lokal; bootstrap membaca store itu secara sinkron, sumber
+  environment hanya jalur migrasi legacy, dan konflik dua sumber gagal
+  tertutup. Token acceptance tetap berada pada store terpisah dan tidak boleh
+  sama dengan bot utama.
 - Onboarding menahan pesan pertama sampai consent, mempertahankan urutan bubble,
   dan menyediakan jalur safety tanpa consent. Bubble setelah pesan pertama
   tidak dikirim ke model atau dinilai safety sebelum consent. Setelah consent,
@@ -119,24 +126,55 @@ sudah lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
 
 ## Batas dan defect aktif
 
-- Current build policy auto-memory versi 8 diuji melalui akun tester nyata.
-  Focus memori lulus 3/3: onboarding/menu mengungkap penyimpanan otomatis,
-  preferensi cara belajar implicit disimpan tanpa consent atau tombol per-item
-  dan ditemukan kembali lewat `/memori`, lalu cleanup; runtime shutdown bersih
-  dan receipt tetap content-free.
-- Baseline full 8/8 masih berasal dari build tepat sebelum perubahan authority
-  memori. Rerun full current build 23 Agustus 2026 melewati onboarding/menu dan
-  task/reminder, lalu timeout pada rangkaian timezone+sesi+check-in. Stage memori
-  sesudah timeout sempat menangkap respons tertunda yang salah; harness kemudian
-  diperbaiki memakai predicate acknowledgement yang sama dengan produk dan
-  focus terisolasi di atas lulus. Planning serta stage setelahnya pada run full
-  itu bukan bukti current build dan masih perlu diulang. Acceptance juga belum
-  menunggu reminder/check-in proaktif benar-benar jatuh tempo, sehingga copy
-  notifikasi dinamisnya masih baru dibuktikan otomatis.
-- Latest build sudah mencapai `application_ready` dengan polling Telegram aktif
-  setelah recovery, lalu berhenti melalui IPC dengan `shutdown_completed` dan
-  lock terlepas. Preflight Bot API `getMe` juga berhasil. Ini membuktikan
-  credential/transport dan lifecycle startup, bukan percakapan user→Harvy.
+- Build yang diuji oleh full live acceptance pada 24 Agustus lulus 8/8 melalui
+  akun tester nyata. Scope mencakup
+  consent/menu, task+reminder proaktif yang benar-benar jatuh tempo,
+  timezone+sesi+check-in proaktif, auto-memory+recall, planning 3/3/3 dengan
+  satu Run Anchor pin/edit/unpin, safety nonkrisis, ekspor, dan cleanup; runtime
+  shutdown bersih dan receipt tetap content-free. Focus memori juga lulus tiga
+  run berurutan setelah satu kegagalan intermittent ditemukan dan prompt
+  ekstraksi diperkuat.
+- Exploratory journey bounded `tg-adaptive-20260824-a` menyelesaikan 25/25
+  giliran dengan response surface, 77 surface event, satu restart, dan shutdown
+  bersih. Assessment manual `completed` tetap membawa `generic-output`,
+  `incomplete-work`, `wrong-route`, dan `other-observed`; ini bukan dogfood
+  tujuh hari.
+- Full v3 `tg-full-adaptive-20260825-a` menyelesaikan 13/13 turn dalam dua run,
+  49 surface, seluruh coverage full, re-entry, satu restart, cleanup, dan
+  shutdown bersih. Konteks bertahan ketika topik kembali, proses diganti, dan
+  runtime direstart. Assessment `3/3/2/2/4/4/2` tetap membawa
+  `generic-output`, `incomplete-work`, `irrelevant-surface`, dan
+  `reminder-delivery`: Harvy beberapa kali mengakui koreksi tanpa melakukan
+  perubahan serta menyimpulkan status yang belum diamati.
+- Journey tersebut menemukan dua kegagalan model setelah timeout classifier
+  `turn-boundary` salah membuka circuit primary bagi understanding/risk-triage.
+  Timeout bounded itu sekarang tetap boleh failover untuk request-nya sendiri
+  tetapi tidak membuka circuit global. Rerun akun nyata
+  `tg-rerun-20260824-a` memperoleh response pada 10/10 giliran tanpa kegagalan
+  yang sama.
+- `/hapus-data` juga ditemukan live masuk fallback unknown dan kategori Memori
+  & data tidak menampilkan kontrol penghapusan. Shortcut exact serta action menu
+  kini memakai konfirmasi bertoken yang sama dan lulus rerun nyata sampai full
+  deletion. Namun rerun masih menemukan output awal generik/incomplete dan
+  keputusan GO beta yang tidak ditopang bukti sebelum koreksi pengguna; kualitas
+  reasoning itu belum ditutup.
+- Journey full v3 menemukan reminder “satu menit lagi” muncul setelah 42,735
+  detik. General understanding prompt saat itu hanya membawa menit; parser,
+  store, dan worker tidak membulatkan. Prompt kini membawa detik dan aturan
+  durasi relatif. Focused rerun menerima reminder setelah 66,1 detik.
+- Focused rerun tersebut juga menemukan Telegram dapat berkata pengingat siap
+  sebelum task commit dan kemudian menghasilkan copy yang bertentangan dengan
+  kartu task. Telegram kini commit task terlebih dahulu lalu meminta model
+  menyuarakan receipt code-owned, sama dengan WhatsApp privat. Exact build
+  `tg-task-receipt-focused-20260825-a` membuktikan live pesan pra-consent menjadi
+  satu task nyata, `/tugas` membaca state yang sama, reminder muncul sekitar
+  64,6 detik setelah pemrosesan pasca-consent dilanjutkan, completion tombol,
+  cleanup, dan shutdown bersih tanpa defect assessment focused.
+- Fault acceptance mematikan child sesudah satu `/menu`, menunggu supervisor
+  menjadwalkan restart dan child attempt kedua siap, lalu akun MTProto tester
+  mendapat `/menu` lagi. Satu fault, satu restart, attempt 1/2 ready, cleanup,
+  dan shutdown lulus. Ini membuktikan reconnect percakapan setelah crash idle,
+  bukan crash tepat pada celah send eksternal dan receipt durable.
 - Runtime hanya chat pribadi; Telegram grup belum menjadi surface produk.
 - Antrean percakapan dan pesan pra-consent masih in-memory. Crash atau force
   stop dapat kehilangan giliran chat yang belum selesai. Active work
@@ -150,25 +188,26 @@ sudah lulus, sedangkan dogfood tujuh hari dan coding/GitHub live belum selesai.
 - Emergency preflight closed-set Telegram belum mencakup command/callback dan
   bukan pengganti triase; false negative tetap mungkin. WhatsApp grup memakai
   matcher yang sama melalui jalur terpisah ADR-024.
-- Baseline full sebelumnya sudah membuktikan onboarding multi-bubble, tombol
-  sesi, task/reminder, safety route, ekspor, serta topologi Run Anchor; focus
-  current build membuktikan auto-memory implicit beserta recall tanpa consent
-  kedua.
-  Adaptive timing pada rangkaian bubble bebas, interruption/correction saat
-  provider aktif, reconnect transport, dan kualitas penggunaan harian masih
-  baru teruji otomatis atau belum masuk baseline live.
+- Full acceptance 24 Agustus dan full exploratory v3 membuktikan onboarding
+  multi-bubble, tombol sesi, task/reminder/check-in jatuh tempo, safety route,
+  ekspor, auto-memory+recall, topologi Run Anchor, burst bebas, jeda, koreksi,
+  topic-return, serta re-entry proses. Interupsi tepat ketika provider masih
+  aktif, reconnect transport murni, dan kualitas penggunaan harian tetap belum
+  masuk baseline live.
 - Metrik turn mempunyai TTFR dan final terpisah untuk delivery yang
   diinstrumentasi, tetapi coverage command/callback/durable run serta dashboard
   agregat belum lengkap dan belum dikalibrasi live.
-- Private coding/GitHub surface baru dibuktikan otomatis. Sandbox Linux,
-  provider exact, GitHub App remote, Telegram upload/callback, dan draft PR
-  belum diuji end-to-end live pada deployment ini; runtime tetap default-off.
+- Private coding/GitHub surface baru dibuktikan otomatis. Provider exact sudah
+  lulus smoke resmi, tetapi sandbox Linux, GitHub App remote, Telegram
+  upload/callback CodingRun, dan draft PR belum diuji end-to-end live pada
+  deployment ini; runtime tetap default-off.
 - Work lane baru satu foreground dan belum mempunyai job queue kedua,
   replacement policy, archive Anchor, storage multi-instance, atau receipt
   selain outbound Telegram.
-- Latest build kini mempunyai bukti baseline live untuk operasi Indonesia yang
-  dipakai acceptance. Kualitas `SemanticOperation` lintas bahasa dan parafrasa
-  luas tetap baru dibuktikan schema/policy, fixture, serta eval provider.
+- Build yang menjalani focused journey 25 Agustus mempunyai bukti live untuk
+  commit-first task dan reminder relatif Indonesia. Kualitas
+  `SemanticOperation` lintas bahasa serta parafrasa luas tetap baru dibuktikan
+  schema/policy, fixture, dan eval provider.
 
 ## Bukti dan pointer
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  allowsDeterministicSurface,
   requiresPlannedExecution,
   resolveModel,
   resolveModelRoute,
@@ -198,6 +199,24 @@ describe("kebijakan pemilihan model", () => {
     assert.equal(requiresPlannedExecution(assessment({
       planningRequired: true,
       complexity: "mechanical",
+    })), false);
+  });
+
+  it("membatasi surface deterministik pada permintaan mekanis tepercaya", () => {
+    assert.equal(allowsDeterministicSurface(assessment({
+      complexity: "mechanical",
+      planningRequired: false,
+      toolNeed: "internal_state",
+    })), true);
+    assert.equal(allowsDeterministicSurface(assessment({
+      complexity: "normal",
+      planningRequired: false,
+      toolNeed: "internal_state",
+    })), false);
+    assert.equal(allowsDeterministicSurface(assessment({
+      complexity: "mechanical",
+      planningRequired: false,
+      confidence: 0.2,
     })), false);
   });
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -13,11 +13,13 @@ import {
   type WhatsAppPairingAdapter,
 } from "../src/operations/channel-setup.js";
 import { liveAcceptancePaths } from "../src/operations/live-acceptance.js";
+import { primaryChannelCredentialPaths } from "../src/operations/primary-channel-credentials.js";
 import { FileControlPlaneRepository } from "../src/storage/file-control-plane-repository.js";
 import { FileUsageLedgerRepository } from "../src/storage/file-usage-ledger-repository.js";
 
 const OPERATOR_TOKEN = "token-operator-channel-setup-yang-lebih-dari-32";
 const BOT_TOKEN = "123456789:abcdefghijklmnopqrstuvwxyz_ABCDE";
+const PRIMARY_BOT_TOKEN = `987654321:${"p".repeat(32)}`;
 const API_HASH = "0123456789abcdef0123456789abcdef";
 const QR_PAYLOAD = "tg://login?token=must-not-be-reflected";
 const WHATSAPP_QR_PAYLOAD = "whatsapp-qr-must-not-be-reflected";
@@ -51,8 +53,19 @@ describe("Harvy Console channel setup", () => {
       { retentionDays: 1 },
     );
     const whatsapp = new EmptyWhatsAppAdapter();
+    const primaryPaths = primaryChannelCredentialPaths(directory);
+    const environment: NodeJS.ProcessEnv = {
+      TELEGRAM_BOT_TOKEN: PRIMARY_BOT_TOKEN,
+    };
+    await writeFile(
+      primaryPaths.environmentFile,
+      `AI_MODE=testing\nTELEGRAM_BOT_TOKEN=${PRIMARY_BOT_TOKEN}\n`,
+      "utf8",
+    );
     const channels = new ChannelSetupService({
       paths: liveAcceptancePaths(directory),
+      primaryCredentialPaths: primaryPaths,
+      environment,
       telegramAdapter: new WaitingTelegramAdapter(),
       whatsappAdapter: whatsapp,
       pairingTimeoutMs: 10_000,
@@ -107,7 +120,17 @@ describe("Harvy Console channel setup", () => {
       assert.deepEqual(initialStatus.identityBoundary, {
         mode: "isolated_acceptance",
         primary: {
-          telegram: { declared: true },
+          telegram: {
+            declared: true,
+            configured: true,
+            source: "environment",
+            legacyEnvironment: true,
+            migrationAvailable: true,
+            runtimeActive: false,
+            restartRequired: false,
+            phase: "unchecked",
+            errorCode: null,
+          },
           whatsapp: {
             configurationValid: true,
             enabled: true,
@@ -117,6 +140,53 @@ describe("Harvy Console channel setup", () => {
           },
         },
       });
+      assert.equal(JSON.stringify(initialStatus).includes(PRIMARY_BOT_TOKEN), false);
+
+      const rejectedMigration = await mutation(
+        started.origin,
+        cookie,
+        csrf,
+        "/api/v1/channel-setup/primary/telegram/migrate",
+        { method: "POST", body: { confirmation: "wrong" } },
+      );
+      assert.equal(rejectedMigration.response.status, 400);
+      const migrated = await mutation(
+        started.origin,
+        cookie,
+        csrf,
+        "/api/v1/channel-setup/primary/telegram/migrate",
+        {
+          method: "POST",
+          body: { confirmation: "MIGRATE_PRIMARY_TELEGRAM_TO_CONSOLE" },
+        },
+      );
+      assert.equal(migrated.response.status, 200);
+      assert.equal(migrated.raw.includes(PRIMARY_BOT_TOKEN), false);
+      const primaryVerification = await mutation(
+        started.origin,
+        cookie,
+        csrf,
+        "/api/v1/channel-setup/primary/telegram/verify",
+        { method: "POST", body: {} },
+      );
+      assert.equal(primaryVerification.response.status, 200);
+      const managedStatus = await authenticatedJson(
+        started.origin,
+        cookie,
+        "/api/v1/channel-setup",
+      );
+      assert.equal(managedStatus.identityBoundary.primary.telegram.source, "console");
+      assert.equal(managedStatus.identityBoundary.primary.telegram.phase, "ready");
+      assert.equal(JSON.stringify(managedStatus).includes(PRIMARY_BOT_TOKEN), false);
+      const verification = await mutation(
+        started.origin,
+        cookie,
+        csrf,
+        "/api/v1/channel-setup/whatsapp/verify",
+        { method: "POST", body: {} },
+      );
+      assert.equal(verification.response.status, 202);
+      assert.equal(whatsapp.events.includes("probe"), false);
       assert.equal(
         (await fetch(`${started.origin}/api/v1/dashboard`, { headers: { cookie } })).status,
         404,
@@ -216,10 +286,25 @@ describe("Harvy Console channel setup", () => {
       assert.equal(rejectedDelete.response.status, 400);
       const audits = await control.audits();
       assert.ok(audits.some((record) =>
+        record.action === "channel_connection_verify" &&
+        record.targetRef === "whatsapp_acceptance" &&
+        record.outcome === "succeeded"
+      ));
+      assert.ok(audits.some((record) =>
         record.action === "channel_credential_revoke" &&
         record.targetRef === "telegram_bot" &&
         record.outcome === "rejected" &&
         record.reasonCode === "confirmation_rejected"
+      ));
+      assert.ok(audits.some((record) =>
+        record.action === "channel_credential_update" &&
+        record.targetRef === "primary_telegram_bot" &&
+        record.outcome === "succeeded"
+      ));
+      assert.ok(audits.some((record) =>
+        record.action === "channel_connection_verify" &&
+        record.targetRef === "primary_telegram_bot" &&
+        record.outcome === "succeeded"
       ));
     } finally {
       await server.close();
@@ -273,8 +358,23 @@ describe("Harvy Console channel setup", () => {
     }
     assert.match(
       CONSOLE_JS,
-      /setup\.classList\.toggle\("hidden",ready\|\|active\)/u,
-      "Kontrol setup harus hilang setelah credential siap atau pairing aktif.",
+      /setup\.classList\.toggle\("hidden",stored\|\|active\)/u,
+      "Kontrol setup harus hilang setelah credential tersimpan atau pairing aktif.",
+    );
+    assert.match(
+      CONSOLE_JS,
+      /item\.session\?\.status==="rejected"/u,
+      "Credential lokal yang ditolak platform harus mempunyai state visual tersendiri.",
+    );
+    assert.match(
+      CONSOLE_JS,
+      /channels\.whatsapp\.ready===true/u,
+      "Readiness WhatsApp harus berasal dari hasil pemeriksaan backend.",
+    );
+    assert.match(
+      CONSOLE_JS,
+      /channel-setup\/whatsapp\/verify/u,
+      "Segarkan kanal harus meminta handshake WhatsApp baru.",
     );
     assert.match(
       CONSOLE_JS,
@@ -288,7 +388,7 @@ describe("Harvy Console channel setup", () => {
     );
     assert.match(
       CONSOLE_JS,
-      /if\(!allReady\)settings\.open=true;else if\(!wasReady\)settings\.open=false/u,
+      /if\(!allReady\|\|primaryNeedsAction\)settings\.open=true;else if\(!wasReady\)settings\.open=false/u,
       "Setup harus terbuka saat belum lengkap dan menutup setelah seluruh identitas tersedia.",
     );
     assert.match(
@@ -301,7 +401,7 @@ describe("Harvy Console channel setup", () => {
 
 class WaitingTelegramAdapter implements TelegramPairingAdapter {
   async validateBotToken(token: string, _signal: AbortSignal): Promise<void> {
-    assert.equal(token, BOT_TOKEN);
+    assert.ok(token === BOT_TOKEN || token === PRIMARY_BOT_TOKEN);
   }
 
   async pairTester(input: {
@@ -327,6 +427,10 @@ class EmptyWhatsAppAdapter implements WhatsAppPairingAdapter {
   readonly events: string[] = [];
   async configured(): Promise<boolean> {
     return false;
+  }
+  async probe(): Promise<"accepted"> {
+    this.events.push("probe");
+    return "accepted";
   }
   async pair(input: {
     signal: AbortSignal;
@@ -376,7 +480,11 @@ async function authenticatedJson(
   identityBoundary: {
     mode: string;
     primary: {
-      telegram: { declared: boolean };
+      telegram: {
+        declared: boolean;
+        source?: "console" | "environment" | "missing" | "conflict";
+        phase?: "missing" | "unchecked" | "validating" | "ready" | "error";
+      };
       whatsapp: {
         configurationValid: boolean;
         enabled: boolean;

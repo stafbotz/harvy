@@ -1,8 +1,7 @@
 # Status — Agent Runtime
 
-Refreshed: 22 Agustus 2026 pada production specialist opt-in, exact/diverse
-role readiness, context-aware orchestration, provider-neutral handoff, dan
-adaptive resource status. Bukti gerbang terbaru dicatat di
+Refreshed: 24 Agustus 2026 pada provider smoke, routing evaluation, dan live
+restart AgentRun privat. Bukti gerbang terbaru dicatat di
 `docs/LOG.md`.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
@@ -146,9 +145,10 @@ agent, scope/authority, atau executor internal.
 
 ## Batas dan defect aktif
 
-- Percobaan primary+Telegram sebelum fix menerima native calls tetapi berhenti
-  sebelum reply. Continuation dan fast path sesudah fix baru terbukti otomatis;
-  smoke primary dan Telegram post-fix belum dilakukan.
+- Provider primary current lulus native tool call, thought-signature reasoning
+  continuation, tool-result replay, truncation/pressure, timeout, dan retry.
+  Full Telegram current juga meluluskan planning 3/3/3 melalui satu anchor
+  mutable. Tool/action CodingRun dari kanal tetap belum diuji live.
 - Native fallback sengaja nonaktif sampai wire contract provider cadangan
   dibuktikan kompatibel.
 - Profile compatibility tidak mengaktifkan reasoning. Profile code-owned
@@ -166,8 +166,13 @@ agent, scope/authority, atau executor internal.
   harga tier nonnol atau reported provider cost; token/attempt tetap terjaga
   bila harga belum lengkap. Actual provider usage satu attempt dapat melewati
   reservation, lalu work non-final berikutnya dihentikan.
-- Kualitas `RoutingAssessment` belum diuji pada provider/corpus percakapan
-  nyata. Role binding exact baru terbukti melalui config/unit test; tidak ada
+- Evaluasi routing A–E current selesai 9 varian setelah harness dinaikkan dari
+  768 ke 4.096 output token dan dibuat request-local saat provider gagal. Hanya
+  5/9 memenuhi seluruh sinyal: rewrite-only B kehilangan batasan sebagaimana
+  eksperimen dirancang, sedangkan C/D/E juga menunjukkan retensi constraint
+  tidak konsisten. Ini defect kualitas/evaluator terbuka, bukan bukti routing
+  production siap. `RoutingAssessment` belum diuji pada corpus percakapan
+  production yang representatif. Role binding exact baru terbukti melalui config/unit test; tidak ada
   klaim model role production aktif. Wiring specialist sudah ada tetapi gate
   production default-off dan belum dibuktikan lewat provider smoke; runtime
   resource grant dan capability discovery planner masih foundation yang belum

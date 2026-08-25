@@ -148,6 +148,7 @@ export type ConsoleAuditAction =
   | "economy_credential_revoke"
   | "channel_pairing_start"
   | "channel_pairing_cancel"
+  | "channel_connection_verify"
   | "channel_credential_update"
   | "channel_credential_revoke"
   | "runtime_mode_update"

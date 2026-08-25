@@ -165,7 +165,9 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 - **Suara receipt tidak boleh menjadi authority transaksi.** Pada operasi
   task, reminder, sesi, check-in, dan preferensi di kanal privat, kode menyusun
   blok fakta stabil, fallback lengkap, serta paling banyak empat tindak lanjut
-  allowlisted. Model hanya boleh menulis satu acknowledgment pendek dan memilih
+  allowlisted. Primary state harus commit sebelum presenter dipanggil; balasan
+  percakapan bebas sebelum commit tidak boleh mengaku operasi sudah terjadi.
+  Model hanya boleh menulis satu acknowledgment pendek dan memilih
   indeks tindak lanjut; status, judul, ID, waktu, tombol, izin, dan mutasi tetap
   berasal dari kode. Output invalid, timeout tiga detik, atau provider gagal
   kembali utuh ke fallback. Panggilan tambahan ini tidak menerima ringkasan
@@ -642,11 +644,20 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   mengklaim selesai setelah isolated product state terhapus.
 - **Identitas utama tidak boleh dipromosikan diam-diam menjadi identitas
   acceptance.** Snapshot Console atas konfigurasi kanal utama hanya boleh
-  membawa validitas, flag aktif, dan jumlah deklarasi; tidak boleh membawa
+  membawa validitas, sumber credential, fase verifikasi, status runtime,
+  kebutuhan restart, flag aktif, dan jumlah deklarasi; tidak boleh membawa
   token, nomor, alias, path auth, atau mengklaim linked session. Bot/session
   utama tidak disalin atau dipakai ulang oleh runner acceptance. Namespace uji
   Telegram dan WhatsApp tetap terpisah dan pairing memerlukan konfirmasi akun
   khusus pengujian.
+- **Token Telegram utama mempunyai satu sumber efektif.** Console wajib
+  memverifikasi bot sebelum commit dan menyimpan token pada secret store
+  terenkripsi dengan key terpisah. `.env` hanya sumber migrasi legacy: harus
+  tepat satu entri yang sama dengan environment proses, store ditulis durable
+  sebelum baris legacy dihapus atomik, dan dua sumber berbeda menggagalkan
+  startup. Runtime acceptance hanya boleh memakai override environment child
+  bertanda sempit; bot acceptance yang identik dengan bot utama ditolak. Token
+  tidak boleh dipantulkan ke snapshot, audit, log, error, atau output setup.
 - **Capability model harus exact dan explicit.** Registry memakai
   `provider + modelId`, bukan base URL, tier, atau substring nama. Model tanpa
   deklarasi `AI_MODEL_PROFILES` hanya mendapat profile compatibility dan tidak

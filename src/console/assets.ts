@@ -15,8 +15,8 @@ export const CONSOLE_HTML = `<!doctype html>
     <section class="login-brand" aria-labelledby="login-title">
       <div class="brand-mark" aria-hidden="true">H</div>
       <p class="eyebrow">HARVY · CONTROL PLANE LOKAL</p>
-      <h1 id="login-title">Pantau Harvy dengan konteks yang jernih.</h1>
-      <p class="login-copy">Biaya, penggunaan model, akses beta, dan audit operator berada di satu tempat—tanpa menyimpan isi percakapan di Console.</p>
+      <h1 id="login-title">Kelola Harvy dengan konteks yang jernih.</h1>
+      <p class="login-copy">Kanal, biaya, penggunaan model, akses beta, dan audit operator berada di satu tempat—tanpa menyimpan isi percakapan di Console.</p>
       <div class="trust-list" aria-label="Batas Console">
         <span>Loopback saja</span><span>Tanpa isi chat</span><span>Sesi terbatas</span>
       </div>
@@ -43,7 +43,7 @@ export const CONSOLE_HTML = `<!doctype html>
       </div>
       <nav id="console-tabs" class="nav-tabs" role="tablist" aria-label="Bagian Console" aria-orientation="vertical">
         <button id="nav-overview" class="active" role="tab" aria-selected="true" aria-controls="tab-overview" tabindex="0" data-tab="overview"><span aria-hidden="true">⌂</span>Ringkasan</button>
-        <button id="nav-channels" role="tab" aria-selected="false" aria-controls="tab-channels" tabindex="-1" data-tab="channels"><span aria-hidden="true">⇄</span>Kanal pengujian</button>
+        <button id="nav-channels" role="tab" aria-selected="false" aria-controls="tab-channels" tabindex="-1" data-tab="channels"><span aria-hidden="true">⇄</span>Kanal</button>
         <button id="nav-access" role="tab" aria-selected="false" aria-controls="tab-access" tabindex="-1" data-tab="access"><span aria-hidden="true">◇</span>Akses</button>
         <button id="nav-groups" role="tab" aria-selected="false" aria-controls="tab-groups" tabindex="-1" data-tab="groups"><span aria-hidden="true">◎</span>Grup</button>
         <button id="nav-plans" role="tab" aria-selected="false" aria-controls="tab-plans" tabindex="-1" data-tab="plans"><span aria-hidden="true">▤</span>Paket</button>
@@ -116,7 +116,7 @@ export const CONSOLE_HTML = `<!doctype html>
               <p id="channel-readiness-detail">Console sedang memastikan identitas uji tersedia.</p>
             </div>
           </div>
-          <button id="channels-refresh" class="ghost compact refresh-action" type="button"><span aria-hidden="true">↻</span> Segarkan</button>
+          <button id="channels-refresh" class="ghost compact refresh-action" type="button"><span aria-hidden="true">↻</span> Periksa koneksi</button>
         </section>
 
         <section class="connection-list" aria-labelledby="connection-list-title">
@@ -143,7 +143,7 @@ export const CONSOLE_HTML = `<!doctype html>
 
         <details id="channel-settings" class="channel-settings">
           <summary>
-            <span><strong>Pengaturan akun dan sesi</strong><small>Pairing, penggantian akun, dan pemisahan dari kanal utama.</small></span>
+            <span><strong>Konfigurasi kanal Harvy</strong><small>Kanal utama, pairing acceptance, dan pemisahan identitas.</small></span>
             <span class="settings-summary-end"><span id="setup-progress-badge" class="badge warn">0 dari 4 terhubung</span><i aria-hidden="true">⌄</i></span>
           </summary>
           <div class="channel-settings-body">
@@ -155,7 +155,7 @@ export const CONSOLE_HTML = `<!doctype html>
               <div class="identity-boundary-body">
                 <div class="identity-map">
                   <article class="identity-card primary-identity">
-                    <div class="identity-card-title"><span class="identity-label">Produk utama</span><strong>Dibaca dari environment</strong></div>
+                    <div class="identity-card-title"><span class="identity-label">Produk utama</span><strong id="primary-config-source">Dikelola dari Console</strong></div>
                     <div class="identity-status-row"><div><strong>Telegram Harvy utama</strong><p id="primary-telegram-detail">Memeriksa konfigurasi tanpa membaca token.</p></div><span id="primary-telegram-status" class="badge">Memeriksa</span></div>
                     <div class="identity-status-row"><div><strong>WhatsApp Harvy utama</strong><p id="primary-whatsapp-detail">Memeriksa deklarasi akun tanpa menampilkan nomor.</p></div><span id="primary-whatsapp-status" class="badge">Memeriksa</span></div>
                   </article>
@@ -171,12 +171,31 @@ export const CONSOLE_HTML = `<!doctype html>
                     <div class="setup-progress-track" aria-hidden="true"><span id="setup-progress-fill"></span></div>
                   </article>
                 </div>
-                <p class="boundary-copy"><strong>Mengapa dipisah?</strong> Pengujian dapat mengirim pesan nyata, logout, dan membuat data sementara. Credential utama hanya dibaca sebagai status dan tidak disalin ke lingkungan uji.</p>
+                <p class="boundary-copy"><strong>Mengapa dipisah?</strong> Console mengelola keduanya, tetapi pengujian dapat logout dan membuat data sementara. Credential utama dan acceptance tetap berada di penyimpanan serta identitas yang berbeda.</p>
               </div>
             </details>
 
+            <section id="primary-settings" class="channel-panel" aria-labelledby="primary-settings-title">
+              <div class="panel-head"><div><h3 id="primary-settings-title">Harvy utama</h3><p>Credential produk yang dipakai ketika runtime Harvy dijalankan.</p></div><span id="primary-ready" class="badge">Belum siap</span></div>
+              <div class="channel-grid">
+                <section id="primary-telegram-bot-card" class="channel-card" aria-labelledby="primary-telegram-bot-title">
+                  <div class="channel-card-head"><div><h3 id="primary-telegram-bot-title">Bot Telegram utama</h3><p id="primary-telegram-bot-detail">Belum diperiksa.</p></div><span id="primary-telegram-bot-status" class="badge">Memeriksa</span></div>
+                  <details id="primary-telegram-bot-editor" class="credential-editor" open>
+                    <summary id="primary-telegram-bot-editor-summary">Tambahkan token bot utama</summary>
+                    <form id="primary-telegram-bot-form" class="channel-form">
+                      <label for="primary-telegram-bot-token">Token baru dari BotFather<input id="primary-telegram-bot-token" type="password" autocomplete="off" maxlength="256" required></label>
+                      <button id="primary-telegram-bot-save" type="submit">Verifikasi dan simpan</button>
+                    </form>
+                    <div id="primary-telegram-migrate-zone" class="credential-migration hidden"><strong>Pindahkan dari environment</strong><p>Token lama akan diverifikasi, disimpan terenkripsi, lalu barisnya dihapus dari <code>.env</code>. Nilainya tidak ditampilkan kembali.</p><label class="check-label"><input id="primary-telegram-migrate-confirm" type="checkbox">Saya memahami bahwa Console menjadi sumber credential utama.</label><button id="primary-telegram-migrate" type="button">Pindahkan ke Console</button></div>
+                    <div id="primary-telegram-verify-zone" class="credential-actions hidden"><button id="primary-telegram-verify" class="ghost compact" type="button">Periksa token sekarang</button></div>
+                    <div id="primary-telegram-delete-zone" class="credential-danger hidden"><strong>Hapus token bot utama</strong><p>Runtime yang sedang hidup tidak langsung berhenti, tetapi Harvy tidak dapat memulai lagi sebelum token baru disimpan.</p><label for="primary-telegram-delete-confirm">Ketik <code>DELETE_PRIMARY_TELEGRAM_BOT</code><input id="primary-telegram-delete-confirm" autocomplete="off"></label><button id="primary-telegram-delete" class="ghost compact" type="button">Hapus token</button></div>
+                  </details>
+                </section>
+              </div>
+            </section>
+
             <section id="telegram-settings" class="channel-panel" aria-labelledby="telegram-settings-title" tabindex="-1">
-              <div class="panel-head"><div><h3 id="telegram-settings-title">Telegram</h3><p>Akun tester berbicara kepada bot Harvy uji yang terpisah dari bot utama.</p></div><span id="telegram-ready" class="badge">Belum siap</span></div>
+              <div class="panel-head"><div><h3 id="telegram-settings-title">Telegram acceptance</h3><p>Akun tester berbicara kepada bot Harvy uji yang terpisah dari bot utama.</p></div><span id="telegram-ready" class="badge">Belum siap</span></div>
               <div class="channel-grid">
                 <section id="telegram-bot-card" class="channel-card" aria-labelledby="telegram-bot-title">
                   <div class="channel-card-head"><div><h3 id="telegram-bot-title">Bot Harvy uji</h3><p id="telegram-bot-detail">Belum diperiksa.</p></div><span id="telegram-bot-status" class="badge">Memeriksa</span></div>
@@ -207,7 +226,7 @@ export const CONSOLE_HTML = `<!doctype html>
             </section>
 
             <section id="whatsapp-settings" class="channel-panel" aria-labelledby="whatsapp-settings-title" tabindex="-1">
-              <div class="panel-head"><div><h3 id="whatsapp-settings-title">WhatsApp</h3><p>Nomor A menjalankan Harvy uji dan nomor B berbicara kepadanya sebagai tester.</p></div></div>
+              <div class="panel-head"><div><h3 id="whatsapp-settings-title">WhatsApp acceptance</h3><p>Nomor A menjalankan Harvy uji dan nomor B berbicara kepadanya sebagai tester.</p></div></div>
               <div class="channel-grid">
                 <section id="whatsapp-harvy-card" class="channel-card" data-whatsapp-role="harvy">
                   <div class="channel-card-head"><div><h3>Nomor Harvy uji A</h3><p id="whatsapp-harvy-detail">Belum diperiksa.</p></div><span id="whatsapp-harvy-status" class="badge">Memeriksa</span></div>
@@ -382,7 +401,7 @@ th,td{text-align:left;border-bottom:1px solid var(--line-soft);padding:12px 9px;
 .channel-settings{margin-top:18px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.72);overflow:hidden}.channel-settings>summary,.identity-boundary>summary{list-style:none}.channel-settings>summary::-webkit-details-marker,.identity-boundary>summary::-webkit-details-marker{display:none}.channel-settings>summary{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 18px;cursor:pointer}.channel-settings>summary:hover{background:var(--bg-soft)}.channel-settings>summary>span:first-child{display:grid;gap:3px}.channel-settings>summary small,.identity-boundary-head small{color:var(--faint);font-size:.73rem;font-weight:500}.settings-summary-end{display:flex;align-items:center;gap:12px}.settings-summary-end i,.identity-boundary-head i{color:var(--faint);font-style:normal;transition:transform .18s ease}.channel-settings[open]>.channel-settings-body{border-top:1px solid var(--line-soft)}.channel-settings[open]>.channel-settings-body+.settings-summary-end i,.channel-settings[open]>summary .settings-summary-end i,.identity-boundary[open]>summary i{transform:rotate(180deg)}.channel-settings-body{padding:16px;background:#fafbf9}
 .identity-boundary{margin-bottom:16px;border:1px solid var(--line);border-radius:13px;background:var(--panel);overflow:hidden}.identity-boundary-head{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 16px;cursor:pointer}.identity-boundary-head:hover{background:var(--bg-soft)}.identity-boundary-head>span{display:grid;gap:3px}.identity-boundary-body{padding:0 16px 16px;border-top:1px solid var(--line-soft)}.identity-map{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:12px;padding-top:16px}.identity-card{padding:15px;border:1px solid var(--line-soft);border-radius:12px;background:#fbfcfa}.identity-card-title{display:grid;gap:7px;margin-bottom:12px}.identity-label{width:max-content;padding:3px 7px;border-radius:6px;color:#745d2f;background:#fff5dd;font-size:.64rem;font-weight:750}.identity-label.test{color:var(--mint);background:#eaf5ee}.identity-status-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;border-top:1px solid var(--line-soft)}.identity-status-row p{margin:4px 0 0;font-size:.73rem}.boundary-marker{display:grid;align-content:center;justify-items:center;gap:6px;color:var(--faint)}.boundary-marker span{font-size:.62rem;font-weight:750;writing-mode:vertical-rl}.boundary-marker i{color:var(--mint);font-size:1.05rem;font-style:normal}.setup-checklist{display:grid;gap:8px;margin:0;padding:0;list-style:none}.setup-checklist li{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:.76rem}.setup-checklist li span{display:grid;place-items:center;width:22px;height:22px;flex:0 0 22px;border:1px solid var(--line);border-radius:50%;font-size:.66rem;font-weight:800}.setup-checklist li.complete{color:var(--text)}.setup-checklist li.complete span{color:#fff;background:var(--mint);border-color:var(--mint)}.setup-progress-track{height:4px;margin-top:14px;border-radius:99px;background:#e3ebe5;overflow:hidden}.setup-progress-track span{display:block;width:0;height:100%;border-radius:inherit;background:var(--mint);transition:width .25s ease}.boundary-copy{margin:14px 0 0;padding-top:13px;border-top:1px solid var(--line-soft);font-size:.76rem}.boundary-copy strong{color:var(--text)}
 .channel-panel{margin-bottom:14px;border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden}.channel-panel:last-child{margin-bottom:0}.channel-panel>.panel-head{padding:17px 19px;border-bottom:1px solid var(--line-soft)}.channel-panel>.panel-head h3{margin-bottom:4px}.channel-panel>.panel-head p{font-size:.79rem}.channel-grid{display:block}.channel-card{display:grid;align-content:start;gap:13px;padding:17px 19px;border-bottom:1px solid var(--line-soft);background:transparent}.channel-card:last-child{border-bottom:0}.channel-card.ready{background:#fcfdfc}.channel-card-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.channel-card-head h3,.channel-card-head p{margin-bottom:0}.channel-card-head p{font-size:.78rem;margin-top:4px}.channel-form{display:grid;gap:11px}.channel-actions{display:flex;gap:8px;flex-wrap:wrap}.check-label{display:flex;grid-template-columns:none;align-items:flex-start;gap:9px;font-weight:500;line-height:1.4}.check-label input{width:18px;min-height:18px;height:18px;margin:1px 0 0;flex:0 0 auto}
-.credential-editor{border:1px solid var(--line);border-radius:11px;background:var(--bg-soft);overflow:hidden}.credential-editor summary{cursor:pointer;padding:11px 12px;color:var(--muted);font-size:.79rem;font-weight:750}.credential-editor[open] summary{color:var(--text);border-bottom:1px solid var(--line)}.credential-editor .channel-form{padding:13px}.credential-danger{margin:0 13px 13px;padding-top:12px;border-top:1px solid #e3b9b4}.credential-danger strong{display:block;color:var(--red);font-size:.78rem}.credential-danger p,.credential-danger label,.credential-danger button{margin-top:9px}.credential-danger p{margin-bottom:0;font-size:.73rem}
+.credential-editor{border:1px solid var(--line);border-radius:11px;background:var(--bg-soft);overflow:hidden}.credential-editor summary{cursor:pointer;padding:11px 12px;color:var(--muted);font-size:.79rem;font-weight:750}.credential-editor[open] summary{color:var(--text);border-bottom:1px solid var(--line)}.credential-editor .channel-form{padding:13px}.credential-actions,.credential-migration{margin:0 13px 13px;padding-top:12px;border-top:1px solid var(--line)}.credential-migration strong{display:block;font-size:.78rem}.credential-migration p,.credential-migration label,.credential-migration button{margin-top:9px}.credential-migration p{margin-bottom:0;font-size:.73rem}.credential-danger{margin:0 13px 13px;padding-top:12px;border-top:1px solid #e3b9b4}.credential-danger strong{display:block;color:var(--red);font-size:.78rem}.credential-danger p,.credential-danger label,.credential-danger button{margin-top:9px}.credential-danger p{margin-bottom:0;font-size:.73rem}
 .qr-stage{display:grid;justify-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:13px;background:#fff}.qr-stage img{display:block;width:min(100%,320px);aspect-ratio:1}.qr-stage p{margin:0;color:#33483d;text-align:center;font-size:.78rem}.session-manager{padding-top:11px;border-top:1px solid var(--line-soft)}.session-manager>summary{cursor:pointer;color:var(--muted);font-size:.8rem;font-weight:700}.session-manager[open]>summary{color:var(--text)}.session-manager-body{display:grid;gap:13px;padding-top:12px}.session-replace{display:grid;gap:9px;padding:13px;border:1px solid #cfe2d5;border-radius:11px;background:#f4faf6}.session-replace strong{color:#294a35;font-size:.8rem}.session-replace p{margin:0;font-size:.75rem}.session-replace button{justify-self:start}.danger-zone{padding-top:11px;border-top:1px solid var(--line-soft)}.danger-zone summary{cursor:pointer;color:var(--muted);font-size:.8rem;font-weight:700}.danger-zone[open] summary{color:var(--red)}.danger-zone label,.danger-zone p,.danger-zone button{margin-top:10px}.danger-zone p{font-size:.75rem;margin-bottom:0}
 @media(max-width:1100px){.summary-grid{grid-template-columns:repeat(2,1fr)}.diagnostic-grid{grid-template-columns:repeat(3,1fr)}.form-grid,.price-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.app-shell{display:block}.sidebar{position:sticky;height:auto;padding:12px 16px 10px;border-right:0;border-bottom:1px solid var(--line-soft)}.sidebar-brand{padding:0 0 10px}.sidebar-brand .brand-mark{width:33px;height:33px}.nav-tabs{display:flex;overflow:auto;gap:6px;padding-bottom:2px}.nav-tabs button{white-space:nowrap;min-height:38px;padding:7px 10px}.sidebar-foot{display:none}.workspace{padding:24px 20px 60px}.loading-bar{left:0}.login-shell{grid-template-columns:1fr;gap:30px;max-width:660px}.login-brand h1{font-size:clamp(2.2rem,9vw,3.6rem)}.identity-map{grid-template-columns:1fr}.boundary-marker{grid-auto-flow:column;justify-content:center}.boundary-marker span{writing-mode:initial}.boundary-marker i{transform:rotate(90deg)}}
@@ -404,11 +423,11 @@ const labels={
   origin:{primary:"Utama",fallback:"Cadangan"},tier:{cheap:"Ringan",efficient:"Efisien",ambitious:"Mendalam",toughest:"Eskalasi"},
   purpose:{"turn-boundary":"Batas giliran",understanding:"Pemahaman","due-date":"Membaca waktu","risk-triage":"Triase keselamatan","memory-privacy":"Privasi memori","group-ingress":"Ingress grup",reply:"Balasan","reply-review":"Review balasan",summary:"Ringkasan",agent:"Agent",research:"Research web","insight":"Catatan keselamatan",session:"Sesi","group-participation":"Rencana partisipasi grup","group-reply":"Balasan grup"},
   attemptStatus:{started:"Sedang berjalan",completed:"Selesai",http_error:"Gangguan HTTP",network_error:"Gangguan jaringan",timeout:"Waktu habis",cancelled:"Dibatalkan",response_rejected:"Respons ditolak",unknown:"Status belum dipastikan"},
-  auditAction:{session_login:"Masuk Console",session_logout:"Keluar Console",enrollment_create:"Tambah akses",enrollment_update:"Ubah akses",evaluation_invite:"Undang evaluasi",evaluation_revoke:"Cabut evaluasi",plan_version_create:"Buat versi paket",price_version_create:"Buat versi harga",economy_credential_create:"Pasang BYOK",economy_credential_revoke:"Cabut BYOK",channel_pairing_start:"Mulai pairing kanal",channel_pairing_cancel:"Batalkan pairing kanal",channel_credential_update:"Perbarui credential kanal",channel_credential_revoke:"Cabut credential kanal",runtime_mode_update:"Ubah mode runtime",unknown_mutation:"Perubahan tidak dikenal"},
+  auditAction:{session_login:"Masuk Console",session_logout:"Keluar Console",enrollment_create:"Tambah akses",enrollment_update:"Ubah akses",evaluation_invite:"Undang evaluasi",evaluation_revoke:"Cabut evaluasi",plan_version_create:"Buat versi paket",price_version_create:"Buat versi harga",economy_credential_create:"Pasang BYOK",economy_credential_revoke:"Cabut BYOK",channel_pairing_start:"Mulai pairing kanal",channel_pairing_cancel:"Batalkan pairing kanal",channel_connection_verify:"Periksa koneksi kanal",channel_credential_update:"Perbarui credential kanal",channel_credential_revoke:"Cabut credential kanal",runtime_mode_update:"Ubah mode runtime",unknown_mutation:"Perubahan tidak dikenal"},
   outcome:{succeeded:"Berhasil",rejected:"Ditolak",failed:"Gagal"},
   source:{provider:"Dilaporkan provider",catalog:"Katalog saat request","current_catalog_estimate":"Estimasi tarif sekarang",unavailable:"Belum dapat dihitung",unpriced:"Belum bertarif"}
 };
-const pageCopy={overview:["Ringkasan","Kesehatan dan biaya operasional dalam 24 jam terakhir."],channels:["Kanal pengujian","Kelola kanal yang digunakan untuk menguji build terbaru Harvy."],access:["Akses","Atur pengguna, grup, paket, dan persetujuan evaluasi."],groups:["Grup","Pantau biaya grup dan bucket anggota pemicu secara pseudonim."],plans:["Paket","Lihat batas dan posisi katalog paket pilot."],prices:["Harga model","Tetapkan harga untuk model yang ditemukan dari environment."],usage:["Penggunaan","Telusuri attempt provider, token, dan asal biayanya."],audit:["Audit","Periksa perubahan operator tanpa membuka isi percakapan."]};
+const pageCopy={overview:["Ringkasan","Kesehatan dan biaya operasional dalam 24 jam terakhir."],channels:["Kanal Harvy","Konfigurasikan kanal utama dan acceptance tanpa mencampur identitasnya."],access:["Akses","Atur pengguna, grup, paket, dan persetujuan evaluasi."],groups:["Grup","Pantau biaya grup dan bucket anggota pemicu secara pseudonim."],plans:["Paket","Lihat batas dan posisi katalog paket pilot."],prices:["Harga model","Tetapkan harga untuk model yang ditemukan dari environment."],usage:["Penggunaan","Telusuri attempt provider, token, dan asal biayanya."],audit:["Audit","Periksa perubahan operator tanpa membuka isi percakapan."]};
 class ApiError extends Error{constructor(message,status,code){super(message);this.status=status;this.code=code}}
 async function api(path,options={}){
   const headers={...(options.headers||{})};
@@ -612,14 +631,19 @@ function pairingPresentation(item){
   if(item.phase==="awaiting_password")return ["Perlu password 2FA","Kirim password dua langkah; nilainya tidak disimpan.","warn"];
   if(item.phase==="revoking")return ["Mencabut session","Console sedang logout ke platform sebelum menghapus lokal.","warn"];
   if(item.phase==="error")return ["Perlu tindakan",pairingErrorDetail(item),"bad"];
-  if(item.configured)return ["Tersedia","Sesi lokal tersedia dan tidak perlu dipasangkan ulang.","good"];
+  if(item.session?.status==="checking")return ["Memeriksa sesi","Credential lokal ditemukan; Console sedang meminta bukti langsung dari WhatsApp.","warn"];
+  if(item.session?.status==="accepted")return ["Sesi valid","WhatsApp menerima sesi ini pada pemeriksaan koneksi terbaru.","good"];
+  if(item.session?.status==="rejected")return ["Sesi ditolak","Credential lokal masih ada, tetapi WhatsApp menolaknya. Pasangkan ulang sesi ini.","bad"];
+  if(item.session?.status==="unreachable")return ["Belum terverifikasi","Credential lokal ada, tetapi WhatsApp tidak dapat dijangkau saat pemeriksaan terakhir. Segarkan untuk mencoba lagi.","warn"];
+  if(item.session?.status==="unchecked")return ["Belum diperiksa","Credential lokal ada, tetapi validitasnya ke WhatsApp belum dibuktikan.","warn"];
+  if(item.configured)return ["Credential tersimpan","Credential lokal tersedia; status koneksi belum diperiksa oleh Console.","warn"];
   return ["Belum dipasangkan","Mulai pairing dengan akun khusus pengujian.",""];
 }
 function renderPairingControls(prefix,item){
-  const ready=item.configured===true,active=pairingActive(item),card=byId(prefix+"-card");
+  const stored=item.configured===true,isWhatsApp=Boolean(item.session),ready=stored&&(!isWhatsApp||item.session.status==="accepted"),active=pairingActive(item),card=byId(prefix+"-card");
   const wasReady=card.dataset.ready==="true";card.classList.toggle("ready",ready);card.dataset.ready=String(ready);
-  const setup=byId(prefix+"-setup")||byId(prefix+"-form");if(setup)setup.classList.toggle("hidden",ready||active);
-  const recovery=ready&&item.phase==="error",manage=byId(prefix+"-manage");if(manage){manage.classList.toggle("hidden",!ready||active);if(recovery&&!active)manage.open=true;else if(!ready||active)manage.open=false}
+  const setup=byId(prefix+"-setup")||byId(prefix+"-form");if(setup)setup.classList.toggle("hidden",stored||active);
+  const recovery=stored&&(item.phase==="error"||item.session?.status==="rejected"),manage=byId(prefix+"-manage");if(manage){manage.classList.toggle("hidden",!stored||active);if(recovery&&!active)manage.open=true;else if(!stored||active)manage.open=false}
   const manageSummary=byId(prefix+"-manage-summary");if(manageSummary){const subject=prefix==="whatsapp-harvy"?"sesi Harvy":"sesi tester";manageSummary.textContent=recovery?"Pulihkan "+subject:"Kelola "+subject}
   if(wasReady&&!ready){const dedicated=byId(prefix+"-dedicated");if(dedicated)dedicated.checked=false;const replaceConfirm=byId(prefix+"-replace-confirm");if(replaceConfirm)replaceConfirm.checked=false}
 }
@@ -641,11 +665,33 @@ function renderPairing(prefix,item,qrPath){
 }
 function setChannelBadge(id,label,tone){const badge=byId(id);badge.textContent=label;badge.className="badge"+(tone?" "+tone:"")}
 function setConnectionStatus(id,label,tone){const status=byId(id);status.textContent=label;status.className="connection-status"+(tone?" "+tone:"")}
+function primaryTelegramPresentation(item){
+  if(item.source==="conflict"||item.phase==="error")return ["Perlu tindakan",item.source==="conflict"?"Credential Console dan environment bertentangan. Selesaikan satu sumber sebelum menjalankan Harvy.":"Token utama belum dapat diverifikasi. Periksa kembali token atau koneksi Telegram.","bad"];
+  if(item.phase==="validating")return ["Memverifikasi","Console sedang meminta bukti langsung dari Telegram.","warn"];
+  if(item.phase==="ready")return ["Bot valid",item.runtimeActive?(item.restartRequired?"Token valid tersimpan. Restart Harvy agar runtime memakainya.":"Token valid dan sedang dipakai runtime Harvy."):"Token valid tersimpan. Jalankan Harvy untuk mengaktifkan bot utama.","good"];
+  if(item.configured)return ["Credential tersimpan",item.source==="environment"?"Token masih berada di .env. Pindahkan ke Console agar hanya ada satu sumber credential.":item.runtimeActive&&item.restartRequired?"Perubahan tersimpan dan membutuhkan restart Harvy.":"Token tersimpan terenkripsi tetapi belum diperiksa pada proses Console ini.","warn"];
+  return ["Belum dikonfigurasi","Tambahkan token BotFather untuk bot Telegram utama.",""];
+}
 function renderPrimaryChannelBoundary(channels){
   const primary=channels.identityBoundary?.primary;
-  const telegramDeclared=primary?.telegram?.declared===true;
-  setChannelBadge("primary-telegram-status",telegramDeclared?"Dikonfigurasi":"Belum diatur",telegramDeclared?"good":"warn");
-  byId("primary-telegram-detail").textContent=telegramDeclared?"Token bot utama tersedia di environment. Acceptance tetap memakai bot uji terpisah.":"TELEGRAM_BOT_TOKEN belum tersedia di environment proses ini.";
+  const telegram=primary?.telegram||{},[telegramLabel,telegramDetail,telegramTone]=primaryTelegramPresentation(telegram);
+  setChannelBadge("primary-telegram-status",telegramLabel,telegramTone);
+  byId("primary-telegram-detail").textContent=telegramDetail;
+  byId("primary-config-source").textContent=telegram.source==="console"?"Telegram dikelola Console":telegram.source==="environment"?"Telegram masih dari environment":telegram.source==="conflict"?"Sumber Telegram bertentangan":"Belum lengkap";
+  const card=byId("primary-telegram-bot-card"),status=byId("primary-telegram-bot-status"),detail=byId("primary-telegram-bot-detail"),editor=byId("primary-telegram-bot-editor"),wasConfigured=editor.dataset.configured==="true";
+  status.textContent=telegramLabel;status.className="badge"+(telegramTone?" "+telegramTone:"");detail.textContent=telegramDetail;card.classList.toggle("ready",telegram.phase==="ready");editor.dataset.configured=String(telegram.configured===true);
+  const source=telegram.source||"missing",legacy=source==="environment",managed=source==="console",busy=telegram.phase==="validating";
+  byId("primary-telegram-bot-form").classList.toggle("hidden",legacy||source==="conflict");
+  byId("primary-telegram-migrate-zone").classList.toggle("hidden",!legacy);
+  byId("primary-telegram-migrate").disabled=busy||telegram.migrationAvailable!==true;
+  byId("primary-telegram-verify-zone").classList.toggle("hidden",telegram.configured!==true);
+  byId("primary-telegram-verify").disabled=busy;
+  byId("primary-telegram-delete-zone").classList.toggle("hidden",!managed);
+  byId("primary-telegram-bot-save").disabled=busy;
+  byId("primary-telegram-delete").disabled=busy;
+  byId("primary-telegram-bot-editor-summary").textContent=legacy?"Pindahkan token utama ke Console":managed?"Ganti atau kelola token utama":"Tambahkan token bot utama";
+  if(source==="missing"||legacy||source==="conflict"||telegram.phase==="error")editor.open=true;else if(!wasConfigured)editor.open=false;
+  const primaryReady=byId("primary-ready");primaryReady.textContent=telegram.phase==="ready"?"Siap":telegram.configured?"Tersimpan":"Belum siap";primaryReady.className="badge "+(telegram.phase==="ready"?"good":telegram.phase==="error"||source==="conflict"?"bad":"warn");
   const whatsapp=primary?.whatsapp;
   if(whatsapp?.configurationValid===false){
     setChannelBadge("primary-whatsapp-status","Konfigurasi tidak sah","bad");
@@ -665,28 +711,30 @@ function renderSetupProgress(channels){
   const steps=[
     ["setup-step-telegram-bot",channels.telegram.bot.configured===true&&channels.telegram.bot.phase!=="error"],
     ["setup-step-telegram-tester",channels.telegram.tester.configured===true&&channels.telegram.tester.phase!=="error"],
-    ["setup-step-whatsapp-harvy",channels.whatsapp.harvy.configured===true&&channels.whatsapp.harvy.phase!=="error"],
-    ["setup-step-whatsapp-tester",channels.whatsapp.tester.configured===true&&channels.whatsapp.tester.phase!=="error"],
+    ["setup-step-whatsapp-harvy",channels.whatsapp.harvy.session?.status==="accepted"&&channels.whatsapp.harvy.phase!=="error"],
+    ["setup-step-whatsapp-tester",channels.whatsapp.tester.session?.status==="accepted"&&channels.whatsapp.tester.phase!=="error"],
   ];
   let ready=0;steps.forEach(([id,complete])=>{byId(id).classList.toggle("complete",complete);if(complete)ready+=1});
-  setChannelBadge("setup-progress-badge",String(ready)+" dari 4 tersedia",ready===4?"good":"warn");
+  setChannelBadge("setup-progress-badge",String(ready)+" dari 4 siap",ready===4?"good":"warn");
   byId("setup-progress-fill").style.width=String(ready*25)+"%";
   return ready;
 }
 function renderChannelOverview(channels,readyCount){
   const telegramReady=channels.telegram.ready===true&&channels.telegram.bot.phase!=="error"&&channels.telegram.tester.phase!=="error";
-  const whatsappReady=channels.whatsapp.harvy.configured===true&&channels.whatsapp.harvy.phase!=="error"&&channels.whatsapp.tester.configured===true&&channels.whatsapp.tester.phase!=="error";
+  const whatsappReady=channels.whatsapp.ready===true;
   const allReady=telegramReady&&whatsappReady;
-  const pairingInProgress=pairingActive(channels.telegram.tester)||pairingActive(channels.whatsapp.harvy)||pairingActive(channels.whatsapp.tester)||channels.telegram.bot.phase==="validating";
-  const hasError=channels.telegram.bot.phase==="error"||channels.telegram.tester.phase==="error"||channels.whatsapp.harvy.phase==="error"||channels.whatsapp.tester.phase==="error";
-  const root=byId("tab-channels"),settings=byId("channel-settings"),wasReady=settings.dataset.ready==="true";
+  const whatsappChecking=channels.whatsapp.harvy.session?.status==="checking"||channels.whatsapp.tester.session?.status==="checking";
+  const whatsappRejected=channels.whatsapp.harvy.session?.status==="rejected"||channels.whatsapp.tester.session?.status==="rejected";
+  const pairingInProgress=pairingActive(channels.telegram.tester)||pairingActive(channels.whatsapp.harvy)||pairingActive(channels.whatsapp.tester)||whatsappChecking||channels.telegram.bot.phase==="validating";
+  const hasError=channels.telegram.bot.phase==="error"||channels.telegram.tester.phase==="error"||channels.whatsapp.harvy.phase==="error"||channels.whatsapp.tester.phase==="error"||whatsappRejected;
+  const root=byId("tab-channels"),settings=byId("channel-settings"),wasReady=settings.dataset.ready==="true",primaryTelegram=channels.identityBoundary?.primary?.telegram,primaryNeedsAction=primaryTelegram?.configured!==true||primaryTelegram?.phase==="error"||primaryTelegram?.source==="conflict"||primaryTelegram?.restartRequired===true;
   root.classList.toggle("ready-mode",allReady);settings.dataset.ready=String(allReady);
-  if(!allReady)settings.open=true;else if(!wasReady)settings.open=false;
+  if(!allReady||primaryNeedsAction)settings.open=true;else if(!wasReady)settings.open=false;
   if(allReady){
     byId("channel-readiness-mark").textContent="✓";
-    byId("channel-readiness-label").textContent="Semua identitas tersedia";
+    byId("channel-readiness-label").textContent="Pemeriksaan live selesai";
     byId("channel-readiness-title").textContent="Harvy siap diuji";
-    byId("channel-readiness-detail").textContent="Empat identitas uji tersedia. Koneksi platform akan dibuktikan saat pengujian dijalankan.";
+    byId("channel-readiness-detail").textContent="Empat identitas tersedia dan kedua sesi WhatsApp diterima pada pemeriksaan terbaru.";
   }else if(hasError){
     byId("channel-readiness-mark").textContent="!";
     byId("channel-readiness-label").textContent="Perlu tindakan";
@@ -694,17 +742,18 @@ function renderChannelOverview(channels,readyCount){
     byId("channel-readiness-detail").textContent="Buka pengaturan di bawah untuk melihat status aman dan mencoba kembali.";
   }else if(pairingInProgress){
     byId("channel-readiness-mark").textContent="…";
-    byId("channel-readiness-label").textContent="Pairing berlangsung";
-    byId("channel-readiness-title").textContent="Sedang menghubungkan kanal";
+    byId("channel-readiness-label").textContent=whatsappChecking?"Pemeriksaan berlangsung":"Pairing berlangsung";
+    byId("channel-readiness-title").textContent=whatsappChecking?"Sedang memeriksa sesi WhatsApp":"Sedang menghubungkan kanal";
     byId("channel-readiness-detail").textContent="Selesaikan langkah yang tampil di pengaturan akun dan sesi.";
   }else{
     byId("channel-readiness-mark").textContent=String(readyCount);
-    byId("channel-readiness-label").textContent=String(readyCount)+" dari 4 identitas tersedia";
+    byId("channel-readiness-label").textContent=String(readyCount)+" dari 4 identitas siap";
     byId("channel-readiness-title").textContent="Selesaikan koneksi kanal";
     byId("channel-readiness-detail").textContent="Lengkapi identitas yang belum tersedia agar Telegram dan WhatsApp dapat diuji.";
   }
   setConnectionStatus("telegram-route-status",telegramReady?"Siap":channels.telegram.bot.phase==="error"||channels.telegram.tester.phase==="error"?"Perlu tindakan":pairingActive(channels.telegram.tester)||channels.telegram.bot.phase==="validating"?"Menghubungkan":"Belum lengkap",telegramReady?"good":channels.telegram.bot.phase==="error"||channels.telegram.tester.phase==="error"?"bad":"warn");
-  setConnectionStatus("whatsapp-route-status",whatsappReady?"Siap":channels.whatsapp.harvy.phase==="error"||channels.whatsapp.tester.phase==="error"?"Perlu tindakan":pairingActive(channels.whatsapp.harvy)||pairingActive(channels.whatsapp.tester)?"Menghubungkan":"Belum lengkap",whatsappReady?"good":channels.whatsapp.harvy.phase==="error"||channels.whatsapp.tester.phase==="error"?"bad":"warn");
+  const whatsappUnreachable=channels.whatsapp.harvy.session?.status==="unreachable"||channels.whatsapp.tester.session?.status==="unreachable";
+  setConnectionStatus("whatsapp-route-status",whatsappReady?"Sesi valid":whatsappRejected?"Sesi ditolak":whatsappChecking?"Memeriksa":channels.whatsapp.harvy.phase==="error"||channels.whatsapp.tester.phase==="error"?"Perlu tindakan":pairingActive(channels.whatsapp.harvy)||pairingActive(channels.whatsapp.tester)?"Menghubungkan":whatsappUnreachable?"Belum terverifikasi":"Belum lengkap",whatsappReady?"good":whatsappRejected||channels.whatsapp.harvy.phase==="error"||channels.whatsapp.tester.phase==="error"?"bad":"warn");
   byId("telegram-manage-open").textContent=telegramReady?"Kelola":"Selesaikan";
   byId("whatsapp-manage-open").textContent=whatsappReady?"Kelola":"Selesaikan";
 }
@@ -730,7 +779,8 @@ function renderChannels(){
   renderPairing("whatsapp-harvy",channels.whatsapp.harvy,"/api/v1/channel-setup/whatsapp/harvy/qr.svg");
   renderPairing("whatsapp-tester",channels.whatsapp.tester,"/api/v1/channel-setup/whatsapp/tester/qr.svg");
   const whatsappBusy=pairingActive(channels.whatsapp.harvy)||pairingActive(channels.whatsapp.tester);
-  ["harvy","tester"].forEach((role)=>{byId("whatsapp-"+role+"-pair").disabled=whatsappBusy||channels.whatsapp[role].configured===true;byId("whatsapp-"+role+"-replace").disabled=whatsappBusy||channels.whatsapp[role].configured!==true;byId("whatsapp-"+role+"-revoke").disabled=whatsappBusy});
+  const whatsappVerifying=channels.whatsapp.harvy.session?.status==="checking"||channels.whatsapp.tester.session?.status==="checking";
+  ["harvy","tester"].forEach((role)=>{byId("whatsapp-"+role+"-pair").disabled=whatsappBusy||whatsappVerifying||channels.whatsapp[role].configured===true;byId("whatsapp-"+role+"-replace").disabled=whatsappBusy||whatsappVerifying||channels.whatsapp[role].configured!==true;byId("whatsapp-"+role+"-revoke").disabled=whatsappBusy||whatsappVerifying});
 }
 async function loadChannels(quiet=false){
   if(channelLoading)return;channelLoading=true;
@@ -738,6 +788,7 @@ async function loadChannels(quiet=false){
   catch(error){if(error?.status===401){showLogin();return}if(!quiet)showGlobalError(error)}
   finally{channelLoading=false}
 }
+async function verifyChannels(){clearGlobalError();const checks=[api("/api/v1/channel-setup/whatsapp/verify",{method:"POST",body:{}})],primary=state.channels?.identityBoundary?.primary?.telegram;if(primary?.configured===true&&primary.source!=="conflict")checks.push(api("/api/v1/channel-setup/primary/telegram/verify",{method:"POST",body:{}}));await Promise.all(checks);await loadChannels()}
 function attemptCost(item){
   const view=item.costView;
   if(view?.source==="recorded")return stack(money(view.costUsdNanos),translated("source",item.cost.effectiveSource));
@@ -796,7 +847,7 @@ async function loadGroups(force=false){
 }
 function showApp(){byId("login-view").classList.add("hidden");byId("app-view").classList.remove("hidden")}
 function showLogin(){csrf=null;byId("app-view").classList.add("hidden");byId("login-view").classList.remove("hidden")}
-function configureConsoleMode(setupOnly){byId("app-view").classList.toggle("setup-only",setupOnly);document.querySelectorAll("[data-tab]").forEach((button)=>button.classList.toggle("hidden",setupOnly&&button.dataset.tab!=="channels"));if(!setupOnly)return;byId("health").textContent="Console lokal";byId("health").className="status-badge ready";byId("last-updated").textContent="Hanya perangkat ini"}
+function configureConsoleMode(setupOnly){byId("app-view").classList.toggle("setup-only",setupOnly);document.querySelectorAll("[data-tab]").forEach((button)=>button.classList.toggle("hidden",setupOnly&&button.dataset.tab!=="channels"));if(!setupOnly)return;byId("health").textContent="Mode konfigurasi";byId("health").className="status-badge ready";byId("last-updated").textContent="Runtime tidak dipantau"}
 async function restore(){try{const session=await api("/api/v1/session");csrf=session.csrfToken;configureConsoleMode(session.setupOnly===true);showApp();if(session.setupOnly===true){switchTab("channels");return}await load();if(location.hash==="#channels")switchTab("channels")}catch(error){showLogin();if(error?.status!==401)byId("login-error").textContent=safeErrorMessage(error)}}
 function switchTab(name,focus=false){
   activeTab=name;const tabs=[...document.querySelectorAll("[data-tab]")];
@@ -809,9 +860,9 @@ byId("login-form").addEventListener("submit",(event)=>{
   withButton(button,"Memeriksa…",async()=>{const result=await api("/api/v1/session",{method:"POST",body:{token:byId("operator-token").value}});csrf=result.csrfToken;byId("operator-token").value="";configureConsoleMode(result.setupOnly===true);showApp();if(result.setupOnly===true)switchTab("channels");else await load()}).catch((error)=>{byId("global-error").classList.add("hidden");byId("login-error").textContent=safeErrorMessage(error)});
 });
 byId("logout").addEventListener("click",()=>withButton(byId("logout"),"Keluar…",async()=>{await api("/api/v1/session",{method:"DELETE",body:{}}).catch(()=>{});showLogin()}).catch(()=>{}));
-byId("refresh").addEventListener("click",()=>activeTab==="channels"?loadChannels():load({forceGroups:activeTab==="groups"}));byId("retry-load").addEventListener("click",()=>activeTab==="channels"?loadChannels():load({forceGroups:activeTab==="groups"}));
+byId("refresh").addEventListener("click",()=>activeTab==="channels"?verifyChannels().catch(showGlobalError):load({forceGroups:activeTab==="groups"}));byId("retry-load").addEventListener("click",()=>activeTab==="channels"?verifyChannels().catch(showGlobalError):load({forceGroups:activeTab==="groups"}));
 byId("refresh-groups").addEventListener("click",()=>withButton(byId("refresh-groups"),"Menyegarkan…",()=>loadGroups(true)).catch(()=>{}));
-byId("channels-refresh").addEventListener("click",()=>withButton(byId("channels-refresh"),"Menyegarkan…",()=>loadChannels()).catch(()=>{}));
+byId("channels-refresh").addEventListener("click",()=>withButton(byId("channels-refresh"),"Memeriksa…",async()=>{await verifyChannels();showNotice("Pemeriksaan koneksi kanal selesai.")}).catch(()=>{}));
 function openChannelSettings(channel){const settings=byId("channel-settings"),target=byId(channel+"-settings");settings.open=true;requestAnimationFrame(()=>{target.scrollIntoView({behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"start"});target.focus({preventScroll:true})})}
 byId("telegram-manage-open").addEventListener("click",()=>openChannelSettings("telegram"));
 byId("whatsapp-manage-open").addEventListener("click",()=>openChannelSettings("whatsapp"));
@@ -823,6 +874,13 @@ byId("enroll-form").addEventListener("submit",(event)=>{
   event.preventDefault();const button=byId("enroll-submit");
   withButton(button,"Menambahkan…",async()=>{clearGlobalError();await api("/api/v1/enrollments",{method:"POST",body:{kind:byId("enroll-kind").value,channel:byId("enroll-channel").value,externalId:byId("enroll-id").value,operatorLabel:byId("enroll-label").value||null}});byId("enroll-id").value="";byId("enroll-label").value="";await load({quiet:true,requireFresh:true});showNotice("Akses pseudonim berhasil ditambahkan.")}).catch(()=>{});
 });
+byId("primary-telegram-bot-form").addEventListener("submit",(event)=>{
+  event.preventDefault();const button=byId("primary-telegram-bot-save");
+  withButton(button,"Memverifikasi…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/telegram/bot-token",{method:"POST",body:{token:byId("primary-telegram-bot-token").value}});byId("primary-telegram-bot-token").value="";await loadChannels();showNotice(state.channels?.identityBoundary?.primary?.telegram?.restartRequired?"Token utama tersimpan. Restart Harvy untuk menerapkannya.":"Token utama berhasil diverifikasi dan disimpan.")}).catch(()=>{});
+});
+byId("primary-telegram-migrate").addEventListener("click",()=>{if(!byId("primary-telegram-migrate-confirm").checked){showGlobalError(userError("Konfirmasikan bahwa Console akan menjadi sumber credential Telegram utama."));return}withButton(byId("primary-telegram-migrate"),"Memindahkan…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/primary/telegram/migrate",{method:"POST",body:{confirmation:"MIGRATE_PRIMARY_TELEGRAM_TO_CONSOLE"}});byId("primary-telegram-migrate-confirm").checked=false;await loadChannels();showNotice("Token utama dipindahkan ke penyimpanan terenkripsi dan dihapus dari .env.")}).catch(()=>{})});
+byId("primary-telegram-verify").addEventListener("click",()=>withButton(byId("primary-telegram-verify"),"Memeriksa…",async()=>{await api("/api/v1/channel-setup/primary/telegram/verify",{method:"POST",body:{}});await loadChannels();showNotice("Token Telegram utama diterima oleh platform.")}).catch(()=>{}));
+byId("primary-telegram-delete").addEventListener("click",()=>withButton(byId("primary-telegram-delete"),"Menghapus…",async()=>{await api("/api/v1/channel-setup/primary/telegram/bot-token",{method:"DELETE",body:{confirmation:byId("primary-telegram-delete-confirm").value}});byId("primary-telegram-delete-confirm").value="";await loadChannels();showNotice("Token Telegram utama dihapus. Simpan token baru sebelum menjalankan ulang Harvy.")}).catch(()=>{}));
 byId("telegram-bot-form").addEventListener("submit",(event)=>{
   event.preventDefault();const button=byId("telegram-bot-save");
   withButton(button,"Memverifikasi…",async()=>{clearGlobalError();await api("/api/v1/channel-setup/telegram/bot-token",{method:"POST",body:{token:byId("telegram-bot-token").value}});byId("telegram-bot-token").value="";await loadChannels();showNotice("Token bot uji berhasil diverifikasi dan disimpan.")}).catch(()=>{});

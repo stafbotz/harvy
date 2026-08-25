@@ -21,6 +21,10 @@ import type {
 } from "../domain/agent-run.js";
 import type { StylePreference } from "../domain/profile.js";
 import {
+  hasRetrievedMemoryProvenance,
+  isRetrievedMemorySource,
+} from "../domain/memory-knowledge.js";
+import {
   isValidAgentRunCheckpoint,
   type AgentRunCheckpoint,
   type AgentRunResult,
@@ -1819,8 +1823,7 @@ function boundedContextSnapshot(
       typeof evidence.id !== "string" ||
       !Array.isArray(evidence.sources) ||
       evidence.sources.length < 1 ||
-      evidence.sources.some((source) =>
-        source !== "episode" && source !== "semantic" && source !== "graph") ||
+      evidence.sources.some((source) => !isRetrievedMemorySource(source)) ||
       (evidence.sources.includes("graph") &&
         !evidence.sources.includes("semantic")) ||
       typeof evidence.text !== "string" ||
@@ -1831,9 +1834,7 @@ function boundedContextSnapshot(
       !Array.isArray(evidence.sourceEpisodeIds) ||
       !Array.isArray(evidence.sourceSequences) ||
       !Array.isArray(evidence.sourceMemoryIds) ||
-      (evidence.sourceEpisodeIds.length === 0 &&
-        evidence.sourceSequences.length === 0 &&
-        evidence.sourceMemoryIds.length === 0)
+      !hasRetrievedMemoryProvenance(evidence)
     ) {
       throw new Error("Evidence konteks active AgentRun tidak sah.");
     }

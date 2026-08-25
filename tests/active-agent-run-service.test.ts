@@ -74,6 +74,43 @@ describe("active AgentRun Phase D", () => {
     assert.equal(recovered?.instructionRevision, 1);
   });
 
+  it("membekukan seluruh sumber Context Pack yang sah ke run durable", async () => {
+    const file = await temporaryFile();
+    const service = serviceAt(file);
+    const sources = ["user-model", "procedure", "error-lesson"] as const;
+    const started = await service.startActive({
+      ...startInput(),
+      context: {
+        ...startInput().context,
+        retrieved: sources.map((source, index) => ({
+          id: `${source}:evidence-${index + 1}`,
+          sources: [source],
+          text: `Evidence ${index + 1}`,
+          score: 0.8,
+          validFrom: "2026-08-09T04:00:00.000Z",
+          validUntil: null,
+          status: "active" as const,
+          sensitivity: "normal" as const,
+          sourceEpisodeIds: [],
+          sourceSequences: source === "user-model" ? [index + 1] : [],
+          sourceMemoryIds: [],
+        })),
+      },
+    });
+
+    assert.equal(started.status, "started");
+    if (started.status !== "started") return;
+    assert.deepEqual(
+      started.run.context.retrieved?.map((item) => item.sources[0]),
+      sources,
+    );
+    assert.deepEqual(
+      (await serviceAt(file).loadActive("telegram", "alice"))?.context.retrieved
+        ?.map((item) => item.sources[0]),
+      sources,
+    );
+  });
+
   it("memilih terminal terbaru meski dua transisi mempunyai timestamp sama", async () => {
     const file = await temporaryFile();
     const service = serviceAt(file);

@@ -35,8 +35,17 @@ export function explicitMemoryRememberAuthority(
     minConfidence: 0.85,
     explicitness: ["explicit"],
   })) return null;
-  const requestedText = (semantic.target ?? "").trim();
-  if (!semanticEvidenceMatches(message, requestedText)) return null;
+  // Model kecil cukup sering memahami operasinya dengan benar, tetapi menulis
+  // `target` sebagai label ringkas (mis. "format jawaban pekerjaan produk")
+  // alih-alih span verbatim. `evidence` sudah lolos pemeriksaan provenance di
+  // atas, jadi pakai span itu sebagai batas authority ketika target bukan
+  // bagian persis dari current turn. Ini tetap tidak memberi authority pada
+  // parafrasa model atau konteks lama.
+  const target = (semantic.target ?? "").trim();
+  const evidence = (semantic.evidence ?? "").trim();
+  const requestedText = semanticEvidenceMatches(message, target)
+    ? target
+    : evidence;
   if (!hasConcreteMemoryContent(requestedText)) return null;
   const forbiddenSecret = containsForbiddenMemorySecret(requestedText);
   if (forbiddenSecret) {
@@ -71,6 +80,16 @@ export function replyAcknowledgesMemoryWrite(text: string): boolean {
     /\b(?:tidak|tak|gak|ga|nggak|enggak|belum|jangan)\b[^.!?]{0,28}\b(?:mengingat|menyimpan|mencatat|ingat|inget|catat|simpan)\b/u
       .test(clean)
   ) return false;
+
+  if (
+    /\b(?:tidak|tak|gak|ga|nggak|enggak|belum|jangan)\b[^.!?]{0,28}\b(?:dicatat|disimpan|diingat|diperbarui)\b/u
+      .test(clean)
+  ) return false;
+
+  // Bentuk pasif seperti "aturan baru dicatat" tetap mengklaim adanya write.
+  // Model tidak boleh menghindari receipt code-owned hanya dengan mengganti
+  // subjek kalimat atau memakai bentuk pasif.
+  if (/\b(?:dicatat|disimpan|diingat|diperbarui)\b/u.test(clean)) return true;
 
   // 📍 cukup jelas sebagai bahasa write setelah commit terkonfirmasi. Ia tetap
   // bukan bukti bahwa commit terjadi; caller sudah memegang receipt code-owned.

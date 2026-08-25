@@ -103,6 +103,7 @@ describe("isolated live acceptance runtime", () => {
       HARVY_BYOK_MASTER_KEY_B64: "must-not-reach-test-runtime",
       WHATSAPP_ENABLED: "true",
       WHATSAPP_ACCOUNTS: "production-account",
+      HARVY_LIVE_EXPLORATION_MESSAGE_SCOPE: "HARVYEXPAAAAAAAAAAAA",
     }, {
       telegramBotToken: CREDENTIAL.botToken,
     });
@@ -116,6 +117,7 @@ describe("isolated live acceptance runtime", () => {
     assert.equal(env.HARVY_BYOK_MASTER_KEY_B64, undefined);
     assert.equal(env.WHATSAPP_ENABLED, "false");
     assert.equal(env.WHATSAPP_ACCOUNTS, undefined);
+    assert.equal(env.HARVY_LIVE_EXPLORATION_MESSAGE_SCOPE, undefined);
     assert.equal(env.TELEGRAM_BOT_TOKEN, CREDENTIAL.botToken);
   });
 
@@ -126,6 +128,7 @@ describe("isolated live acceptance runtime", () => {
         authRoot: "./data/whatsapp-auth/live-acceptance",
         accountAlias: "harvy",
         phoneNumber: "628123456789",
+        messageScope: "HARVYEXP123456789ABC",
       },
     });
     assert.equal(env.WHATSAPP_ENABLED, "true");
@@ -135,6 +138,22 @@ describe("isolated live acceptance runtime", () => {
       phoneNumber: "628123456789",
     }]);
     assert.match(env.WHATSAPP_AUTH_FOLDER ?? "", /live-acceptance$/u);
+    assert.equal(
+      env.HARVY_LIVE_EXPLORATION_MESSAGE_SCOPE,
+      "HARVYEXP123456789ABC",
+    );
+    assert.throws(
+      () => isolatedRuntimeEnvironment({}, {
+        telegramBotToken: CREDENTIAL.botToken,
+        whatsapp: {
+          authRoot: "./data/whatsapp-auth/live-acceptance",
+          accountAlias: "harvy",
+          phoneNumber: "628123456789",
+          messageScope: "invalid",
+        },
+      }),
+      /LIVE_EXPLORATION_WHATSAPP_SCOPE_INVALID/u,
+    );
   });
 
   it("hanya menghapus root sementara dengan prefix acceptance yang sah", async () => {

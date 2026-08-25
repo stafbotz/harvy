@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import makeWASocket, {
   DisconnectReason,
@@ -109,6 +109,7 @@ export type WhatsAppPrivateLifecycleStage =
   | "private-upsert-notify"
   | "private-upsert-append"
   | "private-candidate"
+  | "private-causal-fence-rejected"
   | "private-normalized"
   | "private-handler-returned"
   | "private-pipeline-failed"
@@ -184,8 +185,8 @@ interface AccountRuntime {
    * dipanggil berulang-ulang pada setiap read authority. */
   selfMissingNotified: Set<string>;
   metadataRefreshes: Map<string, MetadataRefreshToken>;
-  /** Deduplikasi ingress private yang hanya menyimpan ID teknis, tanpa body. */
-  privateMessageIds: Map<string, number>;
+  /** Deduplikasi ingress yang hanya menyimpan tuple scope dan ID teknis. */
+  inboundMessageIds: Map<string, number>;
   incoming: Map<string, CachedMessage>;
   outbound: Map<string, CachedMessage>;
 }
@@ -206,6 +207,7 @@ export class BaileysAccountManager
   private readonly logger: OperationalLogger;
   private readonly metadataTimeoutMs: number;
   private readonly downloadContent: typeof downloadContentFromMessage;
+  private readonly liveExplorationMessageScope: string | null;
   private acceptingEvents = true;
   private stopping = false;
 
@@ -226,6 +228,8 @@ export class BaileysAccountManager
       dependencies.metadataTimeoutMs ?? DEFAULT_METADATA_TIMEOUT_MS;
     this.downloadContent =
       dependencies.downloadContent ?? downloadContentFromMessage;
+    this.liveExplorationMessageScope =
+      config.liveExplorationMessageScope ?? null;
 
     for (const account of config.accounts) {
       this.accounts.set(account.id, {
@@ -245,7 +249,7 @@ export class BaileysAccountManager
         groupEpochs: new Map(),
         selfMissingNotified: new Set(),
         metadataRefreshes: new Map(),
-        privateMessageIds: new Map(),
+        inboundMessageIds: new Map(),
         incoming: new Map(),
         outbound: new Map(),
       });
@@ -441,7 +445,7 @@ export class BaileysAccountManager
 
         const socket = runtime.socket;
         runtime.socket = null;
-        runtime.privateMessageIds.clear();
+        runtime.inboundMessageIds.clear();
         this.clearMessageCache(runtime.incoming);
         if (socket) {
           try {
@@ -1534,6 +1538,20 @@ export class BaileysAccountManager
       if (!groupId) continue;
       if (!isJidGroup(groupId)) {
         if (!this.config.privateEnabled) continue;
+        if (
+          this.liveExplorationMessageScope && raw.key.fromMe !== true &&
+          !matchesLiveExplorationMessageId(
+            raw.key.id,
+            this.liveExplorationMessageScope,
+            "T",
+          )
+        ) {
+          this.notifyPrivateLifecycle(
+            runtime,
+            "private-causal-fence-rejected",
+          );
+          continue;
+        }
         if (raw.key.fromMe !== true && raw.key.id) {
           this.notifyPrivateLifecycle(runtime, "private-candidate");
         }
@@ -1547,9 +1565,9 @@ export class BaileysAccountManager
           normalized.userId,
           normalized.messageId,
         );
-        this.prunePrivateMessageIds(runtime);
-        if (runtime.privateMessageIds.has(duplicateKey)) continue;
-        this.rememberPrivateMessageId(runtime, duplicateKey);
+        this.pruneInboundMessageIds(runtime);
+        if (runtime.inboundMessageIds.has(duplicateKey)) continue;
+        this.rememberInboundMessageId(runtime, duplicateKey);
         processing.push(
           this.enqueueGroupOperation(
             runtime,
@@ -1660,6 +1678,14 @@ export class BaileysAccountManager
               authorityEpoch: this.groupEpoch(runtime, groupId),
             });
             if (!normalized) return;
+
+            const duplicateKey = messageCacheKey(
+              groupId,
+              normalized.messageId,
+            );
+            this.pruneInboundMessageIds(runtime);
+            if (runtime.inboundMessageIds.has(duplicateKey)) return;
+            this.rememberInboundMessageId(runtime, duplicateKey);
 
             this.cacheMessage(
               runtime.incoming,
@@ -1806,7 +1832,21 @@ export class BaileysAccountManager
         assertCurrent();
         this.notifyPrivateLifecycle(runtime, "private-delivery-attempted");
         try {
-          const sent = await socket.sendMessage(userId, { text: text.trim() });
+          const requestedMessageId = this.liveExplorationMessageScope
+            ? liveExplorationMessageId(
+              this.liveExplorationMessageScope,
+              "H",
+            )
+            : null;
+          const sent = await socket.sendMessage(
+            userId,
+            { text: text.trim() },
+            requestedMessageId ? { messageId: requestedMessageId } : undefined,
+          );
+          assertLiveExplorationMessageIdPreserved(
+            sent?.key.id,
+            requestedMessageId,
+          );
           this.notifyPrivateLifecycle(runtime, "private-delivery-succeeded");
           return { messageId: sent?.key.id ?? null };
         } catch (error) {
@@ -1818,12 +1858,26 @@ export class BaileysAccountManager
         assertCurrent();
         this.notifyPrivateLifecycle(runtime, "private-delivery-attempted");
         try {
-          const sent = await socket.sendMessage(userId, {
-            document: document.data,
-            fileName: document.fileName,
-            mimetype: document.mimetype,
-            ...(document.caption ? { caption: document.caption } : {}),
-          });
+          const requestedMessageId = this.liveExplorationMessageScope
+            ? liveExplorationMessageId(
+              this.liveExplorationMessageScope,
+              "H",
+            )
+            : null;
+          const sent = await socket.sendMessage(
+            userId,
+            {
+              document: document.data,
+              fileName: document.fileName,
+              mimetype: document.mimetype,
+              ...(document.caption ? { caption: document.caption } : {}),
+            },
+            requestedMessageId ? { messageId: requestedMessageId } : undefined,
+          );
+          assertLiveExplorationMessageIdPreserved(
+            sent?.key.id,
+            requestedMessageId,
+          );
           this.notifyPrivateLifecycle(runtime, "private-delivery-succeeded");
           return { messageId: sent?.key.id ?? null };
         } catch (error) {
@@ -2147,25 +2201,25 @@ export class BaileysAccountManager
     }
   }
 
-  private prunePrivateMessageIds(runtime: AccountRuntime): void {
+  private pruneInboundMessageIds(runtime: AccountRuntime): void {
     const now = this.now().getTime();
-    for (const [key, expiresAt] of runtime.privateMessageIds) {
-      if (expiresAt <= now) runtime.privateMessageIds.delete(key);
+    for (const [key, expiresAt] of runtime.inboundMessageIds) {
+      if (expiresAt <= now) runtime.inboundMessageIds.delete(key);
     }
   }
 
-  private rememberPrivateMessageId(
+  private rememberInboundMessageId(
     runtime: AccountRuntime,
     key: string,
   ): void {
-    while (runtime.privateMessageIds.size >= MAX_OUTBOUND_MESSAGES) {
-      const oldest = runtime.privateMessageIds.keys().next().value as
+    while (runtime.inboundMessageIds.size >= MAX_OUTBOUND_MESSAGES) {
+      const oldest = runtime.inboundMessageIds.keys().next().value as
         | string
         | undefined;
       if (oldest === undefined) break;
-      runtime.privateMessageIds.delete(oldest);
+      runtime.inboundMessageIds.delete(oldest);
     }
-    runtime.privateMessageIds.set(
+    runtime.inboundMessageIds.set(
       key,
       this.now().getTime() + GROUP_INCOMING_QUOTE_CACHE_MS,
     );
@@ -2491,6 +2545,34 @@ async function waitForGroupPresentation(
     if (!groupRuntimeFenceAllows(runtimeFence)) return false;
   }
   return groupRuntimeFenceAllows(runtimeFence);
+}
+
+function liveExplorationMessageId(scope: string, role: "H" | "T"): string {
+  if (!/^HARVYEXP[A-F0-9]{12}$/u.test(scope)) {
+    throw new Error("Scope exploratory WhatsApp tidak sah.");
+  }
+  return `${scope}${role}${randomBytes(6).toString("hex").slice(0, 11).toUpperCase()}`;
+}
+
+function matchesLiveExplorationMessageId(
+  value: unknown,
+  scope: string,
+  role: "H" | "T",
+): boolean {
+  return typeof value === "string" && value.length === 32 &&
+    value.startsWith(`${scope}${role}`) &&
+    /^[A-F0-9]{11}$/u.test(value.slice(21));
+}
+
+function assertLiveExplorationMessageIdPreserved(
+  delivered: string | null | undefined,
+  requested: string | null,
+): void {
+  if (requested !== null && delivered !== requested) {
+    throw new Error(
+      "Pengiriman WhatsApp acceptance tidak mempertahankan scoped message ID.",
+    );
+  }
 }
 
 export function reconnectDecision(

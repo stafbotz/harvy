@@ -6,6 +6,15 @@ import type {
 } from "../domain/task.js";
 import { sortTasksByPriority } from "./prioritizer.js";
 
+export interface TaskScheduleUpdate {
+  dueAt?: Date | null;
+  reminderAt?: Date | null;
+  expected?: {
+    dueAt: string | null;
+    reminderAt: string | null;
+  };
+}
+
 export class TaskService {
   private readonly ownerQueues = new Map<string, Promise<void>>();
 
@@ -102,6 +111,49 @@ export class TaskService {
       if (!task) return null;
 
       return (await this.repository.remove(ownerId, id)) ? task : null;
+    });
+  }
+
+  /** Mengubah tenggat+pengingat dalam satu commit owner-serialized. */
+  async updateSchedule(
+    ownerId: string,
+    id: string,
+    update: TaskScheduleUpdate,
+  ): Promise<StudentTask | null> {
+    if (update.dueAt === undefined && update.reminderAt === undefined) {
+      throw new Error("Perubahan jadwal tugas tidak boleh kosong.");
+    }
+    return this.exclusiveOwner(ownerId, async () => {
+      const task = await this.repository.findById(ownerId, id);
+      if (!task || task.status === "completed") return null;
+      if (
+        update.expected &&
+        (task.dueAt !== update.expected.dueAt ||
+          task.reminderAt !== update.expected.reminderAt)
+      ) {
+        return null;
+      }
+      if (
+        update.reminderAt instanceof Date &&
+        update.reminderAt.getTime() <= this.now().getTime()
+      ) {
+        throw new Error("Waktu pengingat harus berada di masa depan.");
+      }
+      const reminderChanged = update.reminderAt !== undefined;
+      const updated: StudentTask = {
+        ...task,
+        dueAt: update.dueAt === undefined
+          ? task.dueAt
+          : update.dueAt?.toISOString() ?? null,
+        reminderAt: update.reminderAt === undefined
+          ? task.reminderAt
+          : update.reminderAt?.toISOString() ?? null,
+        ...(reminderChanged
+          ? { reminderSentAt: null, reminderDelivery: null }
+          : {}),
+      };
+      await this.repository.save(updated);
+      return updated;
     });
   }
 

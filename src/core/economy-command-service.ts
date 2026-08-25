@@ -4,13 +4,16 @@ import { renderUsageDashboard } from "./usage-dashboard-renderer.js";
 import type { UserUsageSummaryService } from "./user-usage-summary-service.js";
 import { PERSONAL_PLAN_IDS } from "../domain/control-plane.js";
 import {
+  semanticOperationContextAvailable,
   semanticOperationAuthorized,
+  type SemanticInteractionReference,
   type SemanticOperation,
 } from "../domain/semantic-operation.js";
 
 export interface EconomySemanticRequest {
   rawText: string;
   semanticOperation: SemanticOperation | null | undefined;
+  recentInteractions?: readonly SemanticInteractionReference[];
 }
 
 /**
@@ -39,6 +42,9 @@ export class EconomyCommandService {
     const credentialReply = economyCredentialSafetyReply(rawText);
     if (credentialReply) return credentialReply;
     if (!semantic) return null;
+    if (!semanticOperationContextAvailable(semantic, request.recentInteractions)) {
+      return null;
+    }
 
     if (semanticOperationAuthorized(rawText, semantic, {
       domain: "usage",

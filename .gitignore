@@ -12,6 +12,9 @@ data/memori/
 # Kredensial linked-device WhatsApp. Kebocoran folder ini setara mengambil alih
 # sesi nomor Harvy; tidak boleh pernah masuk Git.
 data/whatsapp-auth/
+# State perjalanan exploratory live berisi percakapan akun uji dan hanya boleh
+# tinggal lokal. Evidence di dalamnya content-free, tetapi tetap bukan source.
+data/live-exploration/
 # Coding snapshots/evidence and all local secret mounts are private runtime
 # state. Service deployments should normally place these outside the checkout;
 # these guards protect the documented development defaults.

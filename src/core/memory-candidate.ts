@@ -12,6 +12,53 @@ export interface ExplicitResponsePreference {
 }
 
 /**
+ * Pagar grounding untuk kandidat auto-memory dari model.
+ *
+ * Ini sengaja tidak mencoba memahami bahasa lewat daftar kata. Model harus
+ * menyebut span current turn, subjek, dan horizon secara terstruktur; kode
+ * hanya memverifikasi bahwa buktinya benar-benar ada dan bahwa kandidat itu
+ * tentang pengguna serta masih berguna melewati keadaan sesaat. Perintah
+ * remember yang explicit memiliki authority item-scoped sendiri dan tidak
+ * memakai pagar automatic ini.
+ */
+export function automaticMemoryCandidateAuthorized(
+  rawTurn: string,
+  candidate: {
+    sourceEvidence?: string;
+    sourceSubject?: "self" | "other" | "work";
+    durability?: "durable" | "bounded" | "transient";
+  },
+): boolean {
+  if (
+    candidate.sourceSubject !== "self" ||
+    (candidate.durability !== "durable" &&
+      candidate.durability !== "bounded")
+  ) return false;
+  const evidence = compact(candidate.sourceEvidence ?? "");
+  if (!evidence) return false;
+  return normalizeEvidence(rawTurn).includes(normalizeEvidence(evidence));
+}
+
+/**
+ * Fallback bebas-keyword untuk satu permintaan remember yang sudah mempunyai
+ * evidence exact dari current user turn. Model hanya mengusulkan kind; isi
+ * durable tetap span yang benar-benar diotorisasi pengguna, bukan parafrasa
+ * model. Lebih dari satu kandidat dibiarkan unresolved agar item scope tidak
+ * melebar diam-diam.
+ */
+export function exactExplicitMemoryCandidate(
+  requestedText: string,
+  candidates: readonly { kind: MemoryKind; content: string }[],
+): { kind: MemoryKind; content: string } | null {
+  const content = compact(requestedText);
+  if (
+    candidates.length !== 1 || !content || content.length > 500 ||
+    FORBIDDEN_TEXT_CONTROL.test(content)
+  ) return null;
+  return { kind: candidates[0]!.kind, content };
+}
+
+/**
  * Authority lokal yang sengaja sangat sempit untuk instruksi pengguna tentang
  * bentuk seluruh jawaban Harvy ke depan. Turn seperti ini bukan cerita tentang
  * pengguna: menerapkannya lintas giliran adalah isi perintah itu sendiri.
@@ -263,6 +310,10 @@ function normalize(value: string): string {
     .toLocaleLowerCase("id-ID");
 }
 
+function normalizeEvidence(value: string): string {
+  return compact(value).normalize("NFKC").toLocaleLowerCase("und");
+}
+
 const CORRECTION_PATTERNS = [
   /\b(koreksi|ralat|sebenarnya|bukan lagi|sudah pindah|sekarang bukan)\b/u,
   /\bbukan\b.+\b(tapi|melainkan)\b/u,
@@ -270,3 +321,6 @@ const CORRECTION_PATTERNS = [
   /\b(?:tidak|nggak|gak|ga)\b.+\blagi\b/u,
   /\b(?:sudah|udah)\s+(?:tidak|nggak|gak|ga)\s+berlaku\b/u,
 ];
+
+const FORBIDDEN_TEXT_CONTROL =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;

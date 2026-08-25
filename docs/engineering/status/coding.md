@@ -1,8 +1,8 @@
 # Status Project Workspace dan Coding
 
-Refreshed: 2026-08-20 pada targeted-input dan private-publish vertical slice. Bukti penuh
-terakhir harus dibaca di `docs/LOG.md`; status live tetap dipisahkan dari test
-otomatis.
+Refreshed: 2026-08-24 pada provider live, coding local-E2E, dan acceptance grup
+parsial. Bukti penuh terakhir harus dibaca di `docs/LOG.md`; status live tetap
+dipisahkan dari test otomatis.
 
 ## Ada di kode
 
@@ -107,20 +107,26 @@ otomatis.
   Linux terpasang. Karena itu hostile-code harness dan receipt conformance belum
   dijalankan pada runtime Linux nyata. Backend tersedia di kode/deployment,
   tetapi capability production harus tetap off sampai seluruh 15 skenario lulus
-  pada image+seccomp+host exact.
+  pada image+seccomp+host exact. `npm run acceptance:sandbox` pada host ini gagal
+  tertutup dengan `SANDBOX_ACCEPTANCE_REQUIRES_LINUX_HOST`.
 - GitHub App credential, installation, dan repository uji nonkritis tidak
   tersedia. Broker dan conformance test otomatis ada, tetapi branch/commit/PR
   remote belum diverifikasi live. GitHub runtime tetap opt-in dan setup harus
   menyediakan private key, OAuth secret, state secret, service HMAC, callback,
-  dan repository test.
+  dan repository test. Preflight resmi berhenti sebelum efek dengan
+  `GITHUB_LIVE_ACCEPTANCE_REQUIRES_CREATE_NONCRITICAL_DRAFT_PR`.
 - Profile primary exact `google-ai-studio/gemini-3.5-flash-lite` pada endpoint
   resmi lulus live smoke reasoning/tool continuation, thought-signature replay,
   finish/truncation, pressure, timeout, retry, dan output ceiling. Fallback
   coding tetap tertutup; target `toughest` belum dikonfigurasi dan belum live.
-- WhatsApp GroupAgentRun/group coding belum menjalani acceptance lengkap pada
-  grup dan participant uji nyata. Harness live tersedia, tetapi sengaja gagal
-  non-sukses bila scope participant/crash/reconnect/workspace-publish belum
-  seluruhnya dijalankan.
+- WhatsApp GroupAgentRun lulus scope grup nyata dua-akun untuk anchor, ambient,
+  correction+duplicate replay, status, safety, dan cancel. Ini belum acceptance
+  group-coding: participant kedua, assigned question, Workspace provisioning,
+  crash/reconnect, dan publish privat belum dijalankan.
+- Jalur coding lokal targeted lulus 67/67: private application end-to-end,
+  CodingRun engine/coordinator, local Git nyata, OCI contract, conformance
+  receipt, group-coding ingress/delivery/driver/lifecycle. Bukti ini tidak
+  mengaktifkan capability dan tidak menggantikan sandbox/GitHub remote live.
 - Store control-plane project/run/evidence/deletion/GitHub/group, broker ledger,
   local-git operation ledger, dan outbound delivery masih file/single-service.
   SQLite lease sandbox memberi CAS lintas proses hanya untuk lease itu. Belum

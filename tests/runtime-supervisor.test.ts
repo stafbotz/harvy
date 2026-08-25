@@ -36,6 +36,8 @@ describe("runtime supervisor", () => {
       '  process.exit(0);',
       '});',
       'process.send?.({ type: "harvy-dev-control-ready" });',
+      'process.send?.({ type: "harvy-runtime-channel-status", channel: "whatsapp", accountId: "harvy", status: "connecting", reason: null });',
+      'process.send?.({ type: "harvy-runtime-channel-status", channel: "whatsapp", accountId: "harvy", status: "open", reason: null, messageText: "reject me" });',
       'process.send?.({ type: "harvy-runtime-channel-ready", channel: "whatsapp", accountId: "harvy" });',
       'process.send?.({ type: "harvy-live-acceptance-trace", channel: "whatsapp", accountId: "harvy", stage: "private-normalized" });',
       'process.send?.({ type: "harvy-live-acceptance-trace", channel: "whatsapp", accountId: "628000000000", stage: "private-normalized" });',
@@ -72,6 +74,17 @@ describe("runtime supervisor", () => {
       assert.deepEqual(
         events.filter((event) => event.type === "child-ready"),
         [{ type: "child-ready", attempt: 2 }],
+      );
+      assert.deepEqual(
+        events.filter((event) => event.type === "channel-status"),
+        [{
+          type: "channel-status",
+          attempt: 2,
+          channel: "whatsapp",
+          accountId: "harvy",
+          status: "connecting",
+          reason: null,
+        }],
       );
       assert.deepEqual(
         events.filter((event) => event.type === "channel-ready"),
@@ -122,6 +135,74 @@ describe("runtime supervisor", () => {
       );
       assert.deepEqual(events.at(-1), { type: "crash-loop-open", crashes: 3 });
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("menjalankan fault acceptance satu kali lalu pulih pada child kedua", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-supervisor-fault-"));
+    const entry = join(root, "child.mjs");
+    const count = join(root, "count.txt");
+    await writeFile(entry, [
+      'import { readFileSync, writeFileSync } from "node:fs";',
+      `const countFile = ${JSON.stringify(count)};`,
+      'let count = 0; try { count = Number(readFileSync(countFile, "utf8")); } catch {}',
+      'writeFileSync(countFile, String(count + 1));',
+      'process.on("message", (message) => {',
+      '  if (message?.type === "harvy-dev-shutdown") process.exit(0);',
+      '});',
+      'process.send?.({ type: "harvy-dev-control-ready" });',
+      'setInterval(() => undefined, 60_000);',
+    ].join("\n"));
+    const controller = new AbortController();
+    const fault = new AbortController();
+    const events: RuntimeSupervisorEvent[] = [];
+    let markFirstReady!: () => void;
+    let markSecondReady!: () => void;
+    const firstReady = new Promise<void>((resolveReady) => {
+      markFirstReady = resolveReady;
+    });
+    const secondReady = new Promise<void>((resolveReady) => {
+      markSecondReady = resolveReady;
+    });
+    try {
+      const result = superviseRuntime({
+        entry,
+        cwd: root,
+        signal: controller.signal,
+        acceptanceFaultSignal: fault.signal,
+        restartBaseMs: 10,
+        restartMaxMs: 20,
+        stableResetMs: 5_000,
+        crashWindowMs: 5_000,
+        maxCrashes: 4,
+        shutdownTimeoutMs: 2_000,
+        onEvent: (event) => {
+          events.push(event);
+          if (event.type === "child-ready" && event.attempt === 1) {
+            markFirstReady();
+          } else if (event.type === "child-ready" && event.attempt === 2) {
+            markSecondReady();
+          }
+        },
+      });
+      await firstReady;
+      fault.abort();
+      await secondReady;
+      controller.abort();
+      assert.equal(await result, 0);
+      assert.equal(await readFile(count, "utf8"), "2");
+      assert.deepEqual(
+        events.filter((event) => event.type === "acceptance-fault-injected"),
+        [{ type: "acceptance-fault-injected", attempt: 1 }],
+      );
+      assert.equal(
+        events.filter((event) => event.type === "child-restart-scheduled")
+          .length,
+        1,
+      );
+    } finally {
+      controller.abort();
       await rm(root, { recursive: true, force: true });
     }
   });

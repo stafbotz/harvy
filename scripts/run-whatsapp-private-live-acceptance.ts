@@ -73,6 +73,7 @@ async function runManagedAcceptance(
   if (!harvyJid || !testerJid) {
     throw blocked("WHATSAPP_MANAGED_ACCEPTANCE_IDENTITY_MISSING");
   }
+  const acceptanceHarvyJid = harvyJid;
   if (harvyIdentities.some((jid) => testerIdentities.includes(jid))) {
     throw blocked("WHATSAPP_MANAGED_ACCEPTANCE_IDENTITIES_MUST_DIFFER");
   }
@@ -92,6 +93,7 @@ async function runManagedAcceptance(
 
   const root = await createIsolatedRuntimeRoot();
   const controller = new AbortController();
+  const acceptanceFault = new AbortController();
   const mode = managedAcceptanceMode(process.env);
   const runtimeEnv = isolatedRuntimeEnvironment(process.env, {
     telegramBotToken: telegram.botToken,
@@ -114,11 +116,20 @@ async function runManagedAcceptance(
   const whatsappReady = new Promise<void>((resolveReady) => {
     markWhatsAppReady = resolveReady;
   });
+  let markWhatsAppReadyAfterRestart!: () => void;
+  const whatsappReadyAfterRestart = new Promise<void>((resolveReady) => {
+    markWhatsAppReadyAfterRestart = resolveReady;
+  });
+  const readyAttempts = new Set<number>();
+  let acceptanceFaultInjected = 0;
   const runtime = superviseRuntime({
     entry,
     cwd: root,
     env: runtimeEnv,
     signal: controller.signal,
+    ...(mode === "restart"
+      ? { acceptanceFaultSignal: acceptanceFault.signal }
+      : {}),
     restartBaseMs: 500,
     restartMaxMs: 2_000,
     stableResetMs: 60_000,
@@ -133,7 +144,9 @@ async function runManagedAcceptance(
         event.channel === "whatsapp" &&
         event.accountId === "harvy"
       ) {
+        readyAttempts.add(event.attempt);
         markWhatsAppReady();
+        if (event.attempt >= 2) markWhatsAppReadyAfterRestart();
       }
       if (
         event.type === "acceptance-trace" &&
@@ -146,6 +159,8 @@ async function runManagedAcceptance(
       }
       if (event.type === "child-restart-scheduled") {
         runtimeTrace.restartScheduled += 1;
+      } else if (event.type === "acceptance-fault-injected") {
+        acceptanceFaultInjected += 1;
       } else if (event.type === "crash-loop-open") {
         runtimeTrace.crashLoopOpened = true;
       } else if (event.type === "shutdown-timeout") {
@@ -154,38 +169,24 @@ async function runManagedAcceptance(
     },
   });
   let runtimeCode = 1;
-  let acceptanceCode = 2;
+  const acceptanceExitCodes: number[] = [];
   let runError: unknown;
   let isolatedProductStateRemoved = false;
   try {
     await waitForWhatsAppReady(whatsappReady, runtime);
-    const child = spawn(
-      process.execPath,
-      ["--import", tsxImport, acceptanceScript],
-      {
-        cwd: root,
-        env: {
-          ...runtimeEnv,
-          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_CONFIRM:
-            "RUN_NONCRITICAL_WHATSAPP_PRIVATE",
-          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_ACCOUNT: "DEDICATED_TEST_ACCOUNT",
-          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_TESTER_AUTH_FOLDER:
-            paths.whatsappTesterAuth,
-          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_HARVY_JID: harvyJid,
-          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_HARVY_IDENTITIES:
-            JSON.stringify(harvyIdentities),
-          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_HARVY_DESTINATION:
-            harvyDestination,
-          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_MODE: mode,
-          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_RUN_LABEL:
-            `live-${randomBytes(8).toString("hex")}`,
-          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_TIMEOUT_MS:
-            mode === "probe" ? "30000" : "120000",
-        },
-        stdio: ["ignore", "inherit", "inherit"],
-      },
-    );
-    acceptanceCode = await waitForExit(child, ACCEPTANCE_TIMEOUT_MS);
+    const firstAcceptanceMode = mode === "restart" ? "probe" : mode;
+    acceptanceExitCodes.push(await runPrivateAcceptance(firstAcceptanceMode));
+    if (acceptanceExitCodes[0] !== 0) {
+      throw blocked("WHATSAPP_MANAGED_ACCEPTANCE_INITIAL_PROBE_FAILED");
+    }
+    if (mode === "restart") {
+      acceptanceFault.abort();
+      await waitForWhatsAppReady(whatsappReadyAfterRestart, runtime);
+      acceptanceExitCodes.push(await runPrivateAcceptance("probe"));
+      if (acceptanceExitCodes[1] !== 0) {
+        throw blocked("WHATSAPP_MANAGED_ACCEPTANCE_RECOVERY_PROBE_FAILED");
+      }
+    }
   } catch (error) {
     runError = error;
   } finally {
@@ -199,22 +200,65 @@ async function runManagedAcceptance(
     }
   }
 
-  const passed = !runError && acceptanceCode === 0 && runtimeCode === 0 &&
-    isolatedProductStateRemoved;
+  const restartProven = mode !== "restart" ||
+    (acceptanceFaultInjected === 1 &&
+      runtimeTrace.restartScheduled >= 1 &&
+      readyAttempts.has(1) && readyAttempts.has(2) &&
+      acceptanceExitCodes.length === 2);
+  const passed = !runError && acceptanceExitCodes.length >= 1 &&
+    acceptanceExitCodes.every((code) => code === 0) && runtimeCode === 0 &&
+    isolatedProductStateRemoved && restartProven;
   process.stdout.write(`${JSON.stringify({
-    protocol: "harvy-whatsapp-private-managed-live-acceptance/1",
+    protocol: "harvy-whatsapp-private-managed-live-acceptance/2",
     status: passed ? "passed" : "failed",
     testedAt: new Date().toISOString(),
     mode,
-    acceptanceExitCode: acceptanceCode,
+    acceptanceExitCodes,
+    restartProven,
     runtimeShutdown: runtimeCode === 0 ? "clean" : "failed",
     isolatedProductStateRemoved,
-    runtimeTrace,
+    runtimeTrace: {
+      ...runtimeTrace,
+      acceptanceFaultInjected,
+      readyAttempts: [...readyAttempts].sort((left, right) => left - right),
+    },
     productTrace: trace,
     ...(runError ? { code: safeErrorCode(runError) } : {}),
     outputPrivacy: "no_jid_phone_message_text_token_auth_or_path",
   }, null, 2)}\n`);
   if (!passed) process.exitCode = 2;
+
+  async function runPrivateAcceptance(
+    childMode: "full" | "probe",
+  ): Promise<number> {
+    const child = spawn(
+      process.execPath,
+      ["--import", tsxImport, acceptanceScript],
+      {
+        cwd: root,
+        env: {
+          ...runtimeEnv,
+          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_CONFIRM:
+            "RUN_NONCRITICAL_WHATSAPP_PRIVATE",
+          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_ACCOUNT: "DEDICATED_TEST_ACCOUNT",
+          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_TESTER_AUTH_FOLDER:
+            paths.whatsappTesterAuth,
+          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_HARVY_JID: acceptanceHarvyJid,
+          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_HARVY_IDENTITIES:
+            JSON.stringify(harvyIdentities),
+          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_HARVY_DESTINATION:
+            harvyDestination,
+          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_MODE: childMode,
+          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_RUN_LABEL:
+            `live-${randomBytes(8).toString("hex")}`,
+          HARVY_WHATSAPP_PRIVATE_ACCEPTANCE_TIMEOUT_MS:
+            childMode === "probe" ? "30000" : "120000",
+        },
+        stdio: ["ignore", "inherit", "inherit"],
+      },
+    );
+    return waitForExit(child, ACCEPTANCE_TIMEOUT_MS);
+  }
 }
 
 async function removeIsolatedRuntimeRootWithRetry(root: string): Promise<void> {
@@ -233,9 +277,15 @@ async function removeIsolatedRuntimeRootWithRetry(root: string): Promise<void> {
   throw lastError;
 }
 
-function managedAcceptanceMode(env: NodeJS.ProcessEnv): "full" | "probe" {
-  const value = env.HARVY_WHATSAPP_PRIVATE_MANAGED_MODE?.trim() || "full";
-  if (value === "full" || value === "probe") return value;
+function managedAcceptanceMode(
+  env: NodeJS.ProcessEnv,
+): "full" | "probe" | "restart" {
+  const value = process.argv.includes("--restart")
+    ? "restart"
+    : env.HARVY_WHATSAPP_PRIVATE_MANAGED_MODE?.trim() || "full";
+  if (value === "full" || value === "probe" || value === "restart") {
+    return value;
+  }
   throw blocked("WHATSAPP_MANAGED_ACCEPTANCE_MODE_INVALID");
 }
 
@@ -323,7 +373,7 @@ function safeErrorCode(error: unknown): string {
 
 await main().catch((error: unknown) => {
   process.stdout.write(`${JSON.stringify({
-    protocol: "harvy-whatsapp-private-managed-live-acceptance/1",
+    protocol: "harvy-whatsapp-private-managed-live-acceptance/2",
     status: "blocked_or_failed",
     testedAt: new Date().toISOString(),
     code: safeErrorCode(error),

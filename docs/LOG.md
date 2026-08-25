@@ -13,6 +13,9 @@ material lama berada di:
 - [`log/2026-08-13.md`](log/2026-08-13.md)
 - [`log/2026-08-14.md`](log/2026-08-14.md)
 - [`log/2026-08-15.md`](log/2026-08-15.md)
+- [`log/2026-08-20.md`](log/2026-08-20.md)
+- [`log/2026-08-21.md`](log/2026-08-21.md)
+- [`log/2026-08-22.md`](log/2026-08-22.md)
 - [`log/2026-08-07.md`](log/2026-08-07.md)
 - [`log/2026-08-02-sampai-2026-08-06.md`](log/2026-08-02-sampai-2026-08-06.md)
 - [`log/2026-07-25-sampai-2026-08-02.md`](log/2026-07-25-sampai-2026-08-02.md)
@@ -41,11 +44,60 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
-## 2026-08-24 — Parity privat, delivery fence, dan verifikasi latest build
+## 2026-08-25 — Console mengelola credential kanal dan membuktikan session
 
-Scope: adapter Telegram/WhatsApp privat, capability dan executor agent, task/
-session delivery, consent memori, lifecycle runtime, backup lokal, evaluator
-percakapan, acceptance harness, konfigurasi, tes, invariant, dan status.
+Scope: Channel Setup, bootstrap Telegram, Console Kanal, backup lokal, dan
+credential utama/acceptance.
+
+Changed: keberadaan credential lokal tidak lagi dipromosikan menjadi kesiapan
+WhatsApp. Console menjalankan handshake bounded, membedakan session diterima,
+ditolak, dan platform tidak terjangkau, mencatat waktu tanpa identifier, serta
+membuka pemulihan saat ditolak. Refresh manual memaksa probe baru; polling
+memakai hasil lima menit agar tidak membuka socket tiap 1,5 detik.
+Token bot Telegram utama kini diverifikasi dan disimpan AES-GCM oleh Console,
+terpisah dari bot acceptance. Migrasi menulis store sebelum menghapus satu
+entri `.env` secara atomik; konflik sumber dan file link gagal tertutup.
+
+Verified: migrasi token utama nyata lulus tanpa refleksi; `.env` kini 0 entri,
+bootstrap membaca store, backup drill aktual dan smoke Edge desktop/mobile
+lulus, serta gerbang penuh 1865/1865. Probe WhatsApp nyata sebelumnya
+menunjukkan A tersimpan tetapi ditolak dan B diterima tanpa identifier/secret.
+
+Not verified: restart/delivery bot utama pascamigrasi dan journey WhatsApp B→A.
+
+## 2026-08-25 — Eksplorasi Telegram v3 dan receipt task setelah commit
+
+Scope: runner eksploratif, Telegram privat, semantic task/reminder, evidence
+content-free, dan penghapusan data journey.
+
+Changed: mode full/focused, boundary `settle`/`interrupt`, coverage marker, dan
+schema evidence v3 kini menahan klaim completion yang tidak didukung. Temuan
+live reminder satu menit yang datang terlalu awal ditelusuri ke prompt waktu
+general tanpa detik; prompt kini mempertahankan detik dan durasi relatif.
+Telegram juga menyimpan task lebih dulu lalu memberi model receipt code-owned,
+sehingga balasan bebas tidak dapat mengaku state berubah sebelum commit.
+
+Verified: journey full v3 akun Telegram nyata berjalan dua run, 13/13 turn,
+49 surface, re-entry, restart, seluruh coverage, dan cleanup. Ia tetap menemukan
+empat defect kualitas serta reminder 42,735 detik. Dua rerun focused kemudian
+membuktikan reminder 66,1 detik, menemukan false acknowledgement/task-state,
+lalu exact build berikutnya membuktikan pesan pra-consent tersimpan sebagai task,
+`/tugas` membaca state yang sama, reminder sekitar 64,6 detik setelah pemrosesan
+dilanjutkan, completion tombol, cleanup, dan shutdown bersih. Regresi terarah
+conversation+Telegram lulus 154/154.
+
+Not verified: dogfood tujuh hari, physical erasure halaman bebas SQLite,
+WhatsApp exact-tree sesudah pairing ulang Harvy A, dan crash tepat di celah
+send/receipt.
+
+Next: pair ulang WhatsApp A untuk journey B→A dan lanjutkan dogfood multi-hari.
+
+## 2026-08-24 — Parity privat, delivery fence, dan verifikasi build tanggal itu
+
+Scope: adapter Telegram/WhatsApp privat dan grup, capability dan executor agent,
+task/session delivery, consent memori, lifecycle runtime, backup lokal,
+evaluator percakapan/routing, acceptance harness, konfigurasi, tes, invariant,
+dan status.
 
 Changed: WhatsApp privat sekarang mempunyai capability personal dan coding yang
 sama dengan Telegram privat melalui UX teks kanalnya, tanpa membekukan WhatsApp
@@ -118,60 +170,84 @@ Telegram/WhatsApp; failure memakai fallback, dan check-in model tidak menerima
 goal/konteks lama. Cold smalltalk serta reminder kosong masuk reply model;
 planning AgentRun berasal dari assessment tepercaya/nonmekanis, bukan regex kata.
 Reminder juga kini ditahan saat consent AI ditarik.
+Runner exploratory privat operator-driven ditambahkan untuk Telegram dan
+WhatsApp dengan state journey terisolasi, dialog adaptif tanpa expected answer,
+assessment manual, alias surface, causal fence WhatsApp, restart, serta evidence
+content-free tervalidasi. Receipt tidak menyimpan transcript, sedangkan state
+produk journey tetap lokal dan dapat memuat percakapan uji. Journey nyata
+menemukan timeout `turn-boundary` yang salah membuka circuit primary global,
+shortcut `/hapus-data`/menu data Telegram yang sulit ditemukan, dan presentasi
+task yang menulis `tanpa tenggat` di samping reminder. Circuit dan kontrol data
+Telegram sudah diperbaiki serta direrun live; presentasi task baru teruji lokal.
+Runtime status WhatsApp kini diteruskan content-free dan startup
+`needs-operator` gagal cepat sambil menghentikan child, bukan menunggu timeout
+atau menggantung.
 Acceptance memori sekarang selalu membuktikan commit lewat `/memori`, bukan
-hanya mencocokkan gaya acknowledgement. Reset awal dan cleanup akhir WhatsApp
-memakai stanza ID berbeda agar dedupe replay produk tidak menelan cleanup kedua.
-Satu false-negative live pada preferensi cara belajar ditutup dengan instruksi
-extractor generik bahwa preferensi belajar/komunikasi yang stabil adalah
-kandidat; rerun akun nyata membuktikan write, acknowledgement, dan recall.
+hanya mencocokkan gaya acknowledgement. Satu false-negative live pada
+preferensi cara belajar ditutup dengan pemeriksaan akhir extractor yang tetap
+model-driven; tiga focus run dan full rerun akun nyata kemudian membuktikan
+write, acknowledgement, dan recall. Parser waktu kini membawa detik dan
+melarang pembulatan durasi relatif setelah “1 menit lagi” sempat dianggap sudah
+lewat. Fault mode acceptance satu kali ditambahkan pada supervisor. Runner grup
+managed membuat grup disposable dan membersihkannya; temuan duplicate replay
+menutup ingress Baileys grup dengan deduplikasi tuple scope+message ID. Evaluator
+routing kini tidak berhenti seluruhnya pada satu request provider yang gagal,
+dan drill backup ephemeral membuktikan inventaris restore exact tanpa menjadikan
+kunci sementara sebagai backup operasional.
 
-Verified: `npm run check` PASS; `npm test` PASS 1.776/1.776 dalam 221 suite;
-tes terarah Console/channel setup/live-acceptance/lock PASS 19/19; smoke setup
-localhost membuktikan session `setupOnly`, endpoint kanal 200, dashboard 404,
-response tanpa token, instance kedua ditolak `LOCAL_DATA_LOCKED`, serta shutdown
-melepas proses dan lock; `npm run context:check` PASS; dependency
-audit production PASS tanpa vulnerability; preflight Telegram acceptance gagal
-tertutup sebelum koneksi/send saat acknowledgement kosong;
-eval provider nyata PASS 60/60 (42 percakapan + 18 boundary/interruption), tanpa
-fallback/provider/execution failure; smoke build final mencapai
-`application_ready` lalu IPC `shutdown_completed`, exit bersih, tanpa proses
-Node atau runtime lock tersisa. Drill backup state terkonfigurasi PASS
-create→verify→restore 1.411 entry/3.942.048 byte, terenkripsi tanpa archive
-plaintext, lalu artifact uji dihapus. Preflight WhatsApp privat gagal tertutup
-sebelum koneksi karena konfirmasi operator belum diberikan. Smoke Microsoft
-Edge headless nyata membuktikan login, render/API tanpa exception, status kanal
-final, dan layout desktop/mobile; setelah timeout harness dibuat toleran beban,
-empat pengulangan PASS dan tidak menyisakan profile atau screenshot sementara.
-Pairing WhatsApp A Harvy uji menghasilkan material pair-success durable nyata;
-audit content-free membuktikan empat credential acceptance siap dan kedua
-identitas WhatsApp berbeda. Smoke Edge membuktikan surface siap, pengaturan
-tertutup, aksi Kelola tepat, layout desktop/mobile tanpa overflow, serta alur
-error → pulihkan → QR pengganti. Tes credential/Console/Baileys/acceptance
-terarah PASS 68/68 dan recovery PASS 23/23. Baseline penuh Telegram tepat
-sebelum perubahan consent ini lulus 8/8. Current build kemudian lulus fokus
-Telegram memory 3/3 melalui akun nyata: onboarding, preferensi belajar implicit
-tersimpan tanpa consent/tombol per-item, recall `/memori`, dan cleanup. Rerun
-penuh current build lulus tahap onboarding/menu serta task/reminder, lalu timeout
-pada timezone/session/check-in; tahap sesudahnya tidak dijadikan bukti.
-WhatsApp privat mempunyai baseline full 10/10 dari policy sebelumnya. Rerun
-managed current build meluluskan reset, onboarding/menu, task, reminder,
-sesi/check-in, auto-memory implicit beserta acknowledgement+recall, dan planning
-sekitar 16 detik dengan Anchor mutable serta kualitas 3/3/3. Run kemudian timeout
-pada stage safety nonkrisis sehingga bukan full pass; cleanup tetap lulus. Ada
-16 ingress `notify`, 28/28 delivery call berhasil tanpa pipeline/delivery
-failure, ack tertinggi `none`, runtime shutdown bersih, dan isolated state
-terhapus. Receipt content-free dan tidak membawa identifier akun.
+Verified: `npm run check` dan `npm run context:check` PASS; `npm test` PASS
+1.778/1.778 dalam 221 suite;
+tes terarah perubahan utama PASS 98/98, kontrak corpus PASS 5/5, dan jalur coding
+lokal PASS 67/67; dependency audit production menemukan 0 vulnerability.
+Console/channel setup dan smoke Edge desktop/mobile sebelumnya membuktikan empat
+credential acceptance terpisah, recovery QR, boundary localhost, serta tidak
+merefleksikan secret. Build Telegram yang diuji lulus full live 8/8 lewat akun
+MTProto nyata: onboarding/menu, task+reminder jatuh tempo, timezone+sesi+
+check-in jatuh tempo, auto-memory+recall, planning 3/3/3 dengan satu Anchor
+pin/edit/unpin, safety, ekspor, dan cleanup. Telegram fault acceptance lulus
+menu sebelum/sesudah satu crash child dan satu restart. Build WhatsApp privat
+yang diuji lulus full live 10/10 lewat tester B→Harvy A dengan 31/31 delivery,
+reminder/check-in jatuh tempo, memory, planning 3/3/3, safety, ekspor, cleanup,
+serta create/edit/delete/pin/unpin; fault acceptance lulus dua probe nyata,
+8/8 delivery, satu crash, dan satu restart. WhatsApp grup lulus delapan stage
+scope dua-akun: remove/re-add+notice, start/anchor, ambient isolation, quoted
+correction+duplicate replay, status quote, safety lane, admin cancel, dan
+cleanup; receipt tetap `passed_partial_live_scope`. Provider primary resmi
+`google-ai-studio/gemini-3.5-flash-lite` lulus native tool, thought signature,
+continuation, truncation/pressure, timeout, dan retry. Seluruh 62 kasus evaluasi
+percakapan mempunyai observasi current yang lulus lewat rerun kasus tersisa
+setelah satu 429 dan satu AbortError; ini bukan satu run uninterrupted. Routing
+A–E hanya 5/9 memenuhi seluruh sinyal. Sampel grup ambient lulus 30/30 dengan
+16 warning jangkar topik; direct 15/15 setelah dua rerun terarah dengan dua
+warning. Drill backup lulus create→verify→restore 3.588 entry/4.371.589 byte
+dari 14/18 target dan menghapus artifact. Sandbox Linux dan GitHub live sama-
+sama gagal tertutup sebelum efek karena host/konfirmasi/credential belum siap.
+Dua journey eksploratif akun nyata juga selesai tanpa naskah jawaban: WhatsApp
+18/18 giliran dengan 71 surface event dalam sekitar 16 menit dan Telegram 25/25
+dengan 77 surface event dalam sekitar 18 menit; keduanya menjalankan satu
+restart dan shutdown bersih. Completion manual keduanya `completed`, tetapi
+receipt tetap membawa defect kualitas. Rerun Telegram patch circuit/kontrol data
+mendapat response 10/10, membuktikan menu dan full deletion live, serta tidak
+mengulang dua model failure lama. Rerun WhatsApp berikutnya berhenti sebelum
+percakapan karena linked session Harvy A ditolak platform (`needs-operator`,
+reason `401`); diagnosis dan fail-fast runner terverifikasi live tanpa membuka
+identifier atau credential.
 
-Not verified: rerun penuh current-build Telegram setelah timeout timezone/
-session/check-in, full current-build WhatsApp setelah timeout safety nonkrisis,
-WhatsApp grup latest build, reconnect/interupsi burst/
-CodingRun/GitHub WhatsApp privat, interruption/reconnect Telegram, dogfood tujuh
-hari, tiga wawancara, backup eksternal/lintas mesin,
-multi-process storage, sandbox Linux non-root, atau GitHub App/push/PR nyata.
+Not verified: dogfood tujuh hari, tiga wawancara, crash tepat di antara send
+eksternal dan receipt durable, network disconnect murni, interruption di tengah
+provider/burst, konflik multi-instance, grup multi-human+assigned answer+memory,
+group-coding publish, CodingRun/GitHub remote dari kanal nyata, sandbox hostile
+Linux non-root, GitHub App/push/draft PR nyata, backup dengan kunci durable serta
+media eksternal/restore lintas mesin, kalibrasi FP/FN safety/memory, dan operasi
+publik jangka panjang. Perlu juga rerun WhatsApp sesudah pairing ulang Harvy A,
+penutupan output generik/keputusan tanpa bukti yang ditemukan eksploratif, dan
+verifikasi live presentasi reminder. Dua journey bounded bukan bukti dogfood
+tujuh hari.
 
-Next: mulai dogfood tujuh hari pada tiga surface produk, lakukan tiga wawancara,
-uji reconnect dan CodingRun/GitHub WhatsApp privat, lalu buat kunci+salinan
-backup eksternal sebelum peluncuran publik.
+Next: pair ulang WhatsApp A lalu rerun B→A, tutup defect kualitas eksploratif,
+kemudian mulai dogfood tujuh hari pada tiga surface produk dan tiga wawancara;
+siapkan host Linux, repository GitHub nonkritis, fault window send/receipt,
+peserta grup tambahan, serta backup eksternal sebelum peluncuran publik.
 
 ## 2026-08-22 — Hardening boundary provider, BYOK, dan GitHub broker
 
@@ -318,81 +394,3 @@ bahwa snapshot CURRENT 21 Agustus mendahului entri ini;
 
 Not verified: akun WhatsApp nyata, reconnect/delivery live, banyak nomor nyata,
 provider/model live, dan parity surface khusus Telegram.
-
-## 2026-08-21 — Fondasi Harvy Compute dan funding resolver
-
-Scope: plan policy, economy/runtime funding, billing/usage UX, Telegram,
-WhatsApp, Console, config, tests, dan dokumentasi paket.
-
-Changed: allowance fixed-point dipisahkan dari RunBudget dan physical-cost
-ledger. Request memakai reservation dan delivery settlement dengan funding
-included/sponsored/PAYG-consent/BYOK/safety-exempt. Stable plan IDs dan quality
-ceiling dipertahankan. Wallet, subscription, Commons, payment interface,
-encrypted BYOK store, operator view, dan `/penggunaan` owner-scoped tanpa model
-ditambahkan; token legacy tetap overlay tanpa rewrite historis. Dashboard
-memisahkan physical cost dari settlement, memakai snapshot cache historis, dan
-menolak disclosure grup. Persentase allowance dashboard kini memakai basis
-points `BigInt`; usage/reservation sekecil apa pun tidak lagi terlihat `100%`.
-
-Verified: targeted economy/dashboard/channel PASS (112/112); `npm run check`
-dan `npm run build` PASS; `npm test` PASS (1.520 test dalam 194 suite, 0
-gagal); `npm run context:check` PASS.
-
-Not verified: payment provider production, signed webhook/reconciliation live,
-secret rotation/KMS, dan `/penggunaan` pada akun Telegram/WhatsApp live.
-
-## 2026-08-22 — Long-term memory, `/memori`, dan explicit remember
-
-Scope: memory/history/learning core, Telegram+group adapter, project memory,
-data control, policy, tes, ADR-006/043, serta Constitution v0.6.
-
-Changed: potret `/memori` tetap bounded dan bukan canonical source; natural
-edit/forget tetap memakai cascade. Perintah explicit remember kini menjadi
-consent item-spesifik setelah signal understanding dan guard raw user turn
-sama-sama cocok; personal memory langsung ditulis tanpa consent kedua, tetapi
-cerita implicit tetap bertoken. Negasi/retrieval/reminder, candidate lain, dan
-scope lain tidak mendapat authority. Credential ditolak lagi oleh primary,
-group, dan project memory service. Acknowledgment hanya mengaku ingat setelah
-write atau duplicate terbukti. Receipt hasil commit dibawa ke penyusun balasan
-agar Harvy mengakuinya di dalam jawaban utama yang mengikuti konteks, bukan
-lewat template atau log memory kedua. `📍` bersifat opsional untuk save/update,
-sedangkan `💭` hanya untuk recall; beberapa write dalam satu turn disintesis
-menjadi satu pengalaman.
-
-Verified: targeted acknowledgement/explicit/Telegram/group 223/223 PASS;
-`npm run check` PASS; `npm test` PASS 1.575/1.575 dalam 199 suite; `npm run
-context:check` PASS; `git diff --check` PASS selain warning line-ending Windows.
-
-Not verified: provider/model atau Telegram/WhatsApp live, multi-node storage,
-dan kualitas recall guard pada ragam bahasa di luar fixture.
-
-## 2026-08-20 — Routing role dan bounded orchestration
-
-Scope: understanding/global routing, model role/config/profile, execution
-policy, Agent Runtime delegation, handoff/resource/discovery contract, tes, dan
-ADR-041.
-
-Changed: assessment semantic tertutup kini membedakan mechanical/normal/deep,
-nuansa, planning, stakes, size, serta tool need; panjang 280 karakter tinggal
-fallback legacy. Ordinary chat berbicara lewat everyday role dan deep chat lewat
-orkestrator langsung. Tier accounting tetap kompatibel sementara role dapat
-diikat ke exact model lewat config. Specialist one-hop memakai WorkBrief/
-AgentHandoff tanpa reasoning privat, authorization default-deny, context-free
-delegation, dan batas dua aksi; production tetap default-off. Execution effort
-dapat naik dari difficulty/stakes/uncertainty. Resource grant dan capability
-discovery ditambahkan sebagai primitive code-owned yang belum dirangkai ke
-RunBudget/planner aktif. `toughest`, selective safety, dan continuation tidak
-diubah. Entri LOG terlama dipindah utuh ke arsip 2026-08-09 sesuai batas ukuran.
-
-Verified: tes terarah 229/229 PASS; `npm run check` PASS; `npm test` PASS,
-1.448 test dalam 187 suite, 0 gagal; `npm run context:check` PASS;
-`git diff --check` PASS selain peringatan line-ending Windows.
-
-Not verified: provider/model atau Telegram/WhatsApp live, kualitas corpus
-routing nyata, latency/token/cost production, specialist production, adaptive
-reserve runtime, progressive schema retrieval, connection/OAuth, dan capability
-acquisition/sandbox pihak ketiga.
-
-Next: evaluasi assessment pada corpus tanpa menambah call ordinary; kemudian
-rangkai resource reserve dan specialist hanya bersama privacy/objective policy
-serta telemetry outcome content-free.

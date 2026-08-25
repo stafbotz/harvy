@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
 import { resolve } from "node:path";
 import makeWASocket, {
+  isJidGroup,
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
@@ -66,7 +67,7 @@ async function main(): Promise<void> {
     for (const raw of event.messages) {
       if (
         raw.key.remoteJid !== config.groupJid ||
-        !participantMatches(raw, config.harvyJid)
+        !participantMatches(raw, config.harvyIdentities)
       ) continue;
       const text = messageText(raw);
       if (!text) continue;
@@ -80,12 +81,24 @@ async function main(): Promise<void> {
   try {
     await waitForOpen(socket, config.stageTimeoutMs);
     const metadata = await socket.groupMetadata(config.groupJid);
-    const self = jidNormalizedUser(socket.user?.id ?? "");
-    if (!self || !metadata.participants.some((item) =>
-      jidNormalizedUser(item.id) === self && (item.admin === "admin" || item.admin === "superadmin")
+    const selfIdentities = new Set([
+      ...config.testerIdentities,
+      socket.user?.id ?? "",
+      socket.user?.lid ?? "",
+    ].filter(Boolean).map(jidNormalizedUser));
+    if (selfIdentities.size === 0 || !metadata.participants.some((item) =>
+      [item.id, item.lid, item.phoneNumber].some((identity) =>
+        Boolean(identity) && selfIdentities.has(
+          jidNormalizedUser(identity ?? ""),
+        )
+      ) && (item.admin === "admin" || item.admin === "superadmin")
     )) throw blocked("WHATSAPP_LIVE_ACCEPTANCE_TESTER_MUST_BE_GROUP_ADMIN");
     initiallyPresent = metadata.participants.some((item) =>
-      jidNormalizedUser(item.id) === config.harvyJid
+      [item.id, item.lid, item.phoneNumber].some((identity) =>
+        Boolean(identity) && config.harvyIdentities.includes(
+          jidNormalizedUser(identity ?? ""),
+        )
+      )
     );
     if (!initiallyPresent) {
       throw blocked("WHATSAPP_LIVE_ACCEPTANCE_HARVY_NOT_IN_TEST_GROUP");
@@ -99,7 +112,13 @@ async function main(): Promise<void> {
         "remove",
       );
       removed = true;
-      await waitForMembership(socket, config.groupJid, config.harvyJid, false, config.stageTimeoutMs);
+      await waitForMembership(
+        socket,
+        config.groupJid,
+        config.harvyIdentities,
+        false,
+        config.stageTimeoutMs,
+      );
       const before = messages.length;
       await socket.sendMessage(config.groupJid, {
         text: `[${config.runLabel}] ambient while Harvy is removed`,
@@ -119,7 +138,13 @@ async function main(): Promise<void> {
         "add",
       );
       removed = false;
-      await waitForMembership(socket, config.groupJid, config.harvyJid, true, config.stageTimeoutMs);
+      await waitForMembership(
+        socket,
+        config.groupJid,
+        config.harvyIdentities,
+        true,
+        config.stageTimeoutMs,
+      );
       const notice = await waitForHarvy(
         messages,
         waiters,
@@ -134,7 +159,7 @@ async function main(): Promise<void> {
     await stage(stages, "exact_start_and_anchor", async () => {
       const startedAt = Date.now();
       await socket.sendMessage(config.groupJid, {
-        text: `Harvy, mulai pekerjaan: acceptance ${config.runLabel}; susun tiga langkah aman lalu tunggu koreksi`,
+        text: `Harvy, mulai pekerjaan: audit acceptance ${config.runLabel}; sebelum mengerjakan, wajib tanyakan apakah fokusnya reminder atau privasi dan jangan lanjut sebelum saya memilih`,
         mentions: [config.harvyJid],
       });
       anchor = await waitForHarvy(
@@ -179,12 +204,13 @@ async function main(): Promise<void> {
         messages,
         waiters,
         startedAt,
-        (text) => /diterapkan|koreksi|masukan.*pekerjaan/iu.test(text),
+        isAppliedGroupRunAcknowledgement,
         config.stageTimeoutMs,
       );
       await delay(AMBIENT_OBSERVATION_MS);
       const matching = messages.filter((item) =>
-        item.receivedAt >= startedAt && /diterapkan|koreksi|masukan.*pekerjaan/iu.test(item.text)
+        item.receivedAt >= startedAt &&
+        isAppliedGroupRunAcknowledgement(item.text)
       );
       if (matching.length !== 1) throw new Error("DUPLICATE_REPLAY_NOT_IDEMPOTENT");
       return digestMessage(acknowledgement);
@@ -259,7 +285,7 @@ async function main(): Promise<void> {
     }, null, 2));
     // A partial scope is useful evidence but must never be mistaken for the
     // full live matrix required by the architecture spec.
-    process.exitCode = 2;
+    if (!config.managedPartialScope) process.exitCode = 2;
   } finally {
     if (removed && initiallyPresent) {
       await socket.groupParticipantsUpdate(
@@ -293,8 +319,27 @@ async function stage(
       durationMs: Date.now() - started,
       evidenceDigest: null,
     });
-    throw error;
+    const cause = safeErrorCode(error);
+    throw blocked(
+      `${cause}_AT_${name.toUpperCase()}`.slice(0, 160),
+    );
   }
+}
+
+function safeErrorCode(error: unknown): string {
+  if (
+    error instanceof Error && "code" in error &&
+    typeof (error as Error & { code?: unknown }).code === "string" &&
+    /^[A-Z0-9_]{1,120}$/u.test(
+      (error as Error & { code: string }).code,
+    )
+  ) {
+    return (error as Error & { code: string }).code;
+  }
+  if (error instanceof Error && /^[A-Z0-9_]{1,120}$/u.test(error.message)) {
+    return error.message;
+  }
+  return "WHATSAPP_LIVE_ACCEPTANCE_FAILED";
 }
 
 async function acceptanceConfig(env: NodeJS.ProcessEnv) {
@@ -307,7 +352,7 @@ async function acceptanceConfig(env: NodeJS.ProcessEnv) {
     throw blocked("WHATSAPP_LIVE_ACCEPTANCE_AUTH_FOLDER_INVALID");
   }
   const groupJid = required(env, "HARVY_WHATSAPP_ACCEPTANCE_GROUP_JID");
-  if (!/^\d{5,30}-\d{5,30}@g\.us$/u.test(groupJid)) {
+  if (!isJidGroup(groupJid) || !/^[0-9-]{5,80}@g\.us$/u.test(groupJid)) {
     throw blocked("WHATSAPP_LIVE_ACCEPTANCE_GROUP_JID_INVALID");
   }
   const harvyJid = jidNormalizedUser(required(env, "HARVY_WHATSAPP_ACCEPTANCE_HARVY_JID"));
@@ -324,7 +369,79 @@ async function acceptanceConfig(env: NodeJS.ProcessEnv) {
   if (!Number.isSafeInteger(stageTimeoutMs) || stageTimeoutMs < 5_000 || stageTimeoutMs > 180_000) {
     throw blocked("WHATSAPP_LIVE_ACCEPTANCE_TIMEOUT_INVALID");
   }
-  return { authFolder, groupJid, harvyJid, runLabel, stageTimeoutMs };
+  const harvyIdentities = acceptanceIdentities(
+    env.HARVY_WHATSAPP_ACCEPTANCE_HARVY_IDENTITIES,
+    harvyJid,
+  );
+  const testerIdentities = optionalIdentities(
+    env.HARVY_WHATSAPP_ACCEPTANCE_TESTER_IDENTITIES,
+  );
+  const managedPartialScope =
+    env.HARVY_WHATSAPP_ACCEPTANCE_MANAGED_SCOPE ===
+      "DISPOSABLE_PARTIAL_GROUP";
+  return {
+    authFolder,
+    groupJid,
+    harvyJid,
+    harvyIdentities,
+    testerIdentities,
+    runLabel,
+    stageTimeoutMs,
+    managedPartialScope,
+  };
+}
+
+function optionalIdentities(value: string | undefined): string[] {
+  if (!value?.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw blocked("WHATSAPP_LIVE_ACCEPTANCE_TESTER_IDENTITIES_INVALID");
+  }
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 4) {
+    throw blocked("WHATSAPP_LIVE_ACCEPTANCE_TESTER_IDENTITIES_INVALID");
+  }
+  const identities = new Set<string>();
+  for (const item of parsed) {
+    if (typeof item !== "string" || item.length > 160) {
+      throw blocked("WHATSAPP_LIVE_ACCEPTANCE_TESTER_IDENTITIES_INVALID");
+    }
+    const normalized = jidNormalizedUser(item);
+    if (!/^\d{5,20}@(s\.whatsapp\.net|lid)$/u.test(normalized)) {
+      throw blocked("WHATSAPP_LIVE_ACCEPTANCE_TESTER_IDENTITIES_INVALID");
+    }
+    identities.add(normalized);
+  }
+  return [...identities];
+}
+
+function acceptanceIdentities(value: string | undefined, pnJid: string): string[] {
+  if (!value?.trim()) return [pnJid];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw blocked("WHATSAPP_LIVE_ACCEPTANCE_HARVY_IDENTITIES_INVALID");
+  }
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 4) {
+    throw blocked("WHATSAPP_LIVE_ACCEPTANCE_HARVY_IDENTITIES_INVALID");
+  }
+  const identities = new Set<string>();
+  for (const item of parsed) {
+    if (typeof item !== "string" || item.length > 160) {
+      throw blocked("WHATSAPP_LIVE_ACCEPTANCE_HARVY_IDENTITIES_INVALID");
+    }
+    const normalized = jidNormalizedUser(item);
+    if (!/^\d{5,20}@(s\.whatsapp\.net|lid)$/u.test(normalized)) {
+      throw blocked("WHATSAPP_LIVE_ACCEPTANCE_HARVY_IDENTITIES_INVALID");
+    }
+    identities.add(normalized);
+  }
+  if (!identities.has(pnJid)) {
+    throw blocked("WHATSAPP_LIVE_ACCEPTANCE_HARVY_IDENTITIES_INVALID");
+  }
+  return [...identities];
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -361,7 +478,7 @@ function waitForOpen(socket: WASocket, timeoutMs: number): Promise<void> {
 async function waitForMembership(
   socket: WASocket,
   groupJid: string,
-  participantJid: string,
+  participantIdentities: readonly string[],
   present: boolean,
   timeoutMs: number,
 ): Promise<void> {
@@ -369,7 +486,11 @@ async function waitForMembership(
   while (Date.now() < deadline) {
     const metadata = await socket.groupMetadata(groupJid);
     const observed = metadata.participants.some((item) =>
-      jidNormalizedUser(item.id) === participantJid
+      [item.id, item.lid, item.phoneNumber].some((identity) =>
+        Boolean(identity) && participantIdentities.includes(
+          jidNormalizedUser(identity ?? ""),
+        )
+      )
     );
     if (observed === present) return;
     await delay(1_000);
@@ -407,10 +528,17 @@ async function waitForHarvy(
   throw new Error("WHATSAPP_LIVE_ACCEPTANCE_EXPECTED_RESPONSE_TIMEOUT");
 }
 
-function participantMatches(message: WAMessage, jid: string): boolean {
-  const participant = message.key.participant ?? message.participant;
-  return !message.key.fromMe && Boolean(participant) &&
-    jidNormalizedUser(participant!) === jid;
+function participantMatches(
+  message: WAMessage,
+  identities: readonly string[],
+): boolean {
+  const key = message.key as typeof message.key & {
+    participantAlt?: string | null;
+  };
+  return !message.key.fromMe &&
+    [key.participant, key.participantAlt, message.participant].some((value) =>
+      Boolean(value) && identities.includes(jidNormalizedUser(value ?? ""))
+    );
 }
 
 function messageText(message: WAMessage): string {
@@ -433,6 +561,11 @@ function messageText(message: WAMessage): string {
     break;
   }
   return "";
+}
+
+function isAppliedGroupRunAcknowledgement(text: string): boolean {
+  return /inputmu\s+sudah\s+terikat\s+ke\s+pekerjaan\s+grup\s+yang\s+aktif/iu
+    .test(text);
 }
 
 function digestMessage(message: CapturedMessage): string {
@@ -477,12 +610,7 @@ function blocked(code: string): Error {
 }
 
 await main().catch((error: unknown) => {
-  const code = error instanceof Error && "code" in error &&
-      typeof (error as Error & { code?: unknown }).code === "string"
-    ? (error as Error & { code: string }).code
-    : error instanceof Error && /^[A-Z0-9_]{1,160}$/u.test(error.message)
-      ? error.message
-      : "WHATSAPP_LIVE_ACCEPTANCE_FAILED";
+  const code = safeErrorCode(error);
   console.log(JSON.stringify({
     protocol: "harvy-whatsapp-live-acceptance/1",
     status: "blocked_or_failed",

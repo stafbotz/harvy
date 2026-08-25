@@ -101,7 +101,10 @@ import { MarkdownMemoryRepository } from "./storage/markdown-memory-repository.j
 import { FileMemoryKnowledgeRepository } from "./storage/file-memory-knowledge-repository.js";
 import { SqliteLongTermMemoryRepository } from "./storage/sqlite-long-term-memory-repository.js";
 import { FileTaskRepository } from "./storage/file-task-repository.js";
-import { BaileysAccountManager } from "./whatsapp/baileys-account-manager.js";
+import {
+  BaileysAccountManager,
+  type WhatsAppAccountStatus,
+} from "./whatsapp/baileys-account-manager.js";
 import {
   parseWhatsAppPrivateChatId,
   WhatsAppPrivateConversation,
@@ -646,7 +649,8 @@ whatsapp = config.whatsapp.enabled
             if (run) groupAgentRunWorker?.interrupt(run.runId);
           });
       },
-      onStatus: (accountId, status) => {
+      onStatus: (accountId, status, reason) => {
+        notifySupervisorChannelStatus("whatsapp", accountId, status, reason);
         if (status !== "open") return;
         notifySupervisorChannelReady("whatsapp", accountId);
         void whatsappPrivate?.resumeAgentRuns(accountId).catch(
@@ -1076,6 +1080,8 @@ const agentRunRetention = startAgentRunRetentionWorker(
 
 const channelSetup = config.controlPlane.console.enabled
   ? new ChannelSetupService({
+      primaryRuntimeActive: true,
+      primaryTelegramRuntimeToken: config.telegramBotToken,
       primaryChannels: {
         telegram: { declared: Boolean(config.telegramBotToken) },
         whatsapp: {
@@ -1576,6 +1582,31 @@ function notifySupervisorChannelReady(
       type: "harvy-runtime-channel-ready",
       channel,
       accountId,
+    });
+  } catch {
+    // Parent sudah berhenti; lifecycle child tetap ditangani signal dan exit.
+  }
+}
+
+function notifySupervisorChannelStatus(
+  channel: "whatsapp",
+  accountId: string,
+  status: WhatsAppAccountStatus,
+  reason?: number,
+): void {
+  if (
+    process.env.HARVY_RUNTIME_SUPERVISOR !== "1" ||
+    typeof process.send !== "function"
+  ) {
+    return;
+  }
+  try {
+    process.send({
+      type: "harvy-runtime-channel-status",
+      channel,
+      accountId,
+      status,
+      reason: Number.isSafeInteger(reason) ? reason : null,
     });
   } catch {
     // Parent sudah berhenti; lifecycle child tetap ditangani signal dan exit.

@@ -47,6 +47,12 @@ export interface ExtractedTask {
 export interface ExtractedMemory {
   kind: MemoryKind;
   content: string;
+  /** Exact span dari current user turn yang mendasari kandidat model. */
+  sourceEvidence?: string;
+  /** Siapa/apa yang dijelaskan span tersebut; bukan owner storage. */
+  sourceSubject?: "self" | "other" | "work";
+  /** Horizon makna menurut extractor; `transient` tidak layak auto-memory. */
+  durability?: "durable" | "bounded" | "transient";
   /** Diisi adapter dari HistoryService; model/parser tidak boleh menentukannya. */
   sourceSequences?: number[];
   /** Diisi policy privasi lokal; model/parser tidak boleh menentukannya. */
@@ -127,6 +133,8 @@ const MEMORY_ACTIONS: readonly MemoryAction[] = [
   "edit",
   "remember",
 ];
+const MEMORY_SOURCE_SUBJECTS = ["self", "other", "work"] as const;
+const MEMORY_DURABILITIES = ["durable", "bounded", "transient"] as const;
 const CONTROL_ACTIONS: readonly ControlAction[] = [
   "data",
   "timezone",
@@ -184,12 +192,19 @@ export function parseUnderstanding(raw: string): Understanding | null {
   const memories = readMemories(payload["memories"]);
   let intent = readIntent(payload["intent"]);
   if (!intent) return null;
+  const semanticOperation = parseSemanticOperation(
+    payload["semanticOperation"],
+  );
 
-  // Hanya dua kombinasi yang boleh membawa tugas keluar dari parser. Hal ini
-  // mencegah objek kontradiktif seperti request+offer memicu tombol tugas pada
-  // adapter, serta mencegah task tanpa izin eksplisit tersimpan.
+  // Task baru hanya boleh keluar bersama aksi save. Perubahan task tersimpan
+  // membawa payload jadwal tanpa aksi save agar tidak pernah berubah menjadi
+  // pembuatan task kedua; authority update tetap diverifikasi adapter terhadap
+  // pesan asli sebelum mutasi apa pun dilakukan.
   if (intent === "task") {
-    if (taskAction !== "save" || !task) {
+    const isUpdatePayload = taskAction === null && task !== null &&
+      semanticOperation?.domain === "task" &&
+      semanticOperation.operation === "update";
+    if ((taskAction !== "save" && !isUpdatePayload) || !task) {
       taskAction = null;
       task = null;
     }
@@ -230,10 +245,6 @@ export function parseUnderstanding(raw: string): Understanding | null {
     payload["safetySensitive"] === true,
   );
   if (!riskHint) return null;
-  const semanticOperation = parseSemanticOperation(
-    payload["semanticOperation"],
-  );
-
   return {
     intent,
     taskAction,
@@ -413,7 +424,22 @@ function readMemories(value: unknown): ExtractedMemory[] {
     // Menebak ke arah yang lebih longgar berarti menyimpan diam-diam sesuatu
     // yang mungkin sensitif; menebak ke arah yang lebih ketat hanya membuat
     // Harvy bertanya dulu.
-    memories.push({ kind: kind ?? "personal", content });
+    const sourceEvidence = readShortText(entry["sourceEvidence"], 500);
+    const sourceSubject = readClosedLabel(
+      entry["sourceSubject"],
+      MEMORY_SOURCE_SUBJECTS,
+    );
+    const durability = readClosedLabel(
+      entry["durability"],
+      MEMORY_DURABILITIES,
+    );
+    memories.push({
+      kind: kind ?? "personal",
+      content,
+      ...(sourceEvidence ? { sourceEvidence } : {}),
+      ...(sourceSubject ? { sourceSubject } : {}),
+      ...(durability ? { durability } : {}),
+    });
   }
 
   return memories;

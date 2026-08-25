@@ -1,7 +1,8 @@
 # Status — Safety dan Privacy
 
-Refreshed: 24 Agustus 2026 pada authority auto-memory privat dan probe
-model nyata. Angka gerbang penuh terbaru dicatat di `docs/LOG.md`. Untuk
+Refreshed: 25 Agustus 2026 pada auto-memory, safety live lintas kanal, probe
+model nyata, dan verifikasi cleanup journey. Angka gerbang penuh terbaru
+dicatat di `docs/LOG.md`. Untuk
 perubahan di area ini, baca bagian Constitution dan invariant yang relevan
 sebelum mengubah kontraknya.
 
@@ -81,27 +82,34 @@ sebelum mengubah kontraknya.
   lihat/koreksi/hapus membuatnya dapat diaudit pengguna, tetapi tidak menjamin
   akurasi. Jangan mengklaim semua fakta penting pasti menjadi kandidat atau
   false-positive/false-negative sudah terukur. Credential tetap hard-excluded.
-- Evaluasi provider nyata terbaru lulus 60/60: 42 kasus percakapan dan 18 kasus
-  boundary/interruption tanpa fallback atau kegagalan provider. Di dalamnya,
-  cerita biasa/putus cinta tetap pada dukungan proporsional, sedangkan self-harm
-  dan kekerasan akut masuk jalur bahaya. Corpus ini adalah sampel regresi, bukan
-  pengukuran false-positive/false-negative yang terkalibrasi. Baseline sebelum
-  perubahan policy memori pernah meloloskan skenario nonkrisis tersimulasi pada
-  Telegram dan WhatsApp nyata. Rerun WhatsApp current build 24 Agustus menerima
-  beberapa surface respons tetapi timeout pada predicate stage tersebut;
-  Telegram current full belum mencapainya. Karena itu safety live current build
-  belum lulus dan baseline lama tidak boleh dipromosikan menjadi bukti current,
-  penanganan krisis manusia nyata, atau angka FP/FN.
+- Baseline evaluator provider sebelumnya lulus 60/60. Corpus current bertambah
+  dua kasus memori; seluruh 62 kasus akhirnya lulus tanpa quality failure,
+  termasuk support, self-harm, kekerasan, dan kedua kandidat memori. Bukti ini
+  berasal dari tiga batch rate-controlled: run awal sempat menerima satu HTTP
+  429 dan rerun berikutnya satu AbortError, lalu hanya kasus yang belum terbukti
+  diulang. Jadi ini coverage 62/62 current, bukan satu run uninterrupted.
+- Build full-acceptance 24 Agustus pada Telegram dan WhatsApp privat masing-masing meluluskan
+  skenario safety nonkrisis melalui akun nyata. Scope grup dua-akun juga
+  meluluskan emergency signal dan membuktikan respons safety tidak masuk work
+  lane. Semua memakai kalimat acceptance eksplisit, bukan krisis manusia nyata;
+  hasil ini bukan angka false-positive/false-negative terkalibrasi.
 - Emergency preflight bersifat closed-set pada batching Telegram privat dan
   WhatsApp grup; jangan menganggap hasil negatif sebagai bukti aman. Grup baru
   tetap harus menyelesaikan notice sebelum ACK/model.
 - Nomor/saluran bantuan selain copy deterministik dapat berasal dari model dan
   harus tetap melewati review.
 - Pending bubble pra-consent masih in-memory dan dapat hilang saat restart.
-- Adaptive timing, selective safety, dan emergency ACK grup belum diuji pada
-  grup WhatsApp nyata.
+- Satu emergency flow grup sudah diuji nyata; adaptive timing, selective safety
+  ragam luas, latency ACK, dan false-negative bahasa natural tetap belum diuji.
 - Tidak ada account linking; data tidak boleh digabung lintas kanal dari nama,
   nomor, atau identifier yang tampak sama.
+- Cleanup full exploratory v3 membuktikan seluruh payload canonical JSON,
+  tabel memori utama, dan hasil pencarian FTS kosong; satu blocked generation
+  tombstone tetap ada untuk mencegah late extractor menghidupkan data kembali.
+  Ini membuktikan penghapusan logis, bukan sanitasi byte fisik: repository
+  SQLite belum mengaktifkan `secure_delete` atau menjalankan `VACUUM`, sehingga
+  residu pada free page belum diuji secara forensik. Jangan mengklaim file
+  SQLite bebas data lama sampai kontrak physical erasure ditentukan dan diuji.
 
 ## Bukti dan pointer
 

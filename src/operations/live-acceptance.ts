@@ -87,6 +87,7 @@ export interface IsolatedRuntimeEnvironmentOptions {
     authRoot: string;
     accountAlias: string;
     phoneNumber: string;
+    messageScope?: string;
   };
 }
 
@@ -339,8 +340,10 @@ export function isolatedRuntimeEnvironment(
   const env: NodeJS.ProcessEnv = { ...source };
   for (const name of ISOLATED_STATE_VARIABLES) delete env[name];
   for (const name of UNNEEDED_SECRET_VARIABLES) delete env[name];
+  delete env.HARVY_LIVE_EXPLORATION_MESSAGE_SCOPE;
 
   env.TELEGRAM_BOT_TOKEN = botToken(options.telegramBotToken);
+  env.HARVY_TELEGRAM_TOKEN_EPHEMERAL = "live-acceptance-v1";
   env.APP_ENV = "development";
   env.RELEASE_SHA = "live-acceptance";
   env.LOG_CONSOLE = "false";
@@ -360,6 +363,13 @@ export function isolatedRuntimeEnvironment(
     env.WHATSAPP_PAIRING_MODE = "qr";
     env.WHATSAPP_AUTH_FOLDER = resolve(options.whatsapp.authRoot);
     env.WHATSAPP_ACCOUNTS = JSON.stringify([{ id: alias, phoneNumber }]);
+    if (options.whatsapp.messageScope !== undefined) {
+      if (!/^HARVYEXP[A-F0-9]{12}$/u.test(options.whatsapp.messageScope)) {
+        throw new Error("LIVE_EXPLORATION_WHATSAPP_SCOPE_INVALID");
+      }
+      env.HARVY_LIVE_EXPLORATION_MESSAGE_SCOPE =
+        options.whatsapp.messageScope;
+    }
   } else {
     env.WHATSAPP_ENABLED = "false";
     env.WHATSAPP_PRIVATE_ENABLED = "false";

@@ -150,6 +150,24 @@ describe("Run Anchor", () => {
     assert.match(rendered, /tidak dapat dipastikan/iu);
     assert.match(rendered, /tidak akan mengirim ulang otomatis/iu);
   });
+
+  it("menjelaskan batas pemakaian singkat secara jujur", () => {
+    const run = activeRun({
+      status: "failed",
+      phase: "failed",
+      completedAt: "2026-08-09T05:02:00.000Z",
+      lastError: {
+        stage: "planning",
+        code: "usage_anti_abuse",
+        at: "2026-08-09T05:02:00.000Z",
+      },
+    });
+
+    const rendered = renderRunAnchor(run);
+    assert.match(rendered, /batas pemakaian singkat/iu);
+    assert.match(rendered, /task dan percakapanmu tetap tersimpan/iu);
+    assert.doesNotMatch(rendered, /hasil.*dapat dipercaya/iu);
+  });
 });
 
 function activeRun(

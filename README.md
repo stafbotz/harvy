@@ -134,7 +134,6 @@ Copy-Item .env.example .env
 Mode testing adalah titik awal yang paling sederhana:
 
 ~~~dotenv
-TELEGRAM_BOT_TOKEN=isi_token_dari_BotFather
 AI_MODE=testing
 GOOGLE_AI_STUDIO_API_KEYS=isi_kunci_di_sini
 AI_MODEL_TESTING=isi_id_model_di_sini
@@ -152,7 +151,22 @@ Daftar lengkap variabel, default, retensi, harga, dan lokasi berkas ada di
 [<code>.env.example</code>](.env.example). Jangan commit <code>.env</code>,
 token, atau folder autentikasi WhatsApp.
 
-### 3. Jalankan Harvy
+### 3. Atur bot Telegram utama
+
+Token BotFather tidak lagi diletakkan di <code>.env</code>. Buka Console setup:
+
+~~~bash
+npm run console:setup
+~~~
+
+Di bagian **Harvy utama**, masukkan token bot Telegram utama. Console
+memverifikasinya langsung ke Telegram lalu menyimpan ciphertext dan kunci lokal
+di <code>secrets/</code>; nilainya tidak dapat dibaca kembali dari browser. Jika
+instalasi lama masih memiliki <code>TELEGRAM_BOT_TOKEN</code> di
+<code>.env</code>, gunakan aksi migrasi yang tampil agar Console menyimpan secret
+lebih dulu lalu menghapus baris legacy tersebut.
+
+### 4. Jalankan Harvy
 
 ~~~bash
 npm run dev

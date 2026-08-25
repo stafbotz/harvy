@@ -12,15 +12,49 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import type { AppConfig } from "../src/config.js";
+import type { CodingRuntimeDeploymentConfig } from "../src/core/coding-runtime-composition.js";
 import { acquireLocalRuntimeLock } from "../src/core/local-runtime-lock.js";
 import {
   createLocalBackup,
+  createRuntimeBackupPlan,
   restoreLocalBackup,
   verifyLocalBackup,
   type LocalBackupPlan,
 } from "../src/operations/local-backup.js";
+import { primaryChannelCredentialPaths } from "../src/operations/primary-channel-credentials.js";
 
 describe("backup lokal terenkripsi", () => {
+  it("memasukkan key dan ciphertext credential kanal utama sebagai slot terpisah", () => {
+    const root = join(tmpdir(), "harvy-runtime-backup-plan");
+    const primaryPaths = primaryChannelCredentialPaths(root);
+    const plan = createRuntimeBackupPlan(
+      minimalRuntimeConfig(root),
+      { enabled: false, stateRoot: null } as CodingRuntimeDeploymentConfig,
+      { primaryCredentialPaths: primaryPaths },
+    );
+
+    assert.deepEqual(
+      plan.targets.filter((target) => target.id.startsWith("primary-channel")),
+      [
+        {
+          id: "primary-channel-credential-key",
+          kind: "file",
+          sourcePath: primaryPaths.keyFile,
+          environmentVariable: null,
+          classification: "credentials",
+        },
+        {
+          id: "primary-channel-credentials",
+          kind: "file",
+          sourcePath: primaryPaths.secretFile,
+          environmentVariable: null,
+          classification: "credentials",
+        },
+      ],
+    );
+  });
+
   it("membuat, mengautentikasi, dan memulihkan seluruh slot tanpa plaintext", async () => {
     const root = await mkdtemp(join(tmpdir(), "harvy-local-backup-"));
     const state = join(root, "state");
@@ -167,6 +201,31 @@ describe("backup lokal terenkripsi", () => {
     }
   });
 });
+
+function minimalRuntimeConfig(root: string): AppConfig {
+  const file = (name: string): string => join(root, `${name}.json`);
+  return {
+    dataFile: file("tasks"),
+    memoryFile: file("legacy-memories"),
+    memoryFolder: join(root, "memories"),
+    historyFile: file("history"),
+    longTermMemoryFile: join(root, "long-term.sqlite"),
+    profileFile: file("profiles"),
+    sessionFile: file("sessions"),
+    agentRunFile: file("agent-runs"),
+    telemetryFile: file("telemetry"),
+    controlPlane: {
+      file: file("control-plane"),
+      usageLedgerFile: file("usage-ledger"),
+      entitlementLedgerFile: file("entitlement-ledger"),
+      economy: null,
+    },
+    whatsapp: {
+      authFolder: join(root, "whatsapp-auth"),
+      groupFile: file("whatsapp-groups"),
+    },
+  } as unknown as AppConfig;
+}
 
 function fixturePlan(root: string, excluded?: string): LocalBackupPlan {
   const state = join(root, "state");

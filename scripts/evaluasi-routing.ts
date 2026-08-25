@@ -1,5 +1,6 @@
 import { resolveModel } from "../src/ai/model-policy.js";
 import { resolveModelProfile } from "../src/ai/model-profile.js";
+import { AiError, AiResponseError } from "../src/ai/client.js";
 import { loadConfig } from "../src/config.js";
 import { ExecutionPolicy } from "../src/core/execution-policy.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
@@ -22,7 +23,7 @@ const client = await createInstrumentedAiClient(
 );
 const model = resolveModel("ambitious", config.ai);
 const profile = resolveModelProfile("ambitious", config.ai);
-const maxOutputTokens = Math.min(768, profile?.maxOutputTokens ?? 768);
+const maxOutputTokens = Math.min(4_096, profile?.maxOutputTokens ?? 4_096);
 const policy = new ExecutionPolicy();
 
 const jobs = selectedCases.flatMap((testCase) =>
@@ -49,50 +50,77 @@ async function evaluate(job: {
   variant: RoutingEvalVariant;
 }) {
   const envelope = buildRoutingEvalEnvelope(job.testCase, job.variant);
-  const execution = policy.decide({
-    tier: "ambitious",
-    role: "synthesizer",
-    workClass: "agent",
-    profile,
-    maxOutputTokens,
-    deadlineMs: 60_000,
-    promptMaterial: envelope.promptMaterial,
-  });
-  const response = await client.complete({
-    model,
-    temperature: 0,
-    maxTokens: execution.maxOutputTokens,
-    execution,
-    messages: [{ role: "user", content: envelope.prompt }],
-    usage: {
-      ownerId: "evaluation-routing",
-      channel: "system",
-      subjectKind: "private",
+  try {
+    const execution = policy.decide({
       tier: "ambitious",
-      purpose: "research",
-      safetyCritical: false,
-    },
-  });
-  const normalized = response.toLocaleLowerCase("id-ID");
-  const failures: string[] = [];
-  for (const group of job.testCase.requiredSignalGroups) {
-    if (!group.some((signal) => normalized.includes(signal.toLocaleLowerCase("id-ID")))) {
-      failures.push(`sinyal wajib tidak ditemukan: ${group.join("|")}`);
+      role: "synthesizer",
+      workClass: "agent",
+      profile,
+      maxOutputTokens,
+      deadlineMs: 60_000,
+      promptMaterial: envelope.promptMaterial,
+    });
+    const response = await client.complete({
+      model,
+      temperature: 0,
+      maxTokens: execution.maxOutputTokens,
+      execution,
+      messages: [{ role: "user", content: envelope.prompt }],
+      usage: {
+        ownerId: "evaluation-routing",
+        channel: "system",
+        subjectKind: "private",
+        tier: "ambitious",
+        purpose: "research",
+        safetyCritical: false,
+      },
+    });
+    const normalized = response.toLocaleLowerCase("id-ID");
+    const failures: string[] = [];
+    for (const group of job.testCase.requiredSignalGroups) {
+      if (!group.some((signal) => normalized.includes(signal.toLocaleLowerCase("id-ID")))) {
+        failures.push(`sinyal wajib tidak ditemukan: ${group.join("|")}`);
+      }
     }
-  }
-  for (const signal of job.testCase.forbiddenSignals ?? []) {
-    if (normalized.includes(signal.toLocaleLowerCase("id-ID"))) {
-      failures.push(`sinyal terlarang ditemukan: ${signal}`);
+    for (const signal of job.testCase.forbiddenSignals ?? []) {
+      if (normalized.includes(signal.toLocaleLowerCase("id-ID"))) {
+        failures.push(`sinyal terlarang ditemukan: ${signal}`);
+      }
     }
+    return {
+      caseId: job.testCase.id,
+      variant: job.variant,
+      promptMaterial: envelope.promptMaterial,
+      exposure: envelope.exposure,
+      failures,
+      response,
+    };
+  } catch (error) {
+    return {
+      caseId: job.testCase.id,
+      variant: job.variant,
+      promptMaterial: envelope.promptMaterial,
+      exposure: envelope.exposure,
+      failureSource: "provider_or_execution",
+      failures: [`permintaan evaluasi gagal (${safeEvaluationError(error)})`],
+      response: null,
+    };
   }
-  return {
-    caseId: job.testCase.id,
-    variant: job.variant,
-    promptMaterial: envelope.promptMaterial,
-    exposure: envelope.exposure,
-    failures,
-    response,
-  };
+}
+
+function safeEvaluationError(error: unknown): string {
+  if (error instanceof AiResponseError) {
+    return `AiResponseError:${error.reason}`;
+  }
+  if (error instanceof AiError && error.status !== undefined) {
+    return `AiError:http_${error.status}`;
+  }
+  if (error instanceof Error && /^(?:Abort|Timeout|Type)Error$/u.test(error.name)) {
+    return error.name;
+  }
+  return error instanceof Error && /^[A-Za-z][A-Za-z0-9_.:-]{0,95}$/u.test(error.name)
+    ? error.name
+    : "unknown";
 }
 
 async function mapConcurrent<T, R>(

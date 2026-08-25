@@ -140,6 +140,7 @@ import {
   resolveModelProfileById,
   resolveModelProfile,
   resolveModelRouteProfile,
+  type ModelProfile,
   type ModelProfileRegistry,
 } from "./model-profile.js";
 import type { RunBudgetAccount } from "../core/run-budget.js";
@@ -281,6 +282,11 @@ const OPERATION_PRESENTATION_DEADLINE_MS = 3_000;
 const CHECK_IN_PRESENTATION_MAX_TOKENS = 192;
 const CHECK_IN_PRESENTATION_DEADLINE_MS = 6_000;
 const PRESENTATION_RECENT_TURN_LIMIT = 4;
+// Planner hanya perlu memilih langkah atau capability. Reservasi 32k per pass
+// membuat satu koreksi live menghabiskan separuh work budget meski pemakaian
+// aktualnya jauh lebih kecil. Synthesis akhir tetap mengikuti profil model agar
+// pekerjaan panjang tidak kehilangan ruang untuk jawaban pengguna.
+const AGENT_PLANNER_MAX_OUTPUT_TOKENS = 16_384;
 
 function minimalPresentationContext(context: HarvyContext): HarvyContext {
   return {
@@ -1173,18 +1179,32 @@ export class Conversation {
             },
           }
         : {}),
-      planner: (input, signal, runBudget) =>
-        this.planAgent(
-          input,
-          context,
-          compiled.context,
-          compiled.manifest,
-          mode,
-          runtime,
-          signal,
-          nativeThread,
-          runBudget,
-        ),
+      planner: async (input, signal, runBudget) => {
+        try {
+          return await this.planAgent(
+            input,
+            context,
+            compiled.context,
+            compiled.manifest,
+            mode,
+            runtime,
+            signal,
+            nativeThread,
+            runBudget,
+          );
+        } catch (error) {
+          this.logger.error(
+            "agent_planner_failed",
+            "Planner agent gagal menghasilkan keputusan yang dapat dijalankan.",
+            error,
+            {
+              reason: error instanceof Error ? error.name : "unknown",
+              count: input.step,
+            },
+          );
+          throw error;
+        }
+      },
       ...(runtime.signal ? { signal: runtime.signal } : {}),
       ...(runtime.isCurrent || runtime.awaitCurrent
         ? { isCurrent: () => conversationRuntimeIsCurrent(runtime) }
@@ -1433,7 +1453,7 @@ export class Conversation {
       tier,
       role,
       "agent",
-      null,
+      role === "planner" ? AGENT_PLANNER_MAX_OUTPUT_TOKENS : null,
       45_000,
       {
         modelId: modelRoute.modelId,
@@ -1577,10 +1597,10 @@ export class Conversation {
       if (!request.tools) {
         throw new Error("Agent request kehilangan native tool schema.");
       }
-      return this.client.completeToolTurn({
+      return this.client.completeToolTurn(portableNamedToolRequest({
         ...request,
         tools: request.tools,
-      });
+      }, profile));
     };
     const repairStructuredFinal = async (): Promise<ChatAssistantToolMessage> => {
       if (!replyContract) {
@@ -1831,6 +1851,26 @@ export class Conversation {
       runtime.ownerId ?? "runtime-anonim",
     );
   }
+}
+
+function portableNamedToolRequest(
+  request: ChatRequest & { tools: readonly import("./client.js").ChatFunctionTool[] },
+  profile: ModelProfile | null,
+): ChatRequest & { tools: readonly import("./client.js").ChatFunctionTool[] } {
+  if (
+    typeof request.toolChoice !== "object" ||
+    profile?.supports.namedToolChoice !== false
+  ) {
+    return request;
+  }
+  const name = request.toolChoice.function.name;
+  const selected = request.tools.find((tool) => tool.function.name === name);
+  if (!selected) return request;
+  return {
+    ...request,
+    tools: [selected],
+    toolChoice: "required",
+  };
 }
 
 function satisfiesLiveStateRequirement(

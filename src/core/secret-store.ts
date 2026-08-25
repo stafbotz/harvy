@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { chmod, readFile } from "node:fs/promises";
 import { writeDurableFileAtomic } from "../storage/durable-file.js";
 
@@ -23,6 +24,30 @@ export class MemorySecretStore implements SecretStore {
   async delete(ref: string): Promise<void> {
     this.values.delete(secretRef(ref));
   }
+}
+
+/**
+ * Bootstrap runtime Harvy masih sinkron. Helper read-only ini memakai codec
+ * yang sama dengan EncryptedFileSecretStore tanpa membuat key/file baru.
+ */
+export function readEncryptedFileSecretSync(
+  filePath: string,
+  key: Uint8Array,
+  ref: string,
+): string | null {
+  const safeRef = secretRef(ref);
+  if (key.byteLength !== 32) throw new Error("Kunci secret store harus 32 byte.");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return null;
+    throw error;
+  }
+  const state = parseSecretState(parsed);
+  const encoded = Object.hasOwn(state, safeRef) ? state[safeRef] : null;
+  if (!encoded) return null;
+  return decryptSecret(encoded, safeRef, Buffer.from(key));
 }
 
 /** AES-256-GCM file store terpisah dari state normal dan tidak pernah diekspor. */
@@ -106,22 +131,7 @@ export class EncryptedFileSecretStore implements SecretStore {
       }
       throw error;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("Format secret store tidak sah.");
-    }
-    const values = emptySecretState();
-    for (const [ref, value] of Object.entries(parsed)) {
-      const safeRef = secretRef(ref);
-      if (
-        typeof value !== "string" ||
-        value.length < 3 ||
-        value.length > MAX_ENCODED_SECRET_CHARACTERS
-      ) {
-        throw new Error("Record secret store tidak sah.");
-      }
-      values[safeRef] = value;
-    }
-    return values;
+    return parseSecretState(parsed);
   }
 
   private async persist(state: Record<string, string>): Promise<void> {
@@ -211,6 +221,25 @@ function secretValue(value: string): string {
 
 function emptySecretState(): Record<string, string> {
   return Object.create(null) as Record<string, string>;
+}
+
+function parseSecretState(parsed: unknown): Record<string, string> {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Format secret store tidak sah.");
+  }
+  const values = emptySecretState();
+  for (const [ref, value] of Object.entries(parsed)) {
+    const safeRef = secretRef(ref);
+    if (
+      typeof value !== "string" ||
+      value.length < 3 ||
+      value.length > MAX_ENCODED_SECRET_CHARACTERS
+    ) {
+      throw new Error("Record secret store tidak sah.");
+    }
+    values[safeRef] = value;
+  }
+  return values;
 }
 
 function cloneSecretState(

@@ -102,6 +102,44 @@ describe("TaskService", () => {
     assert.equal(updated?.dueAt, "2026-07-28T12:00:00.000Z");
   });
 
+  it("mengubah tenggat dan pengingat secara atomik dengan expected state", async () => {
+    const service = new TaskService(
+      new MemoryRepository(),
+      () => new Date("2026-07-26T10:00:00.000Z"),
+    );
+    const task = await service.create({
+      ownerId: "student",
+      chatId: "chat",
+      title: "Tinjau hasil live",
+      dueAt: new Date("2026-07-27T02:00:00.000Z"),
+      remindAt: new Date("2026-07-27T01:30:00.000Z"),
+      importance: 3,
+    });
+
+    const updated = await service.updateSchedule("student", task.id, {
+      dueAt: new Date("2026-07-27T03:30:00.000Z"),
+      reminderAt: new Date("2026-07-27T02:30:00.000Z"),
+      expected: {
+        dueAt: task.dueAt,
+        reminderAt: task.reminderAt,
+      },
+    });
+    assert.equal(updated?.dueAt, "2026-07-27T03:30:00.000Z");
+    assert.equal(updated?.reminderAt, "2026-07-27T02:30:00.000Z");
+
+    assert.equal(await service.updateSchedule("student", task.id, {
+      dueAt: new Date("2026-07-27T04:00:00.000Z"),
+      expected: {
+        dueAt: task.dueAt,
+        reminderAt: task.reminderAt,
+      },
+    }), null);
+    assert.equal(
+      (await service.find("student", task.id))?.dueAt,
+      "2026-07-27T03:30:00.000Z",
+    );
+  });
+
   it("memasang pengingat yang diminta lewat kalimat", async () => {
     const service = new TaskService(
       new MemoryRepository(),

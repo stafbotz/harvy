@@ -28,11 +28,14 @@ import type {
 } from "./domain/control-plane.js";
 import {
   parseEnabled,
+  parseLiveExplorationMessageScope,
   parsePairingMode,
   parsePrivateEnabled,
   parseWhatsAppAccounts,
   type WhatsAppConfig,
 } from "./whatsapp/config.js";
+import { resolvePrimaryTelegramBotToken } from
+  "./operations/primary-channel-credentials.js";
 
 /**
  * `testing` memakai satu model gratis lewat Google AI Studio, dengan beberapa
@@ -166,13 +169,7 @@ export function aiClientOptions(
 export function loadConfig(): RuntimeAppConfig {
   loadEnvironmentFile();
 
-  const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
-  if (!telegramBotToken) {
-    throw configurationError(
-      "CONFIG_TELEGRAM_TOKEN_MISSING",
-      "TELEGRAM_BOT_TOKEN belum diisi.",
-    );
-  }
+  const telegramBotToken = resolvePrimaryTelegramBotToken();
 
   const defaultTimezone = process.env.DEFAULT_TIMEZONE ?? "Asia/Jakarta";
   if (!isValidTimeZone(defaultTimezone)) {
@@ -480,6 +477,14 @@ function loadWhatsAppConfig(): WhatsAppConfig {
     ),
     reconnectBaseMs,
     reconnectMaxMs,
+    liveExplorationMessageScope: parseLiveExplorationMessageScope(
+      process.env.HARVY_LIVE_EXPLORATION_MESSAGE_SCOPE,
+      {
+        environment: process.env.APP_ENV,
+        release: process.env.RELEASE_SHA,
+        trace: process.env.HARVY_LIVE_ACCEPTANCE_TRACE,
+      },
+    ),
   };
 }
 

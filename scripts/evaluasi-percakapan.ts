@@ -331,6 +331,21 @@ async function evaluate(testCase: ConversationEvalCase) {
   if (testCase.expectedRoute && route.kind !== testCase.expectedRoute) {
     failures.push(`route ${route.kind}, diharapkan ${testCase.expectedRoute}`);
   }
+  if (testCase.expectedMemory) {
+    const expected = testCase.expectedMemory;
+    const matched = understanding.memories.some((memory) => {
+      const content = memory.content.toLocaleLowerCase("id-ID");
+      return memory.kind === expected.kind &&
+        expected.terms.every((term) =>
+          content.includes(term.toLocaleLowerCase("id-ID"))
+        );
+    });
+    if (!matched) {
+      failures.push(
+        `candidate memori ${expected.kind} tidak memuat ${expected.terms.join("+")}`,
+      );
+    }
+  }
   if (testCase.forbidTaskMutation !== false && route.kind === "save-task") {
     failures.push("tugas dapat berubah tanpa izin eksplisit");
   }

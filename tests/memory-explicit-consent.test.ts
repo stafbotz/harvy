@@ -58,6 +58,23 @@ describe("authority explicit remember", () => {
     assert.deepEqual(authority?.candidateIndexes, [0]);
   });
 
+  it("memakai evidence exact ketika target model berupa label parafrasa", () => {
+    const message =
+      "Mulai sekarang, kalau kita membahas pekerjaan produk, jawab dengan langkah pendek bernomor dan akhiri dengan satu keputusan tegas.";
+    const authority = explicitMemoryRememberAuthority(
+      message,
+      [{
+        content:
+          "Lebih suka jawaban pekerjaan produk dengan langkah pendek bernomor dan diakhiri satu keputusan tegas.",
+      }],
+      remember(message, "format jawaban pekerjaan produk"),
+    );
+
+    assert.equal(authority?.requestedText, message);
+    assert.deepEqual(authority?.candidateIndexes, []);
+    assert.equal(authority?.forbiddenSecret, false);
+  });
+
   it("menolak candidate yang memperluas fakta di luar span authority", () => {
     const message = "remember Sohit is my partner";
     const authority = explicitMemoryRememberAuthority(

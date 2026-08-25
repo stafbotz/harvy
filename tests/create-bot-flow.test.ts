@@ -60,6 +60,74 @@ import { privateAgentScope, scopeKey } from "../src/harness/scope.js";
 import { FileAgentRunRepository } from "../src/storage/file-agent-run-repository.js";
 
 describe("alur adapter Telegram", () => {
+  it("commit task mendahului presentasi dan balasan bebas tidak boleh mengarang status", async () => {
+    const text =
+      "Tolong ingatkan saya satu menit lagi untuk memeriksa ketepatan waktu pengingat ini.";
+    const reminderAt = new Date("2099-08-25T01:12:23.000Z");
+    let taskCommitted = false;
+    let replyCalls = 0;
+    let presentationCalls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "task",
+          taskAction: "save",
+          task: {
+            title: "Memeriksa ketepatan waktu pengingat",
+            dueAt: null,
+            remindAt: reminderAt,
+            importance: 2,
+          },
+          routingAssessment: routingAssessment({
+            complexity: "mechanical",
+            transformationMechanical: true,
+            toolNeed: "internal_state",
+          }),
+          semanticOperation: semanticOperation(
+            "task",
+            "save",
+            text,
+            "memeriksa ketepatan waktu pengingat",
+          ),
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => {
+          replyCalls += 1;
+          return "Siap, pengingatnya sudah kubuat.";
+        },
+        presentOperation: async (
+          brief: Parameters<Conversation["presentOperation"]>[0],
+        ) => {
+          presentationCalls += 1;
+          assert.equal(taskCommitted, true);
+          assert.equal(brief.kind, "task-created");
+          assert.equal(brief.userMessage, text);
+          return `Sudah benar-benar tersimpan.\n\n${brief.stableBody}`;
+        },
+      } as unknown as Conversation,
+      {
+        create: async (input: NewTask) => {
+          assert.equal(input.remindAt?.toISOString(), reminderAt.toISOString());
+          taskCommitted = true;
+          return taskFrom(input);
+        },
+      } as unknown as TaskService,
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(text, 1));
+    await harness.bot.drainPending();
+
+    assert.equal(taskCommitted, true);
+    assert.equal(replyCalls, 0);
+    assert.equal(presentationCalls, 1);
+    assert.ok(harness.sent.some((value) =>
+      value.includes("Sudah benar-benar tersimpan") &&
+      value.includes("Memeriksa ketepatan waktu pengingat")
+    ));
+    assert.ok(!harness.sent.some((value) => value.includes("sudah kubuat")));
+  });
+
   it("memakai presentation model bersama untuk empty state Telegram", async () => {
     let seenChannel: ConversationRuntime["channel"];
     let seenKind = "";
@@ -91,6 +159,67 @@ describe("alur adapter Telegram", () => {
       harness.sent.at(-1),
       "Aku sudah melihat keadaan daftarmu.\n\nTugas aktif: tidak ada.",
     );
+  });
+
+  it("membaca task aktif dari bahasa natural tanpa AgentRun", async () => {
+    const text =
+      "Sekarang sebutkan tugas aktifku dan kapan pengingatnya. Jangan tampilkan ID teknis.";
+    const active: StudentTask = {
+      id: "task-telegram-technical",
+      ownerId: "123",
+      chatId: "123",
+      title: "Meninjau hasil uji live Telegram dan WhatsApp",
+      dueAt: "2026-08-25T03:30:00.000Z",
+      importance: 3,
+      status: "active",
+      createdAt: "2026-08-24T12:00:00.000Z",
+      completedAt: null,
+      reminderAt: "2026-08-25T02:30:00.000Z",
+      reminderSentAt: null,
+    };
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "request",
+          routingAssessment: {
+            complexity: "mechanical",
+            ambiguity: "low",
+            planningRequired: false,
+            emotionalNuance: "low",
+            executionSize: "small",
+            factualStakes: "low",
+            transformationMechanical: true,
+            toolNeed: "internal_state",
+            confidence: 0.99,
+          },
+          semanticOperation: semanticOperation(
+            "task",
+            "list",
+            text,
+            null,
+            "explicit",
+            "all",
+          ),
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        presentOperation: async (
+          brief: Parameters<Conversation["presentOperation"]>[0],
+        ) => brief.stableBody,
+      } as unknown as Conversation,
+      {
+        listActive: async () => [active],
+      } as unknown as TaskService,
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(text, 1));
+    await harness.bot.drainPending();
+
+    const reply = harness.sent.at(-1) ?? "";
+    assert.match(reply, /Meninjau hasil uji live/u);
+    assert.match(reply, /10\.30/u);
+    assert.match(reply, /09\.30/u);
+    assert.doesNotMatch(reply, /task-telegram-technical|\bID:/u);
   });
 
   it("mengubah zona waktu dari bahasa natural ketika extractor kehilangan semantic operation", async () => {
@@ -135,6 +264,156 @@ describe("alur adapter Telegram", () => {
     assert.equal(understandCalls, 1);
     assert.equal(setTimeZoneCalls, 1);
     assert.match(harness.sent.at(-1) ?? "", /Zona waktu tersimpan/iu);
+  });
+
+  it("mengubah jadwal task natural secara owner-scoped tanpa AgentRun", async () => {
+    const text =
+      "Jadwalnya berubah: ubah tugas peninjauan itu menjadi besok pukul 10.30 dan ingatkan satu jam sebelumnya. Jangan buat tugas baru.";
+    let active: StudentTask = {
+      id: "task-live",
+      ownerId: "123",
+      chatId: "123",
+      title: "Meninjau hasil uji live Telegram dan WhatsApp",
+      dueAt: "2099-08-25T02:00:00.000Z",
+      importance: 3,
+      status: "active",
+      createdAt: "2026-08-24T11:00:00.000Z",
+      completedAt: null,
+      reminderAt: "2099-08-25T01:30:00.000Z",
+      reminderSentAt: null,
+    };
+    let updates = 0;
+    const taskService = {
+      listActive: async () => [active],
+      updateSchedule: async (
+        ownerId: string,
+        id: string,
+        update: {
+          dueAt?: Date | null;
+          reminderAt?: Date | null;
+          expected?: { dueAt: string | null; reminderAt: string | null };
+        },
+      ) => {
+        assert.equal(ownerId, "123");
+        assert.equal(id, active.id);
+        if (
+          update.expected &&
+          (update.expected.dueAt !== active.dueAt ||
+            update.expected.reminderAt !== active.reminderAt)
+        ) return null;
+        updates += 1;
+        active = {
+          ...active,
+          dueAt: update.dueAt?.toISOString() ?? active.dueAt,
+          reminderAt: update.reminderAt?.toISOString() ?? active.reminderAt,
+        };
+        return active;
+      },
+    } as unknown as TaskService;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      understand: async () => understanding({
+        intent: "task",
+        taskAction: "save",
+        task: {
+          title: "Tugas peninjauan",
+          dueAt: new Date("2099-08-25T03:30:00.000Z"),
+          remindAt: new Date("2099-08-25T02:30:00.000Z"),
+          importance: 2,
+        },
+        routingAssessment: routingAssessment({
+          complexity: "mechanical",
+          transformationMechanical: true,
+          toolNeed: "internal_state",
+        }),
+        semanticOperation: semanticOperation(
+          "task",
+          "update",
+          text,
+          "tugas peninjauan",
+          "explicit",
+          "recent",
+        ),
+      }),
+      triageRisk: async () => CALM_TRIAGE,
+    } as unknown as Conversation, taskService);
+
+    await harness.bot.handleUpdate(messageUpdate(text, 1));
+    await harness.bot.drainPending();
+
+    assert.equal(updates, 1);
+    assert.equal(active.dueAt, "2099-08-25T03:30:00.000Z");
+    assert.equal(active.reminderAt, "2099-08-25T02:30:00.000Z");
+    assert.match(harness.sent.at(-1) ?? "", /10\.30/u);
+    assert.match(harness.sent.at(-1) ?? "", /09\.30/u);
+  });
+
+  it("menyelesaikan task natural secara owner-scoped tanpa AgentRun", async () => {
+    const text = "Tandai tugas mencatat hasil restart itu selesai.";
+    let active: StudentTask = {
+      id: "task-natural-complete",
+      ownerId: "123",
+      chatId: "123",
+      title: "Mencatat hasil restart",
+      dueAt: null,
+      importance: 2,
+      status: "active",
+      createdAt: "2026-08-24T12:00:00.000Z",
+      completedAt: null,
+      reminderAt: null,
+      reminderSentAt: null,
+    };
+    let completeCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      understand: async () => understanding({
+        intent: "request",
+        routingAssessment: routingAssessment({
+          complexity: "mechanical",
+          transformationMechanical: true,
+          toolNeed: "internal_state",
+        }),
+        semanticOperation: semanticOperation(
+          "task",
+          "complete",
+          text,
+          "mencatat hasil restart",
+          "explicit",
+          "recent",
+        ),
+      }),
+      triageRisk: async () => CALM_TRIAGE,
+      reply: async () => {
+        replyCalls += 1;
+        return "Ini tidak boleh dipanggil.";
+      },
+      presentOperation: async (
+        brief: Parameters<Conversation["presentOperation"]>[0],
+      ) => brief.stableBody,
+    } as unknown as Conversation, {
+      listActive: async () => active.status === "active" ? [active] : [],
+      complete: async (ownerId: string, id: string) => {
+        assert.equal(ownerId, "123");
+        assert.equal(id, active.id);
+        completeCalls += 1;
+        active = {
+          ...active,
+          status: "completed",
+          completedAt: "2026-08-24T12:05:00.000Z",
+        };
+        return active;
+      },
+    } as unknown as TaskService);
+
+    await harness.bot.handleUpdate(messageUpdate(text, 1));
+    await harness.bot.drainPending();
+
+    assert.equal(completeCalls, 1);
+    assert.equal(replyCalls, 0);
+    assert.equal(active.status, "completed");
+    assert.match(harness.sent.at(-1) ?? "", /Mencatat hasil restart/u);
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /\bID:/u);
   });
 
   it("menyatukan /memori, pertanyaan natural, dan Data & izin pada satu potret", async () => {
@@ -506,6 +785,9 @@ describe("alur adapter Telegram", () => {
           memories: [{
             kind: "preference",
             content: "Lebih produktif pagi",
+            sourceEvidence: "aku lebih produktif pagi",
+            sourceSubject: "self",
+            durability: "durable",
           }],
         }),
         triageRisk: async () => CALM_TRIAGE,
@@ -594,6 +876,58 @@ describe("alur adapter Telegram", () => {
     assert.doesNotMatch(harness.sent.at(-1) ?? "", /💭/u);
   });
 
+  it("tidak mengaku aturan dicatat ketika write memori tidak punya receipt", async () => {
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      understand: async () => understanding({
+        memoryAction: "remember",
+        memories: [{
+          kind: "preference",
+          content: "Keputusan utama dulu lalu alasan singkat",
+        }],
+      }),
+      triageRisk: async () => CALM_TRIAGE,
+      reply: async () =>
+        "Aturan baru dicatat: keputusan utama dulu lalu alasan singkat.",
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate(
+      "Kalau membantu pekerjaan produk, jawab dengan keputusan utama dulu.",
+    ));
+    await harness.bot.drainPending();
+
+    assert.doesNotMatch(harness.sent.join("\n"), /aturan baru dicatat/iu);
+  });
+
+  it("tidak menyisipkan ajakan dukungan setelah balasan kerja biasa", async () => {
+    let supportCalls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding(),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Artefak final persis empat baris.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        economy: {
+          supportPrompt: async () => {
+            supportCalls += 1;
+            return "Ajakan dukungan yang tidak diminta.";
+          },
+        } as unknown as EconomyService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(
+      "Berikan artefak final persis empat baris dan jangan tambahkan apa pun.",
+    ));
+    await harness.bot.drainPending();
+
+    assert.equal(supportCalls, 0);
+    assert.deepEqual(harness.sent, ["Artefak final persis empat baris."]);
+  });
+
   it("menyimpan kandidat implisit dan memakai acknowledgment model yang natural", async () => {
     const inputs: NewMemory[] = [];
     const naturalReply =
@@ -603,8 +937,20 @@ describe("alur adapter Telegram", () => {
         classifyTurnBoundary: async () => "complete",
         understand: async () => understanding({
           memories: [
-            { kind: "profile", content: "Nama panggilan Hafizh" },
-            { kind: "preference", content: "Lebih nyaman belajar pagi" },
+            {
+              kind: "profile",
+              content: "Nama panggilan Hafizh",
+              sourceEvidence: "panggil aku Hafizh",
+              sourceSubject: "self",
+              durability: "durable",
+            },
+            {
+              kind: "preference",
+              content: "Lebih nyaman belajar pagi",
+              sourceEvidence: "aku juga lebih nyaman belajar pagi",
+              sourceSubject: "self",
+              durability: "durable",
+            },
           ],
         }),
         triageRisk: async () => CALM_TRIAGE,
@@ -692,6 +1038,62 @@ describe("alur adapter Telegram", () => {
     assert.doesNotMatch(harness.sent.join("\n"), /Boleh aku inget/iu);
     assert.equal(findCallback(harness.telegramCalls, "memsave:"), null);
     assert.match(harness.sent.at(-1) ?? "", /ingat|simpan|ke depan/iu);
+  });
+
+  it("tetap menyimpan preferensi scoped ketika turn masuk jalur planning", async () => {
+    const saved: NewMemory[] = [];
+    const text =
+      "Mulai sekarang, kalau membantu pekerjaan produk, jawab dengan keputusan utama dulu lalu alasan singkat; jangan buka dengan empati generik. Terapkan mulai jawaban berikutnya.";
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "request",
+          memoryAction: "remember",
+          memories: [{
+            kind: "preference",
+            content:
+              "Untuk pekerjaan produk, beri keputusan utama lalu alasan singkat tanpa empati generik.",
+          }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            text,
+            text,
+          ),
+          routingAssessment: routingAssessment({
+            complexity: "deep",
+            planningRequired: true,
+            executionSize: "medium",
+          }),
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        agent: async () => ({
+          status: "completed",
+          reply: "Keputusan utama: format itu berlaku mulai jawaban berikutnya.",
+        }),
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async (input: NewMemory) => {
+            saved.push(input);
+            const item = memoryItem("scoped-product-style", input.content);
+            item.kind = input.kind;
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(text));
+    await harness.bot.drainPending();
+
+    assert.equal(saved.length, 1);
+    assert.match(saved[0]?.content ?? "", /pekerjaan produk.*keputusan utama/iu);
+    assert.doesNotMatch(harness.sent.join("\n"), /SIMPAN MEMORI|JANGAN SIMPAN/iu);
   });
 
   it("permintaan langkah kecil mengalahkan task offer dan pelanggaran pertanyaan model", async () => {
@@ -785,7 +1187,13 @@ describe("alur adapter Telegram", () => {
         classifyTurnBoundary: async () => "complete",
         understand: async () => understanding({
           memoryAction: "remember",
-          memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+          memories: [{
+            kind: "personal",
+            content: "Sohit adalah pacarku",
+            sourceEvidence: "Sohit pacarku",
+            sourceSubject: "self",
+            durability: "durable",
+          }],
           semanticOperation: semanticOperation(
             "memory",
             "remember",
@@ -830,7 +1238,13 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         understand: async () => understanding({
-          memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+          memories: [{
+            kind: "personal",
+            content: "Sohit adalah pacarku",
+            sourceEvidence: "Sohit pacarku",
+            sourceSubject: "self",
+            durability: "durable",
+          }],
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () => "Aku dengar ceritamu.",
@@ -966,7 +1380,13 @@ describe("alur adapter Telegram", () => {
           memoryAction: "remember",
           memories: [
             { kind: "personal", content: "Sohit adalah pacarku" },
-            { kind: "personal", content: "Baru pulang dari rumah sakit" },
+            {
+              kind: "personal",
+              content: "Baru pulang dari rumah sakit",
+              sourceEvidence: "tadi aku habis dari rumah sakit",
+              sourceSubject: "self",
+              durability: "bounded",
+            },
           ],
           semanticOperation: semanticOperation(
             "memory",
@@ -1495,6 +1915,9 @@ describe("alur adapter Telegram", () => {
           return null;
         },
         reply: async () => "Oke, aku catat tugasnya.",
+        presentOperation: async (
+          brief: Parameters<Conversation["presentOperation"]>[0],
+        ) => `Oke, aku catat setelah penyimpanannya berhasil.\n\n${brief.stableBody}`,
         reviewReply: async () => {
           reviews += 1;
           return true;
@@ -1586,6 +2009,9 @@ describe("alur adapter Telegram", () => {
           certain: true,
         }),
         reply: async () => "Kedengarannya lagi berat. Tugasnya tetap aku catat.",
+        presentOperation: async (
+          brief: Parameters<Conversation["presentOperation"]>[0],
+        ) => `Kedengarannya lagi berat. Tugasnya tetap aku catat.\n\n${brief.stableBody}`,
         reviewReply: async () => {
           reviews += 1;
           return true;
@@ -1984,6 +2410,9 @@ describe("alur adapter Telegram", () => {
           memories: [{
             kind: "preference",
             content: "Kesulitan membaca soal panjang saat ujian",
+            sourceEvidence: "aku kesulitan membaca soal panjang saat ujian",
+            sourceSubject: "self",
+            durability: "bounded",
           }],
         }),
         triageRisk: async () => {
@@ -2022,7 +2451,13 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         understand: async () => understanding({
-          memories: [{ kind: "preference", content: "Suka warna biru" }],
+          memories: [{
+            kind: "preference",
+            content: "Suka warna biru",
+            sourceEvidence: "warna favoritku biru",
+            sourceSubject: "self",
+            durability: "durable",
+          }],
         }),
         reply: async () => "Aku ingat.",
       } as unknown as Conversation,
@@ -2045,6 +2480,60 @@ describe("alur adapter Telegram", () => {
     assert.equal(remembers, 1);
     assert.doesNotMatch(harness.sent.at(-1) ?? "", /Boleh aku inget/iu);
     assert.equal(findCallbacks(harness.telegramCalls, "memsave:").length, 0);
+  });
+
+  it("menolak topik kerja dan keadaan sekali pakai sebagai auto-memory Telegram", async () => {
+    const text =
+      "Tolong buat acceptance reminder untuk Harvy. Besok aku harus bangun pagi dan malam ini masih memilih belajar atau tidur.";
+    let remembers = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "request",
+          memories: [
+            {
+              kind: "context",
+              content: "Acceptance reminder untuk Harvy",
+              sourceEvidence: "acceptance reminder untuk Harvy",
+              sourceSubject: "work",
+              durability: "bounded",
+            },
+            {
+              kind: "context",
+              content: "Harus bangun pagi besok dan sedang memilih belajar atau tidur",
+              sourceEvidence:
+                "Besok aku harus bangun pagi dan malam ini masih memilih belajar atau tidur",
+              sourceSubject: "self",
+              durability: "transient",
+            },
+          ],
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () =>
+          "Oke, dua hal itu sudah aku simpan untuk percakapan berikutnya.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          markUsed: async () => undefined,
+          remember: async () => {
+            remembers += 1;
+            return memoryItem("must-not-save", "Tidak boleh tersimpan");
+          },
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(text));
+    await harness.bot.drainPending();
+
+    assert.equal(remembers, 0);
+    assert.doesNotMatch(
+      harness.sent.at(-1) ?? "",
+      /sudah aku simpan|aku ingat untuk ke depan|📍/iu,
+    );
   });
 
   it("tidak kehilangan bubble yang datang ketika persetujuan sedang ditulis", async () => {
@@ -2501,7 +2990,13 @@ describe("alur adapter Telegram", () => {
         triageRisk: async () => CALM_TRIAGE,
         understand: async () => understanding({
           memoryAction: "remember",
-          memories: [{ kind: "preference", content: "Suka warna biru" }],
+          memories: [{
+            kind: "preference",
+            content: "Suka warna biru",
+            sourceEvidence: "warna favoritku biru",
+            sourceSubject: "self",
+            durability: "durable",
+          }],
           semanticOperation: semanticOperation(
             "memory",
             "remember",
@@ -3986,6 +4481,9 @@ describe("alur adapter Telegram", () => {
       triageRisk: async () => CALM_TRIAGE,
       understand: async () => understanding({
         intent: "question",
+        routingAssessment: routingAssessment({
+          complexity: "mechanical",
+        }),
         semanticOperation: semanticOperation(
           "menu",
           "show",
@@ -4200,6 +4698,7 @@ describe("alur adapter Telegram", () => {
     assert.match(menu, /Penggunaan & paket/u);
     assert.match(menu, /Pengaturan/u);
     assert.ok(findCallback(harness.telegramCalls, "menu:usage"));
+    assert.ok(findCallback(harness.telegramCalls, "menu:memory"));
     assert.ok(findCallback(harness.telegramCalls, "menu:settings"));
 
     await harness.bot.handleUpdate(callbackUpdate("menu:usage", 2));
@@ -4210,7 +4709,23 @@ describe("alur adapter Telegram", () => {
     );
     assert.ok(categoryEdit);
 
-    await harness.bot.handleUpdate(callbackUpdate("menu:settings", 3));
+    await harness.bot.handleUpdate(callbackUpdate("menu:memory", 3));
+    await harness.bot.drainPending();
+    const memoryEdit = harness.telegramCalls.find((call) =>
+      call.method === "editMessageText" &&
+      /^Memori & data/u.test((call.payload as { text?: string }).text ?? "")
+    );
+    assert.ok(memoryEdit);
+    const memoryCallbacks = (
+      (memoryEdit.payload as {
+        reply_markup?: {
+          inline_keyboard?: Array<Array<{ callback_data?: string }>>;
+        };
+      }).reply_markup?.inline_keyboard ?? []
+    ).flat().map((button) => button.callback_data);
+    assert.ok(memoryCallbacks.includes("control:delete-all"));
+
+    await harness.bot.handleUpdate(callbackUpdate("menu:settings", 4));
     await harness.bot.drainPending();
     const settingsEdit = harness.telegramCalls.find((call) =>
       call.method === "editMessageText" &&
@@ -4232,11 +4747,59 @@ describe("alur adapter Telegram", () => {
       assert.ok(settingsCallbacks.includes(callback), callback);
     }
 
-    await harness.bot.handleUpdate(commandUpdate("/bantuan", 4));
+    await harness.bot.handleUpdate(commandUpdate("/bantuan", 5));
     await harness.bot.drainPending();
     const help = harness.sent.at(-1) ?? "";
     assert.match(help, /Contoh:/u);
     assert.notEqual(help, menu);
+    assert.equal(modelCalls, 0);
+  });
+
+  it("/hapus-data membuka konfirmasi bertoken yang sama tanpa memanggil model", async () => {
+    let modelCalls = 0;
+    let deletions = 0;
+    const forbidden = (): never => {
+      modelCalls += 1;
+      throw new Error("hapus data exact tidak boleh memanggil model");
+    };
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => forbidden(),
+        understand: async () => forbidden(),
+        triageRisk: async () => forbidden(),
+        reply: async () => forbidden(),
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        dataControls: {
+          deleteAll: async (ownerId: string) => {
+            assert.equal(ownerId, "123");
+            deletions += 1;
+          },
+        } as unknown as DataControlService,
+      },
+    );
+    const update = commandUpdate("/hapus-data", 1);
+    if (update.message?.entities?.[0]) {
+      // Telegram membatasi entity command pada bagian sebelum tanda hubung.
+      update.message.entities[0].length = "/hapus".length;
+    }
+
+    await harness.bot.handleUpdate(update);
+    await harness.bot.drainPending();
+
+    assert.equal(deletions, 0);
+    assert.equal(modelCalls, 0);
+    assert.match(harness.sent.at(-1) ?? "", /tidak bisa dibatalkan/iu);
+    const confirmation = findCallbacks(harness.telegramCalls, "datawipe:");
+    assert.equal(confirmation.length, 2);
+    const yes = confirmation.find((callback) => callback.endsWith(".yes"));
+    assert.ok(yes);
+
+    await harness.bot.handleUpdate(callbackUpdate(yes, 2));
+    await harness.bot.drainPending();
+
+    assert.equal(deletions, 1);
     assert.equal(modelCalls, 0);
   });
 
@@ -4309,6 +4872,10 @@ describe("alur adapter Telegram", () => {
         seenContexts.push(context);
         return understanding({
           intent: "question",
+          routingAssessment: routingAssessment({
+            complexity: "mechanical",
+            toolNeed: "internal_state",
+          }),
           semanticOperation: semanticOperation(
             "usage",
             message === followUp ? "show-details" : "show-summary",
@@ -4369,6 +4936,58 @@ describe("alur adapter Telegram", () => {
       2,
     );
     assert.doesNotMatch(harness.sent.at(-1) ?? "", /Python|memori|maksudmu/iu);
+  });
+
+  it("tidak membiarkan proposal usage explicit membajak penilaian produk nonmekanis", async () => {
+    const text =
+      "Menurutmu, apakah pengujian live yang kita jalankan sudah cukup untuk membuktikan Harvy siap dipakai sehari-hari? Nilai bukti dan celah yang masih berisiko.";
+    let summaryCalls = 0;
+    let agentCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      understand: async () => understanding({
+        intent: "question",
+        semanticOperation: semanticOperation(
+          "usage",
+          "show-details",
+          text,
+          text,
+          "explicit",
+        ),
+        routingAssessment: routingAssessment({
+          complexity: "normal",
+          planningRequired: false,
+          executionSize: "medium",
+          factualStakes: "medium",
+          toolNeed: "internal_state",
+        }),
+      }),
+      triageRisk: async () => CALM_TRIAGE,
+      agent: async () => {
+        agentCalls += 1;
+        return {
+          status: "completed",
+          reply: "Penilaian kesiapan produk berdasarkan bukti live.",
+          trace: [],
+        };
+      },
+    } as unknown as Conversation, {} as TaskService, {
+      economy: {} as EconomyService,
+      usageDashboard: {
+        summary: async () => {
+          summaryCalls += 1;
+          return usageSummary();
+        },
+      },
+    });
+
+    await harness.bot.handleUpdate(messageUpdate(text, 1));
+    await harness.bot.drainPending();
+
+    assert.equal(summaryCalls, 0);
+    assert.equal(agentCalls, 1);
+    assert.match(harness.sent.at(-1) ?? "", /Penilaian kesiapan produk/u);
+    assert.doesNotMatch(harness.sent.join("\n"), /Penggunaan Harvy/u);
   });
 });
 
@@ -4451,7 +5070,8 @@ describe("work lane active AgentRun Telegram", () => {
     const runs = new AgentRunService(
       new FileAgentRunRepository(join(root, "agent-runs.json")),
     );
-    const request = "tolong buatkan rencana belajar langkah demi langkah";
+    const request =
+      "Aku biasanya paling fokus belajar pagi. Tolong buatkan rencana belajar langkah demi langkah.";
     const started = deferredVoid();
     const release = deferredVoid();
     let agentCalls = 0;
@@ -4470,6 +5090,15 @@ describe("work lane active AgentRun Telegram", () => {
                   executionSize: "heavy",
                 })
               : routingAssessment(),
+            memories: message === request
+              ? [{
+                  kind: "preference",
+                  content: "Biasanya paling fokus belajar pagi",
+                  sourceEvidence: "Aku biasanya paling fokus belajar pagi",
+                  sourceSubject: "self",
+                  durability: "durable",
+                }]
+              : [],
           }),
         agent: async (
           _message: string,
@@ -4495,12 +5124,30 @@ describe("work lane active AgentRun Telegram", () => {
         },
       } as unknown as Conversation,
       {} as TaskService,
-      { agentRuns: runs },
+      {
+        agentRuns: runs,
+        memories: {
+          relevantTo: async () => [],
+          remember: async (input: NewMemory) => {
+            const item = memoryItem("active-run-morning", input.content);
+            item.kind = input.kind;
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
     );
 
     try {
       await harness.bot.handleUpdate(messageUpdate(request, 1));
-      await started.promise;
+      await waitFor(() => agentCalls === 1);
+      const noticeIndex = harness.sent.findIndex((text) =>
+        /ingat.*ke depan|📍/iu.test(text)
+      );
+      const anchorIndex = harness.sent.findIndex((text) => text.startsWith("📌 "));
+      assert.ok(noticeIndex >= 0);
+      assert.equal(anchorIndex, noticeIndex + 1);
+      assert.doesNotMatch(harness.sent[anchorIndex] ?? "", /ingat.*ke depan|📍/iu);
       await waitFor(() => harness.sent.some((text) => text.startsWith("📌 ")));
 
       await harness.bot.handleUpdate(messageUpdate("makasih ya", 2));
@@ -4695,6 +5342,111 @@ describe("work lane active AgentRun Telegram", () => {
       assert.ok(harness.sent.includes("Rencana terkoreksi tanpa reminder."));
     } finally {
       releaseFirst.resolve();
+      await harness.bot.drainPending();
+    }
+  });
+
+  it("menahan commit ketika reply ke Anchor masih melewati safety", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-active-run-ingress-race-"));
+    const runs = new AgentRunService(
+      new FileAgentRunRepository(join(root, "agent-runs.json")),
+    );
+    const request = "tolong susun rencana audit yang rinci";
+    const correction = "Koreksi: jangan masukkan langkah publikasi.";
+    const firstStarted = deferredVoid();
+    const releaseFirst = deferredVoid();
+    const correctionUnderstandingStarted = deferredVoid();
+    const releaseCorrectionUnderstanding = deferredVoid();
+    const secondStarted = deferredVoid();
+    let agentCalls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async (text: string) => {
+          if (text === correction) {
+            correctionUnderstandingStarted.resolve();
+            await releaseCorrectionUnderstanding.promise;
+          }
+          return understanding({
+            intent: "request",
+            routingAssessment: routingAssessment({
+              complexity: "deep",
+              planningRequired: true,
+              executionSize: "heavy",
+            }),
+          });
+        },
+        agent: async (
+          _message: string,
+          _mode: string,
+          _context: HarvyContext,
+          runtime: { runId?: string },
+          restored?: AgentRunCheckpoint,
+        ) => {
+          agentCalls += 1;
+          assert.ok(runtime.runId);
+          if (agentCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+            return {
+              status: "completed",
+              reply: "HASIL LAMA YANG TIDAK BOLEH TERKIRIM",
+              checkpoint: activeCheckpoint("123", runtime.runId, request),
+              trace: [],
+            };
+          }
+          assert.ok(restored?.userInputs.some((item) =>
+            item.text.includes("jangan masukkan langkah publikasi")
+          ));
+          secondStarted.resolve();
+          return {
+            status: "completed",
+            reply: "Rencana terkoreksi tanpa langkah publikasi.",
+            checkpoint: { ...restored!, pendingInput: null },
+            trace: [],
+          };
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      { agentRuns: runs },
+    );
+
+    try {
+      await harness.bot.handleUpdate(messageUpdate(request, 1));
+      await firstStarted.promise;
+      await waitFor(() => harness.sent.some((text) => text.startsWith("📌 ")));
+      const anchorId = harness.sent.findIndex((text) => text.startsWith("📌 ")) + 1;
+
+      await harness.bot.handleUpdate(replyMessageUpdate(correction, 2, anchorId));
+      await correctionUnderstandingStarted.promise;
+      releaseFirst.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.equal(
+        harness.sent.includes("HASIL LAMA YANG TIDAK BOLEH TERKIRIM"),
+        false,
+      );
+
+      releaseCorrectionUnderstanding.resolve();
+      await secondStarted.promise;
+      await waitForAsync(async () =>
+        (await runs.loadActive("telegram", "123"))?.status === "completed"
+      );
+      const completed = await runs.loadActive("telegram", "123");
+      assert.equal(agentCalls, 2);
+      assert.equal(completed?.instructionRevision, 2);
+      assert.equal(
+        harness.sent.includes("HASIL LAMA YANG TIDAK BOLEH TERKIRIM"),
+        false,
+      );
+      assert.ok(harness.sent.includes("Rencana terkoreksi tanpa langkah publikasi."));
+      assert.equal(
+        harness.sent.filter((text) => text.startsWith("📌 ")).length,
+        1,
+      );
+    } finally {
+      releaseFirst.resolve();
+      releaseCorrectionUnderstanding.resolve();
       await harness.bot.drainPending();
     }
   });

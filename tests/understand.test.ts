@@ -141,6 +141,42 @@ describe("pembacaan balasan model", () => {
     assert.equal(understanding?.task, null);
   });
 
+  it("mempertahankan payload jadwal khusus untuk semantic task update", () => {
+    const understanding = parseUnderstanding(
+      JSON.stringify({
+        intent: "task",
+        taskAction: null,
+        task: {
+          title: "Peninjauan live Telegram dan WhatsApp",
+          dueAt: "2026-08-25T10:30:00+07:00",
+          remindAt: "2026-08-25T09:30:00+07:00",
+          importance: 3,
+        },
+        semanticOperation: {
+          version: 1,
+          domain: "task",
+          operation: "update",
+          target: "tugas peninjauan",
+          subject: "self",
+          reference: "recent",
+          explicitness: "explicit",
+          evidence: "ubah tugas peninjauan itu menjadi besok pukul 10.30",
+          confidence: 0.98,
+        },
+      }),
+    );
+
+    assert.equal(understanding?.taskAction, null);
+    assert.equal(
+      understanding?.task?.dueAt?.toISOString(),
+      "2026-08-25T03:30:00.000Z",
+    );
+    assert.equal(
+      understanding?.task?.remindAt?.toISOString(),
+      "2026-08-25T02:30:00.000Z",
+    );
+  });
+
   it("hanya mempertahankan tawaran tugas untuk cerita pengguna", () => {
     const understanding = parseUnderstanding(
       JSON.stringify({
@@ -171,7 +207,13 @@ describe("pembacaan balasan model", () => {
         memoryAction: null,
         task: null,
         memories: [
-          { kind: "preference", content: "Warna favoritnya adalah biru" },
+          {
+            kind: "preference",
+            content: "Warna favoritnya adalah biru",
+            sourceEvidence: "warna favoritku biru",
+            sourceSubject: "self",
+            durability: "durable",
+          },
         ],
       }),
     );
@@ -179,6 +221,8 @@ describe("pembacaan balasan model", () => {
     assert.equal(understanding?.intent, "smalltalk");
     assert.equal(understanding?.memoryAction, null);
     assert.equal(understanding?.memories[0]?.kind, "preference");
+    assert.equal(understanding?.memories[0]?.sourceSubject, "self");
+    assert.equal(understanding?.memories[0]?.durability, "durable");
   });
 
   it("mendahulukan fakta baru bila aksi daftar memori berkontradiksi", () => {

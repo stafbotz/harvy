@@ -118,19 +118,31 @@ describe("economy semantic command UX", () => {
     assert.match(recommendation ?? "", /Perkenalan/u);
   });
 
-  it("mengizinkan contextual details tetapi menolak subject orang lain", async () => {
+  it("mengizinkan contextual details hanya dengan receipt surface yang cocok", async () => {
     const harness = fakeEconomy();
     const commands = new EconomyCommandService(harness.fake as never);
+    const contextual = request(
+      "detailnya",
+      "usage",
+      "show-details",
+      null,
+      "contextual",
+      "recent",
+    );
+    assert.equal(
+      await commands.handle("owner-uji", contextual),
+      null,
+      "label contextual model tidak boleh menciptakan navigation state",
+    );
     const details = await commands.handle(
       "owner-uji",
-      request(
-        "detailnya",
-        "usage",
-        "show-details",
-        null,
-        "contextual",
-        "recent",
-      ),
+      {
+        ...contextual,
+        recentInteractions: [{
+          domain: "usage",
+          operation: "show-summary",
+        }],
+      },
     );
     assert.match(details ?? "", /Penggunaan Harvy/u);
 

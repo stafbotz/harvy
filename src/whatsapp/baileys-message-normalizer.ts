@@ -64,6 +64,8 @@ export interface WhatsAppPrivateDelivery {
   bubbleCount: number;
   complete: boolean;
   messageIds?: string[];
+  /** Referensi per posisi bubble/document; null berarti transport tidak memberi ID. */
+  messageRefs?: Array<string | null>;
 }
 
 export interface WhatsAppPrivateMessageRef {

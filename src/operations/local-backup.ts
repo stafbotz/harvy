@@ -34,6 +34,10 @@ import {
   acquireLocalRuntimeLock,
   localRuntimeLockPath,
 } from "../core/local-runtime-lock.js";
+import {
+  primaryChannelCredentialPaths,
+  type PrimaryChannelCredentialPaths,
+} from "./primary-channel-credentials.js";
 
 const ARCHIVE_MAGIC = Buffer.from("HARVY-BACKUP-V1\n", "ascii");
 const AUTH_TAG_BYTES = 16;
@@ -126,9 +130,12 @@ export function createRuntimeBackupPlan(
   options: {
     environmentFile?: string | null;
     excludedPaths?: readonly string[];
+    primaryCredentialPaths?: PrimaryChannelCredentialPaths;
   } = {},
 ): LocalBackupPlan {
   const economy = config.controlPlane.economy;
+  const primaryCredentials = options.primaryCredentialPaths ??
+    primaryChannelCredentialPaths();
   const targets: LocalBackupTarget[] = [
     fileTarget("tasks", config.dataFile, "DATA_FILE", "user-data"),
     fileTarget("legacy-memories", config.memoryFile, "MEMORY_FILE", "user-data"),
@@ -178,6 +185,18 @@ export function createRuntimeBackupPlan(
       config.whatsapp.groupFile,
       "WHATSAPP_GROUP_FILE",
       "user-data",
+    ),
+    fileTarget(
+      "primary-channel-credential-key",
+      primaryCredentials.keyFile,
+      null,
+      "credentials",
+    ),
+    fileTarget(
+      "primary-channel-credentials",
+      primaryCredentials.secretFile,
+      null,
+      "credentials",
     ),
   ];
 

@@ -665,6 +665,100 @@ export class ConsoleServer {
           );
         }
         if (
+          url.pathname ===
+              "/api/v1/channel-setup/primary/telegram/bot-token" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(
+            session,
+            "channel_credential_update",
+            "primary_telegram_bot",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, ["token"]);
+              await setup.setPrimaryTelegramBotToken(
+                readString(body.token, "token", 256),
+              );
+            },
+          );
+          sendJson(response, 200, { updated: true });
+          return;
+        }
+        if (
+          url.pathname ===
+              "/api/v1/channel-setup/primary/telegram/migrate" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(
+            session,
+            "channel_credential_update",
+            "primary_telegram_bot",
+            async () => {
+              const body = await readJsonObject(request);
+              requireConfirmation(
+                body,
+                "MIGRATE_PRIMARY_TELEGRAM_TO_CONSOLE",
+              );
+              await setup.migratePrimaryTelegramBotToken();
+            },
+          );
+          sendJson(response, 200, { migrated: true });
+          return;
+        }
+        if (
+          url.pathname ===
+              "/api/v1/channel-setup/primary/telegram/verify" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(
+            session,
+            "channel_connection_verify",
+            "primary_telegram_bot",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, []);
+              await setup.verifyPrimaryTelegramBotToken();
+            },
+          );
+          sendJson(response, 200, { verified: true });
+          return;
+        }
+        if (
+          url.pathname ===
+              "/api/v1/channel-setup/primary/telegram/bot-token" &&
+          request.method === "DELETE"
+        ) {
+          await this.runMutation(
+            session,
+            "channel_credential_revoke",
+            "primary_telegram_bot",
+            async () => {
+              const body = await readJsonObject(request);
+              requireConfirmation(body, "DELETE_PRIMARY_TELEGRAM_BOT");
+              await setup.deletePrimaryTelegramBotToken();
+            },
+          );
+          sendJson(response, 200, { deleted: true });
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/channel-setup/whatsapp/verify" &&
+          request.method === "POST"
+        ) {
+          await this.runMutation(
+            session,
+            "channel_connection_verify",
+            "whatsapp_acceptance",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, []);
+              await setup.verifyWhatsAppSessions();
+            },
+          );
+          sendJson(response, 202, { accepted: true });
+          return;
+        }
+        if (
           url.pathname === "/api/v1/channel-setup/telegram/bot-token" &&
           request.method === "POST"
         ) {
@@ -1454,6 +1548,33 @@ function describeMutation(
 ): MutationDescriptor {
   if (
     method === "POST" &&
+    url.pathname === "/api/v1/channel-setup/primary/telegram/verify"
+  ) {
+    return {
+      action: "channel_connection_verify",
+      targetRef: "primary_telegram_bot",
+    };
+  }
+  if (
+    method === "POST" &&
+    url.pathname === "/api/v1/channel-setup/primary/telegram/migrate"
+  ) {
+    return {
+      action: "channel_credential_update",
+      targetRef: "primary_telegram_bot",
+    };
+  }
+  if (
+    method === "POST" &&
+    url.pathname === "/api/v1/channel-setup/whatsapp/verify"
+  ) {
+    return {
+      action: "channel_connection_verify",
+      targetRef: "whatsapp_acceptance",
+    };
+  }
+  if (
+    method === "POST" &&
     /\/channel-setup\/(telegram\/tester|whatsapp\/(harvy|tester))\/pair$/u.test(url.pathname)
   ) {
     return { action: "channel_pairing_start", targetRef: channelAuditTarget(url.pathname) };
@@ -1532,6 +1653,7 @@ function readOpaqueSecret(value: unknown, field: string, maximum: number): strin
 }
 
 function channelAuditTarget(pathname: string): string | null {
+  if (pathname.includes("/primary/telegram/")) return "primary_telegram_bot";
   if (pathname.includes("/telegram/bot-token")) return "telegram_bot";
   if (pathname.includes("/telegram/tester")) return "telegram_tester";
   if (pathname.includes("/whatsapp/harvy")) return "whatsapp_harvy";

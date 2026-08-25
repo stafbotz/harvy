@@ -172,13 +172,23 @@ export interface TextEmbeddingProvider {
   embed(texts: readonly string[], signal?: AbortSignal): Promise<number[][]>;
 }
 
-export type RetrievedMemorySource =
-  | "episode"
-  | "semantic"
-  | "graph"
-  | "user-model"
-  | "procedure"
-  | "error-lesson";
+export const RETRIEVED_MEMORY_SOURCES = [
+  "episode",
+  "semantic",
+  "graph",
+  "user-model",
+  "procedure",
+  "error-lesson",
+] as const;
+
+export type RetrievedMemorySource = typeof RETRIEVED_MEMORY_SOURCES[number];
+
+export function isRetrievedMemorySource(
+  value: unknown,
+): value is RetrievedMemorySource {
+  return typeof value === "string" &&
+    (RETRIEVED_MEMORY_SOURCES as readonly string[]).includes(value);
+}
 
 /** Paket evidence yang tetap berstruktur sampai renderer prompt. */
 export interface RetrievedMemoryEvidence {
@@ -193,4 +203,37 @@ export interface RetrievedMemoryEvidence {
   sourceEpisodeIds: string[];
   sourceSequences: number[];
   sourceMemoryIds: string[];
+}
+
+/**
+ * Episode, semantic memory, graph, dan user model harus menunjuk sumber primer.
+ * Procedure/error lesson juga dapat berasal langsung dari observasi AgentRun;
+ * pada bentuk itu record belajar yang ada di `id` adalah provenance durablenya.
+ */
+export function hasRetrievedMemoryProvenance(
+  evidence: Readonly<
+    Pick<
+      RetrievedMemoryEvidence,
+      | "id"
+      | "sources"
+      | "sourceEpisodeIds"
+      | "sourceSequences"
+      | "sourceMemoryIds"
+    >
+  >,
+): boolean {
+  if (
+    evidence.sourceEpisodeIds.length > 0 ||
+    evidence.sourceSequences.length > 0 ||
+    evidence.sourceMemoryIds.length > 0
+  ) {
+    return true;
+  }
+  return (
+    evidence.sources.includes("procedure") &&
+    evidence.id.startsWith("procedure:")
+  ) || (
+    evidence.sources.includes("error-lesson") &&
+    evidence.id.startsWith("error-lesson:")
+  );
 }

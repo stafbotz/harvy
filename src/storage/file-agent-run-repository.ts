@@ -18,6 +18,10 @@ import {
   scopeKey,
   type AgentChannel,
 } from "../harness/scope.js";
+import {
+  hasRetrievedMemoryProvenance,
+  isRetrievedMemorySource,
+} from "../domain/memory-knowledge.js";
 
 const FILE_QUEUES = new Map<string, Promise<void>>();
 
@@ -547,10 +551,7 @@ function validateActiveContext(run: ActiveAgentRun): void {
           evidence.id.length > 300 ||
           !Array.isArray(evidence.sources) ||
           evidence.sources.length < 1 ||
-          evidence.sources.some((source) =>
-            source !== "episode" &&
-            source !== "semantic" &&
-            source !== "graph") ||
+          evidence.sources.some((source) => !isRetrievedMemorySource(source)) ||
           (evidence.sources.includes("graph") &&
             !evidence.sources.includes("semantic")) ||
           typeof evidence.text !== "string" ||
@@ -574,9 +575,7 @@ function validateActiveContext(run: ActiveAgentRun): void {
           evidence.sourceMemoryIds.length > 64 ||
           evidence.sourceMemoryIds.some((id) =>
             typeof id !== "string" || id.length > 256) ||
-          (evidence.sourceEpisodeIds.length === 0 &&
-            evidence.sourceSequences.length === 0 &&
-            evidence.sourceMemoryIds.length === 0)
+          !hasRetrievedMemoryProvenance(evidence)
         )))
   ) {
     throw new Error("Snapshot konteks run aktif tidak sah.");
