@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  GitHubBrokerEffect,
   GitHubBrokerHealth,
   GitHubBrokerTransport,
   GitHubBrokerTransportResult,
@@ -9,8 +10,11 @@ import type {
   GitHubInstallationStatus,
   GitHubRepositoryArchiveReference,
   GitHubRepositoryAccess,
+  GitHubRepositoryBootstrapEffect,
   GitHubRepositoryPage,
 } from "../domain/github.js";
+import { validateGitHubRepositoryBootstrapEffect } from
+  "../domain/github-bootstrap.js";
 import {
   validateLocalGitObjectBundleReference,
 } from "../domain/local-git.js";
@@ -193,6 +197,7 @@ implements GitHubBrokerTransport, GitHubInstallationTransport {
       "visibility",
       "defaultBranch",
       "baseCommit",
+      "empty",
       "targetBranch",
       "targetBranchHead",
       "canRead",
@@ -271,6 +276,18 @@ implements GitHubBrokerTransport, GitHubInstallationTransport {
     return this.effectJson("/v1/github-broker/create-branch", effect, signal);
   }
 
+  async bootstrapRepository(
+    effectInput: GitHubRepositoryBootstrapEffect,
+    signal?: AbortSignal,
+  ): Promise<GitHubBrokerTransportResult> {
+    const effect = validateGitHubRepositoryBootstrapEffect(effectInput);
+    return this.effectJson(
+      "/v1/github-broker/bootstrap-repository",
+      effect,
+      signal,
+    );
+  }
+
   async pushExactCommit(
     effectInput: GitHubExactEffect,
     objectBundle: AsyncIterable<Uint8Array>,
@@ -304,16 +321,18 @@ implements GitHubBrokerTransport, GitHubInstallationTransport {
   }
 
   async reconcileEffect(
-    effectInput: GitHubExactEffect,
+    effectInput: GitHubBrokerEffect,
     signal?: AbortSignal,
   ): Promise<GitHubBrokerTransportResult> {
-    const effect = effectEnvelope(effectInput);
+    const effect = effectInput.capability === "github.repository.bootstrap"
+      ? validateGitHubRepositoryBootstrapEffect(effectInput)
+      : effectEnvelope(effectInput);
     return this.effectJson("/v1/github-broker/reconcile-effect", effect, signal);
   }
 
   private async effectJson(
     path: string,
-    effect: GitHubExactEffect,
+    effect: GitHubBrokerEffect,
     signal?: AbortSignal,
   ): Promise<GitHubBrokerTransportResult> {
     const envelope = { version: 1 as const, effect };

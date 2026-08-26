@@ -130,6 +130,78 @@ describe("CodingRunEngine Phase I", () => {
     assert.doesNotMatch(anchor.text, /%|\bETA\b|\bmodel\b|\bworker\b/iu);
   });
 
+  it("menyimpan advisory per instruction revision secara append-only dan idempotent", async () => {
+    const fixture = await createFixture();
+    const started = await fixture.engine.start(
+      fixture.scope,
+      fixture.project.id,
+      1,
+      brief(),
+    );
+    const mapped = await fixture.engine.markMapped(
+      fixture.scope,
+      started.runId,
+      0,
+    );
+    const challengerDraft = {
+      role: "challenger" as const,
+      status: "completed" as const,
+      summary: "Batasi perubahan dan pertahankan API publik.",
+    };
+    const verifierDraft = {
+      role: "verifier" as const,
+      status: "completed" as const,
+      summary: "Verifikasi test, lint, typecheck, dan build pada snapshot sama.",
+    };
+    const drafts = [challengerDraft, verifierDraft];
+
+    const advised = await fixture.engine.recordAdvisories(
+      fixture.scope,
+      started.runId,
+      0,
+      drafts,
+      mapped.stateRevision,
+    );
+    assert.equal(advised.advisoryReceipts?.length, 2);
+    assert.deepEqual(
+      advised.advisoryReceipts?.map((receipt) => receipt.role).sort(),
+      ["challenger", "verifier"],
+    );
+    assert.equal(
+      advised.advisoryReceipts?.every((receipt) =>
+        receipt.workingSnapshot === advised.repositoryMap?.workingSnapshot &&
+        /^[a-f0-9]{64}$/u.test(receipt.scopeDigest) &&
+        /^[a-f0-9]{64}$/u.test(receipt.summaryDigest)
+      ),
+      true,
+    );
+    assert.equal(advised.events.at(-1)?.type, "advisory.completed");
+
+    const repeated = await fixture.engine.recordAdvisories(
+      fixture.scope,
+      started.runId,
+      0,
+      drafts,
+      advised.stateRevision,
+    );
+    assert.ok(repeated.stateRevision >= advised.stateRevision);
+    assert.equal(repeated.advisoryReceipts?.length, 2);
+
+    await assert.rejects(
+      fixture.engine.recordAdvisories(
+        fixture.scope,
+        started.runId,
+        0,
+        [challengerDraft, { ...verifierDraft, summary: "Rubric berbeda." }],
+        repeated.stateRevision,
+      ),
+      /sudah tercatat berbeda/iu,
+    );
+
+    const reloaded = await fixture.codingRepository.load(started.runId);
+    assert.equal(reloaded?.advisoryReceipts?.length, 2);
+  });
+
   it("menyembunyikan source sensitif dan menolak bundle sandbox sebelum allocate", async () => {
     const fixture = await createFixture({ includeSensitiveSource: true });
     const run = await fixture.engine.start(

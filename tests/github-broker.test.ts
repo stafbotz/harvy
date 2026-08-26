@@ -30,6 +30,7 @@ import type {
   GitHubExactEffect,
   GitHubInstallationConnection,
   GitHubRepositoryAccess,
+  GitHubRepositoryBootstrapEffect,
   GitHubRepositorySelection,
 } from "../src/domain/github.js";
 import type {
@@ -1398,6 +1399,7 @@ async function createFixture(
     visibility: "private",
     defaultBranch: "main",
     baseCommit: BASE,
+    bootstrapAttempts: [],
     selectedByMembershipId: workspace.scope.membershipId,
     selectedAclEpoch: workspace.scope.aclEpoch,
     status: "selected",
@@ -1607,6 +1609,7 @@ class FakeGitHubTransport implements GitHubBrokerTransport {
       visibility: "private",
       defaultBranch: "main",
       baseCommit: this.baseCommit,
+      empty: false,
       targetBranch,
       targetBranchHead: targetBranch ? this.targetHeads.get(targetBranch) ?? null : null,
       canRead: true,
@@ -1614,6 +1617,12 @@ class FakeGitHubTransport implements GitHubBrokerTransport {
       canWriteWorkflows: this.canWriteWorkflows,
       canCreatePullRequest: true,
     };
+  }
+
+  async bootstrapRepository(
+    _effect: GitHubRepositoryBootstrapEffect,
+  ): Promise<GitHubBrokerTransportResult> {
+    throw new Error("bootstrap repository tidak dipakai fixture publish");
   }
 
   async createBranch(
@@ -1741,6 +1750,7 @@ class FakeLocalGitTransport implements LocalGitTransport {
       reason: null,
     };
   }
+
   async prepare(
     binding: LocalGitBinding,
     snapshot: SandboxInputSnapshotDescriptor,

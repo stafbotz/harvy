@@ -8,16 +8,22 @@ import { createReadStream } from "node:fs";
 import { lstat, open, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type {
+  GitHubBrokerEffect,
   GitHubBrokerHealth,
   GitHubBrokerTransportResult,
   GitHubExactEffect,
   GitHubInstallationSession,
   GitHubInstallationStatus,
   GitHubRepositoryAccess,
+  GitHubRepositoryBootstrapEffect,
   GitHubRepositoryArchiveReference,
   GitHubRepositoryPage,
   GitHubRepositorySummary,
 } from "../domain/github.js";
+import {
+  githubRepositoryBootstrapContent,
+  validateGitHubRepositoryBootstrapEffect,
+} from "../domain/github-bootstrap.js";
 import {
   validateLocalGitObjectBundleReference,
   type LocalGitObjectBundleReference,
@@ -384,8 +390,11 @@ export class GitHubAppBackend {
       permissions: { contents: "read", metadata: "read" },
       ...(signal ? { signal } : {}),
     });
-    const baseCommit = await this.#refHead(context, context.defaultBranch, token, false, signal);
-    if (!baseCommit) throw new Error("Default branch GitHub tidak mempunyai head.");
+    const baseCommit = await this.#refHead(context, context.defaultBranch, token, true, signal);
+    const empty = baseCommit === null;
+    if (empty && (await this.#repositoryHeads(context, token, signal)).length !== 0) {
+      throw new Error("Default branch GitHub hilang pada repository yang tidak kosong.");
+    }
     const targetBranchHead = targetBranch === null
       ? null
       : await this.#refHead(context, targetBranch, token, true, signal);
@@ -401,6 +410,7 @@ export class GitHubAppBackend {
       visibility: context.visibility,
       defaultBranch: context.defaultBranch,
       baseCommit,
+      empty,
       targetBranch,
       targetBranchHead,
       canRead: contents >= 1,
@@ -493,6 +503,82 @@ export class GitHubAppBackend {
     }
     await this.#verifyArchive(reference);
     return { path: this.#store.archivePath(record.relativePath), reference };
+  }
+
+  async bootstrapRepository(
+    effectInput: GitHubRepositoryBootstrapEffect,
+    signal?: AbortSignal,
+  ): Promise<GitHubBrokerTransportResult> {
+    const effect = validateGitHubRepositoryBootstrapEffect(effectInput);
+    return this.#execute(effect, async (record) => {
+      const context = await this.#effectContext(effect, "write", signal);
+      const token = await this.#effectToken(
+        effect,
+        { contents: "write", metadata: "read" },
+        signal,
+      );
+      const current = await this.repositoryAccess(
+        effect.ownerWorkspaceKey,
+        effect.installationId,
+        effect.repositoryId,
+        null,
+        signal,
+      );
+      if (
+        !current.empty ||
+        current.baseCommit !== null ||
+        !current.canPush ||
+        current.visibility !== "private" ||
+        current.defaultBranch !== effect.defaultBranch
+      ) return this.#terminal(record, "not_committed", null, null);
+
+      const content = githubRepositoryBootstrapContent(effect);
+      if (digest(content) !== effect.contentSha256) {
+        throw new Error("Konten bootstrap GitHub tidak cocok exact effect.");
+      }
+      record = await this.#phase(
+        record,
+        "repository_bootstrap_sending",
+        "unknown",
+      );
+      try {
+        const response = await this.#api.apiJson({
+          method: "PUT",
+          path: repoPath(context, `/contents/${effect.path}`),
+          authorization: token,
+          body: {
+            message: effect.commitMessage,
+            content: content.toString("base64"),
+            branch: effect.defaultBranch,
+          },
+          accepted: [201],
+          ...(signal ? { signal } : {}),
+        });
+        const value = object(response.value, "GitHub bootstrap receipt");
+        const commit = object(value.commit, "GitHub bootstrap commit");
+        const file = object(value.content, "GitHub bootstrap content");
+        const commitSha = gitHash(commit.sha, "bootstrap commit");
+        if (
+          file.path !== effect.path ||
+          file.sha !== gitBlobHash(content) ||
+          await this.#refHead(
+              context,
+              effect.defaultBranch,
+              token,
+              false,
+              signal,
+            ) !== commitSha
+        ) throw new Error("Receipt bootstrap repository GitHub tidak exact.");
+        return this.#terminal(
+          record,
+          "committed",
+          commitSha,
+          commitUrl(context, commitSha),
+        );
+      } catch {
+        return this.#observe(record);
+      }
+    });
   }
 
   async createBranch(effectInput: GitHubExactEffect, signal?: AbortSignal): Promise<GitHubBrokerTransportResult> {
@@ -664,9 +750,9 @@ export class GitHubAppBackend {
   }
 
   async reconcileEffect(
-    effectInput: GitHubExactEffect,
+    effectInput: GitHubBrokerEffect,
   ): Promise<GitHubBrokerTransportResult> {
-    const effect = validateEffect(effectInput);
+    const effect = validateBrokerEffect(effectInput);
     return this.#exclusive(effect.effectId, async () => {
       let record = await this.#store.loadEffect(effect.effectId);
       if (!record) {
@@ -813,13 +899,16 @@ export class GitHubAppBackend {
   }
 
   async #effectContext(
-    effect: GitHubExactEffect,
+    effect: GitHubBrokerEffect,
     requirement: "write" | "pull_request",
     signal?: AbortSignal,
   ): Promise<RepositoryContext> {
     await this.#assertInstallationOwner(effect.ownerWorkspaceKey, effect.installationId);
     const context = await this.#repositoryContext(effect.installationId, effect.repositoryId, signal);
-    if (context.defaultBranch !== effect.baseBranch || context.archived || context.disabled ||
+    const expectedDefaultBranch = effect.capability === "github.repository.bootstrap"
+      ? effect.defaultBranch
+      : effect.baseBranch;
+    if (context.defaultBranch !== expectedDefaultBranch || context.archived || context.disabled ||
       !context.repoCanPush || permissionLevel(context.permissions.contents) < (requirement === "write" ? 2 : 1) ||
       (requirement === "pull_request" && permissionLevel(context.permissions.pull_requests) < 2) ||
       (effect.capability === "github.workflow.write" && permissionLevel(context.permissions.workflows) < 2)) {
@@ -829,7 +918,7 @@ export class GitHubAppBackend {
   }
 
   #effectToken(
-    effect: GitHubExactEffect,
+    effect: GitHubBrokerEffect,
     permissions: Readonly<Record<string, "read" | "write">>,
     signal?: AbortSignal,
   ): Promise<string> {
@@ -858,6 +947,60 @@ export class GitHubAppBackend {
     });
     if (response.status === 404) return null;
     return gitRefResponse(response.value).sha;
+  }
+
+  async #repositoryHeads(
+    context: RepositoryContext,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<Array<{ ref: string; sha: string }>> {
+    const response = await this.#api.apiJson({
+      method: "GET",
+      path: repoPath(context, "/git/matching-refs/heads/"),
+      authorization: token,
+      accepted: [200, 409],
+      retrySafe: true,
+      ...(signal ? { signal } : {}),
+    });
+    if (response.status === 409) return [];
+    if (!Array.isArray(response.value) || response.value.length > 10_000) {
+      throw new Error("Daftar branch GitHub tidak sah.");
+    }
+    return response.value.map((value) => {
+      const reference = gitRefResponse(value);
+      if (!reference.ref.startsWith("refs/heads/")) {
+        throw new Error("Daftar branch GitHub memuat ref non-branch.");
+      }
+      return reference;
+    });
+  }
+
+  async #matchesBootstrapContent(
+    context: RepositoryContext,
+    token: string,
+    effect: GitHubRepositoryBootstrapEffect,
+    head: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const response = await this.#api.apiJson({
+      method: "GET",
+      path: `${repoPath(context, `/contents/${effect.path}`)}?ref=${encodeURIComponent(head)}`,
+      authorization: token,
+      accepted: [200, 404],
+      retrySafe: true,
+      ...(signal ? { signal } : {}),
+    });
+    if (response.status === 404) return false;
+    const value = object(response.value, "GitHub bootstrap content observation");
+    if (
+      value.path !== effect.path ||
+      value.encoding !== "base64" ||
+      typeof value.content !== "string"
+    ) throw new Error("Observasi konten bootstrap GitHub tidak sah.");
+    const bytes = Buffer.from(value.content.replace(/\s+/gu, ""), "base64");
+    return digest(bytes) === effect.contentSha256 &&
+      bytes.equals(githubRepositoryBootstrapContent(effect)) &&
+      value.sha === gitBlobHash(bytes);
   }
 
   async #uploadCommitObjects(
@@ -1003,7 +1146,7 @@ export class GitHubAppBackend {
   }
 
   async #execute(
-    effect: GitHubExactEffect,
+    effect: GitHubBrokerEffect,
     operation: (record: BrokerEffectRecord) => Promise<GitHubBrokerTransportResult>,
   ): Promise<GitHubBrokerTransportResult> {
     return this.#exclusive(effect.effectId, async () => {
@@ -1044,6 +1187,33 @@ export class GitHubAppBackend {
     const effect = record.effect;
     try {
       const context = await this.#repositoryContext(effect.installationId, effect.repositoryId);
+      if (effect.capability === "github.repository.bootstrap") {
+        const token = await this.#effectToken(
+          effect,
+          { contents: "read", metadata: "read" },
+        );
+        const head = await this.#refHead(
+          context,
+          effect.defaultBranch,
+          token,
+          true,
+        );
+        if (
+          head !== null &&
+          await this.#matchesBootstrapContent(context, token, effect, head)
+        ) {
+          return this.#terminal(
+            record,
+            "committed",
+            head,
+            commitUrl(context, head),
+          );
+        }
+        if (record.phase !== "repository_bootstrap_sending") {
+          return this.#terminal(record, "not_committed", null, null);
+        }
+        return transportResult(await this.#phase(record, record.phase, "unknown"));
+      }
       if (effect.capability === "github.pr.create") {
         const token = await this.#effectToken(effect, {
           contents: "read", metadata: "read", pull_requests: "write",
@@ -1220,6 +1390,12 @@ function validateEffect(
   return effect;
 }
 
+function validateBrokerEffect(input: GitHubBrokerEffect): GitHubBrokerEffect {
+  return input.capability === "github.repository.bootstrap"
+    ? validateGitHubRepositoryBootstrapEffect(input)
+    : validateEffect(input);
+}
+
 function validateArchiveReference(input: GitHubRepositoryArchiveReference): GitHubRepositoryArchiveReference {
   const value = structuredClone(input);
   exactKeys(value, [
@@ -1327,10 +1503,17 @@ function terminal(record: BrokerEffectRecord): boolean {
   return record.status === "committed" || record.status === "not_committed";
 }
 
-function assertSameEffect(record: BrokerEffectRecord, effect: GitHubExactEffect): void {
+function assertSameEffect(record: BrokerEffectRecord, effect: GitHubBrokerEffect): void {
   if (record.effectDigest !== digestCanonical(effect) || JSON.stringify(record.effect) !== JSON.stringify(effect)) {
     throw new Error("GitHub effectId digunakan untuk payload berbeda.");
   }
+}
+
+function gitBlobHash(bytes: Uint8Array): string {
+  return createHash("sha1")
+    .update(`blob ${bytes.byteLength}\0`, "utf8")
+    .update(bytes)
+    .digest("hex");
 }
 
 function repoPath(context: RepositoryContext, suffix: string): string {

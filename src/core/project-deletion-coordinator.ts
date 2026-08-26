@@ -318,7 +318,11 @@ function validDeletionReference(
     ])
   ) throw new Error("Locator project deletion memuat field asing atau hilang.");
   if (input.version !== 1) throw new Error("Versi locator project deletion tidak sah.");
-  if (input.projectSource !== "upload" && input.projectSource !== "github") {
+  if (
+    input.projectSource !== "blank" &&
+    input.projectSource !== "upload" &&
+    input.projectSource !== "github"
+  ) {
     throw new Error("Source locator project deletion tidak sah.");
   }
   if (

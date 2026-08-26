@@ -9,7 +9,9 @@ const ARITHMETIC_EXPRESSION = new RegExp(
   "giu",
 );
 const ARITHMETIC_REQUEST =
-  /\b(?:berapa|hitung(?:kan)?|kerjakan\s+soal|hasil(?:nya)?|langsung\s+(?:kasih|beri(?:kan)?))\b/iu;
+  /\b(?:berapa|hitung(?:kan)?|kerjakan\s+soal|hasil(?:nya)?|jawab(?:lah)?|langsung\s+(?:kasih|beri(?:kan)?))\b/iu;
+const ARITHMETIC_NUMBER_ONLY =
+  /\b(?:angka(?:nya)?\s+saja|hanya\s+(?:angka|angkanya)|number\s+only)\b/iu;
 
 /**
  * Menjawab satu operasi aritmetika pendek tanpa menunggu model.
@@ -35,7 +37,10 @@ export function deterministicArithmeticReply(message: string): string | null {
   const result = applyRational(left, match[2] ?? "", right);
   if (!result) return null;
   const rendered = renderRational(result);
-  return rendered ? `Hasilnya ${rendered}.` : null;
+  if (!rendered) return null;
+  return ARITHMETIC_NUMBER_ONLY.test(normalized)
+    ? rendered
+    : `Hasilnya ${rendered}.`;
 }
 
 /**

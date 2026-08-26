@@ -9,8 +9,15 @@ import { EMPTY_CONTEXT, type HarvyContext } from "../ai/context.js";
 import type { Conversation, ConversationRuntime } from "../ai/conversation.js";
 import type { OperationPresentationBrief } from
   "../ai/operation-presentation.js";
-import { hasMemoryPortraitEvidence } from "../ai/memory-portrait.js";
-import { ByokProviderError } from "../ai/client.js";
+import {
+  groundedMemoryPortraitFallback,
+  hasMemoryPortraitEvidence,
+  isMemoryPortraitGrounded,
+} from "../ai/memory-portrait.js";
+import {
+  ByokProviderError,
+  type ChatImageMediaType,
+} from "../ai/client.js";
 import {
   currentUsageAttribution,
   withUsageAttribution,
@@ -18,6 +25,7 @@ import {
 import {
   allowsDeterministicSurface,
   requiresPlannedExecution,
+  requestsAgentTooling,
   selectGlobalRoute,
 } from "../ai/model-policy.js";
 import { liveStateRequirement } from "../ai/agent.js";
@@ -40,6 +48,17 @@ import type {
 import type { AppConfig } from "../config.js";
 import type { CodingRun } from "../domain/coding-run.js";
 import { renderCodingRunAnchor } from "../coding/coding-run-anchor.js";
+import {
+  GOAL_COMMAND_HELP,
+  parseGoalCommand,
+  parseSkillCommand,
+  SKILL_COMMAND_HELP,
+} from "../coding/project-intent-command.js";
+import {
+  renderProjectGoal,
+  renderProjectSkill,
+  renderProjectSkills,
+} from "../coding/project-intent-presentation.js";
 import type { CodingRuntimeComposition } from "../core/coding-runtime-composition.js";
 import type { EconomyService } from "../core/economy-service.js";
 import {
@@ -69,20 +88,26 @@ import {
   isSensitiveMemory,
 } from "../core/memory-policy.js";
 import {
-  automaticMemoryCandidateAuthorized,
   deriveMemoryMetadata,
   exactExplicitMemoryCandidate,
+  groundedAutomaticMemoryContent,
   inferExplicitResponsePreference,
+  memoryCandidateConflictsWithRetractions,
+  memoryEvidenceConflictsWithRetractions,
 } from "../core/memory-candidate.js";
 import {
   explicitMemoryRememberAuthority,
   normalizeMemoryWriteEmoji,
   replyAcknowledgesMemoryWrite,
+  replyClaimsMemoryDeletion,
+  withoutUnconfirmedMemoryRecordClaims,
+  withoutUnconfirmedMemoryDeletionClaims,
   withoutUnconfirmedMemoryWriteClaims,
 } from "../core/memory-explicit-consent.js";
 import type { MemoryService } from "../core/memory-service.js";
 import {
   isExplicitForgetAllMemories,
+  memoryRetractionAuthorized,
   memoriesMatchingNaturalTarget,
   naturalMemoryTargetLabel,
 } from "../core/memory-natural-control.js";
@@ -264,9 +289,6 @@ import {
 
 /** Jarak bawaan antara pengingat dan tenggat. */
 const REMINDER_LEAD_MS = 60 * 60 * 1000;
-const MEMORY_PORTRAIT_QUERY =
-  "Apa yang kamu ingat tentangku sekarang dan dulu: profilku, preferensi, kebiasaan, tujuan, hubungan, proyek, serta hal penting yang berubah?";
-
 interface AuthorizedMemoryCandidate {
   memory: ExtractedMemory;
   /** Perintah remember dibuktikan lokal; onboarding mengotorisasi write biasa. */
@@ -285,6 +307,15 @@ interface StoredMemoryBatch {
     item: MemoryItem;
     operation: "saved" | "updated" | "already-known";
     explicit: boolean;
+  }>;
+}
+
+interface ForgottenMemoryBatch {
+  forgotten: MemoryItem[];
+  acknowledgements: Array<{
+    content: string;
+    operation: "forgotten";
+    explicit: true;
   }>;
 }
 
@@ -1095,6 +1126,19 @@ export function createBot(
         if (!await codingConsent(ctx, ownerId)) return;
         const actor = privateCodingActor(ctx, codingRuntime);
         const command = commandTail(ctx.message?.text ?? "", "project");
+        if (/^init\s+/iu.test(command)) {
+          const selected = await codingRuntime.application.createBlankProject(
+            actor,
+            command.replace(/^init\s+/iu, ""),
+          );
+          await ctx.reply([
+            "Project kosong dibuat dan dipilih.",
+            `Workspace: ${selected.workspaceKey}`,
+            `Project: ${selected.projectId}`,
+            "Tetapkan tujuan dengan /goal sebelum mulai coding.",
+          ].join("\n"));
+          return;
+        }
         if (/^new\s+/iu.test(command)) {
           const selected = await codingRuntime.application.createWorkspace(
             actor,
@@ -1157,6 +1201,7 @@ export function createBot(
         }
         await ctx.reply([
           "Kelola project coding:",
+          "/project init <nama>",
           "/project new <nama>",
           "/project list",
           "/project use <workspaceKey>",
@@ -1167,6 +1212,93 @@ export function createBot(
         ].join("\n"));
       },
     );
+  });
+
+  bot.command("goal", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(ctx, ownerId, "drain", "Perintah /goal gagal:", async () => {
+      if (!codingRuntime) {
+        await ctx.reply("Runtime coding belum diaktifkan oleh deployment Harvy.");
+        return;
+      }
+      if (!await codingConsent(ctx, ownerId)) return;
+      const actor = privateCodingActor(ctx, codingRuntime);
+      const command = parseGoalCommand(commandTail(ctx.message?.text ?? "", "goal"));
+      if (command.kind === "show") {
+        await ctx.reply(renderProjectGoal(await codingRuntime.application.currentGoal(actor)));
+        return;
+      }
+      if (command.kind === "set") {
+        await ctx.reply(renderProjectGoal(await codingRuntime.application.setGoal(actor, command.input)));
+        return;
+      }
+      if (command.kind === "complete") {
+        await ctx.reply(renderProjectGoal(await codingRuntime.application.completeGoal(actor)));
+        return;
+      }
+      if (command.kind === "block") {
+        await ctx.reply(renderProjectGoal(await codingRuntime.application.addGoalBlocker(actor, command.summary)));
+        return;
+      }
+      if (command.kind === "resolve") {
+        await ctx.reply(renderProjectGoal(await codingRuntime.application.resolveGoalBlocker(actor, command.blockerId)));
+        return;
+      }
+      if (command.kind === "confirm") {
+        await ctx.reply(renderProjectGoal(await codingRuntime.application.confirmManualGoalCriterion(
+          actor,
+          command.criterionId,
+          command.summary,
+        )));
+        return;
+      }
+      await ctx.reply(GOAL_COMMAND_HELP);
+    });
+  });
+
+  bot.command("skill", (ctx) => {
+    const ownerId = ownerOf(ctx);
+    enqueueBotAction(ctx, ownerId, "drain", "Perintah /skill gagal:", async () => {
+      if (!codingRuntime) {
+        await ctx.reply("Runtime coding belum diaktifkan oleh deployment Harvy.");
+        return;
+      }
+      if (!await codingConsent(ctx, ownerId)) return;
+      const actor = privateCodingActor(ctx, codingRuntime);
+      const command = parseSkillCommand(commandTail(ctx.message?.text ?? "", "skill"));
+      if (command.kind === "list") {
+        await ctx.reply(renderProjectSkills(await codingRuntime.application.listSkills(actor)));
+        return;
+      }
+      if (command.kind === "create") {
+        await ctx.reply(renderProjectSkill(await codingRuntime.application.createSkill(actor, command.input)));
+        return;
+      }
+      if (command.kind === "apply") {
+        let anchorMessageId: number | null = null;
+        let pendingRun: CodingRun | null = null;
+        const handle = await codingRuntime.application.startCodingWithSkill(
+          actor,
+          command.nameOrId,
+          command.request,
+          async (run) => {
+            pendingRun = run;
+            if (anchorMessageId !== null) scheduleCodingAnchor(run, ctx.chat.id, anchorMessageId);
+          },
+        );
+        const sent = await ctx.reply(handle.initialAnchor.text);
+        anchorMessageId = sent.message_id;
+        codingAnchors.set(ownerId, {
+          runId: handle.runId,
+          chatId: ctx.chat.id,
+          messageId: sent.message_id,
+        });
+        if (pendingRun) scheduleCodingAnchor(pendingRun, ctx.chat.id, sent.message_id);
+        trackCodingCompletion(ctx, ownerId, handle, sent.message_id);
+        return;
+      }
+      await ctx.reply(SKILL_COMMAND_HELP);
+    });
   });
 
   bot.command("code", (ctx) => {
@@ -1317,8 +1449,32 @@ export function createBot(
           actor,
           { connectionId: parts[0]!, repositoryId: parts[1]! },
         );
+        if (provisioned.status === "bootstrap_required") {
+          await ctx.reply([
+            "Repository privat ini benar-benar kosong.",
+            "Harvy belum menulis apa pun. Untuk melanjutkan, Harvy perlu membuat commit baseline code-owned berupa README.md pada default branch.",
+            `Repository: ${provisioned.selection.repositoryFullName}`,
+            `Konfirmasi: /github bootstrap ${provisioned.selection.selectionId}`,
+          ].join("\n\n"));
+          return;
+        }
         await ctx.reply([
           "Repository GitHub sudah menjadi project workspace terisolasi.",
+          `Repository: ${provisioned.selection.repositoryFullName}`,
+          `Base commit: ${provisioned.selection.baseCommit}`,
+          `Project: ${provisioned.project.id}`,
+          "Mulai dengan /code <task>.",
+        ].join("\n"));
+        return;
+      }
+      if (/^bootstrap\s+/iu.test(command)) {
+        const selectionId = command.replace(/^bootstrap\s+/iu, "").trim();
+        const provisioned = await codingRuntime.privateGitHub.bootstrapAndProvision(
+          actor,
+          selectionId,
+        );
+        await ctx.reply([
+          "Baseline repository dibuat dan project workspace sudah siap.",
           `Repository: ${provisioned.selection.repositoryFullName}`,
           `Base commit: ${provisioned.selection.baseCommit}`,
           `Project: ${provisioned.project.id}`,
@@ -1332,6 +1488,7 @@ export function createBot(
         "/github status <connectionId>",
         "/github repos <connectionId>",
         "/github use <connectionId> <repositoryId>",
+        "/github bootstrap <selectionId> — hanya untuk repo privat kosong",
       ].join("\n"));
     });
   });
@@ -1358,6 +1515,30 @@ export function createBot(
   });
 
   bot.on("message:document", (ctx) => {
+    const imageType = telegramImageMediaType(ctx.message.document.mime_type);
+    if (imageType) {
+      enqueueTelegramImage(
+        ctx,
+        ctx.message.document.file_id,
+        ctx.message.document.file_size,
+        imageType,
+        ctx.message.caption ?? "",
+      );
+      return;
+    }
+    if (ctx.message.document.mime_type?.startsWith("image/")) {
+      const ownerId = ownerOf(ctx);
+      enqueueBotAction(
+        ctx,
+        ownerId,
+        "cancel",
+        "Format gambar gagal ditanggapi:",
+        async () => {
+          await ctx.reply("Kirim gambar JPEG, PNG, atau WebP, ya.");
+        },
+      );
+      return;
+    }
     const ownerId = ownerOf(ctx);
     enqueueBotAction(ctx, ownerId, "drain", "Upload project ZIP gagal:", async () => {
       if (!codingRuntime) {
@@ -1391,6 +1572,18 @@ export function createBot(
         "Mulai dengan /code <task>.",
       ].join("\n"));
     });
+  });
+
+  bot.on("message:photo", (ctx) => {
+    const photo = ctx.message.photo.at(-1);
+    if (!photo) return;
+    enqueueTelegramImage(
+      ctx,
+      photo.file_id,
+      photo.file_size,
+      "image/jpeg",
+      ctx.message.caption ?? "",
+    );
   });
 
   bot.on("message:text", (ctx) => {
@@ -1844,6 +2037,115 @@ export function createBot(
     }
   }
 
+  function enqueueTelegramImage(
+    ctx: Context,
+    fileId: string,
+    declaredSize: number | undefined,
+    mediaType: ChatImageMediaType,
+    caption: string,
+  ): void {
+    const ownerId = ownerOf(ctx);
+    const queuedAt = Date.now();
+    const ingress = enqueueOnboardingOperation(ownerId, async () => {
+      if (!await consentGate(ownerId)) {
+        await beginOnboarding(ctx, ownerId, "");
+        await ctx.reply(
+          "Setelah menyetujui, kirim ulang gambarnya supaya media tidak ditahan sebelum izin.",
+        );
+        return;
+      }
+      messageBatcher.cancelAndEnqueue(ownerId, () =>
+        runGuardedAction(ctx, "Gambar gagal diproses:", () =>
+          processTelegramImage(
+            ctx,
+            ownerId,
+            fileId,
+            declaredSize,
+            mediaType,
+            caption,
+            queuedAt,
+          )
+        )
+      );
+    }).catch((error: unknown) => {
+      logger.error(
+        "telegram_image_ingress_failed",
+        "Gerbang gambar Telegram gagal.",
+        error,
+      );
+    });
+    trackIngress(ingress);
+  }
+
+  async function processTelegramImage(
+    ctx: Context,
+    ownerId: string,
+    fileId: string,
+    declaredSize: number | undefined,
+    mediaType: ChatImageMediaType,
+    caption: string,
+    queuedAt: number,
+  ): Promise<void> {
+    const telegramFile = await ctx.api.getFile(fileId);
+    if (!telegramFile.file_path) {
+      throw new Error("Telegram tidak menyediakan path gambar.");
+    }
+    const image = await downloadTelegramImage(
+      config.telegramBotToken,
+      telegramFile.file_path,
+      mediaType,
+      declaredSize,
+    );
+    const text = caption.trim() || "Tolong bantu aku memahami gambar ini.";
+    const turnId = randomUUID();
+    const startedAt = Date.now();
+    let outcome: "completed" | "failed" = "completed";
+    await telemetry.beginTurn(ownerId, turnId);
+    try {
+      await withUsageAttribution(
+        {
+          turnId,
+          subjectKind: "private",
+          channel: "telegram",
+          actorAliases: [],
+        },
+        () => handleFreeText(
+          ctx,
+          ownerId,
+          text,
+          {
+            images: [{
+              type: "input_image",
+              mediaType,
+              data: image,
+              detail: "auto",
+            }],
+          },
+          ctx.update.update_id,
+          hasExplicitImmediateDangerSignal(text),
+          false,
+        ),
+      );
+    } catch (error) {
+      outcome = "failed";
+      throw error;
+    } finally {
+      const endedAt = Date.now();
+      await telemetry.recordTurn({
+        turnId,
+        ownerId,
+        subjectKind: "private",
+        channel: "telegram",
+        outcome,
+        bubbleCount: 1,
+        batchWaitMs: 0,
+        queueWaitMs: Math.max(0, startedAt - queuedAt),
+        handlingLatencyMs: Math.max(0, endedAt - startedAt),
+        totalLatencyMs: Math.max(0, endedAt - queuedAt),
+      });
+    }
+  }
+
   function enqueueOnboardingOperation(
     ownerId: string,
     operation: () => Promise<void>,
@@ -1943,6 +2245,7 @@ export function createBot(
       },
       {
         seed,
+        minimumUpdateIntervalMs: 15_000,
         onError: (operation, error) => {
           logger.warn(
             "telegram_progress_operation_failed",
@@ -2012,7 +2315,9 @@ export function createBot(
     explicitImmediateDanger = false,
     urgentBoundary = false,
   ): Promise<void> {
+    const hasImageInput = Boolean(runtime.images?.length);
     if (
+      !hasImageInput &&
       !explicitImmediateDanger &&
       !urgentBoundary &&
       !hasExplicitImmediateDangerSignal(text) &&
@@ -2029,45 +2334,12 @@ export function createBot(
       return;
     }
     actionOffers.clear(ownerId);
-    if (!runtime.interruptionRelation) {
-      runtime.progress?.report({ phase: "reading", detail: "general" });
-    }
-
-    // Konteks disusun sebelum pesan ini ikut tercatat, supaya giliran yang
-    // sedang ditangani tidak muncul dua kali di dalam promptnya sendiri.
-    const [initialContext, profile, activeSession] = await Promise.all([
-      contextFor(ownerId, text),
+    const [profile, activeSession] = await Promise.all([
       profiles.load(ownerId),
       sessions.active(ownerId),
     ]);
-    let context = initialContext;
-    let engagedSession: ActiveSession | null = null;
     const timeZone = profile.timeZone ?? config.defaultTimezone;
     if (!(await runtimeIsCurrent(runtime))) return;
-
-    // Pertanyaan identitas model yang berdiri sendiri adalah fakta produk,
-    // sehingga tetap dapat dijawab saat model dasar atau kuota biasa sedang
-    // tidak tersedia. Pesan campuran tetap masuk triase penuh.
-    if (canUseModelIdentityFastPath(text, context.turns)) {
-      await noteTurnSignal(ownerId, "deterministic-fast-path");
-      await appendUserHistory(ownerId, text, runtime);
-      if (!(await runtimeIsCurrent(runtime))) return;
-      await ctx.reply(CAPYBARA_MODEL_REPLY);
-      await history.append(ownerId, "harvy", CAPYBARA_MODEL_REPLY);
-      void history.compact(ownerId);
-      return;
-    }
-
-    if (canUseDirectTimeFastPath(text, context.turns)) {
-      const response = conversation.deterministicTimeReply(timeZone);
-      await noteTurnSignal(ownerId, "deterministic-fast-path");
-      await appendUserHistory(ownerId, text, runtime);
-      if (!(await runtimeIsCurrent(runtime))) return;
-      await ctx.reply(response);
-      await history.append(ownerId, "harvy", response);
-      void history.compact(ownerId);
-      return;
-    }
 
     // `drainPending()` pada shutdown/test dapat mem-flush bubble sebelum timer
     // klasifikasi sempat memuat checkpoint dari disk. Handler tetap authority
@@ -2083,11 +2355,57 @@ export function createBot(
     const immediateDanger =
       explicitImmediateDanger || hasExplicitImmediateDangerSignal(text);
 
-    // Nilai formulir yang closed-set melewati compiler dan triase umum. Sinyal
-    // darurat lokal tetap diperiksa lebih dulu dan membuat jalur ini gagal
-    // tertutup ke pipeline safety penuh.
+    const arithmeticReply =
+      !hasImageInput && !waitingAtStart && !activeSession &&
+        !immediateDanger && !urgentBoundary
+        ? deterministicArithmeticReply(text)
+        : null;
+    if (arithmeticReply) {
+      await noteTurnSignal(ownerId, "deterministic-fast-path");
+      await appendUserHistory(ownerId, text, runtime);
+      if (!(await runtimeIsCurrent(runtime))) return;
+      await ctx.reply(arithmeticReply);
+      await history.append(ownerId, "harvy", arithmeticReply);
+      void history.compact(ownerId);
+      return;
+    }
+
+    // Baru sesudah fast path lokal gugur, bayar kompilasi history dan semantic
+    // memory. Ini penting karena retrieval dapat memanggil embedding/provider;
+    // hitungan exact tidak boleh menunggu seluruh pipeline tersebut.
+    const initialContext = await contextFor(ownerId, text);
+    let context = initialContext;
+    let engagedSession: ActiveSession | null = null;
+    if (!(await runtimeIsCurrent(runtime))) return;
+
+    // Pertanyaan identitas model yang berdiri sendiri adalah fakta produk,
+    // sehingga tetap dapat dijawab saat model dasar atau kuota biasa sedang
+    // tidak tersedia. Pesan campuran tetap masuk triase penuh.
+    if (!hasImageInput && canUseModelIdentityFastPath(text, context.turns)) {
+      await noteTurnSignal(ownerId, "deterministic-fast-path");
+      await appendUserHistory(ownerId, text, runtime);
+      if (!(await runtimeIsCurrent(runtime))) return;
+      await ctx.reply(CAPYBARA_MODEL_REPLY);
+      await history.append(ownerId, "harvy", CAPYBARA_MODEL_REPLY);
+      void history.compact(ownerId);
+      return;
+    }
+
+    if (!hasImageInput && canUseDirectTimeFastPath(text, context.turns)) {
+      const response = conversation.deterministicTimeReply(timeZone);
+      await noteTurnSignal(ownerId, "deterministic-fast-path");
+      await appendUserHistory(ownerId, text, runtime);
+      if (!(await runtimeIsCurrent(runtime))) return;
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
+      void history.compact(ownerId);
+      return;
+    }
+
+    // Nilai formulir memerlukan context untuk menyajikan hasilnya, tetapi
+    // tetap berada di luar understanding/triase umum setelah context tersedia.
     if (
-      waitingAtStart &&
+      !hasImageInput && waitingAtStart &&
       !immediateDanger &&
       isNarrowPendingAnswer(waitingAtStart, text)
     ) {
@@ -2109,20 +2427,6 @@ export function createBot(
         void history.compact(ownerId);
         return;
       }
-    }
-
-    const arithmeticReply =
-      !waitingAtStart && !activeSession && !immediateDanger && !urgentBoundary
-        ? deterministicArithmeticReply(text)
-        : null;
-    if (arithmeticReply) {
-      await noteTurnSignal(ownerId, "deterministic-fast-path");
-      await appendUserHistory(ownerId, text, runtime);
-      if (!(await runtimeIsCurrent(runtime))) return;
-      await ctx.reply(arithmeticReply);
-      await history.append(ownerId, "harvy", arithmeticReply);
-      void history.compact(ownerId);
-      return;
     }
 
     // Normalisasi local-only tetap menutup supersession/suppression pada jalur
@@ -2290,7 +2594,11 @@ export function createBot(
       understanding = safetyOnlyUnderstanding();
     }
 
-    const publicProgressFocus = triage.level === "biasa"
+    const exposeSemanticProgressFocus =
+      runtime.interruptionRelation !== "correction" &&
+      runtime.interruptionRelation !== "redirect";
+    const publicProgressFocus = triage.level === "biasa" &&
+        exposeSemanticProgressFocus
       ? understanding?.publicFocus ?? null
       : null;
     runtime = { ...runtime, publicProgressFocus };
@@ -2314,7 +2622,7 @@ export function createBot(
     // understanding pass as the rest of the turn. These deterministic
     // surfaces do not enter durable conversation history, and every follow-up
     // reads fresh state from its owner-scoped service.
-    if (understanding && triage.level === "biasa") {
+    if (!hasImageInput && understanding && triage.level === "biasa") {
       const semantic = understanding.semanticOperation;
       // Surface account/menu adalah jawaban mekanis. Bila assessment yang sama
       // mengatakan pengguna meminta analisis atau pekerjaan berencana, proposal
@@ -2455,6 +2763,21 @@ export function createBot(
         return;
       }
 
+      if (
+        effectPermissions.generalState &&
+        await handleNaturalProjectIntent(
+          ctx,
+          ownerId,
+          text,
+          understanding,
+          context,
+          runtime,
+        )
+      ) {
+        await markDeliveredForOwner(ownerId, currentTurnId(), ctx);
+        return;
+      }
+
       // Jawaban bebas untuk pending tetap memakai compiler + routing safety.
       // Hanya closed-set yang sudah keluar lewat fast path di atas.
       const pendingNow = pending.peek(ownerId);
@@ -2484,16 +2807,25 @@ export function createBot(
       // Pertanyaan state-live yang dikenali pagar lokal harus selalu mencapai
       // runtime read-only. Label intent/action model tidak boleh membajaknya ke
       // kontrol memori atau kontrol data sebelum tool authority hidup.
-      const requiresLiveState = liveStateRequirement(text) !== null;
-      const guidedSmallStep = effectPermissions.generalState &&
+      const requiresLiveState = !hasImageInput &&
+        liveStateRequirement(text) !== null;
+      const guidedSmallStep = !hasImageInput &&
+        effectPermissions.generalState &&
         !activeSession &&
         prefersGuidedSmallStep(
           understanding.suggestedActions ?? [],
           understanding.routingAssessment,
         );
-      const requiresAgentPlanning = !guidedSmallStep &&
+      // `planningRequired` describes the shape of work, not authority to start
+      // that work. A user can mention a difficult plan while venting or giving
+      // context (for example, "aku tahu harus meninjau catatan..."). Only an
+      // actual request may open the Agent Runtime lane.
+      const requiresAgentPlanning = !hasImageInput && !guidedSmallStep &&
+        understanding.intent === "request" &&
         requiresPlannedExecution(understanding.routingAssessment);
-      const proposedRoute = immediateUnderstandingRoute(understanding, text);
+      const proposedRoute = hasImageInput
+        ? ({ kind: "conversation" } as const)
+        : immediateUnderstandingRoute(understanding, text);
       const proposedRouteAllowed = proposedRoute.kind === "show-tasks"
         ? effectPermissions.generalState && allowsDeterministicSurface(
             understanding.routingAssessment,
@@ -2784,13 +3116,14 @@ export function createBot(
       const explicitSmallStepSession =
         guidedSmallStep &&
         route.kind === "conversation";
-      const offeredTask = effectPermissions.generalState &&
+      const offeredTask = !hasImageInput && effectPermissions.generalState &&
           !explicitSmallStepSession
         ? taskToOffer(understanding)
         : null;
       const styleEligible =
-        effectPermissions.generalState &&
+        !hasImageInput && effectPermissions.generalState &&
         !explicitSmallStepSession &&
+        understanding.intent === "feeling" &&
         shouldAskStyle(profile) &&
         context.turns.length >= HISTORY_WINDOW &&
         !activeSession;
@@ -2798,7 +3131,7 @@ export function createBot(
         ? (["start_small"] as const)
         : (understanding.suggestedActions ?? []);
       const proposedActions =
-        effectPermissions.generalState &&
+        !hasImageInput && effectPermissions.generalState &&
         !activeSession &&
         route.kind === "conversation" &&
         understanding.memories.length === 0 &&
@@ -2824,17 +3157,54 @@ export function createBot(
         (proposedActions[0] === "listen" ? "Menyimak cerita ini" : "");
       const plannedActions = actionGoal ? proposedActions : [];
       const explicitResponsePreference = inferExplicitResponsePreference(text);
+      const authorizedMemoryRetractions =
+        (understanding.memoryRetractions ?? []).filter((proposal) =>
+          memoryRetractionAuthorized(text, proposal)
+        );
       // Boundary lokal membuktikan bahwa seluruh turn adalah satu instruksi
       // presentasi. Gunakan canonical candidate-nya saja: kandidat model yang
       // memparafrasakan item yang sama tidak boleh menghasilkan write kedua
       // atau prompt consent tambahan.
       const proposedMemories: ExtractedMemory[] = explicitResponsePreference
         ? [explicitResponsePreference]
-        : [...understanding.memories];
+        : understanding.memories.filter((memory) =>
+          !memoryCandidateConflictsWithRetractions(
+            memory,
+            authorizedMemoryRetractions,
+          )
+        );
+      const retracted = !hasImageInput &&
+          route.kind === "conversation" &&
+          effectPermissions.explicitControl
+        ? await retractCorrectedMemories(
+            ownerId,
+            text,
+            understanding,
+            runtime,
+          )
+        : { forgotten: [], acknowledgements: [] };
+      if (retracted.forgotten.length > 0) {
+        const forgottenIds = new Set(retracted.forgotten.map((item) => item.id));
+        context = {
+          ...context,
+          memories: context.memories.filter((item) =>
+            !forgottenIds.has(item.id)
+          ),
+          ...(context.retrieved
+            ? {
+                retrieved: context.retrieved.filter((item) =>
+                  !item.sourceMemoryIds.some((id) => forgottenIds.has(id))
+                ),
+              }
+            : {}),
+        };
+      }
+      if (!(await runtimeIsCurrent(runtime))) return;
       // Sama seperti WhatsApp privat, fakta stabil dari current turn diproses
       // sebelum jalur agent dipilih. Kedalaman pekerjaan tidak membatalkan
       // authority onboarding atau instruksi preferensi yang eksplisit.
-      const initialDerivedMemoryCandidates = effectPermissions.generalState
+      const initialDerivedMemoryCandidates =
+        !hasImageInput && effectPermissions.generalState
         ? proposedMemories.map((memory) => ({
             ...memory,
             ...deriveMemoryMetadata(memory.kind, memory.content, text),
@@ -2852,7 +3222,15 @@ export function createBot(
       const explicitRememberSignaled = explicitResponsePreference === null &&
         understanding.memoryAction === "remember" &&
         understanding.taskAction === null &&
-        understanding.task === null;
+        understanding.task === null &&
+        !memoryEvidenceConflictsWithRetractions(
+          understanding.semanticOperation?.evidence,
+          authorizedMemoryRetractions,
+        ) &&
+        !memoryEvidenceConflictsWithRetractions(
+          understanding.semanticOperation?.target,
+          authorizedMemoryRetractions,
+        );
       const explicitRemember = explicitRememberSignaled &&
           effectPermissions.generalState
         ? explicitMemoryRememberAuthority(
@@ -2909,10 +3287,13 @@ export function createBot(
           !exactExplicitFallback,
       );
       const rejectedAutomaticMemoryCandidate = derivedMemoryCandidates.some(
-        (memory, index) =>
-          !explicitlyConsented.has(index) &&
-          (!automaticMemoryCandidateAuthorized(text, memory) ||
-            containsForbiddenMemorySecret(memory.content)),
+        (memory, index) => {
+          if (explicitlyConsented.has(index)) return false;
+          const grounded = groundedAutomaticMemoryContent(text, memory);
+          return grounded === null ||
+            containsForbiddenMemorySecret(memory.content) ||
+            containsForbiddenMemorySecret(grounded);
+        },
       );
       const memoryCandidates: AuthorizedMemoryCandidate[] =
         explicitRemember?.forbiddenSecret ||
@@ -2920,14 +3301,20 @@ export function createBot(
           explicitRequestUnresolved
           ? []
           : derivedMemoryCandidates
-            .map((memory, index) => ({
-              memory,
-              explicitRequest: explicitlyConsented.has(index),
-            }))
-            .filter(({ memory, explicitRequest }) =>
-              explicitRequest ||
-              automaticMemoryCandidateAuthorized(text, memory)
-            )
+            .flatMap((memory, index): AuthorizedMemoryCandidate[] => {
+              const explicitRequest = explicitlyConsented.has(index);
+              if (explicitRequest) return [{ memory, explicitRequest: true }];
+              const grounded = groundedAutomaticMemoryContent(text, memory);
+              if (!grounded) return [];
+              return [{
+                memory: {
+                  ...memory,
+                  content: grounded,
+                  ...deriveMemoryMetadata(memory.kind, grounded, text),
+                },
+                explicitRequest: false,
+              }];
+            })
             // Primary MemoryService menolak lagi. Filter ini juga mencegah
             // candidate credential membayar classifier privasi kedua.
             .filter(({ memory }) =>
@@ -2951,13 +3338,16 @@ export function createBot(
       }
       const explicitCommitMissing =
         explicitlyConsented.size > remembered.explicitlyRemembered.length;
-      const memoryAcknowledgements = remembered.acknowledgements.map(
-        ({ item, operation, explicit }) => ({
-          content: item.content,
-          operation,
-          explicit,
-        }),
-      );
+      const memoryAcknowledgements = [
+        ...retracted.acknowledgements,
+        ...remembered.acknowledgements.map(
+          ({ item, operation, explicit }) => ({
+            content: item.content,
+            operation,
+            explicit,
+          }),
+        ),
+      ];
 
       // Sesudah policy dan commit selesai, balasan tetap disusun sebagai
       // percakapan utama—bukan struk penyimpanan. Kalimat yang membawa perasaan
@@ -3008,9 +3398,14 @@ export function createBot(
             ? "orchestrate"
             : "tools";
           if (
+            !hasImageInput &&
             !isModelIdentityQuestion(text) &&
             (globalRoute === "specialized" || globalRoute === "orchestrate") &&
-            shouldUseAgentRuntime(text, planningMode)
+            shouldUseAgentRuntime(
+              understanding,
+              requiresLiveState,
+              requiresAgentPlanning,
+            )
           ) {
             if (
               agentRuns &&
@@ -3182,11 +3577,14 @@ export function createBot(
         if (triage.level !== "biasa") {
           await noteTurnSignal(ownerId, "safety-fallback");
           reply = safeFallbackReply(triage.level);
-        } else if (remembered.acknowledgements.length > 0) {
+        } else if (memoryAcknowledgements.length > 0) {
           // Model gagal memilih wording, tetapi commit sudah nyata. Beri satu
           // fallback manusiawi dan tetap biarkan delivery guard menentukan
           // apakah primary write dipertahankan atau di-rollback.
-          reply = memoryFallbackAcknowledgement(remembered);
+          reply = memoryLifecycleFallbackAcknowledgement(
+            retracted,
+            remembered,
+          );
         } else if (route.kind !== "save-task") {
           const failure = aiFailureMessage(error);
           await ctx.reply(failure);
@@ -3201,6 +3599,20 @@ export function createBot(
         await rollbackOrdinaryMemories(ownerId, remembered.saved);
         await telemetry.discardUndelivered?.(ownerId, currentTurnId());
         return;
+      }
+      if (reply) {
+        reply = withoutUnconfirmedMemoryRecordClaims(reply) ||
+          "Aku dengar koreksimu.";
+        if (retracted.acknowledgements.length === 0) {
+          reply = withoutUnconfirmedMemoryDeletionClaims(reply) ||
+            "Aku dengar koreksimu.";
+        } else if (!activeRunLaunch && !replyClaimsMemoryDeletion(reply)) {
+          reply = [
+            reply.trimEnd(),
+            "",
+            memoryRetractionFallbackAcknowledgement(retracted),
+          ].join("\n");
+        }
       }
       if (
         reply &&
@@ -3218,10 +3630,18 @@ export function createBot(
         reply = withoutUnconfirmedMemoryWriteClaims(reply) ||
           "Aku dengar yang kamu ceritakan.";
       }
-      if (activeRunLaunch && remembered.acknowledgements.length > 0) {
-        activeRunMemoryNotice = normalizeMemoryWriteEmoji(
-          memoryFallbackAcknowledgement(remembered),
+      if (
+        activeRunLaunch &&
+        (remembered.acknowledgements.length > 0 ||
+          retracted.acknowledgements.length > 0)
+      ) {
+        const notice = memoryLifecycleFallbackAcknowledgement(
+          retracted,
+          remembered,
         );
+        activeRunMemoryNotice = remembered.acknowledgements.length > 0
+          ? normalizeMemoryWriteEmoji(notice)
+          : notice;
       } else if (
         reply &&
         remembered.acknowledgements.length > 0 &&
@@ -3559,7 +3979,10 @@ export function createBot(
       if (!(await runtimeIsCurrent(runtime))) return;
 
       // Pekerjaan yang tersirat di balik cerita ditawarkan, tidak dicatat diam-diam.
-      if (offeredTask) {
+      if (
+        offeredTask && reply && remembered.saved.length === 0 &&
+        plannedActions.length === 0 && !replyHasBlockingQuestion(reply)
+      ) {
         const confirmationToken = await setPending(ownerId, {
           kind: "confirm-task",
           task: offeredTask,
@@ -3594,7 +4017,8 @@ export function createBot(
       await askStyleOnce(
         ctx,
         ownerId,
-        styleEligible && !adaptiveKeyboard,
+        styleEligible && !adaptiveKeyboard &&
+          !replyHasBlockingQuestion(reply ?? ""),
         runtime,
       );
     } finally {
@@ -5144,6 +5568,11 @@ export function createBot(
     const bubbles = splitReplyBubbles(text);
     if (bubbles.length === 0) return null;
     const replyKeyboard = keyboard;
+    // Caller biasanya sudah membuang fallback note bila balasan model telah
+    // mengakui write. Pertahankan pagar kedua di boundary delivery agar race
+    // atau refactor tidak menghasilkan dua kalimat "aku ingat" dalam bubble
+    // yang sama.
+    const notesToDeliver = replyAcknowledgesMemoryWrite(text) ? [] : notes;
 
     let lastMessage: SentMessageRef | null = null;
     const delivered: string[] = [];
@@ -5153,7 +5582,9 @@ export function createBot(
       }
       if (index === 0) await runtime.progress?.responding?.();
       const last = index === bubbles.length - 1;
-      const deliveredBubble = last ? withMemoryNotes(bubble, notes) : bubble;
+      const deliveredBubble = last
+        ? withMemoryNotes(bubble, notesToDeliver)
+        : bubble;
       let sent;
       try {
         sent = await ctx.reply(
@@ -5206,6 +5637,56 @@ export function createBot(
     if (items.length === 0) return;
 
     await ctx.reply(memoryNoteLines(items));
+  }
+
+  async function retractCorrectedMemories(
+    ownerId: string,
+    text: string,
+    understanding: Understanding,
+    runtime: ConversationRuntime,
+  ): Promise<ForgottenMemoryBatch> {
+    const proposals = (understanding.memoryRetractions ?? []).filter(
+      (proposal) => memoryRetractionAuthorized(text, proposal),
+    );
+    if (proposals.length === 0) {
+      return { forgotten: [], acknowledgements: [] };
+    }
+
+    const current = await memories.list(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) {
+      return { forgotten: [], acknowledgements: [] };
+    }
+    const selected = new Map<string, MemoryItem>();
+    for (const proposal of proposals) {
+      for (const item of memoriesMatchingNaturalTarget(
+        current,
+        proposal.target,
+      )) {
+        selected.set(item.id, item);
+      }
+    }
+    // Koreksi natural adalah item-scoped, bukan jalan belakang bulk deletion.
+    if (selected.size === 0 || selected.size > 8) {
+      return { forgotten: [], acknowledgements: [] };
+    }
+
+    await discardAgentRunForMemoryChange(ownerId);
+    if (!(await runtimeIsCurrent(runtime))) {
+      return { forgotten: [], acknowledgements: [] };
+    }
+    const forgotten: MemoryItem[] = [];
+    for (const item of selected.values()) {
+      const removed = await memories.forget(ownerId, item.id);
+      if (removed) forgotten.push(removed);
+    }
+    return {
+      forgotten,
+      acknowledgements: forgotten.map((item) => ({
+        content: item.content,
+        operation: "forgotten" as const,
+        explicit: true as const,
+      })),
+    };
   }
 
   /**
@@ -5317,6 +5798,26 @@ export function createBot(
     }
   }
 
+  function memoryRetractionFallbackAcknowledgement(
+    _retracted: ForgottenMemoryBatch,
+  ): string {
+    return "Oke, ingatan lama yang kamu koreksi sudah aku hapus.";
+  }
+
+  function memoryLifecycleFallbackAcknowledgement(
+    retracted: ForgottenMemoryBatch,
+    remembered: StoredMemoryBatch,
+  ): string {
+    return [
+      ...(retracted.acknowledgements.length > 0
+        ? [memoryRetractionFallbackAcknowledgement(retracted)]
+        : []),
+      ...(remembered.acknowledgements.length > 0
+        ? [memoryFallbackAcknowledgement(remembered)]
+        : []),
+    ].join(" ");
+  }
+
   async function setActiveRunAnchorPinned(
     run: ActiveAgentRun,
     pinned: boolean,
@@ -5390,49 +5891,16 @@ export function createBot(
     runtime: ConversationRuntime = {},
   ): Promise<void> {
     if (!(await runtimeIsCurrent(runtime))) return;
-    const [items, conversationContext] = await Promise.all([
-      memories.list(ownerId),
-      history.context(ownerId),
-    ]);
+    const items = await memories.list(ownerId);
     if (!(await runtimeIsCurrent(runtime))) return;
-    let portraitContext: HarvyContext = {
-      summary: conversationContext.summary,
-      // Potret tidak membaca raw turn. Compiler hanya memerlukan bentuk context
-      // yang sama untuk menerapkan validity/suppression pada source lain.
+    const portraitContext: HarvyContext = {
+      // Riwayat dan episode bukan daftar memori. Potret hanya memakai primary
+      // memory (serta, bila caller lain kelak menambahkannya, evidence yang
+      // tetap menunjuk primary source yang dapat dikendalikan pengguna).
+      summary: null,
       turns: [],
       memories: items,
     };
-
-    if (memoryContextCompiler) {
-      try {
-        const compiled = await memoryContextCompiler.compilePrivate(
-          ownerId,
-          MEMORY_PORTRAIT_QUERY,
-          portraitContext,
-          {
-            allowRetrieval: true,
-            ...(runtime.signal ? { signal: runtime.signal } : {}),
-          },
-        );
-        portraitContext = compiled.context;
-        logger.info(
-          "memory_portrait_context_compiled",
-          "Context bounded untuk potret memori selesai dikompilasi.",
-          {
-            selectedCount: compiled.manifest.selectedCount,
-            selectedCharacters: compiled.manifest.selectedCharacters,
-            failedRouteCount: compiled.manifest.failedRouteCount,
-          },
-        );
-      } catch (error) {
-        logger.warn(
-          "memory_portrait_context_failed",
-          "Compiler potret memori gagal; hanya primary memory yang dipakai.",
-          { errorType: error instanceof Error ? error.name : "unknown" },
-        );
-      }
-      if (!(await runtimeIsCurrent(runtime))) return;
-    }
 
     const hasEvidence = hasMemoryPortraitEvidence(portraitContext);
     let text = MEMORY_PORTRAIT_EMPTY;
@@ -5440,19 +5908,27 @@ export function createBot(
       await bestEffortTyping(ctx, logger);
       if (!(await runtimeIsCurrent(runtime))) return;
       try {
-        const summary = await conversation.memoryPortrait(
+        const candidate = await conversation.memoryPortrait(
           portraitContext,
           ownerId,
           runtime.signal,
         );
-        text = formatMemoryPortrait(summary);
+        const summary = isMemoryPortraitGrounded(candidate, portraitContext)
+          ? candidate
+          : groundedMemoryPortraitFallback(portraitContext);
+        text = summary
+          ? formatMemoryPortrait(summary)
+          : MEMORY_PORTRAIT_UNAVAILABLE;
       } catch (error) {
         logger.warn(
           "memory_portrait_generation_failed",
-          "Potret memori tidak dapat disintesis; fallback tanpa data dipakai.",
+          "Potret memori tidak dapat disintesis secara grounded; fallback exact dipakai.",
           { errorType: error instanceof Error ? error.name : "unknown" },
         );
-        text = MEMORY_PORTRAIT_UNAVAILABLE;
+        const fallback = groundedMemoryPortraitFallback(portraitContext);
+        text = fallback
+          ? formatMemoryPortrait(fallback)
+          : MEMORY_PORTRAIT_UNAVAILABLE;
       }
     }
 
@@ -6892,10 +7368,171 @@ export function createBot(
   }
 
   function shouldUseAgentRuntime(
-    _text: string,
-    _mode: "tools" | "orchestrate",
+    understanding: Understanding,
+    requiresLiveState: boolean,
+    requiresAgentPlanning: boolean,
   ): boolean {
-    return true;
+    return requiresLiveState || requiresAgentPlanning ||
+      requestsAgentTooling(understanding.routingAssessment);
+  }
+
+  async function handleNaturalProjectIntent(
+    ctx: Context,
+    ownerId: string,
+    text: string,
+    understanding: Understanding,
+    context: HarvyContext,
+    runtime: ConversationRuntime,
+  ): Promise<boolean> {
+    const semantic = understanding.semanticOperation;
+    if (
+      !semantic ||
+      !["project", "goal", "skill"].includes(semantic.domain) ||
+      !semanticOperationAuthorized(text, semantic, {
+        domain: semantic.domain,
+        operations: semantic.domain === "project"
+          ? ["create", "list", "show"]
+          : semantic.domain === "goal"
+            ? ["show", "set", "complete", "block", "resolve"]
+            : ["list", "create", "apply"],
+        minConfidence: 0.85,
+        explicitness: ["explicit"],
+        references: ["none", "current", "recent", "quoted"],
+      })
+    ) return false;
+
+    if (!codingRuntime) {
+      const response = "Runtime coding belum diaktifkan oleh deployment Harvy.";
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
+      return true;
+    }
+    if (!await codingConsent(ctx, ownerId)) return true;
+    const actor = privateCodingActor(ctx, codingRuntime);
+
+    try {
+      let response: string | null = null;
+      if (semantic.domain === "project" && semantic.operation === "list") {
+        const projects = await codingRuntime.application.listProjects(actor);
+        response = projects.length === 0
+          ? "Workspace aktif belum mempunyai project."
+          : ["Project di workspace aktif:", ...projects.map((project) =>
+              `• ${project.projectId} — ${project.source}, revision ${project.revision}`
+            )].join("\n");
+      } else if (semantic.domain === "project" && semantic.operation === "show") {
+        const current = await codingRuntime.application.current(actor);
+        const selected = current.selection;
+        response = selected.projectId
+          ? [
+              "Project aktif:",
+              `Workspace: ${selected.workspaceKey}`,
+              `Project: ${selected.projectId}`,
+              `Revision: ${selected.projectRevision}`,
+            ].join("\n")
+          : "Belum ada project aktif.";
+      } else if (semantic.domain === "goal" && semantic.operation === "show") {
+        response = renderProjectGoal(await codingRuntime.application.currentGoal(actor));
+      } else if (semantic.domain === "goal" && semantic.operation === "complete") {
+        response = renderProjectGoal(await codingRuntime.application.completeGoal(actor));
+      } else if (semantic.domain === "skill" && semantic.operation === "list") {
+        response = renderProjectSkills(await codingRuntime.application.listSkills(actor));
+      } else {
+        const proposal = await conversation.interpretProjectIntent(
+          text,
+          semantic,
+          context,
+          runtime,
+        );
+        if (!proposal) {
+          response = "Aku menangkap tindakan projectnya, tetapi detailnya belum cukup pasti. Jelaskan nama, tujuan, atau skill yang dimaksud dalam satu pesan.";
+        } else if (proposal.kind === "project-create") {
+          const selected = await codingRuntime.application.createBlankProject(
+            actor,
+            proposal.displayName,
+          );
+          response = [
+            `Project kosong “${proposal.displayName}” sudah dibuat dan dipilih.`,
+            `Workspace: ${selected.workspaceKey}`,
+            `Project: ${selected.projectId}`,
+            "Berikutnya tetapkan tujuan dan bukti selesai yang kamu inginkan.",
+          ].join("\n");
+        } else if (proposal.kind === "goal-set") {
+          response = renderProjectGoal(await codingRuntime.application.setGoal(actor, {
+            objective: proposal.objective,
+            acceptanceCriteria: proposal.acceptanceCriteria,
+            ...(proposal.milestones ? { milestones: proposal.milestones } : {}),
+          }));
+        } else if (proposal.kind === "goal-block") {
+          response = renderProjectGoal(await codingRuntime.application.addGoalBlocker(
+            actor,
+            proposal.summary,
+          ));
+        } else if (proposal.kind === "goal-resolve") {
+          response = renderProjectGoal(
+            await codingRuntime.application.resolveGoalBlockerByReference(
+              actor,
+              proposal.query,
+            ),
+          );
+        } else if (proposal.kind === "skill-create") {
+          const { kind: _kind, ...definition } = proposal;
+          response = renderProjectSkill(
+            await codingRuntime.application.createSkillFromLatestEvidence(
+              actor,
+              definition,
+            ),
+          );
+        } else if (proposal.kind === "skill-apply") {
+          const chatId = ctx.chat?.id;
+          if (chatId === undefined) throw new Error("Chat Telegram tidak tersedia.");
+          let anchorMessageId: number | null = null;
+          let pendingRun: CodingRun | null = null;
+          const handle = await codingRuntime.application.startCodingWithSkill(
+            actor,
+            proposal.nameOrId,
+            proposal.request,
+            async (run) => {
+              pendingRun = run;
+              if (anchorMessageId !== null) {
+                scheduleCodingAnchor(run, chatId, anchorMessageId);
+              }
+            },
+          );
+          const sent = await ctx.reply(handle.initialAnchor.text);
+          anchorMessageId = sent.message_id;
+          codingAnchors.set(ownerId, {
+            runId: handle.runId,
+            chatId,
+            messageId: sent.message_id,
+          });
+          if (pendingRun) scheduleCodingAnchor(pendingRun, chatId, sent.message_id);
+          trackCodingCompletion(ctx, ownerId, handle, sent.message_id);
+          await history.append(ownerId, "harvy", handle.initialAnchor.text);
+          return true;
+        }
+      }
+
+      if (!response || !(await runtimeIsCurrent(runtime))) return true;
+      await ctx.reply(response);
+      await history.append(ownerId, "harvy", response);
+      logger.info("semantic_route_selected", "Intent project natural dijalankan.", {
+        semanticDomain: semantic.domain,
+        semanticOperation: semantic.operation,
+        confidenceBucket: semanticConfidenceBucket(semantic),
+        route: "project-intent",
+        deterministic: false,
+      });
+      return true;
+    } catch (error) {
+      const response = error instanceof Error
+        ? error.message
+        : "Tindakan project belum dapat dijalankan.";
+      if (await runtimeIsCurrent(runtime)) {
+        await ctx.reply(response);
+        await history.append(ownerId, "harvy", response);
+      }
+      return true;
+    }
   }
 
   async function runGuardedAction(
@@ -6950,6 +7587,107 @@ function ownerOf(ctx: Context): string {
 function commandTail(text: string, command: string): string {
   const pattern = new RegExp(`^/${command}(?:@[A-Za-z0-9_]+)?(?:\\s+|$)`, "iu");
   return text.replace(pattern, "").trim();
+}
+
+function telegramImageMediaType(
+  value: string | undefined,
+): ChatImageMediaType | null {
+  switch (value?.trim().toLocaleLowerCase("en-US")) {
+    case "image/jpeg":
+    case "image/jpg":
+      return "image/jpeg";
+    case "image/png":
+      return "image/png";
+    case "image/webp":
+      return "image/webp";
+    default:
+      return null;
+  }
+}
+
+async function downloadTelegramImage(
+  botToken: string,
+  filePath: string,
+  mediaType: ChatImageMediaType,
+  declaredSize?: number,
+): Promise<Buffer> {
+  const maximum = 5 * 1024 * 1024;
+  if (
+    (declaredSize !== undefined &&
+      (!Number.isSafeInteger(declaredSize) || declaredSize < 1 ||
+        declaredSize > maximum)) ||
+    !/^[A-Za-z0-9_./-]{1,512}$/u.test(filePath) ||
+    filePath.split("/").some((part) => !part || part === "." || part === "..")
+  ) throw new Error("Descriptor gambar Telegram tidak sah atau terlalu besar.");
+  const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.telegram.org/file/bot${botToken}/${encodedPath}`,
+      {
+        redirect: "error",
+        cache: "no-store",
+        signal: AbortSignal.timeout(60_000),
+      },
+    );
+  } catch {
+    throw new Error("Download gambar Telegram gagal.");
+  }
+  const contentLength = Number(response.headers.get("content-length") ?? "NaN");
+  if (
+    !response.ok || !response.body ||
+    (Number.isFinite(contentLength) &&
+      (!Number.isSafeInteger(contentLength) || contentLength < 1 ||
+        contentLength > maximum))
+  ) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("Response gambar Telegram tidak sah atau terlalu besar.");
+  }
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const item = await reader.read();
+      if (item.done) break;
+      total += item.value.byteLength;
+      if (total > maximum) throw new Error("Gambar Telegram melewati batas 5 MiB.");
+      chunks.push(Buffer.from(item.value));
+    }
+  } catch {
+    await reader.cancel().catch(() => undefined);
+    throw new Error("Download gambar Telegram gagal atau melewati batas.");
+  } finally {
+    reader.releaseLock();
+  }
+  if (total < 1 || (declaredSize !== undefined && total !== declaredSize)) {
+    throw new Error("Ukuran gambar Telegram tidak cocok descriptor.");
+  }
+  const image = Buffer.concat(chunks, total);
+  if (!hasImageSignature(image, mediaType)) {
+    throw new Error("Isi gambar Telegram tidak cocok format yang dinyatakan.");
+  }
+  return image;
+}
+
+function hasImageSignature(
+  data: Uint8Array,
+  mediaType: ChatImageMediaType,
+): boolean {
+  if (mediaType === "image/jpeg") {
+    return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 &&
+      data[2] === 0xff;
+  }
+  if (mediaType === "image/png") {
+    const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    return data.length >= png.length && png.every((byte, index) =>
+      data[index] === byte
+    );
+  }
+  return data.length >= 12 &&
+    String.fromCharCode(...data.slice(0, 4)) === "RIFF" &&
+    String.fromCharCode(...data.slice(8, 12)) === "WEBP";
 }
 
 async function downloadTelegramZip(

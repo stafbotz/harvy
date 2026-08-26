@@ -7,6 +7,12 @@ import type { AiConfig } from "../config.js";
 import { ProductionCodingValidatorPolicy } from "../coding/production-coding-validator-policy.js";
 import type { WorkspacePrincipalChannel } from "../domain/workspace.js";
 import type { GroupMessage } from "../domain/group.js";
+import { PROJECT_SKILL_TOOL_IDS } from "../domain/project-intent.js";
+import {
+  codingRuntimeSetupPaths,
+  loadManagedCodingRuntimeSetupSync,
+  type CodingRuntimeSetupPaths,
+} from "../operations/coding-runtime-setup.js";
 import type {
   AuthenticatedGroupCodingActor,
   GroupCodingRunMutator,
@@ -23,6 +29,7 @@ import { FileCodingRunRepository } from "../storage/file-coding-run-repository.j
 import { FileGitHubConnectionRepository } from "../storage/file-github-connection-repository.js";
 import { FileGroupCodingRepository } from "../storage/file-group-coding-repository.js";
 import { FilePrivateCodingSessionStore } from "../storage/file-private-coding-session-store.js";
+import { FileProjectIntentRepository } from "../storage/file-project-intent-repository.js";
 import { FileModelEscalationRepository } from "../storage/file-model-escalation-repository.js";
 import { FileProjectDeletionRepository } from "../storage/file-project-deletion-repository.js";
 import { FileProjectWorkspaceRepository } from "../storage/file-project-workspace-repository.js";
@@ -60,6 +67,7 @@ import { PrivateGitHubApplication } from "./private-github-application.js";
 import { ProjectDeletionCoordinator } from "./project-deletion-coordinator.js";
 import { startProjectDeletionRecoveryWorker } from "./project-deletion-recovery-worker.js";
 import { ProjectWorkspaceService } from "./project-workspace-service.js";
+import { ProjectIntentService } from "./project-intent-service.js";
 import { SandboxRunnerService } from "./sandbox-runner-service.js";
 import { TrustedWorkspaceActorRegistry } from "./trusted-workspace-actor-registry.js";
 import { TrustedGroupCodingActorRegistry } from "./trusted-group-coding-actor-registry.js";
@@ -91,6 +99,7 @@ export interface CodingRuntimeComposition {
   actors: TrustedWorkspaceActorRegistry;
   authority: WorkspaceAuthorityService;
   projects: ProjectWorkspaceService;
+  intents: ProjectIntentService;
   runs: CodingRunEngine;
   supervisor: CodingRuntimeSupervisor;
   githubInstallations: GitHubInstallationService | null;
@@ -114,7 +123,55 @@ export interface CodingRuntimeComposition {
 
 export function loadCodingRuntimeDeploymentConfig(
   env: NodeJS.ProcessEnv = process.env,
+  setupPaths: CodingRuntimeSetupPaths = codingRuntimeSetupPaths(),
 ): CodingRuntimeDeploymentConfig {
+  const managed = loadManagedCodingRuntimeSetupSync(setupPaths);
+  if (managed) {
+    if (enabledFlag(env.HARVY_CODING_RUNTIME_ENABLED)) {
+      throw new Error(
+        "Konfigurasi coding tersedia di Console dan environment. Nonaktifkan sumber environment sebelum startup.",
+      );
+    }
+    if (!managed.compute.enabled) {
+      return {
+        enabled: false,
+        stateRoot: null,
+        principalSecretFile: null,
+        conformanceReceiptFile: null,
+        conformanceReceiptSha256: null,
+        sandbox: null,
+        localGit: null,
+        github: null,
+        codingAiPrivacyDomain: null,
+      };
+    }
+    return {
+      enabled: true,
+      stateRoot: managed.compute.stateRoot,
+      principalSecretFile: managed.compute.principalSecretFile,
+      conformanceReceiptFile: managed.compute.conformanceReceiptFile,
+      conformanceReceiptSha256: managed.compute.conformanceReceiptSha256,
+      sandbox: managed.compute.sandbox
+        ? {
+            ...managed.compute.sandbox,
+            allowInsecureLoopback: managed.compute.allowInsecureLoopback,
+          }
+        : null,
+      localGit: managed.compute.localGit
+        ? {
+            ...managed.compute.localGit,
+            allowInsecureLoopback: managed.compute.allowInsecureLoopback,
+          }
+        : null,
+      github: managed.github.enabled && managed.github.broker
+        ? {
+            ...managed.github.broker,
+            allowInsecureLoopback: managed.compute.allowInsecureLoopback,
+          }
+        : null,
+      codingAiPrivacyDomain: managed.compute.codingAiPrivacyDomain,
+    };
+  }
   const enabled = enabledFlag(env.HARVY_CODING_RUNTIME_ENABLED);
   if (!enabled) {
     return {
@@ -191,6 +248,12 @@ export async function createCodingRuntimeComposition(input: {
     undefined,
     githubRepository,
     deletionRepository,
+  );
+  const intents = new ProjectIntentService(
+    new FileProjectIntentRepository(join(root, "project-intents.json")),
+    authority,
+    projects,
+    PROJECT_SKILL_TOOL_IDS,
   );
   const sandboxTransport = new HttpSandboxTransport({
     origin: config.sandbox.origin,
@@ -395,6 +458,7 @@ export async function createCodingRuntimeComposition(input: {
     progress,
     undefined,
     groupRepository,
+    intents,
   );
   const githubConfirmations = new PrivateGitHubConfirmationController();
   const githubTransport = config.github && githubProof
@@ -501,6 +565,7 @@ export async function createCodingRuntimeComposition(input: {
     actors,
     authority,
     projects,
+    intents,
     runs,
     supervisor,
     githubInstallations,

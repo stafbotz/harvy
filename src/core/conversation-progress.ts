@@ -263,6 +263,13 @@ export function publicFocusProgressEvent(
   relation: TurnInterruptionRelation | null | undefined,
   publicFocus: SafePublicProgressFocus | null | undefined,
 ): ConversationProgressEvent | null {
+  // Focus dari extractor adalah advisory dan dapat tertinggal satu objek/topik
+  // pada giliran koreksi atau redirect. Relation code-owned lebih tepercaya:
+  // tampilkan status generik yang jujur tanpa membocorkan detail model yang
+  // belum tervalidasi oleh jawaban akhir.
+  if (relation === "correction" || relation === "redirect") {
+    return interruptionProgressEvent(relation, null);
+  }
   const normalized = parsePublicProgressFocus(publicFocus);
   if (!normalized) return null;
   return interruptionProgressEvent(relation, normalized) ??

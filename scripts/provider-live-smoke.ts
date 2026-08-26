@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import {
   AiClient,
   AiResponseError,
@@ -6,7 +7,10 @@ import {
   type ChatFunctionTool,
 } from "../src/ai/client.js";
 import { resolveModel } from "../src/ai/model-policy.js";
-import type { ModelProfile } from "../src/ai/model-profile.js";
+import {
+  ModelProfileRegistry,
+  type ModelProfile,
+} from "../src/ai/model-profile.js";
 import { aiClientOptions, loadAiConfig, type AiConfig } from "../src/config.js";
 import { ExecutionPolicy } from "../src/core/execution-policy.js";
 import type {
@@ -18,6 +22,8 @@ import type {
 const TOOL_NAME = "provider_smoke_marker";
 const TOOL_MARKER = "PROVIDER_SMOKE_OK";
 const CONTINUATION_MARKER = "PROVIDER_CONTINUATION_OK";
+const COMPLETION_MARKER = "PROVIDER_COMPLETION_OK";
+const STRUCTURED_MARKER = "PROVIDER_STRUCTURED_OK";
 const MAX_CONTEXT_PROBE_CHARACTERS = 16 * 1024 * 1024;
 
 interface SafeAttempt {
@@ -29,6 +35,8 @@ interface SafeAttempt {
   finishReason: string | null;
   latencyMs: number;
   usageSource: "provider" | "estimated";
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
 }
 
 interface SafeStage {
@@ -61,6 +69,8 @@ class AttemptCollector implements ProviderAttemptObserver {
       finishReason: result.finishReason,
       latencyMs: result.latencyMs,
       usageSource: result.usage.estimated ? "estimated" : "provider",
+      cacheReadTokens: result.usage.cacheReadTokens,
+      cacheWriteTokens: result.usage.cacheWriteTokens,
     });
   }
 }
@@ -77,9 +87,17 @@ function loadEnvironment(): void {
   }
 }
 
-function clientFor(config: AiConfig, collector: AttemptCollector): AiClient {
+function clientFor(
+  config: AiConfig,
+  collector: AttemptCollector,
+  probeProfile: ModelProfile,
+): AiClient {
+  const otherProfiles = config.modelProfiles.list().filter((profile) =>
+    profile.provider !== probeProfile.provider || profile.id !== probeProfile.id
+  );
   return new AiClient({
-    ...aiClientOptions(config, { fallback: false }),
+    ...aiClientOptions(config),
+    modelProfiles: new ModelProfileRegistry([...otherProfiles, probeProfile]),
     attemptObserver: collector,
     environment: "development",
     costCenter: "probe",
@@ -139,11 +157,15 @@ async function runStage(
     facts?: Readonly<Record<string, string | number | boolean | null>>;
   }>,
   config: AiConfig,
+  probeProfile: ModelProfile,
 ): Promise<SafeStage> {
   const collector = new AttemptCollector();
   const started = Date.now();
   try {
-    const result = await action(clientFor(config, collector), collector);
+    const result = await action(
+      clientFor(config, collector, probeProfile),
+      collector,
+    );
     return {
       stage: name,
       status: "passed",
@@ -163,6 +185,245 @@ async function runStage(
   }
 }
 
+async function basicCompletionStage(
+  config: AiConfig,
+  profile: ModelProfile,
+  model: string,
+): Promise<SafeStage> {
+  return runStage("basic_completion", async (client) => {
+    const text = await client.complete({
+      model,
+      messages: [{
+        role: "user",
+        content: `Answer with exactly ${COMPLETION_MARKER}.`,
+      }],
+      temperature: 0,
+      maxTokens: boundedOutput(profile, 64),
+      timeoutMs: 60_000,
+      maxAttempts: 1,
+      validateResponse: (value) => value.trim() === COMPLETION_MARKER,
+      usage: stageRequestMetadata(),
+    });
+    if (text.trim() !== COMPLETION_MARKER) {
+      throw new Error("completion_marker_mismatch");
+    }
+    return { code: "exact_marker_observed" };
+  }, config, profile);
+}
+
+async function structuredOutputStage(
+  config: AiConfig,
+  profile: ModelProfile,
+  model: string,
+): Promise<SafeStage> {
+  if (!profile.supports.structuredOutput) {
+    return notExercised("structured_output", "profile_capability_disabled");
+  }
+  return runStage("structured_output", async (client) => {
+    const isValid = (text: string): boolean => {
+      try {
+        const value = JSON.parse(text) as unknown;
+        return value !== null && typeof value === "object" &&
+          !Array.isArray(value) &&
+          Object.keys(value).length === 1 &&
+          (value as Record<string, unknown>).marker === STRUCTURED_MARKER;
+      } catch {
+        return false;
+      }
+    };
+    const text = await client.complete({
+      model,
+      messages: [
+        {
+          role: "system",
+          content: "Return one JSON object with exactly one key named marker.",
+        },
+        {
+          role: "user",
+          content: `Set marker to ${STRUCTURED_MARKER}.`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: boundedOutput(profile, 64),
+      timeoutMs: 60_000,
+      maxAttempts: 1,
+      json: true,
+      validateResponse: isValid,
+      usage: stageRequestMetadata(),
+    });
+    if (!isValid(text)) throw new Error("structured_contract_mismatch");
+    return { code: "json_object_contract_observed" };
+  }, config, profile);
+}
+
+async function automaticPromptCacheStage(
+  config: AiConfig,
+  profile: ModelProfile,
+  model: string,
+): Promise<SafeStage> {
+  if (!profile.supports.promptCaching) {
+    return notExercised("automatic_prompt_cache", "profile_capability_disabled");
+  }
+  return runStage("automatic_prompt_cache", async (client, collector) => {
+    const runNonce = randomUUID();
+    const stablePrefix = [
+      `Unique smoke run ${runNonce}.`,
+      ...Array.from(
+      { length: 180 },
+      (_, index) => `Stable policy sentence ${index + 1}: preserve exact semantics.`,
+      ),
+    ].join("\n");
+    const request = {
+      model,
+      messages: [
+        { role: "system" as const, content: stablePrefix },
+        {
+          role: "user" as const,
+          content: `Answer with exactly ${COMPLETION_MARKER}.`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: boundedOutput(profile, 32),
+      timeoutMs: 60_000,
+      maxAttempts: 1,
+      validateResponse: (value: string) => value.trim() === COMPLETION_MARKER,
+      usage: stageRequestMetadata(),
+    };
+    await client.complete(request);
+    const first = collector.attempts.at(-1);
+    await client.complete(request);
+    const second = collector.attempts.at(-1);
+    const firstRead = first?.cacheReadTokens ?? 0;
+    const secondRead = second?.cacheReadTokens ?? 0;
+    if (secondRead <= 0 || secondRead <= firstRead) {
+      throw new Error("automatic_cache_read_not_observed");
+    }
+    return {
+      code: "automatic_prefix_cache_read_observed",
+      facts: {
+        firstCacheReadTokens: firstRead,
+        secondCacheReadTokens: secondRead,
+        firstCacheWriteTokens: first?.cacheWriteTokens ?? 0,
+        secondCacheWriteTokens: second?.cacheWriteTokens ?? 0,
+      },
+    };
+  }, config, profile);
+}
+
+async function imageInputStage(
+  config: AiConfig,
+  profile: ModelProfile,
+  model: string,
+): Promise<SafeStage> {
+  if (!profile.supports.imageInput) {
+    return notExercised("image_input", "profile_capability_disabled");
+  }
+  return runStage("image_input", async (client) => {
+    const image = solidPng(32, 32, 255, 0, 0);
+    const isRed = (value: string): boolean => {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        return parsed !== null && typeof parsed === "object" &&
+          !Array.isArray(parsed) && Object.keys(parsed).length === 1 &&
+          (parsed as Record<string, unknown>).dominant_color === "red";
+      } catch {
+        return false;
+      }
+    };
+    const text = await client.complete({
+      model,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Inspect the image and return one JSON object with exactly one key",
+            "named dominant_color. Its value must be red, green, or other.",
+          ].join(" "),
+        },
+        {
+          role: "user",
+          content: "What is the dominant visible color of the attached image?",
+        },
+      ],
+      imageInputs: [{
+        type: "input_image",
+        mediaType: "image/png",
+        data: image,
+        detail: "low",
+      }],
+      temperature: 0,
+      maxTokens: boundedOutput(profile, 64),
+      timeoutMs: 60_000,
+      maxAttempts: 1,
+      json: true,
+      validateResponse: isRed,
+      usage: stageRequestMetadata(),
+    });
+    if (!isRed(text)) throw new Error("image_contract_mismatch");
+    return {
+      code: "visual_content_observed",
+      facts: { imageBytes: image.byteLength },
+    };
+  }, config, profile);
+}
+
+function notExercised(stage: string, code: string): SafeStage {
+  return { stage, status: "not_exercised", code, durationMs: 0, attempts: [] };
+}
+
+function solidPng(
+  width: number,
+  height: number,
+  red: number,
+  green: number,
+  blue: number,
+): Uint8Array {
+  const stride = 1 + width * 3;
+  const raw = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y += 1) {
+    const row = y * stride;
+    raw[row] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const pixel = row + 1 + x * 3;
+      raw[pixel] = red;
+      raw[pixel + 1] = green;
+      raw[pixel + 2] = blue;
+    }
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 2;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function pngChunk(type: string, data: Uint8Array): Buffer {
+  const typeBytes = Buffer.from(type, "ascii");
+  const payload = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(payload.byteLength, 0);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, payload])), 0);
+  return Buffer.concat([length, typeBytes, payload, checksum]);
+}
+
+function crc32(data: Uint8Array): number {
+  let crc = 0xffff_ffff;
+  for (const byte of data) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb8_8320 : 0);
+    }
+  }
+  return (crc ^ 0xffff_ffff) >>> 0;
+}
+
 async function toolAndContinuation(
   config: AiConfig,
   profile: ModelProfile,
@@ -170,7 +431,7 @@ async function toolAndContinuation(
 ): Promise<{ stages: SafeStage[]; assistant: ChatAssistantToolMessage | null }> {
   const capturedTurns: ChatAssistantToolMessage[] = [];
   const policy = new ExecutionPolicy();
-  const toolStage = await runStage("native_tool_and_reasoning_capture", async (client) => {
+  const toolStage = await runStage("native_tool_and_continuation_capture", async (client) => {
     const maxOutputTokens = boundedOutput(profile, 256);
     const execution = policy.decide({
       tier: "ambitious",
@@ -245,7 +506,7 @@ async function toolAndContinuation(
         thoughtSignatureCaptured: Boolean(call.extra_content?.google.thought_signature),
       },
     };
-  }, config);
+  }, config, profile);
 
   const captured = capturedTurns[0] ?? null;
   if (toolStage.status !== "passed" || !captured) {
@@ -295,8 +556,8 @@ async function toolAndContinuation(
     if (!text.includes(CONTINUATION_MARKER)) {
       throw new Error("continuation_marker_missing");
     }
-    return { code: "assistant_and_reasoning_replayed" };
-  }, config);
+    return { code: "assistant_tool_turn_replayed" };
+  }, config, profile);
   return { stages: [toolStage, continuationStage], assistant: captured };
 }
 
@@ -318,7 +579,7 @@ async function outputCeilingStage(
       deadlineMs: 60_000,
       maxSteps: 1,
     });
-    const text = await clientFor(config, collector).complete({
+    const text = await clientFor(config, collector, profile).complete({
       model,
       messages: [{
         role: "user",
@@ -414,7 +675,7 @@ async function contextPressureStage(
       throw error;
     }
     throw new Error("context_pressure_not_rejected");
-  }, config);
+  }, config, profile);
 }
 
 async function timeoutAndRetryStage(
@@ -437,7 +698,7 @@ async function timeoutAndRetryStage(
   });
   const wantedAttempts = Math.min(2, config.keys.size);
   try {
-    await clientFor(config, collector).complete({
+    await clientFor(config, collector, profile).complete({
       model,
       messages: [{ role: "user", content: "Return the single word OK." }],
       temperature: 0,
@@ -479,40 +740,69 @@ async function timeoutAndRetryStage(
   }
 }
 
+function probeProfileFor(
+  configured: ModelProfile,
+  provider: string,
+  model: string,
+): { phase: "discovery" | "verification"; profile: ModelProfile } {
+  if (configured.verification === "explicit") {
+    return { phase: "verification", profile: configured };
+  }
+  // Kandidat ini hanya hidup di proses smoke. Menandai capability `true`
+  // memberi izin kepada adapter untuk benar-benar mencoba wire tersebut; hasil
+  // baru boleh dipromosikan setelah semua stage wajib lulus.
+  return {
+    phase: "discovery",
+    profile: {
+      id: model,
+      provider,
+      verification: "explicit",
+      reasoning: {
+        mandatory: false,
+        defaultEffort: "none",
+        supportedEfforts: [],
+        wireFormat: "none",
+      },
+      supports: {
+        tools: true,
+        toolChoice: true,
+        namedToolChoice: true,
+        structuredOutput: true,
+        temperature: true,
+        promptCaching: true,
+        imageInput: true,
+      },
+      continuation: {
+        preserveReasoning: false,
+        preserveAssistantMessage: true,
+      },
+      contextWindow: configured.contextWindow,
+      maxOutputTokens: configured.maxOutputTokens,
+    },
+  };
+}
+
 async function main(): Promise<void> {
   loadEnvironment();
   const config = loadAiConfig();
   const model = resolveModel("ambitious", config);
-  const profile = config.modelProfiles.require(config.providerId, model);
+  const configuredProfile = config.modelProfiles.require(config.providerId, model);
+  const { phase, profile } = probeProfileFor(
+    configuredProfile,
+    config.providerId,
+    model,
+  );
   const profileDigest = createHash("sha256")
     .update(JSON.stringify(profile))
     .digest("hex");
-  const blockedReasons: string[] = [];
-  if (profile.verification !== "explicit") blockedReasons.push("profile_not_explicit");
-  if (!profile.supports.tools) blockedReasons.push("native_tools_not_declared");
-  if (!profile.continuation.preserveAssistantMessage) {
-    blockedReasons.push("assistant_continuation_not_declared");
-  }
-  if (profile.reasoning.wireFormat !== "none" && !profile.continuation.preserveReasoning) {
-    blockedReasons.push("reasoning_replay_not_declared");
-  }
-  if (blockedReasons.length > 0) {
-    console.log(JSON.stringify({
-      protocol: "harvy-provider-live-smoke/1",
-      status: "blocked",
-      testedAt: new Date().toISOString(),
-      provider: config.providerId,
-      model,
-      profileDigest,
-      blockedReasons,
-    }, null, 2));
-    process.exitCode = 2;
-    return;
-  }
 
   const stages: SafeStage[] = [];
+  stages.push(await basicCompletionStage(config, profile, model));
+  stages.push(await structuredOutputStage(config, profile, model));
   const continuation = await toolAndContinuation(config, profile, model);
   stages.push(...continuation.stages);
+  stages.push(await automaticPromptCacheStage(config, profile, model));
+  stages.push(await imageInputStage(config, profile, model));
   stages.push(await outputCeilingStage(config, profile, model));
   stages.push(await contextPressureStage(config, profile, model));
   stages.push(await timeoutAndRetryStage(config, profile, model));
@@ -524,6 +814,8 @@ async function main(): Promise<void> {
     mode: config.mode,
     provider: config.providerId,
     model,
+    phase,
+    promotionEligible: phase === "discovery" && failures.length === 0,
     profileDigest,
     profile: {
       verification: profile.verification,
@@ -532,6 +824,9 @@ async function main(): Promise<void> {
       defaultEffort: profile.reasoning.defaultEffort,
       tools: profile.supports.tools,
       namedToolChoice: profile.supports.namedToolChoice,
+      structuredOutput: profile.supports.structuredOutput,
+      promptCaching: profile.supports.promptCaching,
+      imageInput: profile.supports.imageInput,
       preserveAssistantMessage: profile.continuation.preserveAssistantMessage,
       preserveReasoning: profile.continuation.preserveReasoning,
       contextWindow: profile.contextWindow,

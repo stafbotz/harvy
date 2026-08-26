@@ -34,7 +34,7 @@ Login menukar token operator menjadi sesi in-memory dengan cookie `HttpOnly`
 dan `SameSite=Strict`. Browser tidak menyimpan token di `localStorage` atau
 `sessionStorage`. Restart proses membatalkan seluruh sesi.
 
-## Mode setup kanal tanpa bootstrap Telegram
+## Mode setup tanpa bootstrap Telegram
 
 Pairing akun uji tidak bergantung pada runtime utama yang sudah memiliki token
 Telegram. Jalankan:
@@ -53,16 +53,17 @@ sumber status produk. Mode setup juga memegang lock runtime utama, sehingga
 sesi layanan tidak pernah dipasangkan, dicabut, atau diperiksa oleh dua proses
 Baileys sekaligus. Hentikan Harvy sebelum membuka mode ini.
 
-Mode setup tidak memakai sidebar satu-item. Dua tab halaman dengan lebar setara
-memisahkan **Layanan** dari **Pengujian**, dan badge pada keduanya tetap memberi
-ringkasan keadaan lingkungan yang sedang tidak dibuka. Tab **Layanan** mengelola
-token BotFather dan armada WhatsApp layanan. Snapshot browser hanya membawa
+Mode setup tidak memakai sidebar dashboard. Tiga langkah dengan lebar setara
+memisahkan **Kanal**, **Komputer kerja**, dan **GitHub**. Di dalam Kanal,
+environment **Layanan** dan **Pengujian** tetap terpisah dan badge keduanya
+memberi ringkasan keadaan yang sedang tidak dibuka. Environment **Layanan**
+mengelola token BotFather dan armada WhatsApp layanan. Snapshot browser hanya membawa
 sumber, fase verifikasi, status runtime, kebutuhan restart, alias operasional,
 dan lifecycle akun—tidak pernah nilai token, nomor, JID, atau path. Token serta
 metadata armada yang lolos validasi disimpan dengan AES-GCM di
 `secrets/primary-channels.secrets.json`; kunci lokal terpisah berada di
 `secrets/primary-channels.key`; material linked-device tetap berada per alias di
-`data/whatsapp-auth/`. Tab **Pengujian** memakai bot Telegram, akun
+`data/whatsapp-auth/`. Environment **Pengujian** memakai bot Telegram, akun
 Telegram penguji, dan dua session WhatsApp sendiri. Console menolak bot layanan
 dan bot pengujian yang identik, serta menolak identitas WhatsApp layanan yang
 sama dengan akun acceptance atau akun layanan lain.
@@ -154,7 +155,10 @@ npm run test:console-browser
 ```
 
 Command ini memakai server serta storage sementara dan tidak melakukan pairing
-atau mengirim pesan ke platform.
+atau mengirim pesan ke platform. Browser benar-benar mengisi form compute dan
+GitHub, menyimpan secret sementara, menjalankan probe in-process, memeriksa
+secret tidak dipantulkan, berpindah tab, dan mengaudit overflow desktop/mobile.
+Ini regresi interaksi Console, bukan bukti sandbox atau GitHub remote live.
 
 Untuk audit read-only terhadap credential dan session yang benar-benar sudah
 dipasangkan, tutup Console setup lain lalu jalankan:
@@ -222,6 +226,13 @@ desktop/mobile, lalu keluar tanpa pairing, revoke, atau perubahan pengaturan.
 - Memigrasikan daftar akun WhatsApp layanan dari `.env`, menambah banyak akun
   beralias, memeriksa session ke platform, memasangkan ulang, mencabut akun,
   serta mengatur aktivasi grup/privat tanpa menampilkan nomor atau JID.
+- Menyimpan dan memverifikasi koneksi sandbox Linux serta local-git, termasuk
+  service HMAC yang berbeda, privacy domain coding, dan receipt hostile-code
+  exact. Compute tetap nonaktif bila health/identity tidak cocok atau receipt
+  kedaluwarsa.
+- Menyimpan credential GitHub App dan koneksi Broker tanpa PAT atau refleksi
+  secret ke browser. GitHub hanya dapat diaktifkan sesudah compute aktif dan
+  Broker lolos probe; perubahan saat runtime hidup ditandai perlu restart.
 
 Tidak ada checkout, pembayaran, auto-renew, invoice, refund, webhook, atau SLA
 komersial pada versi ini. Paket berstatus `pilot` adalah hipotesis produk.
@@ -230,16 +241,16 @@ komersial pada versi ini. Paket berstatus `pilot` adalah hipotesis produk.
 
 Saat startup, server membentuk inventaris dari seluruh slot model yang
 nonkosong: `AI_MODEL_TESTING`, override testing per tier,
-`AI_TESTING_FALLBACK_MODEL`, serta tiga `AI_MODEL_*` production. Model untuk
+serta tiga `AI_MODEL_*` production. Model untuk
 mode yang sedang tidak aktif tetap terlihat sebagai “tersedia, tidak aktif”;
 status aktif menunjukkan routing proses sekarang, bukan kesehatan provider.
 Model yang sama pada beberapa tier tampil satu kali dengan seluruh sumbernya.
 
 Respons API hanya membawa `providerId`, `modelId`, mode, origin, tier, nama
 variabel model, dan status aktif. Base URL, API key, token pool, maupun
-credential lain tidak menjadi bagian katalog. `AI_TESTING_FALLBACK_PROVIDER_ID`
-harus diisi eksplisit bila label ledger perlu bernama `always-codex`; Harvy
-tidak menebak provider dari URL.
+credential lain tidak menjadi bagian katalog. Mode testing hanya
+menginventarisasi provider primary `gmi-serving`; tidak ada slot provider
+fallback yang dapat diaktifkan dari environment.
 
 Form harga memakai satu pemilih pasangan katalog. Server tetap memeriksa
 allowlist yang sama dan menolak POST untuk provider/model buatan. Perubahan

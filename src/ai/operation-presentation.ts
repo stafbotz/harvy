@@ -55,6 +55,10 @@ export const OPERATION_PRESENTATION_PROMPT = [
   "  benar membantu.",
   "- Jangan mengulang judul, ID, waktu, jumlah, status, atau fakta dari blok",
   "  receipt. Jangan mengklaim tindakan lain terjadi.",
+  "- Untuk task-created, reminder-scheduled, dan checkin-scheduled, operasi",
+  "  baru terpasang untuk masa depan. Katakan tercatat/terpasang; jangan berkata",
+  "  pengguna sudah diingatkan, notifikasi sudah muncul, atau check-in sudah",
+  "  dikirim. Hanya reminder-due/checkin-ongoing boleh menyatakan waktunya tiba.",
   "- Jangan menyebut database, receipt, route, model, prompt, atau sistem.",
   "- Jangan memamerkan memori. Jangan menyebut detail lama yang tidak diperlukan",
   "  hanya agar terdengar personal.",
@@ -140,7 +144,9 @@ export function renderOperationPresentation(
   brief: OperationPresentationBrief,
   draft: OperationPresentationDraft | null,
 ): string {
-  if (!draft) return brief.fallbackText.trim();
+  if (!draft || !acknowledgementMatchesOperation(brief.kind, draft.acknowledgement)) {
+    return brief.fallbackText.trim();
+  }
   const stableBody = brief.stableBody.trim();
   if (!stableBody) return brief.fallbackText.trim();
   const nextStep = draft.nextStepIndex === null
@@ -152,4 +158,16 @@ export function renderOperationPresentation(
     stableBody,
     ...(nextStep ? ["", nextStep] : []),
   ].join("\n");
+}
+
+function acknowledgementMatchesOperation(
+  kind: OperationPresentationKind,
+  acknowledgement: string,
+): boolean {
+  if (
+    kind !== "task-created" && kind !== "reminder-scheduled" &&
+    kind !== "checkin-scheduled"
+  ) return true;
+  return !/\b(?:sudah|udah|telah)\s+(?:(?:aku|harvy)\s+)?(?:meng(?:ingatkan|irim)|kuingatkan|kukirim)\b/iu
+    .test(acknowledgement);
 }

@@ -18,6 +18,7 @@ import { CodingRunProgressHub } from "../src/core/coding-run-progress-hub.js";
 import { CodingRunScheduler } from "../src/core/coding-run-scheduler.js";
 import { LocalGitService } from "../src/core/local-git-service.js";
 import { PrivateCodingApplication } from "../src/core/private-coding-application.js";
+import { ProjectIntentService } from "../src/core/project-intent-service.js";
 import { ProjectWorkspaceService } from "../src/core/project-workspace-service.js";
 import { TrustedWorkspaceActorRegistry } from
   "../src/core/trusted-workspace-actor-registry.js";
@@ -40,6 +41,8 @@ import { FilePrivateCodingSessionStore } from
   "../src/storage/file-private-coding-session-store.js";
 import { FileProjectWorkspaceRepository } from
   "../src/storage/file-project-workspace-repository.js";
+import { FileProjectIntentRepository } from
+  "../src/storage/file-project-intent-repository.js";
 import { FileWorkspaceRepository } from "../src/storage/file-workspace-repository.js";
 import { FileGroupCodingRepository } from
   "../src/storage/file-group-coding-repository.js";
@@ -207,6 +210,55 @@ describe("PrivateCodingApplication end-to-end", () => {
     await fixture.stop();
   });
 
+  it("tidak memulai milestone ProjectGoal bila admission CodingRun gagal", async () => {
+    const fixture = await createFixture(
+      new DeterministicWorker(),
+      new PassingSandbox(),
+      { failCreateCodingRun: true },
+    );
+    await fixture.application.uploadZip(fixture.actor, projectZip());
+    await fixture.application.setGoal(fixture.actor, {
+      objective: "Menaikkan nilai export dengan bukti validator.",
+      acceptanceCriteria: [{ kind: "code", text: "Validator lulus." }],
+      milestones: ["Implementasi perubahan"],
+    });
+
+    await assert.rejects(
+      fixture.application.startCoding(fixture.actor, "Ubah nilai menjadi 2"),
+      /simulated CodingRun admission failure/iu,
+    );
+    const goal = await fixture.application.currentGoal(fixture.actor);
+    assert.equal(goal?.status, "active");
+    assert.equal(goal?.milestones[0]?.status, "pending");
+    assert.equal(goal?.evidence.length, 0);
+    await fixture.stop();
+  });
+
+  it("mengikat brief CodingRun ke ProjectGoal dan mencatat evidence setelah commit", async () => {
+    const fixture = await createFixture(new DeterministicWorker());
+    await fixture.application.uploadZip(fixture.actor, projectZip());
+    const goal = await fixture.application.setGoal(fixture.actor, {
+      objective: "Menaikkan nilai export dengan bukti validator.",
+      acceptanceCriteria: [{ kind: "code", text: "Validator lulus." }],
+      milestones: ["Implementasi perubahan"],
+    });
+    const handle = await fixture.application.startCoding(
+      fixture.actor,
+      "Ubah nilai export menjadi 2",
+    );
+    const outcome = await handle.completion;
+    assert.equal(outcome.run.taskBrief.objective, goal.objective);
+    assert.deepEqual(outcome.run.taskBrief.acceptanceCriteria, ["Validator lulus."]);
+    assert.equal(outcome.stoppedReason, null);
+    const current = await fixture.application.currentGoal(fixture.actor);
+    assert.equal(current?.milestones[0]?.status, "completed");
+    assert.equal(current?.acceptanceCriteria[0]?.status, "met");
+    assert.deepEqual(current?.evidence.map((item) => item.ref), [
+      `coding-run:${outcome.run.runId}`,
+    ]);
+    await fixture.stop();
+  });
+
   it("owner WhatsApp privat menyetujui exact request link untuk principal grup", async () => {
     const fixture = await createFixture(new DeterministicWorker());
     const whatsappOwner = fixture.actors.issue({
@@ -277,6 +329,7 @@ describe("PrivateCodingApplication end-to-end", () => {
 async function createFixture(
   worker: CodingWorkerDriver,
   sandbox: PassingSandbox = new PassingSandbox(),
+  options: { failCreateCodingRun?: boolean } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "harvy-private-coding-e2e-"));
   roots.push(root);
@@ -365,9 +418,30 @@ async function createFixture(
     join(root, "group-coding.json"),
   );
   const controller = new WorkspaceCodingController(authority, actors, projects, runs);
+  const applicationController = options.failCreateCodingRun
+    ? new Proxy(controller, {
+        get(target, property) {
+          if (property === "createCodingRun") {
+            return async () => {
+              throw new Error("simulated CodingRun admission failure");
+            };
+          }
+          const value = Reflect.get(target, property, target) as unknown;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      })
+    : controller;
+  const projectIntents = new ProjectIntentService(
+    new FileProjectIntentRepository(join(root, "project-intents.json")),
+    authority,
+    projects,
+    ["workspace.read", "workspace.write", "sandbox.test"],
+    now,
+    randomUUID,
+  );
   const application = new PrivateCodingApplication(
     actors,
-    controller,
+    applicationController,
     authority,
     projects,
     runs,
@@ -377,6 +451,7 @@ async function createFixture(
     progress,
     now,
     groupRepository,
+    projectIntents,
   );
   application.start();
   return {

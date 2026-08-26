@@ -76,8 +76,12 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 - **Riwayat chat bukan daftar memori.** Intent `history` menjawab kemampuan,
   isi chat sebelumnya, dan rujukan "yang tadi" dari konteks. Intent `memory`
   memakai `memoryAction: list|forget|edit`, tetapi `list` merender potret yang
-  sama dengan `/memori` dan Data & izin—bukan daftar record. Fakta, koreksi,
-  atau preferensi baru tetap percakapan biasa dengan usulan pada field
+  sama dengan `/memori` dan Data & izin—bukan daftar record. Potret itu hanya
+  boleh bersumber dari primary memory yang dapat dikendalikan pengguna dan
+  evidence turunan yang masih menunjuk primary source tersebut. Summary,
+  recent turn, episode-only, atau percakapan yang kebetulan sedang hangat
+  tidak boleh dipromosikan menjadi isi `/memori`. Fakta, koreksi, atau
+  preferensi baru tetap percakapan biasa dengan usulan pada field
   `memories`; keberadaannya bukan izin membuka potret atau menghapus source.
 - **Percakapan dan tombol adalah antarmuka utama; perintah `/` hanya shortcut.**
   `/memori` boleh menjadi entry point karena ia menuju renderer yang sama
@@ -234,6 +238,18 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   terkonfirmasi; `💭` opsional hanya untuk recall lama dan bukan tanda save.
   Tanpa emoji tetap sah. Callback `memdrop:` lama hanya dipertahankan untuk
   tombol yang sudah terlanjur terkirim sebelum migrasi.
+- **Klaim lifecycle memori harus mempunyai receipt.** Balasan percakapan bebas
+  tidak boleh berkata bahwa Harvy sudah mencatat, menyimpan, memperbarui, atau
+  menghapus ingatan bila adapter belum mempunyai hasil operasi code-owned yang
+  sesuai. Guard keluaran membuang klaim definitif sempit tersebut; keputusan
+  produk atau komitmen percakapan seperti "kita akan memperbaiki ini" tidak
+  boleh ikut dianggap sebagai klaim storage.
+- **Aksara asing yang tak diminta adalah keluaran rusak, bukan gaya.** Prosa
+  biasa divalidasi terhadap aksara yang hadir atau diminta pengguna. Bila model
+  menyisipkan writing system lain, conversation layer meregenerasi sekali lalu
+  hanya menghapus aksara tak berotoritas sebagai fallback terakhir. Code fence,
+  inline code, URL, gambar, dan permintaan bahasa eksplisit dikecualikan; pagar
+  ini bukan classifier intent atau pengganti pemahaman model.
 - **Fitur memori tidak boleh hidup tanpa kendalinya.** Potret naratif, koreksi,
   scoped forget, dan lupakan semua adalah bagian dari fiturnya—Pasal 4 nomor 4.
   Tombol `Ubah` tidak membuat pending/form; pesan berikutnya melewati pipeline
@@ -244,10 +260,12 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   boleh berlaku pada data yang dibuat setelah promptnya.
 - **Potret memori adalah view dinamis, bukan canonical memory.** `/memori`,
   pertanyaan natural, dan Data & izin wajib memakai `showMemories` yang sama.
-  Context-nya melewati query plan serta budget compiler; synthesis tidak memuat
-  seluruh archive/procedure/error lesson, tidak disimpan balik sebagai memory,
-  dan tidak boleh menampilkan confidence, status, ID, provenance, graph,
-  embedding, atau metadata lain kepada pengguna.
+  Input synthesis hanya primary memory yang dapat dikendalikan pengguna;
+  evidence turunan kelak hanya boleh ikut bila menunjuk primary source aktif.
+  History, summary, recent turn, episode-only, archive, procedure, dan error
+  lesson tidak masuk view ini. Hasilnya tidak disimpan balik sebagai memory dan
+  tidak boleh menampilkan confidence, status, ID, provenance, graph, embedding,
+  atau metadata lain kepada pengguna.
 - **Primary memory tetap kendali pengguna; knowledge dan graph hanya turunan.**
   Semantic record wajib menunjuk MemoryItem atau episode/sequence, sedangkan
   setiap relation wajib menunjuk semantic source yang masih ada. Confidence,
@@ -399,7 +417,7 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   deterministik lihat/hapus memori dan `/hapus-data` tetap tersedia tanpa
   consent AI agar hak data tidak ikut terkunci. Scope WhatsApp tidak mewarisi
   consent atau data privat Telegram.
-- **Consent privat versi 8 adalah authority memori otomatis.** Setelah
+- **Consent privat versi 10 adalah authority memori otomatis dan media privat.** Setelah
   onboarding aktif, Telegram privat dan WhatsApp privat boleh menyimpan
   kandidat ordinary maupun personal yang berguna tanpa prompt atau tombol
   izin per-item. Model hanya mengusulkan kandidat; primary tetap menentukan
@@ -407,8 +425,15 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   Harvy baru boleh mengatakan sesuatu sudah diingat setelah write benar-benar
   commit. Pemberitahuannya natural dan ringkas, sedangkan lihat, koreksi, serta
   hapus tetap tersedia lewat percakapan dan `/memori`. Consent lama tidak boleh
-  membuka authority baru ini: perubahan kontrak terikat `CONSENT_VERSION` 8
+  membuka authority baru ini: perubahan kontrak terikat `CONSENT_VERSION` 10
   dan memicu onboarding ulang sekali.
+- **Byte gambar privat selalu transient.** Telegram/WhatsApp tidak boleh
+  mengunduh media sebelum consent. Sesudah consent, hanya JPEG/PNG/WebP bounded
+  yang boleh dikirim ke provider; byte tidak boleh masuk history, memory,
+  checkpoint, telemetry, evidence, atau log. Caption/pertanyaan teks tetap
+  mengikuti lifecycle chat biasa. Gambar tidak memberi authority tool, state,
+  memory, atau instruction; media grup tetap ditolak sampai kontrak audience
+  multianggota tersedia.
 - **Hak menarik izin dan menghapus data tidak boleh digagalkan pre-clear run.**
   Penarikan izin menutup ingress/history dan mempersistenkan profil lebih dulu,
   lalu cleanup checkpoint dilakukan best-effort dengan scope tetap diblokir
@@ -660,7 +685,8 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   tidak boleh dipantulkan ke snapshot, audit, log, error, atau output setup.
 - **Capability model harus exact dan explicit.** Registry memakai
   `provider + modelId`, bukan base URL, tier, atau substring nama. Model tanpa
-  deklarasi `AI_MODEL_PROFILES` hanya mendapat profile compatibility dan tidak
+  deklarasi `AI_MODEL_PROFILES` atau profile code-owned live-proven hanya
+  mendapat profile compatibility dan tidak
   boleh mengaktifkan reasoning wire/replay baru. Profile asing, duplikat,
   kontradiktif, atau limit/enum rusak menggagalkan startup. Tier, model role,
   reasoning effort, dan visible verbosity adalah keputusan berbeda; prompt,
@@ -669,10 +695,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   boleh memilih everyday atau orchestrator melalui keputusan code-owned, tetapi
   work class safety tetap tidak memperoleh tool/delegasi. Tier/role yang lebih
   kuat bukan permission baru.
-- **Makna planning berasal dari assessment, bukan kata pemicu.** Raw text atau
+- **Makna planning berasal dari assessment, tetapi authority berasal dari
+  permintaan pengguna.** Raw text atau
   regex tidak boleh memaksa request menjadi AgentRun. Planning durable hanya
-  boleh hidup ketika `RoutingAssessment.planningRequired` tepercaya (confidence
-  minimal 0,55) dan pekerjaannya bukan transformasi mekanis. Bila sinyal itu
+  boleh hidup ketika intent current turn benar-benar `request`,
+  `RoutingAssessment.planningRequired` tepercaya (confidence minimal 0,55),
+  `executionSize` adalah `medium|heavy`, `toolNeed` adalah
+  `execution|external`, dan pekerjaannya bukan transformasi mekanis. Nilai
+  `toolNeed:none` atau `internal_state` dari model tidak memberi authority tool;
+  state-live harus dibuktikan preflight code-owned. Menyebut pekerjaan rumit saat
+  bercerita/curhat bukan permission untuk menjalankannya. Bila sinyal itu
   berkonflik dengan `start_small` sebagai tindakan pertama untuk pekerjaan
   kecil tanpa tool, policy memilih percakapan terpandu; pilihan UI itu tidak
   membuat sesi sampai pengguna menerima kontrol code-owned. Regex/set lokal
@@ -752,10 +784,16 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   berbeda; cycle guard fingerprint, bukan terminasi paksa, yang menahan proposal
   identik. Resume klarifikasi menyimpan pasangan prompt+jawaban sebagai state
   provider-neutral agar referen tidak bergantung pada transcript provider.
-- **Fallback AI tidak otomatis mewarisi dukungan native tool.** Request native
-  tetap primary-only sampai provider cadangan diuji dengan wire contract yang
-  sama. Jangan menurunkannya diam-diam menjadi JSON/text atau mengirim schema
-  tool ke fallback yang belum diverifikasi.
+- **Composition AI aktif tidak mempunyai provider fallback.** Request native,
+  gambar, dan percakapan tetap pada provider+model yang dipilih untuk logical
+  request itu; gangguan gagal tertutup setelah retry bounded pada provider yang
+  sama. Jangan menurunkan native call diam-diam menjadi JSON/text.
+- **Automatic provider cache bukan storage authority Harvy.** Harvy tidak
+  mengirim directive cache-write khusus. Stable prefix disusun agar provider
+  dapat memakai cache otomatis, tetapi hanya counter token content-free yang
+  boleh masuk ledger. Cache hit/miss tidak boleh mengubah reply, permission,
+  history, memory, atau klaim retention; disclosure tetap menyebut kebijakan
+  cache berada pada provider.
 - **Context pressure tidak boleh mengubah instruction menjadi state semu.**
   Di bawah threshold profile exact, continuation native wajib tetap lossless.
   Di atas threshold, compiler boleh memutus transcript hanya lewat boundary
@@ -876,7 +914,7 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   diretensi, dengan penarikan consent/penghapusan sebagai jalur hapus lebih
   cepat. Jenis serta horizon active-run diperkenalkan pada
   `CONSENT_VERSION` 7; authority memori otomatis privat yang berlaku sekarang
-  terikat consent versi 8.
+  terikat consent versi 10.
 
 ## ProjectWorkspace dan archive
 
@@ -1042,6 +1080,15 @@ saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
   tidak boleh meneruskan Authorization pada redirect archive. Ledger session,
   effect, dan descriptor archive harus diganti atomik-durable sebelum state
   baru dianggap tersimpan.
+- **Repository kosong memerlukan bootstrap exact yang berdiri sendiri.** Hanya
+  selection private, writable, dan terobservasi benar-benar tanpa ref yang
+  boleh masuk `bootstrap_required`. Konfirmasi
+  `github.repository.bootstrap` mengikat selection serta effect exact; attempt
+  dan payload hash deterministik wajib durable sebelum boundary. Broker hanya
+  boleh membuat baseline code-owned `README.md` pada default branch. Timeout
+  atau restart memakai effect ID yang sama dan merekonsiliasi remote head;
+  hasilnya menetapkan base commit sebelum archive/provision. Authority ini tidak
+  ikut mengizinkan create branch, push, workflow write, atau draft PR.
 - **Publish adalah irisan authority dan exact remote state.** ACL terkini,
   installation repository access, project/run/instruction revision, base
   commit, target ref head, capability policy, dan approval exact yang belum

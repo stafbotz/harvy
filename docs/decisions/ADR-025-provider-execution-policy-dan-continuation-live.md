@@ -7,6 +7,9 @@
 - **Diamendemen oleh:** ADR-026 untuk cumulative RunBudget physical attempt dan
   ADR-028 untuk output policy general; batas historis change set ADR-025 di
   bawah tetap benar untuk change set itu
+- **Disupersesi sebagian oleh:** amandemen ADR-003 tanggal 25 Agustus 2026 untuk
+  composition provider aktif. Referensi Google di bawah adalah konteks dan
+  bukti change set 9 Agustus, bukan konfigurasi runtime sekarang.
 
 ## Konteks
 
@@ -82,9 +85,10 @@ tidak:
   atau continuation durable lintas restart; atau
 - mengklaim DeepSeek sebagai provider production Harvy.
 
-Ceiling lama tetap dipertahankan sampai budget total satu logical run dan
-turunannya tersedia. Primitive DeepSeek hanya mempunyai tes adapter/client
-sintetis; composition root saat ini tetap Google AI Studio atau OpenRouter.
+Pada change set 9 Agustus, ceiling lama tetap dipertahankan sampai budget total
+satu logical run dan turunannya tersedia. Primitive DeepSeek hanya mempunyai
+tes adapter/client sintetis; composition root saat itu memakai Google AI Studio
+atau OpenRouter. Composition aktif sekarang mengikuti ADR-003.
 
 ## Konsekuensi
 

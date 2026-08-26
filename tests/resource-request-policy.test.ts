@@ -142,6 +142,8 @@ function profile(): ModelProfile {
       namedToolChoice: true,
       structuredOutput: true,
       temperature: true,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: true,

@@ -45,6 +45,7 @@ import {
   normalizeBaileysGroupMessage,
   normalizeBaileysPrivateMessage,
   whatsAppPrivatePresentationBubbles,
+  type WhatsAppPrivateInboundImage,
   type WhatsAppPrivateMessage,
   type WhatsAppPrivateReply,
   type WhatsAppPrivateReplyResult,
@@ -1598,6 +1599,19 @@ export class BaileysAccountManager
                   return;
                 }
               }
+              if (normalized.image) {
+                hydrated = {
+                  ...hydrated,
+                  image: {
+                    ...normalized.image,
+                    loadData: () => downloadBoundedPrivateImage(
+                      raw,
+                      this.downloadContent,
+                      normalized.image!.mediaType,
+                    ),
+                  },
+                };
+              }
               const task = this.handlePrivateMessage(
                 runtime,
                 socket,
@@ -2470,6 +2484,63 @@ function groupNoticeRuntimeUnavailable(): Error {
 }
 
 const MAX_PRIVATE_DOCUMENT_BYTES = 32 * 1024 * 1024;
+const MAX_PRIVATE_IMAGE_BYTES = 5 * 1024 * 1024;
+
+async function downloadBoundedPrivateImage(
+  raw: WAMessage,
+  downloadContent: typeof downloadContentFromMessage,
+  mediaType: WhatsAppPrivateInboundImage["mediaType"],
+): Promise<Buffer> {
+  const image = extractMessageContent(raw.message)?.imageMessage;
+  if (!image) throw new Error("Gambar WhatsApp tidak tersedia.");
+  const declared = image.fileLength == null ? null : toNumber(image.fileLength);
+  if (
+    declared !== null &&
+    (!Number.isSafeInteger(declared) || declared < 1 ||
+      declared > MAX_PRIVATE_IMAGE_BYTES)
+  ) {
+    throw new Error("Ukuran gambar WhatsApp tidak sah atau terlalu besar.");
+  }
+  const stream = await downloadContent(image, "image");
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > MAX_PRIVATE_IMAGE_BYTES) {
+      stream.destroy();
+      throw new Error("Gambar WhatsApp melewati batas 5 MiB.");
+    }
+    chunks.push(buffer);
+  }
+  if (total < 1 || (declared !== null && total !== declared)) {
+    throw new Error("Ukuran gambar WhatsApp tidak cocok descriptor.");
+  }
+  const data = Buffer.concat(chunks, total);
+  if (!hasPrivateImageSignature(data, mediaType)) {
+    throw new Error("Isi gambar WhatsApp tidak cocok format yang dinyatakan.");
+  }
+  return data;
+}
+
+function hasPrivateImageSignature(
+  data: Uint8Array,
+  mediaType: WhatsAppPrivateInboundImage["mediaType"],
+): boolean {
+  if (mediaType === "image/jpeg") {
+    return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 &&
+      data[2] === 0xff;
+  }
+  if (mediaType === "image/png") {
+    const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    return data.length >= signature.length && signature.every((byte, index) =>
+      data[index] === byte
+    );
+  }
+  return data.length >= 12 &&
+    String.fromCharCode(...data.slice(0, 4)) === "RIFF" &&
+    String.fromCharCode(...data.slice(8, 12)) === "WEBP";
+}
 
 async function downloadBoundedPrivateDocument(
   raw: WAMessage,

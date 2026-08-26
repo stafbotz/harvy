@@ -133,6 +133,14 @@ describe("pemahaman pesan", () => {
       prompt,
       /durasi relatif[\s\S]*sampai detik[\s\S]*jangan membulatkan/iu,
     );
+    assert.match(
+      prompt,
+      /task\/save explicit[\s\S]*intent "task"[\s\S]*taskAction "save"[\s\S]*task berupa payload/iu,
+    );
+    assert.ok(
+      prompt.indexOf("Pemeriksaan akhir wajib") < prompt.lastIndexOf("Sekarang:"),
+      "jam dinamis harus berada setelah seluruh prefix aturan yang stabil",
+    );
   });
 
   it("memberi jatah token yang cukup untuk model penalaran", async () => {
@@ -209,8 +217,7 @@ describe("pemahaman pesan", () => {
       requests[0]?.messages.at(-1)?.content ?? "",
       /hubungan-giliran-code-owned>[\s\S]*correction/u,
     );
-    assert.ok(events.length > 0);
-    assert.equal(events.some((event) => event.publicFocus !== undefined), false);
+    assert.deepEqual(events, []);
   });
 
   it("membawa konteks ke langkah pemahaman, bukan hanya ke balasan", async () => {
@@ -626,7 +633,7 @@ describe("sintesis potret memori", () => {
     const conversation = new Conversation(
       recorder(requests, JSON.stringify({
         summary:
-          "Kamu sedang memikirkan pilihan kuliah. Aku punya kesan kamu lebih nyaman belajar malam, tapi aku belum terlalu yakin.",
+          "Kamu sekarang kelas 11 IPA di SMAN 3.",
       })),
       ROUTING,
       "Asia/Jakarta",
@@ -651,20 +658,204 @@ describe("sintesis potret memori", () => {
       }],
     }, "student");
 
-    assert.match(portrait, /belum terlalu yakin/iu);
+    assert.match(portrait, /kelas 11 IPA/iu);
     assert.equal(requests.length, 1);
     assert.equal(requests[0]?.json, true);
     assert.equal(requests[0]?.maxTokens, 2_048);
     assert.equal(requests[0]?.execution?.maxOutputTokens, 2_048);
     assert.equal(requests[0]?.usage?.purpose, "summary");
     assert.match(requests[0]?.messages[0]?.content ?? "", /potret singkat/iu);
-    assert.match(requests[0]?.messages.at(-1)?.content ?? "", /uncertain/u);
+    assert.doesNotMatch(requests[0]?.messages.at(-1)?.content ?? "", /uncertain/u);
     assert.doesNotMatch(requests[0]?.messages.at(-1)?.content ?? "", /raw turn tidak ikut/u);
+    assert.doesNotMatch(requests[0]?.messages.at(-1)?.content ?? "", /Pernah membicarakan kuliah/u);
     assert.doesNotMatch(requests[0]?.messages.at(-1)?.content ?? "", /internal-id/u);
   });
 });
 
 describe("balasan percakapan", () => {
+  it("menaruh jam dinamis setelah prefix balasan agar cache provider tetap berguna", async () => {
+    const firstRequests: ChatRequest[] = [];
+    const secondRequests: ChatRequest[] = [];
+    const first = new Conversation(
+      recorder(firstRequests, "jawaban"),
+      ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-08-26T08:00:00.000Z"),
+    );
+    const second = new Conversation(
+      recorder(secondRequests, "jawaban"),
+      ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-08-26T09:00:00.000Z"),
+    );
+
+    await first.reply("Susun tiga langkah.", understanding("request"));
+    await second.reply("Susun tiga langkah.", understanding("request"));
+
+    const firstPrompt = firstRequests[0]?.messages[0]?.content ?? "";
+    const secondPrompt = secondRequests[0]?.messages[0]?.content ?? "";
+    const firstClock = firstPrompt.lastIndexOf("Sekarang ");
+    const secondClock = secondPrompt.lastIndexOf("Sekarang ");
+    assert.ok(firstClock > firstPrompt.indexOf("Pengguna meminta"));
+    assert.ok(secondClock > secondPrompt.indexOf("Pengguna meminta"));
+    assert.equal(
+      firstPrompt.slice(0, firstClock),
+      secondPrompt.slice(0, secondClock),
+    );
+  });
+
+  it("memberi pagar kualitas untuk constraint, hitungan, waktu, dan receipt tindakan", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "45"),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.reply(
+      "Hitung 17+28 dan jawab angkanya saja.",
+      understanding("request"),
+    );
+
+    const prompt = requests[0]?.messages[0]?.content ?? "";
+    assert.match(prompt, /format, jumlah bagian, panjang[\s\S]*angkanya saja/iu);
+    assert.match(prompt, /periksa kembali hitungan[\s\S]*total waktu/iu);
+    assert.match(prompt, /jangan mengarang jam mulai[\s\S]*interval relatif/iu);
+    assert.match(
+      prompt,
+      /Balasan model bukan bukti[\s\S]*pengingat[\s\S]*hasil code-owned/iu,
+    );
+  });
+
+  it("meregenerasi jawaban yang menambah baris di luar jumlah explicit", async () => {
+    const requests: ChatRequest[] = [];
+    const replies = [
+      "1. Slide A – 10 menit\n2. Slide B – 10 menit\n3. Slide C – 10 menit\nTotal: 30 menit",
+      "1. Slide A – 10 menit\n2. Slide B – 10 menit\n3. Slide C – 10 menit",
+    ];
+    const conversation = new Conversation(
+      {
+        async complete(request: ChatRequest): Promise<string> {
+          requests.push(request);
+          return replies.shift() ?? "";
+        },
+      } as unknown as AiClient,
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const reply = await conversation.reply(
+      "Jawab tepat tiga baris bernomor.",
+      understanding("request"),
+    );
+
+    assert.equal(
+      reply,
+      "1. Slide A – 10 menit\n2. Slide B – 10 menit\n3. Slide C – 10 menit",
+    );
+    assert.equal(requests.length, 2);
+    assert.match(
+      requests[1]?.messages.at(-1)?.content ?? "",
+      /pemeriksaan-constraint-keluaran[\s\S]*exact-lines/iu,
+    );
+  });
+
+  it("meregenerasi code-only yang membawa prosa atau conditional expression rumpang", async () => {
+    const requests: ChatRequest[] = [];
+    const replies = [
+      [
+        "Ini fungsi yang kamu minta:",
+        "```ts",
+        "const DEFAULT_DRY_THRESHOLD_PCT = 30;",
+        "const threshold = options.dryThresholdPct ? DEFAULT_DRY_THRESHOLD_PCT;",
+        "return moisture <= threshold ? 'water' : 'wait';",
+        "```",
+      ].join("\n"),
+      [
+        "```ts",
+        "const DEFAULT_DRY_THRESHOLD_PCT = 30;",
+        "const threshold = options.dryThresholdPct ?? DEFAULT_DRY_THRESHOLD_PCT;",
+        "return moisture <= threshold ? 'water' : 'wait';",
+        "```",
+      ].join("\n"),
+    ];
+    const conversation = new Conversation(
+      {
+        async complete(request: ChatRequest): Promise<string> {
+          requests.push(request);
+          return replies.shift() ?? "";
+        },
+      } as unknown as AiClient,
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const reply = await conversation.reply(
+      "Write only TypeScript code for the pure decision function.",
+      understanding("request"),
+    );
+
+    assert.doesNotMatch(reply, /Ini fungsi/u);
+    assert.match(reply, /\?\? DEFAULT_DRY_THRESHOLD_PCT/u);
+    assert.equal(requests.length, 2);
+    assert.match(
+      requests[1]?.messages.at(-1)?.content ?? "",
+      /code-only[\s\S]*malformed-conditional[\s\S]*Pertahankan ejaan identifier/iu,
+    );
+  });
+
+  it("meregenerasi balasan bila model menyisipkan aksara yang tidak diminta", async () => {
+    const requests: ChatRequest[] = [];
+    const replies = [
+      "Jangan pindah topik terlalu cepat karena itu bikin累.",
+      "Jangan pindah topik terlalu cepat karena itu cepat melelahkan.",
+    ];
+    const conversation = new Conversation(
+      {
+        async complete(request: ChatRequest): Promise<string> {
+          requests.push(request);
+          return replies.shift() ?? "";
+        },
+      } as unknown as AiClient,
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const reply = await conversation.reply(
+      "Bagaimana ritme kerja yang sehat?",
+      understanding("question"),
+    );
+
+    assert.equal(
+      reply,
+      "Jangan pindah topik terlalu cepat karena itu cepat melelahkan.",
+    );
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1]?.maxAttempts, 1);
+    assert.match(
+      requests[1]?.messages.at(-1)?.content ?? "",
+      /pemeriksaan-kualitas-keluaran[\s\S]*han/iu,
+    );
+  });
+
+  it("tidak meregenerasi bahasa asing yang memang diminta", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "谢谢 berarti terima kasih."),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    assert.equal(
+      await conversation.reply(
+        "Tuliskan terima kasih dalam bahasa Mandarin.",
+        understanding("question"),
+      ),
+      "谢谢 berarti terima kasih.",
+    );
+    assert.equal(requests.length, 1);
+  });
+
   it("melarang balasan task biasa mengarang commit tanpa hasil operasi", async () => {
     const requests: ChatRequest[] = [];
     const conversation = new Conversation(
@@ -776,6 +967,38 @@ describe("balasan percakapan", () => {
     // Mode uji tanpa profile tidak mengaku memakai reasoning efektif.
     assert.equal(events.at(-1)?.phase, "composing");
     assert.deepEqual(events.at(-1)?.publicFocus, parsed.publicFocus);
+  });
+
+  it("menghormati null explicit dari adapter untuk menahan focus correction", async () => {
+    const events: ConversationProgressEvent[] = [];
+    const conversation = new Conversation(
+      recorder([], "jawaban yang sudah dikoreksi"),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+    const parsed = understanding("question");
+    parsed.publicFocus = {
+      kind: "adjust",
+      subject: "detail lama yang mungkin sudah usang",
+      contrast: null,
+      purpose: null,
+    };
+
+    await conversation.reply(
+      "bukan itu, maksudku batas 30",
+      parsed,
+      undefined,
+      null,
+      CALM_TRIAGE,
+      null,
+      false,
+      {
+        publicProgressFocus: null,
+        progress: { report: (event) => events.push(event) },
+      },
+    );
+
+    assert.equal(events.at(-1)?.publicFocus, undefined);
   });
 
   it("menjaga percakapan biasa bersih dari capability catalog", async () => {
@@ -1211,6 +1434,69 @@ describe("balasan percakapan", () => {
     assert.match(system, /Jangan pakai 💭 sebagai\s+tanda write/iu);
     assert.match(system, /Emoji tidak wajib/iu);
     assert.equal(reply, "Iya, aku inget betapa pentingnya Sohit buat kamu.");
+  });
+
+  it("memberi receipt penghapusan hanya setelah primary memory benar-benar dicabut", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "Oke, pemahaman lama itu sudah aku hapus."),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.reply(
+      "Bahasa Inggris tadi hanya untuk satu bagian.",
+      understanding("smalltalk"),
+      undefined,
+      null,
+      CALM_TRIAGE,
+      null,
+      false,
+      {
+        memoryAcknowledgements: [{
+          operation: "forgotten",
+          content: "Prefers coding conversations in English",
+          explicit: true,
+        }],
+      },
+    );
+
+    const system = requests[0]?.messages[0]?.content ?? "";
+    assert.match(system, /forgotten/iu);
+    assert.match(system, /pemahaman lama yang disebut/iu);
+    assert.doesNotMatch(system, /Tidak ada receipt\s+penghapusan/iu);
+  });
+
+  it("menempatkan kontrak artefak dan pemeriksaan angka pada giliran terkait", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "export function shouldWater() { return false; }"),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+    const request = understanding("request");
+    request.routingAssessment = {
+      complexity: "normal",
+      ambiguity: "low",
+      planningRequired: false,
+      emotionalNuance: "low",
+      executionSize: "small",
+      factualStakes: "medium",
+      transformationMechanical: false,
+      toolNeed: "calculation",
+      confidence: 0.94,
+    };
+
+    await conversation.reply(
+      "Tulis hanya fungsi keputusan dan cek batas 30 jam terhadap 1,5 hari.",
+      request,
+    );
+
+    const system = requests[0]?.messages[0]?.content ?? "";
+    assert.match(system, /KONTRAK PEMERIKSAAN ANGKA/iu);
+    assert.match(system, /Pisahkan hasil kasus konkret/iu);
+    assert.match(system, /KONTRAK LINGKUP/iu);
+    assert.match(system, /Jangan menggantinya dengan rencana/iu);
   });
 
   it("membatasi 💭 pada recall dan melarang klaim write tanpa receipt", async () => {

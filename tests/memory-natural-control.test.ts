@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   hasExplicitMemoryForgetRequest,
   isExplicitForgetAllMemories,
+  memoryRetractionAuthorized,
   memoriesMatchingNaturalTarget,
 } from "../src/core/memory-natural-control.js";
 import type { MemoryItem } from "../src/domain/memory.js";
@@ -49,6 +50,48 @@ describe("kontrol memori semantic", () => {
     assert.deepEqual(
       memoriesMatchingNaturalTarget(items, "sekolahku").map((item) => item.id),
       ["school"],
+    );
+  });
+
+  it("mengotorisasi retraction item-scoped hanya dari satu evidence exact", () => {
+    const message =
+      "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap.";
+    assert.equal(memoryRetractionAuthorized(message, {
+      target: "preferensi bahasa Inggris",
+      sourceEvidence:
+        "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+      explicitness: "explicit",
+      confidence: 0.96,
+    }), true);
+    assert.equal(memoryRetractionAuthorized(message, {
+      target: "semua ingatan",
+      sourceEvidence:
+        "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+      explicitness: "explicit",
+      confidence: 0.96,
+    }), false, "retraction natural tidak boleh menjadi bulk deletion");
+    assert.equal(memoryRetractionAuthorized(message, {
+      target: "preferensi bahasa Inggris",
+      sourceEvidence: "evidence yang tidak ada",
+      explicitness: "explicit",
+      confidence: 0.96,
+    }), false);
+  });
+
+  it("mencocokkan koreksi topik lintas bahasa secara owner-local", () => {
+    const multilingual = [
+      memory("english", "Prefers coding conversations in English", "2026-08-04T00:00:00.000Z"),
+      memory("garden", "Memiliki kebun kecil", "2026-08-05T00:00:00.000Z"),
+    ];
+    assert.deepEqual(
+      memoriesMatchingNaturalTarget(multilingual, "preferensi bahasa Inggris")
+        .map((item) => item.id),
+      ["english"],
+    );
+    assert.deepEqual(
+      memoriesMatchingNaturalTarget(multilingual, "garden project")
+        .map((item) => item.id),
+      ["garden"],
     );
   });
 

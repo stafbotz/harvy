@@ -6,6 +6,8 @@ import {
   EPISODE_CLAIM_MAX_CHARS,
   EPISODE_CLAIMS_PER_FIELD_LIMIT,
   EPISODE_TOTAL_CLAIMS_LIMIT,
+  episodeDraftHasClaims,
+  episodeSourceRequiresClaims,
   readEpisodeSummaryDraft,
 } from "../core/episodic-compaction.js";
 import { jsonForPrompt } from "./prompt-data.js";
@@ -33,6 +35,9 @@ export const EPISODE_SUMMARY_PROMPT = [
   "- corrections menyimpan koreksi eksplisit atas informasi sebelumnya.",
   "- commitments menyimpan janji/tindak lanjut yang benar-benar diucapkan.",
   "- unresolved hanya untuk pertanyaan, pekerjaan, atau keputusan yang masih terbuka.",
+  "- Kode, artefak kerja, constraint keluaran, keputusan angka/batas, koreksi,",
+  "  serta pekerjaan yang belum tuntas adalah konteks bermakna. Jangan",
+  "  mengeluarkan sembilan array kosong bila salah satunya ada di sumber.",
   "- temporalAnchors hanya untuk waktu/tanggal yang eksplisit disebut.",
   "- uncertainties mencatat konflik atau ketidakpastian eksplisit, bukan tebakanmu.",
   "- Buang sapaan, basa-basi, pengulangan, dan detail yang tidak membantu kelanjutan.",
@@ -66,10 +71,15 @@ export function parseEpisodeSummary(
 ): EpisodeSummaryDraft | null {
   const payload = extractJsonObject(raw);
   if (!payload) return null;
-  return readEpisodeSummaryDraft(
+  const draft = readEpisodeSummaryDraft(
     payload,
     new Set(turns.map((turn) => turn.sequence)),
   );
+  if (!draft) return null;
+  if (!episodeDraftHasClaims(draft) && episodeSourceRequiresClaims(turns)) {
+    return null;
+  }
+  return draft;
 }
 
 function extractJsonObject(raw: string): Record<string, unknown> | null {

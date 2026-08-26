@@ -644,6 +644,73 @@ describe("armada akun Baileys", () => {
     await manager.stop();
   });
 
+  it("menyediakan loader gambar privat tanpa mengunduh media sebelum callback", async () => {
+    const sockets: FakeSocket[] = [];
+    let downloadCalls = 0;
+    let callsBeforeLoader = -1;
+    let received: Buffer | null = null;
+    const png = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x00,
+    ]);
+    const manager = new BaileysAccountManager(
+      {
+        ...config(),
+        privateEnabled: true,
+        accounts: [config().accounts[0]!],
+      },
+      {
+        ...noOpEvents(),
+        onPrivateMessage: async (incoming) => {
+          callsBeforeLoader = downloadCalls;
+          received = await incoming.image?.loadData?.() ?? null;
+          return null;
+        },
+      },
+      {
+        loadAuthState: authLoader([]),
+        createSocket: (socketConfig) => {
+          const socket = new FakeSocket(socketConfig, 0);
+          sockets.push(socket);
+          return socket.value;
+        },
+        downloadContent: async () => {
+          downloadCalls += 1;
+          const stream = new PassThrough();
+          stream.end(png);
+          return stream;
+        },
+      },
+    );
+    await manager.start();
+    const socket = sockets[0]!;
+    socket.ev.emit("connection.update", { connection: "open" });
+    socket.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [{
+        key: {
+          id: "private-image-1",
+          remoteJid: "628777777777@s.whatsapp.net",
+          fromMe: false,
+        },
+        messageTimestamp: 1_775_000_000,
+        message: {
+          imageMessage: {
+            caption: "Apa warna dominannya?",
+            mimetype: "image/png",
+            fileLength: png.byteLength,
+          },
+        },
+      } as WAMessage],
+    });
+    await manager.drainEvents();
+
+    assert.equal(callsBeforeLoader, 0);
+    assert.equal(downloadCalls, 1);
+    assert.deepEqual(received, png);
+    await manager.stop();
+  });
+
   it("mengabaikan chat pribadi saat flag mati tetapi tetap memproses grup", async () => {
     const groupMessages: string[] = [];
     let privateMessages = 0;

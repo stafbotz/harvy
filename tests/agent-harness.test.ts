@@ -924,6 +924,31 @@ describe("agent harness", () => {
     if (result.status === "stopped") assert.equal(result.reason, "deadline");
   });
 
+  it("mempertahankan owner deadline invocation pada race pembacaan clock", async () => {
+    const base = Date.parse("2026-07-31T10:00:00.000Z");
+    let phase: "steady" | "race" | "exhausted" = "steady";
+    const result = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "tes deadline tie",
+      planner: async () => {
+        phase = "race";
+        return { kind: "final", reply: "terlambat" };
+      },
+      limits: { deadlineMs: 10 },
+      now: () => {
+        if (phase === "steady") return new Date(base);
+        if (phase === "race") {
+          phase = "exhausted";
+          return new Date(base + 9);
+        }
+        return new Date(base + 10);
+      },
+    });
+
+    assert.equal(result.status, "stopped");
+    if (result.status === "stopped") assert.equal(result.reason, "deadline");
+  });
+
   it("mengatribusikan watchdog planner ke deadline RunBudget yang lebih ketat", async () => {
     const base = new Date("2026-07-31T10:00:00.000Z");
     const result = await harness().run({

@@ -208,6 +208,14 @@ describe("status kerja percakapan", () => {
     const postTriage = publicFocusProgressEvent("independent", publicFocus);
     assert.equal(postTriage?.phase, "checking");
     assert.deepEqual(postTriage?.publicFocus, publicFocus);
+
+    const correction = publicFocusProgressEvent("correction", publicFocus);
+    assert.equal(correction?.phase, "adjusting");
+    assert.equal(correction?.publicFocus, undefined);
+
+    const redirect = publicFocusProgressEvent("redirect", publicFocus);
+    assert.equal(redirect?.phase, "switching");
+    assert.equal(redirect?.publicFocus, undefined);
   });
 
   it("fallback aman tetap tersedia saat focus tidak ada", () => {

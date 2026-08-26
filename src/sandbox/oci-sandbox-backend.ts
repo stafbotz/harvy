@@ -50,6 +50,8 @@ const FORBIDDEN_SECRET_ENV = new Set([
   "TELEGRAM_BOT_TOKEN",
   "HARVY_CONSOLE_TOKEN",
   "HARVY_WORKSPACE_PRINCIPAL_SECRET_FILE",
+  "GMI_API_KEY",
+  // Retired names remain forbidden so stale local secrets cannot enter OCI.
   "AI_TESTING_FALLBACK_API_KEY",
   "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",

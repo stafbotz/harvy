@@ -4,7 +4,64 @@ import { jsonForPrompt } from "./prompt-data.js";
 export const MEMORY_PORTRAIT_MAX_CHARACTERS = 1_600;
 const MEMORY_PORTRAIT_PRIMARY_LIMIT = 16;
 const MEMORY_PORTRAIT_EVIDENCE_LIMIT = 12;
-const MEMORY_PORTRAIT_EPISODE_CHARACTERS = 1_800;
+const MEMORY_PORTRAIT_FALLBACK_LIMIT = 4;
+
+/**
+ * Kata penghubung yang boleh ditambahkan model tanpa mengubah isi fakta.
+ * Negasi, intensitas, waktu, topik, emosi, kebiasaan, dan sifat sengaja tidak
+ * ada di sini: semuanya wajib punya padanan di source.
+ */
+const PORTRAIT_SCAFFOLD_TOKENS = new Set([
+  "aku",
+  "kamu",
+  "anda",
+  "ingat",
+  "mengingat",
+  "pahami",
+  "memahami",
+  "catat",
+  "catatan",
+  "pernah",
+  "bilang",
+  "berkata",
+  "mengatakan",
+  "menyampaikan",
+  "berdasarkan",
+  "hal",
+  "tentang",
+  "soal",
+  "bahwa",
+  "yang",
+  "dan",
+  "serta",
+  "juga",
+  "ini",
+  "itu",
+  "sekarang",
+  "currently",
+  "current",
+  "adalah",
+  "ialah",
+  "punya",
+  "memiliki",
+  "pemahamanku",
+  "catatanku",
+  "remember",
+  "understand",
+  "understanding",
+  "said",
+  "shared",
+  "mentioned",
+  "based",
+  "about",
+  "that",
+  "and",
+  "also",
+  "this",
+  "these",
+  "you",
+  "your",
+]);
 
 /**
  * Potret memori adalah representasi sesaat, bukan sumber kebenaran baru.
@@ -26,7 +83,7 @@ export const MEMORY_PORTRAIT_PROMPT = [
   "- Status active berarti pemahaman saat ini. Status superseded hanya boleh dipakai untuk perubahan penting dari dulu ke sekarang.",
   "- Status uncertain wajib ditulis sebagai kesan yang mungkin keliru, misalnya ‘aku punya kesan’ atau ‘aku belum terlalu yakin’.",
   "- Jangan mengubah dugaan, konflik, atau informasi yang sedang berkembang menjadi fakta mutlak.",
-  "- Boleh menyebut pengalaman bersama secara umum bila membantu kesinambungan, tanpa jumlah percakapan, timestamp, atau kronologi rinci.",
+  "- Jangan mengarang isi riwayat percakapan, tindakan penyimpanan/penghapusan, atau janji tentang apa yang akan diingat. Sumber ini hanya berisi memori yang dapat dikendalikan pengguna.",
   "- Jangan mendiagnosis, membuat profil psikologis, atau menyimpulkan sifat yang tidak dinyatakan sumber.",
   "- Jangan menyebut metadata atau istilah internal seperti confidence, status, predicate, provenance, graph, embedding, ID, candidate, source, validFrom, atau validUntil.",
   "- Jangan memakai judul, bullet, nomor, tabel, Markdown, atau kalimat tentang cara kerja database.",
@@ -34,6 +91,8 @@ export const MEMORY_PORTRAIT_PROMPT = [
 ].join("\n");
 
 export function memoryPortraitInput(context: HarvyContext): string {
+  const controllableEvidence = (context.retrieved ?? [])
+    .filter((evidence) => evidence.sourceMemoryIds.length > 0);
   const packet = {
     primary: context.memories
       .slice(0, MEMORY_PORTRAIT_PRIMARY_LIMIT)
@@ -41,7 +100,7 @@ export function memoryPortraitInput(context: HarvyContext): string {
         kind: memory.kind,
         statement: clip(memory.content, 240),
       })),
-    evidence: (context.retrieved ?? [])
+    evidence: controllableEvidence
       .slice(0, MEMORY_PORTRAIT_EVIDENCE_LIMIT)
       .map((evidence) => ({
         statement: clip(evidence.text, 400),
@@ -49,9 +108,6 @@ export function memoryPortraitInput(context: HarvyContext): string {
         validFrom: evidence.validFrom,
         validUntil: evidence.validUntil,
       })),
-    sharedExperience: context.summary
-      ? clip(context.summary, MEMORY_PORTRAIT_EPISODE_CHARACTERS)
-      : null,
   };
 
   return [
@@ -65,8 +121,54 @@ export function memoryPortraitInput(context: HarvyContext): string {
 
 export function hasMemoryPortraitEvidence(context: HarvyContext): boolean {
   return context.memories.length > 0 ||
-    (context.retrieved?.length ?? 0) > 0 ||
-    Boolean(context.summary?.trim());
+    (context.retrieved ?? []).some((evidence) =>
+      evidence.sourceMemoryIds.length > 0
+    );
+}
+
+/**
+ * Memastikan semua kata pembawa fakta pada narasi berasal dari source yang
+ * dapat dikendalikan pengguna. Validator ini sengaja konservatif: parafrasa
+ * yang tidak dapat dibuktikan akan memakai fallback exact, bukan dianggap
+ * benar hanya karena terdengar masuk akal.
+ */
+export function isMemoryPortraitGrounded(
+  summary: string,
+  context: HarvyContext,
+): boolean {
+  const sourceTokens = new Set(
+    portraitSourceStatements(context).flatMap(contentTokens),
+  );
+  if (sourceTokens.size === 0) return false;
+
+  const factualTokens = contentTokens(summary).filter((token) =>
+    !PORTRAIT_SCAFFOLD_TOKENS.has(token)
+  );
+  return factualTokens.length > 0 &&
+    factualTokens.every((token) => sourceTokens.has(token));
+}
+
+/**
+ * Fallback user-facing yang tidak menyimpulkan apa pun. Isi di antara tanda
+ * kutip berasal persis dari primary memory/evidence terkontrol; model hanya
+ * dipakai bila narasinya lolos grounding di atas.
+ */
+export function groundedMemoryPortraitFallback(
+  context: HarvyContext,
+): string | null {
+  const statements = portraitSourceStatements(context)
+    .slice(0, MEMORY_PORTRAIT_FALLBACK_LIMIT)
+    .map(safeQuotedStatement)
+    .filter(Boolean);
+  if (statements.length === 0) return null;
+
+  const opening = statements.length === 1
+    ? "Yang paling jelas kuingat berasal langsung dari hal yang pernah kamu sampaikan:"
+    : "Yang kuingat saat ini berasal langsung dari hal-hal yang pernah kamu sampaikan:";
+  return [
+    opening,
+    ...statements.map((statement) => `“${statement}”`),
+  ].join("\n\n");
 }
 
 export function parseMemoryPortrait(raw: string): string | null {
@@ -111,6 +213,40 @@ function clip(value: string, maximum: number): string {
   const clean = value.trim().replaceAll(/\s+/gu, " ");
   if (clean.length <= maximum) return clean;
   return `${clean.slice(0, maximum - 1).trimEnd()}…`;
+}
+
+function portraitSourceStatements(context: HarvyContext): string[] {
+  const statements = [
+    ...context.memories
+      .slice(0, MEMORY_PORTRAIT_PRIMARY_LIMIT)
+      .map((memory) => clip(memory.content, 240)),
+    ...(context.retrieved ?? [])
+      .filter((evidence) => evidence.sourceMemoryIds.length > 0)
+      .slice(0, MEMORY_PORTRAIT_EVIDENCE_LIMIT)
+      .map((evidence) => clip(evidence.text, 400)),
+  ];
+  const seen = new Set<string>();
+  return statements.filter((statement) => {
+    const key = statement.normalize("NFKC").toLocaleLowerCase("id-ID");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function contentTokens(value: string): string[] {
+  return value.normalize("NFKC")
+    .toLocaleLowerCase("id-ID")
+    .match(/[\p{L}\p{N}]+/gu)
+    ?.filter((token) => token.length > 1 || /^\d$/u.test(token)) ?? [];
+}
+
+function safeQuotedStatement(value: string): string {
+  return value
+    .replaceAll(/[\u0000-\u001f\u007f]/gu, " ")
+    .replaceAll(/[“”]/gu, '"')
+    .replaceAll(/\s+/gu, " ")
+    .trim();
 }
 
 const INTERNAL_METADATA_PATTERN =

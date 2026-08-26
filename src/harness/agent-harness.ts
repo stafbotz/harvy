@@ -529,8 +529,11 @@ export class AgentHarness {
       try {
         runBudget.assertStep(checkpoint.step);
       } catch (error) {
+        const reason = runBudgetReason(error) ?? "budget_steps";
         return stopped(
-          runBudgetReason(error) ?? "budget_steps",
+          reason === "budget_deadline" && !budgetOwnsDeadline
+            ? "deadline"
+            : reason,
           checkpoint,
           trace,
         );
@@ -1710,7 +1713,9 @@ function stopReason(
   if (now().getTime() >= deadlineAt) {
     return budgetOwnsDeadline ? "budget_deadline" : "deadline";
   }
-  return runBudget.isTimeExhausted() ? "budget_deadline" : null;
+  return runBudget.isTimeExhausted()
+    ? budgetOwnsDeadline ? "budget_deadline" : "deadline"
+    : null;
 }
 
 function abortReason(
@@ -1732,7 +1737,11 @@ function abortReason(
     return budgetOwnsDeadline ? "budget_deadline" : "deadline";
   }
   const budgetReason = runBudgetReason(error);
-  if (budgetReason) return budgetReason;
+  if (budgetReason) {
+    return budgetReason === "budget_deadline" && !budgetOwnsDeadline
+      ? "deadline"
+      : budgetReason;
+  }
   if (error instanceof AgentRunStaleError) return "stale";
   // `boundedCall` memakai clock monotonic AbortSignal. Timer itu dapat menang
   // beberapa mikrodetik sebelum wall clock `now()` membulat ke deadline. Pada
@@ -1745,7 +1754,9 @@ function abortReason(
   if (usageLimit) return usageLimit;
   const overage = runBudget.workOverageReason();
   if (overage) return overage;
-  if (runBudget.isTimeExhausted()) return "budget_deadline";
+  if (runBudget.isTimeExhausted()) {
+    return budgetOwnsDeadline ? "budget_deadline" : "deadline";
+  }
   return "invalid_planner_output";
 }
 

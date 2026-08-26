@@ -45,9 +45,9 @@ const TASK_MISSING: Variants = [
 ];
 
 const NOTHING_LEFT: Variants = [
-  "Semua beres. Nikmati waktumu.",
-  "Kosong. Istirahat dulu gih.",
-  "Nggak ada sisa. Waktumu punyamu.",
+  "Semua beres; tugas aktifmu sekarang kosong.",
+  "Sekarang nggak ada tugas aktif yang tersisa.",
+  "Daftar tugas aktifmu sudah kosong.",
 ];
 
 const EMPTY_LIST: Variants = [

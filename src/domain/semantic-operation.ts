@@ -14,7 +14,10 @@ export type SemanticDomain =
   | "session"
   | "menu"
   | "data"
-  | "history";
+  | "history"
+  | "project"
+  | "goal"
+  | "skill";
 
 export type SemanticOperationName =
   | "show-summary"
@@ -48,7 +51,12 @@ export type SemanticOperationName =
   | "set-quiet-hours"
   | "withdraw-consent"
   | "export"
-  | "delete-all";
+  | "delete-all"
+  | "create"
+  | "set"
+  | "apply"
+  | "block"
+  | "resolve";
 
 export type SemanticReference =
   | "none"
@@ -104,6 +112,9 @@ const DOMAIN_OPERATIONS = Object.freeze({
     "delete-all",
   ],
   history: ["recall"],
+  project: ["create", "list", "show"],
+  goal: ["show", "set", "complete", "block", "resolve"],
+  skill: ["list", "create", "apply"],
 } satisfies Readonly<Record<SemanticDomain, readonly SemanticOperationName[]>>);
 
 const REFERENCES: readonly SemanticReference[] = [

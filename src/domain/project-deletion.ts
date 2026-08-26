@@ -11,7 +11,7 @@ export interface ProjectDeletionRecord {
   ownerWorkspaceKey: string;
   projectId: string;
   projectCreatedAt: string;
-  projectSource: "upload" | "github";
+  projectSource: "blank" | "upload" | "github";
   expectedProjectRevision: number;
   status: "requested" | "cleanup_required" | "completed";
   runIds: string[];

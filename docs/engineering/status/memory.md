@@ -1,7 +1,8 @@
 # Status — Memory dan Data
 
-Refreshed: 24 Agustus 2026 pada auto-memory privat berbasis onboarding,
-long-term memory, acknowledgement kontekstual, dan UX `/memori`;
+Refreshed: 26 Agustus 2026 pada auto-memory privat berbasis onboarding,
+potret primary-only, receipt claim, acknowledgement kontekstual, dan UX
+`/memori`;
 archive SQLite, outbox learning, user model, procedural/error memory,
 persistent embedding index, compiler konteks, lifecycle, kontrol data, serta
 renderer Telegram teruji otomatis. Baca untuk memory, history, compaction,
@@ -12,7 +13,10 @@ learning, storage, atau kontrol data yang bukan policy safety.
 - MemoryItem yang dapat dikendalikan pengguna tetap berada di Markdown per
   owner. `/memori`, pertanyaan natural, dan Data & izin kini memakai satu
   renderer potret naratif, bukan daftar `content — kind`. Potret disintesis
-  ulang dari context pack bounded dan tidak menjadi source memory baru.
+  ulang hanya dari primary memory yang dapat dikendalikan pengguna dan tidak
+  menjadi source memory baru. History, summary, recent turn, serta episode-only
+  tetap dapat membantu percakapan, tetapi tidak dipresentasikan sebagai hal
+  yang Harvy simpan.
   Tombol tunggal `Ubah` hanya mengembalikan pengguna ke percakapan bebas;
   scoped forget memakai topik natural, sedangkan hapus semua ingatan tetap
   bertoken dan terpisah di Data & izin. Layer `_knowledge` adalah proyeksi
@@ -20,7 +24,7 @@ learning, storage, atau kontrol data yang bukan policy safety.
   memory, provenance, validity interval, status `active|superseded|uncertain|
   expired`, suppression receipt, entity, dan relation temporal. Graph tidak
   pernah menjadi authority tanpa semantic source.
-- Consent onboarding privat versi 8 menjadi authority untuk auto-memory
+- Consent onboarding privat versi 10 menjadi authority untuk auto-memory
   ordinary maupun personal di Telegram privat dan WhatsApp privat. Tidak ada
   prompt `SIMPAN MEMORI`/`JANGAN SIMPAN`, tombol izin, maupun tombol
   lupakan/urungkan per write. Kandidat faktual melewati policy dan primary
@@ -62,12 +66,12 @@ learning, storage, atau kontrol data yang bukan policy safety.
   route lintas bahasa; pattern lexical lama tetap fallback/ranking, bukan satu-
   satunya parser makna.
 - Potret `/memori` adalah satu-satunya jalur UI yang sengaja membayar synthesis
-  khusus. Query potret memilih primary, episode relevan, semantic, graph, dan
-  user model dalam budget compiler 8 item/3.000 karakter; procedure dan error
-  lesson tidak dimuat. Prompt synthesis menerima maksimal 16 primary, 12
-  evidence, dan 1.800 karakter shared experience, menyatakan status uncertain
-  secara manusiawi, serta menolak output berupa daftar atau metadata internal.
-  Sapaan dan giliran biasa tidak menjalankan synthesis ini.
+  khusus. Entry point privat saat ini memberi maksimal 16 primary memory;
+  evidence turunan maksimal 12 item hanya sah bila masih menunjuk primary
+  source aktif. Summary, raw recent turn, episode-only, shared experience,
+  procedure, error lesson, dan archive tidak dimuat. Prompt menyatakan status
+  uncertain secara manusiawi serta menolak output berupa daftar atau metadata
+  internal. Sapaan dan giliran biasa tidak menjalankan synthesis ini.
 - `MEMORY_EMBEDDING_MODEL` mengaktifkan adapter embeddings kompatibel OpenAI.
   Document vector kini dicache durable berdasarkan scope, source ID,
   normalized content hash, exact model ID, dan model version/config; query
@@ -103,6 +107,9 @@ learning, storage, atau kontrol data yang bukan policy safety.
   `SemanticOperation` explicit dengan evidence dari raw turn sebelum matcher
   lexical owner-local boleh meranking source; model tidak diberi kuasa
   menghapus hanya dari klasifikasinya. Forget-all tetap masuk confirmation.
+  Balasan bebas yang mengklaim sudah mencatat/menyimpan atau menghapus sesuatu
+  juga dibuang bila tidak ada receipt operasi yang sesuai; guard ini sengaja
+  sempit agar keputusan percakapan biasa tidak ikut hilang.
 - Ekspor v4 mencakup primary memory, hot history, cold archive, semantic/graph,
   user model, versioned procedures, error lessons, candidates, dan metadata
   outbox tanpa credential atau payload operational tersembunyi. Insight
@@ -142,10 +149,11 @@ learning, storage, atau kontrol data yang bukan policy safety.
 - Potret menerima status dan validity dari Context Pack, tetapi bentuk evidence
   terpilih saat ini tidak membawa nilai confidence dan stability user-model
   secara terpisah. Target forget topikal juga hanya dapat menghapus primary
-  source yang cocok secara lexical/alias; detail episode-only tanpa primary
-  source memerlukan permintaan yang lebih spesifik atau hapus semua ingatan.
+  source yang cocok secara lexical/alias. Detail episode-only tidak ditampilkan
+  di potret; penghapusan history atau seluruh data tetap memakai lifecycle yang
+  berbeda.
 - Pada cerita privat, extractor dapat salah membentuk, melewatkan, atau terlalu
-  sering membuat kandidat. Setelah consent versi 8, false positive dapat
+  sering membuat kandidat. Setelah consent versi 10, false positive dapat
   menjadi memori yang keliru; receipt natural, koreksi/hapus natural, dan
   `/memori` memberi kontrol, tetapi bukan bukti akurasi sempurna. False-positive
   dan false-negative model aktual karena itu wajib diukur lewat acceptance dan
@@ -158,7 +166,7 @@ learning, storage, atau kontrol data yang bukan policy safety.
   lagi diperlakukan sebagai cerita implicit. Boundary lokal yang sempit membuat
   satu canonical preference; parafrasa kandidat model diganti agar tidak lahir
   write duplikat. Candidate privat lain memakai policy onboarding yang sama.
-- Bukti live 24 Agustus 2026 membuktikan policy versi 8 pada kedua kanal privat.
+- Bukti live 24 Agustus 2026 membuktikan policy saat itu pada kedua kanal privat.
   Telegram tester nyata lulus focus 3/3 dan WhatsApp tester nyata meluluskan
   stage memori dalam run full: preferensi cara belajar implicit disimpan tanpa
   consent atau tombol per-item, write diberitahukan, `/memori` menemukan item
@@ -166,6 +174,14 @@ learning, storage, atau kontrol data yang bukan policy safety.
   menemukan false-negative extractor; prompt model diperjelas secara generik
   untuk preferensi cara belajar/berkomunikasi dan rerun live kemudian lulus.
   Ini satu sampel positif, bukan kalibrasi FP/FN.
+- Exploratory Telegram nyata 26 Agustus menemukan bahwa hypothetical/current
+  work dan negasi dapat salah menjadi kandidat, balasan dapat mengklaim delete
+  atau record tanpa receipt, dan `/memori` mencampur history ke dalam potret.
+  Pagar kandidat, receipt claim, serta portrait primary-only kemudian direrun
+  dengan akun tester nyata: koreksi tetap dijawab, tidak ada write/delete palsu,
+  dan `/memori` tetap empty sesudah percakapan panjang tanpa primary memory.
+  WhatsApp build yang sama belum memperoleh bukti live karena session tester
+  ditolak transport dengan 401 sebelum satu pesan pun terkirim.
 
 ## Bukti dan pointer
 

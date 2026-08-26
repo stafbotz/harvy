@@ -57,7 +57,7 @@ export interface WorkspaceView {
 export interface WorkspaceProjectView {
   projectId: string;
   revision: number;
-  source: "upload" | "github";
+  source: "blank" | "upload" | "github";
   snapshotId: string;
 }
 
@@ -182,6 +182,34 @@ export class WorkspaceCodingController {
           revision: project.revision,
           snapshotId: project.baseSnapshot,
           archiveSha256: project.source.sha256,
+        });
+      },
+    );
+  }
+
+  async createBlankProject(
+    actorInput: AuthenticatedWorkspaceActor,
+    commandInput: { workspaceKey: string },
+  ): Promise<CreatedBlankProjectView> {
+    const { principal } = await this.resolveActor(actorInput);
+    assertExactKeys(commandInput, ["workspaceKey"], "blank project command");
+    const workspaceKey = safeKey(commandInput.workspaceKey, "workspaceKey");
+    const scope = await this.resolveScope(workspaceKey, principal);
+    return this.authority.withPermissions(
+      scope,
+      ["artifact.write", "code.write"],
+      async () => {
+        const project = await this.projects.createBlank(scope);
+        if (project.source.type !== "blank") {
+          throw new WorkspaceCodingControllerError(
+            "workspace_run_invalid",
+            "Pembuatan project kosong menghasilkan source yang tidak sah.",
+          );
+        }
+        return Object.freeze({
+          projectId: project.id,
+          revision: project.revision,
+          snapshotId: project.baseSnapshot,
         });
       },
     );
@@ -349,6 +377,12 @@ function safeKey(value: unknown, field: string): string {
     );
   }
   return value;
+}
+
+export interface CreatedBlankProjectView {
+  projectId: string;
+  revision: number;
+  snapshotId: string;
 }
 
 function safeDisplayName(value: unknown): string {

@@ -7,6 +7,8 @@ import {
   removeIsolatedRuntimeRoot,
 } from "../src/operations/live-acceptance.js";
 import { ChannelSetupService } from "../src/operations/channel-setup.js";
+import { CodingRuntimeSetupService } from
+  "../src/operations/coding-runtime-setup.js";
 import {
   acquireLocalRuntimeLock,
   localRuntimeLockPath,
@@ -58,6 +60,7 @@ async function main(): Promise<void> {
       { retentionDays: 1 },
     );
     const setup = new ChannelSetupService();
+    const codingSetup = new CodingRuntimeSetupService();
     server = new ConsoleServer(
       controlPlane,
       usageLedger,
@@ -71,6 +74,7 @@ async function main(): Promise<void> {
       undefined,
       null,
       setup,
+      codingSetup,
     );
 
     const started = await server.start();

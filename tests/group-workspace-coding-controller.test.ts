@@ -538,7 +538,7 @@ async function createFixture() {
     accountId: "account-1",
     groupName: "Kelas",
     joinedAt: "2026-08-15T02:00:00.000Z",
-    noticeVersion: 9,
+    noticeVersion: 10,
     noticeSentAt: "2026-08-15T02:01:00.000Z",
     disabledAt: null,
   };
@@ -616,7 +616,7 @@ async function createCrossChannelFixture() {
     accountId: "account-1",
     groupName: "Kelas",
     joinedAt: "2026-08-15T02:00:00.000Z",
-    noticeVersion: 9,
+    noticeVersion: 10,
     noticeSentAt: "2026-08-15T02:01:00.000Z",
     disabledAt: null,
   };

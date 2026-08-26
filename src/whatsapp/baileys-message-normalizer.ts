@@ -26,6 +26,8 @@ export interface WhatsAppPrivateMessage {
   at: string;
   quotedMessageId?: string | null;
   document?: WhatsAppPrivateInboundDocument | null;
+  /** Byte media transient; adapter tidak pernah memasukkannya ke store/log. */
+  image?: WhatsAppPrivateInboundImage | null;
 }
 
 export interface WhatsAppPrivateInboundDocument {
@@ -33,6 +35,14 @@ export interface WhatsAppPrivateInboundDocument {
   mimetype: string;
   declaredBytes: number | null;
   data: Buffer;
+}
+
+export interface WhatsAppPrivateInboundImage {
+  mediaType: "image/jpeg" | "image/png" | "image/webp";
+  declaredBytes: number | null;
+  data: Buffer;
+  /** Loader transient dipanggil hanya setelah consent diperiksa. */
+  loadData?: () => Promise<Buffer>;
 }
 
 export interface WhatsAppPrivateReply {
@@ -204,8 +214,9 @@ export function normalizeBaileysPrivateMessage(
   const content = extractMessageContent(raw.message);
   const text = messageText(content) ?? "";
   const descriptor = privateDocumentDescriptor(content);
+  const image = privateImageDescriptor(content);
   const contextInfo = messageContextInfo(content);
-  if (!text && !descriptor) return null;
+  if (!text && !descriptor && !image) return null;
   return {
     accountId: context.accountId,
     userId,
@@ -216,6 +227,7 @@ export function normalizeBaileysPrivateMessage(
     document: descriptor
       ? { ...descriptor, data: Buffer.alloc(0) }
       : null,
+    image: image ? { ...image, data: Buffer.alloc(0) } : null,
   };
 }
 
@@ -288,6 +300,42 @@ function privateDocumentDescriptor(
       ? declared
       : null,
   };
+}
+
+function privateImageDescriptor(
+  content: ReturnType<typeof extractMessageContent>,
+): Omit<WhatsAppPrivateInboundImage, "data"> | null {
+  const image = content?.imageMessage;
+  if (!image) return null;
+  const mediaType = supportedImageMediaType(image.mimetype);
+  if (!mediaType) return null;
+  const declared = image.fileLength == null ? null : toNumber(image.fileLength);
+  return {
+    mediaType,
+    declaredBytes: declared !== null && Number.isSafeInteger(declared) &&
+        declared >= 0
+      ? declared
+      : null,
+  };
+}
+
+function supportedImageMediaType(
+  value: string | null | undefined,
+): WhatsAppPrivateInboundImage["mediaType"] | null {
+  switch (value?.trim().toLocaleLowerCase("en-US")) {
+    case undefined:
+    case null:
+    case "":
+    case "image/jpeg":
+    case "image/jpg":
+      return "image/jpeg";
+    case "image/png":
+      return "image/png";
+    case "image/webp":
+      return "image/webp";
+    default:
+      return null;
+  }
 }
 
 function timestampIso(value: WAMessage["messageTimestamp"]): string {

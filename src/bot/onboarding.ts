@@ -27,7 +27,7 @@ export function introBubbles(
   const consent = [
     "Sebelum mulai, jadilah pengguna yang bertanggung jawab dan bijaksana ya. Aku punya persyaratan dan layanan, semacam janji di antara kita biar obrolan kita tetap aman dan nyaman.",
     "",
-    "Pesanmu bakal diproses oleh AI. Kalau ada hal yang berguna buat obrolan berikutnya, aku bisa otomatis mengingatnya. Aku bakal bilang setelah benar-benar menyimpan atau memperbaruinya, dan kamu bisa melihat, mengoreksi, atau menghapusnya kapan aja.",
+    "Pesan atau gambar yang kamu kirim bakal diproses oleh AI. Kalau ada hal yang berguna buat obrolan berikutnya, aku bisa otomatis mengingatnya. Aku bakal bilang setelah benar-benar menyimpan atau memperbaruinya, dan kamu bisa melihat, mengoreksi, atau menghapusnya kapan aja.",
   ];
 
   if (heldMessage) {
@@ -77,7 +77,9 @@ export function consentDetail(
   return [
     "Boleh. Ini apa adanya:",
     "",
-    "• Isi pesanmu dapat dikirim ke satu atau lebih layanan AI di luar Harvy supaya bisa dipahami. Model utama juga dapat menerima potongan memori dan riwayat tersimpan yang dipilih karena relevan agar percakapan tetap nyambung. Kalau layanan utama gagal, permintaan yang sama dapat dikirim ulang ke layanan cadangan. Tanpa layanan AI itu aku nggak bisa jalan sama sekali.",
+    "• Isi pesanmu dapat dikirim ke satu layanan AI utama di luar Harvy supaya bisa dipahami. Layanan itu juga dapat menerima potongan memori dan riwayat tersimpan yang dipilih karena relevan agar percakapan tetap nyambung. Harvy tidak mengirim ulang permintaanmu ke penyedia cadangan. Tanpa layanan AI utama itu aku nggak bisa jalan sama sekali.",
+    "• Layanan AI utama dapat otomatis memakai ulang bagian awal prompt yang berulang melalui cache penyedia. Bagian itu dapat memuat instruksi sistem serta konteks yang dipilih untuk permintaan tersebut. Harvy tidak mengirim perintah cache-write khusus dan hanya mencatat hitungan token cache tanpa isi; masa simpan cache tetap mengikuti kebijakan layanan AI utama.",
+    "• Di chat privat, gambar JPEG, PNG, atau WebP baru diunduh setelah kamu memilih mulai lalu dikirim secara sementara ke layanan AI yang sama. Byte gambar tidak masuk riwayat, memori, checkpoint pekerjaan, atau log Harvy; caption atau pertanyaan teksnya tetap dapat masuk riwayat seperti pesan biasa. Harvy tidak dapat melihat gambar itu lagi pada giliran berikutnya kecuali kamu mengirim ulang. Gambar grup belum diproses.",
     "• Untuk permintaan rumit yang sudah lolos pemeriksaan keselamatan, sistem dapat membagi bagian relevan permintaanmu menjadi dua atau tiga subpekerjaan model yang berjalan bersamaan. Worker itu tidak menerima memori, riwayat, credential, atau akses tool; satu model utama menyatukan hasilnya.",
     "• Untuk pekerjaan planning yang berjalan di latar, sistem menyimpan permintaan awal, potongan konteks, memori, dan riwayat yang dipilih karena relevan, progress, koreksi atau jawabanmu, hasil tool read-only, serta bukti pengiriman. Data itu dipakai agar pekerjaan dapat dipulihkan setelah restart dan hasil lama tidak terkirim setelah instruksi berubah. Pertanyaan tambahan harus dijawab dalam 10 menit; record pekerjaan aktif disimpan paling lama 7 hari, lalu record hasil atau status akhirnya paling lama 7 hari sejak pekerjaan selesai atau berhenti. Hanya record terbaru yang dipertahankan untuk pekerjaanmu; record tetap terikat ke akun dan kemampuan yang sama, ikut ekspor/penghapusan data, serta dihapus lebih cepat ketika kamu menarik izin AI atau menghapus seluruh data.",
     "• Satu pengecualian, dan cuma satu: pesan pertamamu aku lihat sekilas sebelum kamu setuju, khusus buat ngecek kamu lagi dalam bahaya atau nggak. Kalau iya, aku nggak mau kamu nunggu tombol dulu.",

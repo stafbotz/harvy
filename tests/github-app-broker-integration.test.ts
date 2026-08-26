@@ -12,6 +12,10 @@ import { afterEach, describe, it } from "node:test";
 import { scanProjectTree } from "../src/core/project-files.js";
 import type { GitHubExactEffect } from "../src/domain/github.js";
 import {
+  createGitHubRepositoryBootstrapEffect,
+  githubRepositoryBootstrapContent,
+} from "../src/domain/github-bootstrap.js";
+import {
   createLocalGitCommitRequest,
   LOCAL_GIT_EMPTY_TREE,
   LOCAL_GIT_UPLOAD_ROOT_COMMIT,
@@ -183,6 +187,49 @@ describe("credential-owning GitHub App Broker integration", () => {
     assert.equal(github.patchCount, 0);
   });
 
+  it("menginisialisasi repository privat yang benar-benar kosong secara exact dan idempotent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-github-app-empty-"));
+    roots.push(root);
+    const github = new FakeGitHub("a".repeat(40), "b".repeat(40), true);
+    const backend = await readyBackend(root, github);
+    const before = await backend.repositoryAccess("workspace-1", "7", "99", null);
+    assert.equal(before.empty, true);
+    assert.equal(before.baseCommit, null);
+    assert.equal(github.bootstrapPutCount, 0);
+
+    const effect = createGitHubRepositoryBootstrapEffect({
+      attempt: 1,
+      ownerWorkspaceKey: "workspace-1",
+      installationConnectionId: "installation-connection-empty-1",
+      selectionId: "github-selection-empty-1",
+      installationId: "7",
+      repositoryId: "99",
+      repositoryFullName: "student/project",
+      visibility: "private",
+      defaultBranch: "main",
+    });
+    const first = await backend.bootstrapRepository(effect);
+    assert.equal(first.status, "committed");
+    assert.equal(first.operationFenced, true);
+    assert.equal(first.externalId, "c".repeat(40));
+    assert.equal(
+      first.url,
+      `https://github.com/student/project/commit/${"c".repeat(40)}`,
+    );
+    assert.equal(github.bootstrapPutCount, 1);
+    assert.deepEqual(
+      github.contents.get("README.md"),
+      githubRepositoryBootstrapContent(effect),
+    );
+
+    const replay = await backend.bootstrapRepository(effect);
+    assert.deepEqual(replay, first);
+    assert.equal(github.bootstrapPutCount, 1);
+    const after = await backend.repositoryAccess("workspace-1", "7", "99", null);
+    assert.equal(after.empty, false);
+    assert.equal(after.baseCommit, "c".repeat(40));
+  });
+
   it("menolak stale base branch di credential broker sebelum branch/object/PR mutation", async () => {
     const root = await mkdtemp(join(tmpdir(), "harvy-github-app-stale-base-"));
     roots.push(root);
@@ -342,17 +389,25 @@ async function* fileChunks(path: string): AsyncGenerator<Uint8Array> {
 }
 
 class FakeGitHub {
-  readonly refs = new Map<string, string>([["main", LOCAL_GIT_UPLOAD_ROOT_COMMIT]]);
+  readonly refs = new Map<string, string>();
   readonly archive = Buffer.from("PK\u0003\u0004fake-github-archive", "binary");
   readonly tokenRequests: Array<Record<string, unknown>> = [];
   readonly seenAuthorization: string[] = [];
   readonly pulls: Array<{ id: number; body: string; draft: boolean }> = [];
   readonly blobs = new Map<string, Buffer>();
+  readonly contents = new Map<string, Buffer>();
   createdCommit: string | null = null;
   lastPatchForce: boolean | null = null;
   patchCount = 0;
+  bootstrapPutCount = 0;
 
-  constructor(readonly expectedCommit: string, readonly expectedTree: string) {}
+  constructor(
+    readonly expectedCommit: string,
+    readonly expectedTree: string,
+    empty = false,
+  ) {
+    if (!empty) this.refs.set("main", LOCAL_GIT_UPLOAD_ROOT_COMMIT);
+  }
 
   readonly fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
@@ -413,6 +468,39 @@ class FakeGitHub {
       const branch = decodeURIComponent(refMatch[1]!);
       const sha = this.refs.get(branch);
       return sha ? response(ref(branch, sha)) : response({ message: "Not Found" }, 404);
+    }
+    if (
+      url.pathname === "/repos/student/project/git/matching-refs/heads/" &&
+      method === "GET"
+    ) {
+      return response([...this.refs.entries()].map(([branch, sha]) => ref(branch, sha)));
+    }
+    if (url.pathname === "/repos/student/project/contents/README.md" && method === "PUT") {
+      assert.equal(body.message, "Initialize repository for Harvy");
+      assert.equal(body.branch, "main");
+      assert.equal(this.refs.size, 0);
+      const bytes = Buffer.from(String(body.content), "base64");
+      this.contents.set("README.md", bytes);
+      this.bootstrapPutCount += 1;
+      const commit = "c".repeat(40);
+      this.refs.set("main", commit);
+      return response({
+        content: { path: "README.md", sha: gitObjectHash("blob", bytes) },
+        commit: { sha: commit },
+      }, 201);
+    }
+    if (url.pathname === "/repos/student/project/contents/README.md" && method === "GET") {
+      const bytes = this.contents.get("README.md");
+      const requested = url.searchParams.get("ref");
+      if (!bytes || requested !== this.refs.get("main")) {
+        return response({ message: "Not Found" }, 404);
+      }
+      return response({
+        path: "README.md",
+        sha: gitObjectHash("blob", bytes),
+        encoding: "base64",
+        content: bytes.toString("base64"),
+      });
     }
     if (url.pathname === "/repos/student/project/git/refs" && method === "POST") {
       const branch = String(body.ref).slice("refs/heads/".length);

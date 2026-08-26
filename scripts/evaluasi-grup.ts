@@ -42,7 +42,6 @@ import {
 const EVALUATOR_VERSION = "harvy.group-eval.v4";
 const PLANNER_P95_TARGET_MS = 5_000;
 const all = process.argv.includes("--all");
-const allowFallback = process.argv.includes("--allow-fallback");
 const requestedLimit = numericArgument("--limit-per-topic=", 10);
 const concurrency = numericArgument("--concurrency=", 3);
 const requestsPerMinute = numericArgument("--rpm=", 24);
@@ -89,7 +88,7 @@ if (selected.length === 0) {
 }
 const config = loadConfig();
 const conversation = new GroupConversation(
-  await createInstrumentedAiClient(config, "evaluation", allowFallback),
+  await createInstrumentedAiClient(config, "evaluation"),
   config.ai,
 );
 const requestLimiter = createRequestLimiter(
@@ -206,11 +205,8 @@ const summary = {
   syntheticOnly: true,
   mode: config.ai.mode,
   model: resolveModel("cheap", config.ai),
-  fallbackAllowed: allowFallback && config.ai.fallback !== null,
-  modelScope:
-    allowFallback && config.ai.fallback !== null
-      ? "primary-or-fallback"
-      : "primary-only",
+  fallbackAllowed: false,
+  modelScope: "primary-only",
   pipelineVersion: GROUP_CONVERSATION_PIPELINE_VERSION,
   turnPolicyVersion: GROUP_TURN_POLICY_VERSION,
   corpusVersion: GROUP_EVAL_CORPUS_VERSION,

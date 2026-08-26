@@ -1,16 +1,17 @@
 # Status — Platform dan Operasi Runtime
 
-Refreshed: 24 Agustus 2026 pada live crash/restart, backup drill, dan provider.
+Refreshed: 25 Agustus 2026 pada migrasi provider testing GMI-only.
 Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 
 ## Keadaan saat ini
 
-- Mode testing dapat memakai gateway OpenAI-compatible cadangan; production
-  mengabaikannya. Retry/fallback mempertahankan request ID dan mencatat setiap
-  physical attempt secara terpisah.
-- Timeout/network/5xx dapat failover; 429 mengikuti key-rotation policy lalu
-  circuit sementara. Lifecycle cancellation, 4xx lain, invalid output, dan
-  local limit tidak diam-diam dialihkan.
+- Mode testing memakai satu primary OpenAI-compatible `gmi-serving`; production
+  memakai satu gateway OpenRouter. Composition runtime kedua mode tidak
+  mempunyai provider fallback. Setiap physical retry tetap mempertahankan
+  request ID dan dicatat sebagai attempt terpisah pada provider yang sama.
+- Timeout, network error, 429, dan 5xx gagal tertutup setelah retry bounded pada
+  provider aktif. Lifecycle cancellation, 4xx lain, invalid output, dan local
+  limit juga tidak pernah dialihkan ke provider lain.
 - `AI_BASE_URL` primary divalidasi sebagai HTTPS atau HTTP loopback tanpa
   credential/query/fragment/path completion penuh sebelum key dapat dikirim.
   Respons chat sukses mempunyai hard cap 64 MiB sebelum buffering, memakai
@@ -33,20 +34,18 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 - Context manifest dan token estimate tersedia sebagai metadata lokal; usage
   provider dipakai bila ada.
 - Registry capability mengikat exact provider+model. Default compatibility
-  mempertahankan wire lama tanpa reasoning; deklarasi `AI_MODEL_PROFILES`
-  schema-valid atau record code-owned live-proven diperlukan untuk effort/
-  reasoning continuation baru. Profile Google AI Studio Gemini 3.5 Flash-Lite
-  hanya aktif pada endpoint resmi exact; custom gateway dan fallback tidak
-  mewarisi bukti itu. Adapter
-  mengirim allowlist message dan field Google/OpenRouter/DeepSeek yang sesuai
-  profile, termasuk omission temperature/tool choice yang tidak didukung.
+  mempertahankan wire dasar tanpa reasoning; deklarasi `AI_MODEL_PROFILES`
+  schema-valid atau profile code-owned yang sudah dibuktikan live diperlukan
+  untuk capability baru. `gmi-serving/MiniMaxAI/MiniMax-M3` pada endpoint resmi
+  kini mempunyai profile exact code-owned; custom gateway dan model lain tidak
+  mewarisi bukti itu.
 - Respons tanpa terminal finish reason, content filter, reason asing, dan
   pasangan text/tool reason yang salah ditolak. Ledger menormalkan reason asing
   ke `other` dan membedakan `incomplete` dari `truncated` tanpa menyimpan isi.
-  Respons 2xx yang kehilangan terminal marker dicoba sekali lagi secara
-  berbatas melalui kunci berikutnya; `content_filter` dan reason terminal lain
-  tetap tidak di-retry. Provider live membuktikan satu recovery
-  `incomplete → accepted` tanpa menerima fragmen ambigu sebagai jawaban.
+  Respons 2xx yang kehilangan terminal marker dapat dicoba sekali lagi secara
+  berbatas pada provider yang sama; `content_filter` dan reason terminal lain
+  tetap tidak di-retry. Bukti recovery provider lama bersifat historis dan
+  belum membuktikan perilaku GMI/MiniMax.
 - Repository telemetry v3 menambah turn record content-free yang ikut retensi,
   export, full deletion, flush, dan shutdown drain. Service menyediakan
   nearest-rank p50/p95 serta rate boundary/triage/review/fast-path per owner;
@@ -85,10 +84,14 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 - Crash masih dapat meninggalkan lock stale, tetapi startup berikutnya hanya
   mereklamasinya setelah payload valid dan PID pemilik terbukti mati. Lock
   malformed dari luar tetap gagal tertutup dan memerlukan pemeriksaan operator.
-- Native tool calling masih primary-only; compatibility fallback belum terbukti.
-- Capability explicit provider fallback sengaja ditolak sampai execution plan
-  dapat dihitung ulang secara aman untuk provider/model fallback.
-- Kebijakan privacy/retention provider cadangan belum diverifikasi.
+- Smoke exact GMI/MiniMax 25 Agustus membuktikan completion, structured JSON,
+  native tool + tool-result continuation, truncation, rejection context lokal,
+  timeout, input gambar, serta automatic cache reuse. Provider melaporkan
+  cache-read tetapi tidak melaporkan cache-write; populasi cache disimpulkan
+  dari prefix unik yang pertama uncached lalu terbaca cache pada request kedua.
+- Hanya satu key tersedia saat smoke, sehingga rotasi/retry lintas key tidak
+  dapat dijalankan. Kebijakan privacy/retention dan SLA GMI tetap belum
+  diverifikasi oleh kode.
 - Token selection masih character/count-based; belum ada tokenizer atau
   adaptive calibration per route/model.
 - Turn summary belum menjadi dashboard agregat lintas owner. TTFR/final p50/p95

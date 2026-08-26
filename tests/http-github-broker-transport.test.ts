@@ -5,6 +5,8 @@ import type {
   GitHubBrokerTransportResult,
   GitHubExactEffect,
 } from "../src/domain/github.js";
+import { createGitHubRepositoryBootstrapEffect } from
+  "../src/domain/github-bootstrap.js";
 import { HttpGitHubBrokerTransport } from "../src/transport/http-github-broker-transport.js";
 import type {
   TrustDomainRequestBinding,
@@ -39,6 +41,7 @@ describe("HTTP GitHub Broker trust-domain transport", () => {
         visibility: "private",
         defaultBranch: "main",
         baseCommit: "a".repeat(40),
+        empty: false,
         targetBranch: "harvy/project",
         targetBranchHead: null,
         canRead: true,
@@ -252,6 +255,16 @@ describe("HTTP GitHub Broker trust-domain transport", () => {
       } else {
         await requestBytes(init);
       }
+      if (path.endsWith("/bootstrap-repository")) {
+        return jsonResponse(headers, {
+          effectId: bootstrap.effectId,
+          status: "committed",
+          operationFenced: true,
+          externalId: "c".repeat(40),
+          url: `https://github.com/student/project/commit/${"c".repeat(40)}`,
+          completedAt: NOW,
+        });
+      }
       return jsonResponse(headers, committed(push.effectId));
     });
     const result = await transport.pushExactCommit(push, chunks(bundleBytes));
@@ -261,11 +274,25 @@ describe("HTTP GitHub Broker trust-domain transport", () => {
 
     const branch = effect("github.branch.create");
     await transport.createBranch(branch);
+    const bootstrap = createGitHubRepositoryBootstrapEffect({
+      attempt: 1,
+      ownerWorkspaceKey: "workspace-http-github",
+      installationConnectionId: "installation-connection-http-1",
+      selectionId: "github-selection-http-empty-1",
+      installationId: "7",
+      repositoryId: "99",
+      repositoryFullName: "student/project",
+      visibility: "private",
+      defaultBranch: "main",
+    });
+    const bootstrapResult = await transport.bootstrapRepository(bootstrap);
+    assert.equal(bootstrapResult.externalId, "c".repeat(40));
     const pr = effect("github.pr.create");
     await transport.createDraftPullRequest(pr);
     assert.deepEqual(paths, [
       "/v1/github-broker/push-exact-commit",
       "/v1/github-broker/create-branch",
+      "/v1/github-broker/bootstrap-repository",
       "/v1/github-broker/create-draft-pr",
     ]);
     await assert.rejects(

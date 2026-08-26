@@ -9,12 +9,15 @@ import type {
   GitHubInstallationConnectionSaveResult,
   GitHubInstallationRepository,
   GitHubRepositoryArchiveReference,
+  GitHubRepositoryBootstrapAttempt,
   GitHubRepositorySelection,
   GitHubRepositorySelectionSaveResult,
   GitHubSelectionBindResult,
   GitHubUnknownEffectPage,
   GitHubUnknownEffectReference,
 } from "../domain/github.js";
+import { validateGitHubRepositoryBootstrapEffect } from
+  "../domain/github-bootstrap.js";
 import { validateLocalGitObjectBundleReference } from "../domain/local-git.js";
 import type {
   GitHubProjectProvisioningBinding,
@@ -366,8 +369,13 @@ export class FileGitHubConnectionRepository
   ): Promise<GitHubRepositorySelectionSaveResult> {
     const record = structuredClone(selection);
     validateSelection(record);
-    if (record.revision !== 1 || record.status !== "selected") {
-      throw new Error("GitHub repository selection awal harus selected revision 1.");
+    if (
+      record.revision !== 1 ||
+      (record.status !== "selected" && record.status !== "bootstrap_required")
+    ) {
+      throw new Error(
+        "GitHub repository selection awal harus selected atau bootstrap_required revision 1.",
+      );
     }
     return this.exclusive(async () => {
       const database = await this.readDatabase();
@@ -534,12 +542,13 @@ export class FileGitHubConnectionRepository
       for (const installation of parsed.installations) {
         validateInstallation(installation);
       }
-      for (const selection of parsed.selections) validateSelection(selection);
+      const selections = parsed.selections.map(migrateSelectionV2);
+      for (const selection of selections) validateSelection(selection);
       const database: GitHubConnectionDatabase = {
         version: 2,
         connections: structuredClone(parsed.connections),
         installations: structuredClone(parsed.installations),
-        selections: structuredClone(parsed.selections),
+        selections: structuredClone(selections),
       };
       validateDatabaseCrossReferences(database);
       return database;
@@ -783,7 +792,7 @@ function validateSelection(
     "version", "selectionId", "confirmationId", "ownerWorkspaceKey",
     "installationConnectionId", "installationId", "repositoryId",
     "repositoryFullName", "visibility", "defaultBranch", "baseCommit",
-    "selectedByMembershipId", "selectedAclEpoch", "status", "archive",
+    "bootstrapAttempts", "selectedByMembershipId", "selectedAclEpoch", "status", "archive",
     "projectId", "bindingId", "revision", "selectedAt", "expiresAt",
     "updatedAt",
   ], "repository selection");
@@ -804,7 +813,31 @@ function validateSelection(
   repositoryFullName(selection.repositoryFullName);
   visibility(selection.visibility);
   validBranch(selection.defaultBranch);
-  gitCommit(selection.baseCommit, "selection baseCommit");
+  if (selection.baseCommit !== null) {
+    gitCommit(selection.baseCommit, "selection baseCommit");
+  }
+  if (!Array.isArray(selection.bootstrapAttempts) ||
+    selection.bootstrapAttempts.length > 32) {
+    throw new Error("Ledger bootstrap GitHub selection tidak sah.");
+  }
+  const bootstrapConfirmations = new Set<string>();
+  selection.bootstrapAttempts.forEach((attempt, index) => {
+    validateBootstrapAttempt(attempt);
+    if (
+      bootstrapConfirmations.has(attempt.confirmationId) ||
+      attempt.effect.attempt !== index + 1 ||
+      attempt.effect.ownerWorkspaceKey !== selection.ownerWorkspaceKey ||
+      attempt.effect.installationConnectionId !==
+        selection.installationConnectionId ||
+      attempt.effect.selectionId !== selection.selectionId ||
+      attempt.effect.installationId !== selection.installationId ||
+      attempt.effect.repositoryId !== selection.repositoryId ||
+      attempt.effect.repositoryFullName !== selection.repositoryFullName ||
+      attempt.effect.visibility !== selection.visibility ||
+      attempt.effect.defaultBranch !== selection.defaultBranch
+    ) throw new Error("Attempt bootstrap tidak cocok repository selection.");
+    bootstrapConfirmations.add(attempt.confirmationId);
+  });
   safeText(
     selection.selectedByMembershipId,
     "selectedByMembershipId",
@@ -827,6 +860,7 @@ function validateSelection(
       selection.archive.repositoryId !== selection.repositoryId ||
       selection.archive.repositoryFullName !== selection.repositoryFullName ||
       selection.archive.defaultBranch !== selection.defaultBranch ||
+      selection.baseCommit === null ||
       selection.archive.commit !== selection.baseCommit ||
       Date.parse(selection.archive.expiresAt) < Date.parse(selection.expiresAt)
     ) {
@@ -840,19 +874,28 @@ function validateSelection(
     safeText(selection.bindingId, "selection bindingId", 512);
   }
   const coherent =
+    (selection.status === "bootstrap_required" &&
+      selection.baseCommit === null &&
+      selection.archive === null &&
+      selection.projectId === null &&
+      selection.bindingId === null) ||
     (selection.status === "selected" &&
+      selection.baseCommit !== null &&
       selection.archive === null &&
       selection.projectId === null &&
       selection.bindingId === null) ||
     (selection.status === "archive_ready" &&
+      selection.baseCommit !== null &&
       selection.archive !== null &&
       selection.projectId === null &&
       selection.bindingId === null) ||
     (selection.status === "project_created" &&
+      selection.baseCommit !== null &&
       selection.archive !== null &&
       selection.projectId !== null &&
       selection.bindingId === null) ||
     (selection.status === "bound" &&
+      selection.baseCommit !== null &&
       selection.archive !== null &&
       selection.projectId !== null &&
       selection.bindingId !== null) ||
@@ -861,6 +904,36 @@ function validateSelection(
   if (!coherent) {
     throw new Error("State GitHub repository selection tidak konsisten.");
   }
+  if (
+    selection.bootstrapAttempts.length > 0 &&
+    selection.baseCommit !== null &&
+    !selection.bootstrapAttempts.some((attempt) =>
+      attempt.status === "committed" &&
+      attempt.externalCommit === selection.baseCommit
+    )
+  ) throw new Error("Baseline GitHub selection tidak cocok receipt bootstrap.");
+}
+
+function migrateSelectionV2(value: unknown): GitHubRepositorySelection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("GitHub repository selection v2 tidak sah.");
+  }
+  const record = value as Record<string, unknown>;
+  if ("bootstrapAttempts" in record) {
+    return structuredClone(record) as unknown as GitHubRepositorySelection;
+  }
+  assertExactKeys(record, [
+    "version", "selectionId", "confirmationId", "ownerWorkspaceKey",
+    "installationConnectionId", "installationId", "repositoryId",
+    "repositoryFullName", "visibility", "defaultBranch", "baseCommit",
+    "selectedByMembershipId", "selectedAclEpoch", "status", "archive",
+    "projectId", "bindingId", "revision", "selectedAt", "expiresAt",
+    "updatedAt",
+  ], "legacy repository selection v2");
+  return {
+    ...(structuredClone(record) as unknown as GitHubRepositorySelection),
+    bootstrapAttempts: [],
+  };
 }
 
 function validateSelectionTransition(
@@ -869,6 +942,8 @@ function validateSelectionTransition(
 ): void {
   const immutableCurrent = {
     ...current,
+    baseCommit: null,
+    bootstrapAttempts: [],
     status: "selected",
     archive: null,
     projectId: null,
@@ -878,6 +953,8 @@ function validateSelectionTransition(
   };
   const immutableNext = {
     ...next,
+    baseCommit: null,
+    bootstrapAttempts: [],
     status: "selected",
     archive: null,
     projectId: null,
@@ -889,6 +966,7 @@ function validateSelectionTransition(
     throw new Error("Field immutable GitHub repository selection berubah.");
   }
   const transitions: Record<GitHubRepositorySelection["status"], readonly string[]> = {
+    bootstrap_required: ["bootstrap_required", "selected", "cancelled"],
     selected: ["selected", "archive_ready", "cleanup_required", "cancelled"],
     archive_ready: [
       "archive_ready", "project_created", "cleanup_required", "cancelled",
@@ -904,6 +982,20 @@ function validateSelectionTransition(
   ) {
     throw new Error("Transisi GitHub repository selection tidak sah.");
   }
+  validateBootstrapAttemptsTransition(current, next);
+  if (
+    current.baseCommit !== next.baseCommit &&
+    !(
+      current.baseCommit === null &&
+      next.baseCommit !== null &&
+      current.status === "bootstrap_required" &&
+      next.status === "selected" &&
+      next.bootstrapAttempts.some((attempt) =>
+        attempt.status === "committed" &&
+        attempt.externalCommit === next.baseCommit
+      )
+    )
+  ) throw new Error("Baseline commit GitHub selection berubah tanpa bootstrap committed.");
   if (
     current.archive !== null &&
     !sameValue(current.archive, next.archive)
@@ -937,6 +1029,107 @@ function validateSelectionTransition(
     next.status !== "bound"
   ) {
     throw new Error("Binding selection hanya boleh ditambahkan saat bound.");
+  }
+}
+
+function validateBootstrapAttempt(
+  attempt: GitHubRepositoryBootstrapAttempt,
+): void {
+  assertExactKeys(attempt, [
+    "confirmationId",
+    "approvedByMembershipId",
+    "approvedAclEpoch",
+    "effect",
+    "status",
+    "externalCommit",
+    "url",
+    "createdAt",
+    "updatedAt",
+  ], "repository bootstrap attempt");
+  safeText(attempt.confirmationId, "bootstrap confirmationId", 512);
+  safeText(attempt.approvedByMembershipId, "bootstrap membershipId", 512);
+  positive(attempt.approvedAclEpoch, "bootstrap aclEpoch");
+  validateGitHubRepositoryBootstrapEffect(attempt.effect);
+  if (![
+    "prepared",
+    "committed",
+    "unknown",
+    "not_committed",
+  ].includes(attempt.status)) {
+    throw new Error("Status attempt bootstrap GitHub tidak sah.");
+  }
+  validIso(attempt.createdAt, "bootstrap attempt createdAt");
+  validIso(attempt.updatedAt, "bootstrap attempt updatedAt");
+  if (Date.parse(attempt.updatedAt) < Date.parse(attempt.createdAt)) {
+    throw new Error("Waktu attempt bootstrap GitHub mundur.");
+  }
+  if (attempt.status === "committed") {
+    gitCommit(attempt.externalCommit, "bootstrap external commit");
+    if (
+      typeof attempt.url !== "string" ||
+      attempt.url !==
+        `https://github.com/${attempt.effect.repositoryFullName}/commit/${attempt.externalCommit}`
+    ) throw new Error("URL receipt bootstrap GitHub tidak exact.");
+  } else if (attempt.externalCommit !== null || attempt.url !== null) {
+    throw new Error("Attempt bootstrap non-committed membawa receipt eksternal.");
+  }
+}
+
+function validateBootstrapAttemptsTransition(
+  current: GitHubRepositorySelection,
+  next: GitHubRepositorySelection,
+): void {
+  if (next.bootstrapAttempts.length < current.bootstrapAttempts.length) {
+    throw new Error("Ledger bootstrap GitHub selection tidak boleh menyusut.");
+  }
+  for (let index = 0; index < current.bootstrapAttempts.length; index += 1) {
+    const before = current.bootstrapAttempts[index]!;
+    const after = next.bootstrapAttempts[index]!;
+    const immutableBefore = {
+      ...before,
+      status: "prepared",
+      externalCommit: null,
+      url: null,
+      updatedAt: "",
+    };
+    const immutableAfter = {
+      ...after,
+      status: "prepared",
+      externalCommit: null,
+      url: null,
+      updatedAt: "",
+    };
+    const allowed =
+      (before.status === "prepared" && [
+        "prepared",
+        "unknown",
+        "committed",
+        "not_committed",
+      ].includes(after.status)) ||
+      (before.status === "unknown" && [
+        "unknown",
+        "committed",
+        "not_committed",
+      ].includes(after.status)) ||
+      ((before.status === "committed" || before.status === "not_committed") &&
+        after.status === before.status);
+    if (
+      !allowed ||
+      !sameValue(immutableBefore, immutableAfter) ||
+      Date.parse(after.updatedAt) < Date.parse(before.updatedAt)
+    ) throw new Error("Attempt bootstrap GitHub lama berubah tidak sah.");
+  }
+  if (next.bootstrapAttempts.length > current.bootstrapAttempts.length) {
+    if (next.bootstrapAttempts.length !== current.bootstrapAttempts.length + 1) {
+      throw new Error("Hanya satu attempt bootstrap GitHub boleh ditambahkan per CAS.");
+    }
+    const previous = current.bootstrapAttempts.at(-1);
+    const appended = next.bootstrapAttempts.at(-1)!;
+    if (
+      appended.status !== "prepared" ||
+      appended.effect.attempt !== (previous?.effect.attempt ?? 0) + 1 ||
+      (previous && previous.status !== "not_committed")
+    ) throw new Error("Append attempt bootstrap GitHub tidak berurutan.");
   }
 }
 
@@ -1011,6 +1204,12 @@ function validateDatabaseCrossReferences(
     }
     selectionIds.add(selection.selectionId);
     confirmationIds.add(selection.confirmationId);
+    for (const attempt of selection.bootstrapAttempts) {
+      if (confirmationIds.has(attempt.confirmationId)) {
+        throw new Error("GitHub confirmation bootstrap dipakai lebih dari sekali.");
+      }
+      confirmationIds.add(attempt.confirmationId);
+    }
     const connection = database.installations.find(
       (candidate) =>
         candidate.connectionId === selection.installationConnectionId,
@@ -1071,7 +1270,10 @@ function confirmationUsed(
     (candidate.confirmationId === confirmationId ||
       candidate.revocationAuthorityId === confirmationId)
   ) || database.selections.some(
-    (candidate) => candidate.confirmationId === confirmationId,
+    (candidate) => candidate.confirmationId === confirmationId ||
+      candidate.bootstrapAttempts.some((attempt) =>
+        attempt.confirmationId === confirmationId
+      ),
   ) || database.connections.some((state) =>
     state.approvals.some((approval) => approval.confirmationId === confirmationId)
   );
@@ -1424,11 +1626,21 @@ function rejectCredentialKeys(value: unknown): void {
     return;
   }
   for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    if (/(?:private.?key|client.?secret|access.?token|installation.?token|pat|credential)/iu.test(key)) {
+    if (isCredentialMetadataKey(key)) {
       throw new Error("Credential tidak boleh masuk metadata GitHub Harvy.");
     }
     rejectCredentialKeys(nested);
   }
+}
+
+function isCredentialMetadataKey(key: string): boolean {
+  const normalized = key
+    .replace(/([a-z\d])([A-Z])/gu, "$1_$2")
+    .replace(/[^a-z\d]+/giu, "_")
+    .replace(/^_+|_+$/gu, "")
+    .toLowerCase();
+  return /(?:^|_)(?:private_key|client_secret|access_token|installation_token|personal_access_token|pat|credential|credentials)(?:_|$)/u
+    .test(normalized);
 }
 
 function capability(value: unknown): void {

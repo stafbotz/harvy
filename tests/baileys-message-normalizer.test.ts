@@ -184,6 +184,7 @@ describe("normalisasi pesan Baileys", () => {
       at: "2026-03-31T23:33:20.000Z",
       quotedMessageId: null,
       document: null,
+      image: null,
     });
     assert.equal(
       whatsappPrivateOwnerId(normalized?.userId ?? ""),
@@ -221,6 +222,30 @@ describe("normalisasi pesan Baileys", () => {
       ),
       null,
     );
+
+    const image = normalizeBaileysPrivateMessage(
+      message({
+        key: {
+          id: "private-image",
+          remoteJid: "628777777777@s.whatsapp.net",
+          fromMe: false,
+        },
+        message: {
+          imageMessage: {
+            caption: "Apa isi gambar ini?",
+            mimetype: "image/png",
+            fileLength: 128,
+          },
+        },
+      }),
+      { accountId: "utama", selfJids: ["628123456789@s.whatsapp.net"] },
+    );
+    assert.equal(image?.text, "Apa isi gambar ini?");
+    assert.deepEqual(image?.image, {
+      mediaType: "image/png",
+      declaredBytes: 128,
+      data: Buffer.alloc(0),
+    });
   });
 });
 

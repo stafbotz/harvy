@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   CodingRunCoordinator,
+  type CodingAdvisoryDraft,
+  type CodingAdvisoryInput,
   type CodingCoordinatorEngine,
   type CodingCoordinatorRepositoryTools,
   type CodingWorkerAction,
@@ -455,6 +457,95 @@ describe("CodingRunCoordinator", () => {
       /recovery_hint_accepted/u,
     );
   });
+
+  it("merekam dua advisory read-only sebelum integration writer merencanakan", async () => {
+    const engine = new FakeCoordinatorEngine();
+    const advisoryInputs: CodingAdvisoryInput[] = [];
+    const writerInputs: CodingWorkerInput[] = [];
+    const driver: CodingWorkerDriver = {
+      async advise(input) {
+        advisoryInputs.push(structuredClone(input));
+        return [
+          {
+            role: "challenger",
+            status: "completed",
+            summary: "Scope perlu menjaga API publik dan membatasi perubahan ke satu file.",
+          },
+          {
+            role: "verifier",
+            status: "completed",
+            summary: "Buktikan test, lint, typecheck, dan build pada snapshot yang sama.",
+          },
+        ];
+      },
+      async next(input) {
+        writerInputs.push(structuredClone(input));
+        return {
+          kind: "yield",
+          reasonCode: "review_advisory",
+          question: "Lanjutkan dengan batas ini?",
+        };
+      },
+    };
+
+    const result = await new CodingRunCoordinator(engine, driver, {
+      maxActions: 4,
+    }).run(SCOPE, engine.run.runId);
+
+    assert.equal(result.outcome, "yielded");
+    assert.equal(engine.advisoryWrites, 1);
+    assert.equal(engine.run.advisoryReceipts?.length, 2);
+    const advisoryInput = advisoryInputs[0];
+    assert.ok(advisoryInput);
+    assert.equal((advisoryInput.run.advisories ?? []).length, 0);
+    assert.equal(advisoryInput.repositoryEvidence.tree.kind, "workspace.tree");
+    assert.equal(advisoryInput.repositoryEvidence.diff.kind, "workspace.diff");
+    assert.equal(writerInputs.length, 1);
+    assert.deepEqual(
+      writerInputs[0]?.run.advisories?.map((receipt) => receipt.role).sort(),
+      ["challenger", "verifier"],
+    );
+    assert.equal(writerInputs[0]?.previousObservation?.kind, "advisory.completed");
+    assert.equal(
+      JSON.stringify(writerInputs[0]?.previousObservation).includes(
+        "Scope perlu menjaga API publik",
+      ),
+      false,
+    );
+    assert.equal(engine.run.counters.coordinatorDecisions, 2);
+  });
+
+  it("menolak advisory credential-like sebelum menjadi state durable", async () => {
+    const engine = new FakeCoordinatorEngine();
+    const driver: CodingWorkerDriver = {
+      async advise() {
+        return [
+          {
+            role: "challenger",
+            status: "completed",
+            summary: `Jangan gunakan github_pat_${"A".repeat(30)} ini.`,
+          },
+          {
+            role: "verifier",
+            status: "completed",
+            summary: "Jalankan validator deterministik.",
+          },
+        ];
+      },
+      async next() {
+        throw new Error("Writer tidak boleh dipanggil.");
+      },
+    };
+
+    await assert.rejects(
+      new CodingRunCoordinator(engine, driver, { maxActions: 4 }).run(
+        SCOPE,
+        engine.run.runId,
+      ),
+      /credential-like/iu,
+    );
+    assert.equal(engine.advisoryWrites, 0);
+  });
 });
 
 class QueueDriver implements CodingWorkerDriver {
@@ -491,6 +582,7 @@ class FakeCoordinatorEngine implements CodingCoordinatorEngine {
   mutateBeforePatch = false;
   recoveryRemainsPending = false;
   validatorStatus: CodingValidatorReceipt["status"] = "passed";
+  advisoryWrites = 0;
 
   async get(_scope: WorkspaceAgentScope, runId: string): Promise<CodingRun | null> {
     return runId === this.run.runId ? structuredClone(this.run) : null;
@@ -662,6 +754,36 @@ class FakeCoordinatorEngine implements CodingCoordinatorEngine {
         planDigest: "f".repeat(64),
         createdAt: NOW,
       },
+    };
+    return structuredClone(this.run);
+  }
+
+  async recordAdvisories(
+    _scope: WorkspaceAgentScope,
+    _runId: string,
+    expectedInstructionRevision: number,
+    drafts: readonly CodingAdvisoryDraft[],
+    expectedStateRevision?: number,
+  ): Promise<CodingRun> {
+    assert.equal(expectedInstructionRevision, this.run.instructionRevision);
+    if (expectedStateRevision !== undefined) {
+      assert.equal(expectedStateRevision, this.run.stateRevision);
+    }
+    this.advisoryWrites += 1;
+    this.run = {
+      ...this.run,
+      advisoryReceipts: drafts.map((draft, index) => ({
+        advisoryId: `advisory-${draft.role}-${index + 1}`,
+        role: draft.role,
+        status: draft.status,
+        instructionRevision: this.run.instructionRevision,
+        workingSnapshot: this.run.repositoryMap!.workingSnapshot,
+        scopeDigest: `${index + 1}`.repeat(64),
+        summary: draft.summary,
+        summaryDigest: `${index + 3}`.repeat(64),
+        createdAt: NOW,
+      })),
+      stateRevision: this.run.stateRevision + 1,
     };
     return structuredClone(this.run);
   }
@@ -925,6 +1047,7 @@ function baseRun(): CodingRun {
     events: [],
     validatorReceipts: [],
     taskReviewReceipts: [],
+    advisoryReceipts: [],
     repositoryMap: null,
     plan: null,
     diff: null,

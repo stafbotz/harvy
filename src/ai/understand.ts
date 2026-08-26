@@ -66,6 +66,22 @@ export interface ExtractedMemory {
   graphProjection?: import("../domain/memory-knowledge.js").MemoryGraphProjection | null;
 }
 
+/**
+ * Usulan untuk mencabut pemahaman lama yang secara eksplisit dikoreksi user.
+ *
+ * Ini bukan authority mutasi. Adapter masih harus membuktikan exact evidence,
+ * mencocokkan target hanya pada primary memory owner-local, lalu memperoleh
+ * receipt dari `MemoryService.forget` sebelum Harvy boleh mengaku lupa.
+ */
+export interface ExtractedMemoryRetraction {
+  /** Topik manusiawi dari pemahaman lama; tidak pernah berupa storage ID. */
+  target: string;
+  /** Exact span current turn yang mengatakan pemahaman lama tidak berlaku. */
+  sourceEvidence: string;
+  explicitness: "explicit";
+  confidence: number;
+}
+
 export type TaskAction = "save" | "offer";
 export type MemoryAction = "list" | "forget" | "edit" | "remember";
 export type ControlAction =
@@ -99,6 +115,8 @@ export interface Understanding {
   publicFocus?: SafePublicProgressFocus | null;
   task: ExtractedTask | null;
   memories: ExtractedMemory[];
+  /** Koreksi natural dapat mencabut beberapa primary memory dalam satu turn. */
+  memoryRetractions?: ExtractedMemoryRetraction[];
   suggestedActions?: AdaptiveActionId[];
   actionGoal?: string | null;
   controlAction?: ControlAction | null;
@@ -177,6 +195,9 @@ const INTENT_ALIASES: Readonly<Record<string, ConversationIntent>> = {
  */
 const MAX_MEMORIES_PER_MESSAGE = 2;
 
+/** Koreksi gabungan tetap bounded dan tidak boleh menjadi bulk deletion. */
+const MAX_MEMORY_RETRACTIONS_PER_MESSAGE = 4;
+
 /** Memori yang lebih panjang dari ini hampir pasti kalimat percakapan. */
 const MEMORY_MAX_CHARS = 200;
 
@@ -190,11 +211,31 @@ export function parseUnderstanding(raw: string): Understanding | null {
   let memoryAction = readMemoryAction(payload["memoryAction"]);
   let memoryTarget = readShortText(payload["memoryTarget"], 120);
   const memories = readMemories(payload["memories"]);
+  const memoryRetractions = readMemoryRetractions(
+    payload["memoryRetractions"],
+  );
   let intent = readIntent(payload["intent"]);
   if (!intent) return null;
   const semanticOperation = parseSemanticOperation(
     payload["semanticOperation"],
   );
+
+  // Model kadang sudah memahami makna operasi dengan benar, tetapi memberi
+  // label intent generik `request`. Jangan membuang payload task yang sah hanya
+  // karena dua field model itu tidak selaras. Rekonsiliasi ini tetap tidak
+  // memberi authority: adapter masih mencocokkan evidence semantic dengan
+  // pesan asli sebelum write. Sebaliknya, proposal save yang explicit tetapi
+  // tidak membawa aksi + payload lengkap ditolak agar jalur percakapan tidak
+  // dapat mengarang receipt "sudah dicatat".
+  const explicitTaskSave = semanticOperation?.domain === "task" &&
+    semanticOperation.operation === "save" &&
+    semanticOperation.explicitness === "explicit" &&
+    semanticOperation.subject === "self" &&
+    semanticOperation.confidence >= 0.85;
+  if (explicitTaskSave) {
+    if (taskAction !== "save" || task === null) return null;
+    intent = "task";
+  }
 
   // Task baru hanya boleh keluar bersama aksi save. Perubahan task tersimpan
   // membawa payload jadwal tanpa aksi save agar tidak pernah berubah menjadi
@@ -227,7 +268,7 @@ export function parseUnderstanding(raw: string): Understanding | null {
       memoryAction === "list" ||
       memoryAction === "forget" ||
       memoryAction === "edit";
-    if (!isControl || memories.length > 0) {
+    if (!isControl || memories.length > 0 || memoryRetractions.length > 0) {
       intent = "smalltalk";
       if (memoryAction !== "remember") memoryAction = null;
     }
@@ -257,6 +298,7 @@ export function parseUnderstanding(raw: string): Understanding | null {
     publicFocus: parsePublicProgressFocus(payload["publicFocus"]),
     task,
     memories,
+    ...(memoryRetractions.length > 0 ? { memoryRetractions } : {}),
     suggestedActions,
     actionGoal,
     controlAction,
@@ -425,6 +467,13 @@ function readMemories(value: unknown): ExtractedMemory[] {
     // yang mungkin sensitif; menebak ke arah yang lebih ketat hanya membuat
     // Harvy bertanya dulu.
     const sourceEvidence = readShortText(entry["sourceEvidence"], 500);
+    // Satu kandidat harus ditopang satu klausa. Model pernah menggabungkan
+    // preferensi umum dengan arahan "untuk presentasi ini" menjadi satu memori
+    // durable. Boundary struktural ini bebas bahasa: bila evidence melompati
+    // batas kalimat, kandidat dibuang agar horizon berbeda tidak melebur.
+    if (sourceEvidence && containsMultipleEvidenceClauses(sourceEvidence)) {
+      continue;
+    }
     const sourceSubject = readClosedLabel(
       entry["sourceSubject"],
       MEMORY_SOURCE_SUBJECTS,
@@ -443,6 +492,38 @@ function readMemories(value: unknown): ExtractedMemory[] {
   }
 
   return memories;
+}
+
+function readMemoryRetractions(value: unknown): ExtractedMemoryRetraction[] {
+  if (!Array.isArray(value)) return [];
+
+  const retractions: ExtractedMemoryRetraction[] = [];
+  for (const entry of value) {
+    if (retractions.length >= MAX_MEMORY_RETRACTIONS_PER_MESSAGE) break;
+    if (!isRecord(entry)) continue;
+    const target = readShortText(entry["target"], 160);
+    const sourceEvidence = readShortText(entry["sourceEvidence"], 240);
+    const confidence = entry["confidence"];
+    if (
+      !target || !sourceEvidence ||
+      entry["explicitness"] !== "explicit" ||
+      typeof confidence !== "number" || !Number.isFinite(confidence) ||
+      confidence < 0 || confidence > 1 ||
+      containsMultipleEvidenceClauses(sourceEvidence)
+    ) continue;
+    retractions.push({
+      target,
+      sourceEvidence,
+      explicitness: "explicit",
+      confidence,
+    });
+  }
+  return retractions;
+}
+
+function containsMultipleEvidenceClauses(value: string): boolean {
+  const withoutTrailing = value.trim().replace(/[.!?;]+$/u, "");
+  return /[.!?;]\s+\S/u.test(withoutTrailing);
 }
 
 /**

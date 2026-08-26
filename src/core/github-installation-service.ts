@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   GitHubBrokerTransport,
+  GitHubBrokerTransportResult,
   GitHubConnectionState,
   GitHubInstallationConnection,
   GitHubInstallationRepository,
@@ -13,11 +14,15 @@ import type {
   GitHubInteractiveGrant,
   GitHubRepositoryAccess,
   GitHubRepositoryArchiveReference,
+  GitHubRepositoryBootstrapAttempt,
+  GitHubRepositoryBootstrapEffect,
   GitHubRepositoryPage,
   GitHubRepositorySelection,
   GitHubRepositorySummary,
   GitHubRepositoryVisibility,
 } from "../domain/github.js";
+import { createGitHubRepositoryBootstrapEffect } from
+  "../domain/github-bootstrap.js";
 import type { ProjectWorkspace } from "../domain/project-workspace.js";
 import type { WorkspaceAgentScope } from "../harness/scope.js";
 import { containsSecretLikeValue } from "../security/credential-like.js";
@@ -252,6 +257,9 @@ export class GitHubInstallationService {
           if (existing.status === "archive_ready") {
             return this.resumeArchiveReady(existing);
           }
+          if (existing.status === "bootstrap_required") {
+            return clone(existing);
+          }
           if (existing.status !== "selected") {
             throw new Error("GitHub repository selection tidak dapat dilanjutkan.");
           }
@@ -267,6 +275,11 @@ export class GitHubInstallationService {
           connection,
           repositoryId,
         );
+        if (access.empty && (access.visibility !== "private" || !access.canPush)) {
+          throw new Error(
+            "Bootstrap hanya tersedia untuk repository privat kosong yang dapat ditulis GitHub App.",
+          );
+        }
         const at = this.now();
         const selection: GitHubRepositorySelection = {
           version: 1,
@@ -280,9 +293,10 @@ export class GitHubInstallationService {
           visibility: access.visibility,
           defaultBranch: access.defaultBranch,
           baseCommit: access.baseCommit,
+          bootstrapAttempts: [],
           selectedByMembershipId: scope.membershipId,
           selectedAclEpoch: scope.aclEpoch,
-          status: "selected",
+          status: access.empty ? "bootstrap_required" : "selected",
           archive: null,
           projectId: null,
           bindingId: null,
@@ -303,12 +317,173 @@ export class GitHubInstallationService {
           if (winner.status === "archive_ready") {
             return this.resumeArchiveReady(winner);
           }
+          if (winner.status === "bootstrap_required") return clone(winner);
           if (winner.status !== "selected") {
             throw new Error("GitHub repository selection tidak dapat dilanjutkan.");
           }
           return this.prepareSelectionArchive(winner);
         }
-        return this.prepareSelectionArchive(created.selection);
+        return created.selection.status === "bootstrap_required"
+          ? clone(created.selection)
+          : this.prepareSelectionArchive(created.selection);
+      },
+    );
+  }
+
+  /**
+   * Initializes a selected, truly empty private repository through one
+   * separately confirmed, durable exact effect. The same prepared attempt is
+   * replayed by effect id after a crash; an unknown attempt is only observed.
+   */
+  async bootstrapEmptyRepository(
+    scope: WorkspaceAgentScope,
+    selectionIdInput: string,
+    grantInput: GitHubInteractiveGrant,
+  ): Promise<GitHubRepositorySelection> {
+    const selectionId = safeOpaque(selectionIdInput, "selectionId", 512);
+    const grant = validateInteractiveGrant(grantInput, this.now());
+    return this.authority.withPermissions(
+      scope,
+      ["workspace.manage", "github.read", "github.push", "code.write"],
+      async () => {
+        let selection = await this.repository.loadSelection(selectionId);
+        if (!selection || selection.ownerWorkspaceKey !== scope.workspaceKey) {
+          throw new Error("GitHub repository selection tidak ditemukan pada workspace ini.");
+        }
+        await this.verifyGrant(scope, grant, {
+          action: "github.repository.bootstrap",
+          connectionId: selection.installationConnectionId,
+          repositoryId: selection.repositoryId,
+          selectionId: selection.selectionId,
+        });
+        if (selection.status === "archive_ready") {
+          return this.resumeArchiveReady(selection);
+        }
+        if (selection.status === "selected") {
+          return this.prepareSelectionArchive(selection);
+        }
+        if (selection.status !== "bootstrap_required" || selection.baseCommit !== null) {
+          throw new Error("Repository GitHub tidak menunggu bootstrap baseline.");
+        }
+        if (this.now().getTime() >= Date.parse(selection.expiresAt)) {
+          await this.saveSelection(selection, {
+            ...withoutSelectionRevision(selection),
+            status: "cancelled",
+            updatedAt: this.now().toISOString(),
+          });
+          throw new Error("GitHub repository selection sudah kedaluwarsa.");
+        }
+        const connection = await this.repository.loadInstallation(
+          selection.installationConnectionId,
+        );
+        if (
+          !connection ||
+          connection.status !== "active" ||
+          connection.ownerWorkspaceKey !== scope.workspaceKey ||
+          connection.installationId !== selection.installationId
+        ) throw new Error("GitHub installation selection tidak lagi aktif.");
+
+        let attempt = selection.bootstrapAttempts.at(-1) ?? null;
+        if (!attempt || attempt.status === "not_committed") {
+          if (selection.visibility !== "private") {
+            throw new Error("Bootstrap GitHub hanya tersedia untuk repository privat.");
+          }
+          const effect = createGitHubRepositoryBootstrapEffect({
+            attempt: (attempt?.effect.attempt ?? 0) + 1,
+            ownerWorkspaceKey: selection.ownerWorkspaceKey,
+            installationConnectionId: selection.installationConnectionId,
+            selectionId: selection.selectionId,
+            installationId: selection.installationId,
+            repositoryId: selection.repositoryId,
+            repositoryFullName: selection.repositoryFullName,
+            visibility: selection.visibility,
+            defaultBranch: selection.defaultBranch,
+          });
+          const at = this.now().toISOString();
+          attempt = {
+            confirmationId: grant.confirmationId,
+            approvedByMembershipId: scope.membershipId,
+            approvedAclEpoch: scope.aclEpoch,
+            effect,
+            status: "prepared",
+            externalCommit: null,
+            url: null,
+            createdAt: at,
+            updatedAt: at,
+          };
+          selection = await this.saveSelection(selection, {
+            ...withoutSelectionRevision(selection),
+            bootstrapAttempts: [...selection.bootstrapAttempts, attempt],
+            updatedAt: at,
+          });
+        }
+
+        const result = attempt.status === "unknown"
+          ? await this.transportCall(
+              "GitHub bootstrap reconciliation",
+              (signal) => this.brokerTransport.reconcileEffect(
+                attempt!.effect,
+                signal,
+              ),
+            )
+          : attempt.status === "committed"
+            ? bootstrapResultFromAttempt(attempt)
+            : await this.transportCall(
+                "GitHub empty repository bootstrap",
+                (signal) => this.brokerTransport.bootstrapRepository(
+                  attempt!.effect,
+                  signal,
+                ),
+              );
+        const completed = validateBootstrapResult(result, attempt.effect);
+        const updatedAttempt: GitHubRepositoryBootstrapAttempt = {
+          ...attempt,
+          status: completed.status,
+          externalCommit: completed.status === "committed"
+            ? completed.externalId
+            : null,
+          url: completed.status === "committed" ? completed.url : null,
+          updatedAt: completed.completedAt,
+        };
+        selection = await this.saveSelection(selection, {
+          ...withoutSelectionRevision(selection),
+          bootstrapAttempts: [
+            ...selection.bootstrapAttempts.slice(0, -1),
+            updatedAttempt,
+          ],
+          updatedAt: this.now().toISOString(),
+        });
+        if (completed.status === "unknown") {
+          throw new Error(
+            "Hasil bootstrap repository GitHub belum diketahui; Harvy hanya akan merekonsiliasi effect ini.",
+          );
+        }
+        if (completed.status === "not_committed") {
+          throw new Error(
+            "Bootstrap repository GitHub terbukti belum terjadi; konfirmasi baru dapat mencoba attempt berikutnya.",
+          );
+        }
+        const access = await this.readRepositoryAccess(
+          connection,
+          selection.repositoryId,
+        );
+        if (
+          access.empty ||
+          access.baseCommit === null ||
+          access.baseCommit !== completed.externalId ||
+          access.repositoryFullName !== selection.repositoryFullName ||
+          access.visibility !== "private" ||
+          access.defaultBranch !== selection.defaultBranch
+        ) {
+          throw new Error("Baseline GitHub committed tetapi head repository berubah sebelum provisioning.");
+        }
+        selection = await this.saveSelection(selection, {
+          ...withoutSelectionRevision(selection),
+          status: "selected",
+          baseCommit: access.baseCommit,
+          updatedAt: this.now().toISOString(),
+        });
+        return this.prepareSelectionArchive(selection);
       },
     );
   }
@@ -445,6 +620,9 @@ export class GitHubInstallationService {
         }
         if (!selection.archive) {
           throw new Error("GitHub repository selection belum mempunyai archive exact.");
+        }
+        if (selection.baseCommit === null) {
+          throw new Error("GitHub repository selection belum mempunyai baseline commit.");
         }
         if (!project) {
           if (this.now().getTime() >= Date.parse(selection.archive.expiresAt)) {
@@ -662,6 +840,10 @@ export class GitHubInstallationService {
   private async prepareSelectionArchive(
     selection: GitHubRepositorySelection,
   ): Promise<GitHubRepositorySelection> {
+    if (selection.baseCommit === null || selection.status === "bootstrap_required") {
+      throw new Error("Repository GitHub kosong memerlukan bootstrap baseline terpisah.");
+    }
+    const baseCommit = selection.baseCommit;
     if (this.now().getTime() >= Date.parse(selection.expiresAt)) {
       const cancelled = await this.saveSelection(selection, {
         ...withoutSelectionRevision(selection),
@@ -706,7 +888,7 @@ export class GitHubInstallationService {
         selection.ownerWorkspaceKey,
         selection.installationId,
         selection.repositoryId,
-        selection.baseCommit,
+        baseCommit,
         selection.selectionId,
         signal,
       ),
@@ -1074,7 +1256,7 @@ function validateRepositoryAccess(
   assertExactKeys(value, [
     "ownerWorkspaceKey", "installationId", "repositoryId",
     "repositoryFullName", "visibility", "defaultBranch", "baseCommit",
-    "targetBranch", "targetBranchHead", "canRead", "canPush",
+    "empty", "targetBranch", "targetBranchHead", "canRead", "canPush",
     "canWriteWorkflows", "canCreatePullRequest",
   ], "repository access");
   if (
@@ -1083,14 +1265,16 @@ function validateRepositoryAccess(
     value.repositoryId !== repositoryId ||
     value.targetBranch !== null ||
     value.targetBranchHead !== null ||
-    value.canRead !== true
+    value.canRead !== true ||
+    typeof value.empty !== "boolean" ||
+    value.empty !== (value.baseCommit === null)
   ) {
     throw new Error("Authority repository GitHub tidak cocok selection.");
   }
   validRepositoryFullName(value.repositoryFullName);
   validVisibility(value.visibility);
   validBranch(value.defaultBranch);
-  validGitCommit(value.baseCommit, "baseCommit");
+  if (value.baseCommit !== null) validGitCommit(value.baseCommit, "baseCommit");
   for (const flag of [
     value.canPush,
     value.canWriteWorkflows,
@@ -1142,6 +1326,74 @@ function validateArchiveReference(
   ) {
     throw new Error("Expiry archive GitHub tidak sah untuk selection.");
   }
+  return clone(value);
+}
+
+function bootstrapResultFromAttempt(
+  attempt: GitHubRepositoryBootstrapAttempt,
+): GitHubBrokerTransportResult {
+  if (
+    attempt.status !== "committed" ||
+    attempt.externalCommit === null ||
+    attempt.url === null
+  ) throw new Error("Receipt bootstrap GitHub committed tidak lengkap.");
+  return {
+    effectId: attempt.effect.effectId,
+    status: "committed",
+    operationFenced: true,
+    externalId: attempt.externalCommit,
+    url: attempt.url,
+    completedAt: attempt.updatedAt,
+  };
+}
+
+function validateBootstrapResult(
+  value: GitHubBrokerTransportResult,
+  effect: GitHubRepositoryBootstrapEffect,
+): GitHubBrokerTransportResult {
+  assertExactKeys(value, [
+    "effectId",
+    "status",
+    "operationFenced",
+    "externalId",
+    "url",
+    "completedAt",
+  ], "bootstrap result");
+  if (
+    value.effectId !== effect.effectId ||
+    (value.status === "unknown" && value.operationFenced !== false) ||
+    (value.status !== "unknown" && value.operationFenced !== true)
+  ) throw new Error("Fence/identity hasil bootstrap GitHub tidak sah.");
+  validIso(value.completedAt, "bootstrap completedAt");
+  if (value.status !== "committed") {
+    if (value.externalId !== null || value.url !== null) {
+      throw new Error("Bootstrap GitHub non-committed membawa metadata eksternal.");
+    }
+    return clone(value);
+  }
+  if (typeof value.externalId !== "string") {
+    throw new Error("Commit receipt bootstrap GitHub tidak tersedia.");
+  }
+  validGitCommit(value.externalId, "bootstrap external commit");
+  if (typeof value.url !== "string") {
+    throw new Error("URL receipt bootstrap GitHub tidak tersedia.");
+  }
+  let url: URL;
+  try {
+    url = new URL(value.url);
+  } catch {
+    throw new Error("URL receipt bootstrap GitHub tidak sah.");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "github.com" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !==
+      `/${effect.repositoryFullName}/commit/${value.externalId}`
+  ) throw new Error("URL receipt bootstrap GitHub tidak exact.");
   return clone(value);
 }
 

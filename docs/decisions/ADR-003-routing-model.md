@@ -91,29 +91,36 @@ orchestrator, handoff specialist, adaptive resource primitive, serta progressive
 capability discovery berada di ADR-041. Invariant `toughest` ADR-040 tidak
 berubah.
 
-### Dua mode dan cadangan testing yang terbatas
+### Dua mode tanpa provider fallback runtime
 
 | Mode | Primary | Cadangan | Model dan kunci |
 |---|---|---|---|
-| `testing` | Google AI Studio | Opsional, satu gateway OpenAI-compatible | Primary memakai satu model dan banyak kunci bergantian; cadangan memakai model serta kunci sendiri |
+| `testing` | GMI Serving | Tidak ada | Satu model testing dan satu key GMI lokal |
 | `production` | OpenRouter | Tidak ada | Tiga model sesuai tingkatan dan satu kunci |
 
 Produksi memakai OpenRouter sebagai gerbang tunggal agar tagihan berada di satu
 tempat dan model dapat diganti tanpa membuka akun baru.
 
-Mode uji memakai kuota gratis Google AI Studio. Provider cadangan hanya dibaca
-saat `AI_MODE=testing`; konfigurasi yang sama diabaikan pada production.
-Menghentikan mode uji cukup dengan mengubah `AI_MODE` menjadi `production`;
-tidak ada kode yang disentuh.
+**Amandemen 25 Agustus 2026.** Mode uji memakai endpoint OpenAI-compatible GMI
+Serving dengan target `MiniMaxAI/MiniMax-M3`. Google AI Studio dicabut karena
+rate limit menghambat acceptance aktual; AlwaysCodex juga dicabut, termasuk
+seluruh environment, flag evaluator, dan disclosure failover. Runtime, probe,
+dan evaluator selalu primary-only. Klien fallback generik tetap hanya sebagai
+boundary yang diuji secara terisolasi dan tidak dapat dipasang composition.
+Perubahan vendor beserta disclosure cache/media menaikkan consent privat ke
+v10 dan notice grup ke v11.
 
-Per 26 Juli 2026, model mode uji adalah `gemini-3.5-flash-lite`. Model ini juga
-dipakai untuk keputusan batas bubble; lihat `ADR-007`.
+`GMI_API_KEY` wajib lokal, base URL bawaan adalah
+`https://api.gmi-serving.com/v1`, dan ID model tetap berada di environment.
+Smoke exact 25 Agustus 2026 meluluskan completion, structured JSON, native tool
+dan continuation, truncation, context rejection lokal, timeout, automatic
+cache reuse, serta input gambar. Karena itu exact endpoint resmi + MiniMax-M3
+memperoleh profile code-owned; custom gateway/model lain tidak mewarisinya.
 
-Keduanya diakses lewat satu klien yang sama. Google AI Studio dan OpenRouter
-sama-sama menyediakan permukaan yang kompatibel dengan OpenAI, sehingga yang
-berbeda hanya alamat dan kunci.
+Bagian Google/AlwaysCodex di bawah adalah histori keputusan yang disupersesi,
+bukan konfigurasi aktif.
 
-### Beberapa kunci untuk mode uji
+### Histori disupersesi: beberapa kunci Google untuk mode uji
 
 `GOOGLE_AI_STUDIO_API_KEYS` menerima lebih dari satu kunci yang dipisah koma.
 Kunci dipakai bergantian agar kuota gratis tidak menghentikan pengembangan
@@ -124,7 +131,7 @@ sebanyak jumlah kunci yang tersedia.
 Ini alat pengembangan, bukan cara mengelak dari batas layanan. Seluruh kunci
 tetap milik akun yang sama dan tunduk pada ketentuan penyedia.
 
-### Amandemen 31 Juli 2026: failover provider mode uji
+### Histori disupersesi: failover provider mode uji 31 Juli 2026
 
 Log grup 30 Juli memperlihatkan timeout Google pada triase, generasi, review,
 dan planner. Rotasi dua kunci membuat satu tahap provider-wide dapat menunggu
@@ -174,16 +181,12 @@ satu turn.
 
 ## Risiko yang diketahui
 
-- **Sebagian nama model belum terverifikasi.** ID
-  `deepseek/deepseek-v4-flash` dan `gemini-3.5-flash-lite` diverifikasi pada
-  daftar resmi penyedia tanggal 26 Juli 2026. GPT 5.6 Luna dan GPT 5.6 Terra
-  belum diverifikasi. Seluruh ID tetap berada di environment: koreksi cukup
-  satu baris `.env`.
-- **Lebih dari satu rantai penyedia selama masa uji.** Google AI Studio,
-  gateway cadangan, dan upstream gateway tersebut mempunyai kegagalan,
-  ketentuan, serta retensi masing-masing. Bila keseragaman lebih penting
-  daripada gratis, `AI_BASE_URL` dan `AI_MODEL_TESTING` dapat diarahkan ke satu
-  penyedia tanpa mengubah kode.
+- **ID/config selain pasangan yang diuji belum terverifikasi.** Profile
+  code-owned hanya berlaku pada exact GMI endpoint + MiniMax-M3. Seluruh ID
+  tetap berada di environment; custom gateway/model kembali ke compatibility.
+- **Rantai testing tunggal tetap mempunyai risiko vendor.** Tidak ada fallback
+  yang menutupi outage/rate limit. Kebijakan privasi/retensi dan SLA GMI belum
+  dapat dibuktikan hanya dari respons API yang sukses.
 - **Perubahan perilaku antar mode.** Model uji tunggal tidak akan berperilaku
   sama dengan tiga model produksi. Hasil pengujian dalam mode uji tidak boleh
   dianggap mewakili produksi, terutama untuk percakapan keselamatan.

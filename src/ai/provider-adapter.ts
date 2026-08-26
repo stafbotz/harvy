@@ -2,6 +2,7 @@ import type { ExecutionPlan } from "../core/execution-policy.js";
 import type {
   AssistantContinuation,
   ChatAssistantToolMessage,
+  ChatInputImagePart,
   ChatMessage,
   ChatToolCall,
 } from "./client.js";
@@ -16,6 +17,7 @@ interface ProviderBinding {
   providerId: string;
   modelId: string;
   profile?: ModelProfile | null;
+  imageInputs?: readonly ChatInputImagePart[];
 }
 
 const TOOL_CALL_BINDINGS = new WeakMap<object, Readonly<ProviderBinding>>();
@@ -39,7 +41,20 @@ export function serializeProviderMessages(
   messages: readonly ChatMessage[],
   binding: ProviderBinding,
 ): readonly Record<string, unknown>[] {
-  return messages.map((message) => {
+  const images = binding.imageInputs ?? [];
+  let imageUserIndex = -1;
+  if (images.length > 0) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "user") {
+        imageUserIndex = index;
+        break;
+      }
+    }
+    if (imageUserIndex < 0) {
+      throw new Error("Input gambar memerlukan giliran user terakhir.");
+    }
+  }
+  return messages.map((message, index) => {
     if (message.role === "assistant" && "tool_calls" in message) {
       return serializeAssistantToolMessage(message, binding);
     }
@@ -51,8 +66,49 @@ export function serializeProviderMessages(
         content: message.content,
       };
     }
-    return { role: message.role, content: message.content };
+    if (index === imageUserIndex) {
+      return {
+        role: "user",
+        content: serializeMultimodalContent(message.content, images, binding),
+      };
+    }
+    return {
+      role: message.role,
+      content: message.content,
+    };
   });
+}
+
+function serializeMultimodalContent(
+  text: string,
+  images: readonly ChatInputImagePart[],
+  binding: ProviderBinding,
+): readonly Record<string, unknown>[] {
+  if (
+    binding.profile?.verification !== "explicit" ||
+    !binding.profile.supports.imageInput
+  ) {
+    throw new Error("Profile provider tidak mengizinkan input gambar.");
+  }
+  return [
+    { type: "text", text },
+    ...images.map(serializeImagePart),
+  ];
+}
+
+function serializeImagePart(part: ChatInputImagePart): Record<string, unknown> {
+  const encoded = Buffer.from(
+    part.data.buffer,
+    part.data.byteOffset,
+    part.data.byteLength,
+  ).toString("base64");
+  return {
+    type: "image_url",
+    image_url: {
+      url: `data:${part.mediaType};base64,${encoded}`,
+      ...(part.detail ? { detail: part.detail } : {}),
+    },
+  };
 }
 
 /** Provider-specific effort serialization; verbosity tetap metadata policy. */

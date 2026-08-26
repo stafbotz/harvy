@@ -44,7 +44,7 @@ describe("OpenAiCompatibleEmbeddingProvider", () => {
       baseUrl: "https://example.test/v1",
       keys: new ApiKeyPool(["secret-test"]),
       model: "embedding-test",
-      providerId: "google-ai-studio",
+      providerId: "provider-uji",
       fetcher: async () => new Response("rate limited", { status: 429 }),
     });
     await assert.rejects(failed.embed(["query"]), /status 429/u);
@@ -53,7 +53,7 @@ describe("OpenAiCompatibleEmbeddingProvider", () => {
       baseUrl: "https://example.test/v1",
       keys: new ApiKeyPool(["secret-test"]),
       model: "embedding-test",
-      providerId: "google-ai-studio",
+      providerId: "provider-uji",
       fetcher: async () => new Response(JSON.stringify({
         data: [{ index: 0, embedding: [Number.NaN] }],
       })),
@@ -67,7 +67,7 @@ describe("OpenAiCompatibleEmbeddingProvider", () => {
       baseUrl: "https://example.test/v1",
       keys: new ApiKeyPool(["secret-test"]),
       model: "embedding-test",
-      providerId: "google-ai-studio",
+      providerId: "provider-uji",
       maxResponseBytes: 1_024,
       fetcher: async () => new Response(new ReadableStream<Uint8Array>({
         start(controller) {

@@ -1,4 +1,5 @@
 import { containsForbiddenMemorySecret } from "./memory-policy.js";
+import { isTurnScopedMemoryInstruction } from "./memory-candidate.js";
 import {
   semanticEvidenceMatches,
   semanticOperationAuthorized,
@@ -47,6 +48,19 @@ export function explicitMemoryRememberAuthority(
     ? target
     : evidence;
   if (!hasConcreteMemoryContent(requestedText)) return null;
+  // Semantic extractor dapat salah menganggap constraint untuk current task
+  // sebagai perintah remember. Exact evidence tetap bukan authority bila span
+  // itu sendiri membatasi instruksi pada percakapan/pekerjaan ini.
+  if (isTurnScopedMemoryInstruction(requestedText)) return null;
+  // Ini pagar retensi fail-closed, bukan router intent. Proposal model
+  // `remember` tidak memperoleh authority bila exact span justru melarang
+  // penyimpanan. Adapter tetap melanjutkan permintaan utama pada turn itu.
+  if (
+    /\b(?:jangan|tidak|tak|gak|ga|nggak|enggak)\s+(?:perlu\s+)?(?:ingat|inget|mengingat|simpan|menyimpan|catat|mencatat)\b/iu
+      .test(requestedText) ||
+    /\b(?:do\s+not|don't|never)\s+(?:remember|store|save)\b/iu
+      .test(requestedText)
+  ) return null;
   const forbiddenSecret = containsForbiddenMemorySecret(requestedText);
   if (forbiddenSecret) {
     return { requestedText, candidateIndexes: [], forbiddenSecret: true };
@@ -150,6 +164,60 @@ export function withoutUnconfirmedMemoryWriteClaims(text: string): string {
     .join("")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
+}
+
+/**
+ * Pagar sempit untuk kalimat faktual "sudah aku catat/simpan" tanpa receipt.
+ * Berbeda dari `replyAcknowledgesMemoryWrite`, fungsi ini sengaja tidak
+ * menganggap keputusan produk seperti "kita akan memperbaiki X" sebagai
+ * mutasi memori.
+ */
+export function withoutUnconfirmedMemoryRecordClaims(text: string): string {
+  const pieces = text.match(/[^.!?\n]+[.!?]?|\n+/gu) ?? [text];
+  return pieces
+    .filter((piece) =>
+      /^\n+$/u.test(piece) || !replyClaimsDefinitiveMemoryRecordWrite(piece)
+    )
+    .join("")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
+export function replyClaimsDefinitiveMemoryRecordWrite(text: string): boolean {
+  const clean = normalizeSentence(text);
+  return /\b(?:sudah|udah|telah)\s+(?:aku\s+)?(?:catat|simpan)\b/u.test(clean) ||
+    /\b(?:catatan|memori|ingatan|preferensi|permintaan(?:mu)?)\b[^.!?]{0,60}\b(?:sudah|udah|telah)\s+(?:aku\s+)?(?:catat|simpan|dicatat|disimpan)\b/u
+      .test(clean) ||
+    /\baku\s+(?:akan|bakal)\s+(?:mencatat|menyimpan)\b[^.!?]{0,80}\b(?:ke\s+depan|selanjutnya|seterusnya)\b/u
+      .test(clean);
+}
+
+/**
+ * Menghapus klaim bahwa catatan durable telah dihapus tanpa receipt mutasi.
+ *
+ * Jalur kontrol forget yang sah selesai dan kembali lebih awal dengan copy
+ * code-owned. Karena itu, setiap klaim deletion yang muncul di balasan
+ * percakapan umum pasti tidak memiliki bukti commit dan harus ditahan.
+ */
+export function withoutUnconfirmedMemoryDeletionClaims(text: string): string {
+  const pieces = text.match(/[^.!?\n]+[.!?]?|\n+/gu) ?? [text];
+  return pieces
+    .filter((piece) =>
+      /^\n+$/u.test(piece) || !replyClaimsMemoryDeletion(piece)
+    )
+    .join("")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
+export function replyClaimsMemoryDeletion(text: string): boolean {
+  const clean = normalizeSentence(text);
+  return /\b(?:sudah|udah|telah)\s+(?:aku\s+)?(?:hapus|lupakan)\b/u.test(clean) ||
+    /\b(?:catatan|ingatan|memori|memorinya|yang itu|yang tadi)\b[^.!?]{0,60}\b(?:sudah|udah|telah)\s+(?:aku\s+)?(?:hapus|lupakan|dihapus|dilupakan)\b/u
+      .test(clean) ||
+    /\bi\s+(?:have\s+)?(?:deleted|removed|forgotten)\b/u.test(clean) ||
+    /\b(?:memory|note|record)\b[^.!?]{0,50}\b(?:has been|was)\s+(?:deleted|removed|forgotten)\b/u
+      .test(clean);
 }
 
 function hasConcreteMemoryContent(value: string): boolean {

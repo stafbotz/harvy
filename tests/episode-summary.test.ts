@@ -26,6 +26,20 @@ describe("episode summary v2", () => {
       at: "2026-08-02T01:00:01.000Z",
     },
   ];
+  const smalltalkTurns: StoredConversationTurn[] = [
+    {
+      sequence: 1,
+      role: "user",
+      text: "Halo.",
+      at: "2026-08-02T00:00:00.000Z",
+    },
+    {
+      sequence: 2,
+      role: "harvy",
+      text: "Hai!",
+      at: "2026-08-02T00:00:01.000Z",
+    },
+  ];
 
   it("membaca sembilan kategori dan menormalisasi urutan provenance", () => {
     const raw = JSON.stringify({
@@ -44,8 +58,21 @@ describe("episode summary v2", () => {
 
   it("menerima episode kosong agar basa-basi tetap dapat dibuang", () => {
     assert.deepEqual(
-      parseEpisodeSummary(JSON.stringify(emptyPayload()), turns),
+      parseEpisodeSummary(JSON.stringify(emptyPayload()), smalltalkTurns),
       emptyPayload(),
+    );
+  });
+
+  it("menolak episode kosong untuk source kode atau kerja panjang", () => {
+    const codeTurns: StoredConversationTurn[] = [{
+      sequence: 3,
+      role: "user",
+      text: "Perbaiki fungsi ini:\n```ts\nconst decide = (n: number) => n <= 30 ? 'water' : 'wait';\n```",
+      at: "2026-08-02T00:01:00.000Z",
+    }];
+    assert.equal(
+      parseEpisodeSummary(JSON.stringify(emptyPayload()), codeTurns),
+      null,
     );
   });
 
@@ -110,7 +137,7 @@ describe("episode summary v2", () => {
 
   it("tetap membaca JSON yang dibungkus pagar kode", () => {
     const raw = `\`\`\`json\n${JSON.stringify(emptyPayload())}\n\`\`\``;
-    assert.notEqual(parseEpisodeSummary(raw, turns), null);
+    assert.notEqual(parseEpisodeSummary(raw, smalltalkTurns), null);
   });
 
   it("memprioritaskan koreksi dan pekerjaan terbuka saat konteks dipotong", () => {

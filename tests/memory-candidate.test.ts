@@ -4,10 +4,33 @@ import {
   automaticMemoryCandidateAuthorized,
   deriveMemoryMetadata,
   exactExplicitMemoryCandidate,
+  groundedAutomaticMemoryContent,
   inferExplicitResponsePreference,
+  memoryCandidateConflictsWithRetractions,
+  memoryEvidenceConflictsWithRetractions,
 } from "../src/core/memory-candidate.js";
 
 describe("deriveMemoryMetadata", () => {
+  it("memenangkan retraction atas candidate dan semantic remember yang bertentangan", () => {
+    const retractions = [{
+      sourceEvidence:
+        "Bahasa Inggris tadi hanya untuk proyek ini, bukan preferensi permanen.",
+    }];
+    assert.equal(memoryCandidateConflictsWithRetractions({
+      content: "Bahasa Inggris tadi hanya untuk proyek ini, bukan preferensi permanen",
+      sourceEvidence:
+        "Bahasa Inggris tadi hanya untuk proyek ini, bukan preferensi permanen.",
+    }, retractions), true);
+    assert.equal(memoryEvidenceConflictsWithRetractions(
+      "Koreksi: Bahasa Inggris tadi hanya untuk proyek ini, bukan preferensi permanen.",
+      retractions,
+    ), true);
+    assert.equal(memoryCandidateConflictsWithRetractions({
+      content: "Aku suka contoh batas 30 dan 31.",
+      sourceEvidence: "Aku suka contoh batas 30 dan 31.",
+    }, retractions), false);
+  });
+
   it("hanya mengizinkan auto-memory grounded tentang pengguna yang tidak sesaat", () => {
     assert.equal(automaticMemoryCandidateAuthorized(
       "Aku biasanya paling fokus belajar pagi.",
@@ -41,6 +64,85 @@ describe("deriveMemoryMetadata", () => {
         durability: "durable",
       },
     ), false, "evidence yang tidak ada di current turn harus gagal tertutup");
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Jangan pakai tool; bantu aku lewat percakapan ini saja.",
+      {
+        sourceEvidence: "bantu aku lewat percakapan ini saja",
+        sourceSubject: "self",
+        durability: "durable",
+      },
+    ), false, "constraint current turn tidak boleh menjadi preferensi durable");
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Mulai sekarang bantu aku lewat percakapan biasa, kecuali aku meminta tool.",
+      {
+        sourceEvidence:
+          "Mulai sekarang bantu aku lewat percakapan biasa, kecuali aku meminta tool",
+        sourceSubject: "self",
+        durability: "durable",
+      },
+    ), true, "horizon lintas giliran yang eksplisit tetap dapat disimpan");
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Kalau aku memakai Harvy setiap hari, kebiasaan apa yang paling masuk akal?",
+      {
+        sourceEvidence: "aku memakai Harvy setiap hari",
+        sourceSubject: "self",
+        durability: "durable",
+      },
+    ), false, "premis pertanyaan bersyarat bukan fakta durable");
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Kalau penjelasan teknis panjang, aku sering kehilangan inti.",
+      {
+        sourceEvidence:
+          "Kalau penjelasan teknis panjang, aku sering kehilangan inti",
+        sourceSubject: "self",
+        durability: "durable",
+      },
+    ), true, "pola habitual pada klausa akibat bukan skenario rekaan");
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Untuk konteks: jika aku pindah ke Bandung, apa yang perlu disiapkan?",
+      {
+        sourceEvidence: "aku pindah ke Bandung",
+        sourceSubject: "self",
+        durability: "bounded",
+      },
+    ), false, "exact evidence di dalam klausa andaian tetap ditolak");
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Let's continue in English for this section.",
+      {
+        sourceEvidence: "Let's continue in English for this section",
+        sourceSubject: "self",
+        durability: "durable",
+      },
+    ), false, "peralihan bahasa satu bagian bukan preferensi durable");
+    assert.equal(automaticMemoryCandidateAuthorized(
+      "Mulai sekarang selalu balas dalam bahasa Inggris.",
+      {
+        sourceEvidence: "Mulai sekarang selalu balas dalam bahasa Inggris",
+        sourceSubject: "self",
+        durability: "durable",
+      },
+    ), true, "horizon durable explicit tetap menang atas pola bahasa");
+  });
+
+  it("menyimpan evidence user, bukan perluasan makna buatan model", () => {
+    const raw = "Kalau penjelasan teknis panjang aku sering kehilangan inti.";
+    assert.equal(
+      groundedAutomaticMemoryContent(raw, {
+        sourceEvidence:
+          "Kalau penjelasan teknis panjang aku sering kehilangan inti",
+        sourceSubject: "self",
+        durability: "durable",
+      }),
+      "Kalau penjelasan teknis panjang aku sering kehilangan inti",
+    );
+    assert.equal(
+      groundedAutomaticMemoryContent("Let's continue in English.", {
+        sourceEvidence: "Let's continue in English",
+        sourceSubject: "self",
+        durability: "durable",
+      }),
+      null,
+    );
   });
 
   it("memakai span explicit exact saat satu parafrasa model tidak cocok leksikal", () => {

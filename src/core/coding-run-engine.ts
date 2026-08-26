@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   CodingChangeSet,
+  CodingAdvisoryReceipt,
   CodingConstraintKind,
   CodingDiffSummary,
   CodingEvidenceBinding,
@@ -301,6 +302,7 @@ export class CodingRunEngine {
       validatorReceipts: [],
       taskReviewReceipts: [],
       repositoryMap: null,
+      advisoryReceipts: [],
       plan: null,
       diff: null,
       limits: structuredClone(this.limits),
@@ -663,6 +665,90 @@ export class CodingRunEngine {
             run.instructionRevision,
             "repository_map_ready",
             this.now().toISOString(),
+          ),
+        ),
+      });
+    });
+  }
+
+  async recordAdvisories(
+    scope: WorkspaceAgentScope,
+    runId: string,
+    expectedInstructionRevision: number,
+    drafts: ReadonlyArray<{
+      role: CodingAdvisoryReceipt["role"];
+      status: CodingAdvisoryReceipt["status"];
+      summary: string;
+    }>,
+    expectedStateRevision?: number,
+  ): Promise<CodingRun> {
+    return this.authorizedExclusive(scope, runId, ["code.write"], async () => {
+      let run = await this.requireMutableRun(scope, runId);
+      assertStateRevision(run, expectedStateRevision);
+      run = await this.claimOrRenewWriter(run);
+      assertInstruction(run, expectedInstructionRevision);
+      this.assertActiveBudget(run, "work");
+      const repositoryMap = currentRepositoryMap(run);
+      const current = (run.advisoryReceipts ?? []).filter((receipt) =>
+        receipt.instructionRevision === expectedInstructionRevision
+      );
+      if (current.length > 0) {
+        if (
+          current.length === drafts.length && drafts.every((draft) =>
+            current.some((receipt) =>
+              receipt.role === draft.role && receipt.status === draft.status &&
+              receipt.summary === draft.summary
+            )
+          )
+        ) return run;
+        throw new Error("Advisory CodingRun untuk revision ini sudah tercatat berbeda.");
+      }
+      if (
+        drafts.length !== 2 || new Set(drafts.map((draft) => draft.role)).size !== 2 ||
+        !drafts.some((draft) => draft.role === "challenger") ||
+        !drafts.some((draft) => draft.role === "verifier")
+      ) throw new Error("CodingRun memerlukan tepat dua advisory read-only berbeda.");
+      const scopeDigest = digestJson({
+        runId: run.runId,
+        projectId: run.binding.projectId,
+        instructionRevision: expectedInstructionRevision,
+        repositoryMapDigest: repositoryMap.mapDigest,
+        taskContractDigest: taskContractDigest(run),
+      });
+      const createdAt = this.now().toISOString();
+      const receipts = drafts.map((draft): CodingAdvisoryReceipt => {
+        if (
+          (draft.role !== "challenger" && draft.role !== "verifier") ||
+          !["completed", "partial", "plan_conflict", "uncertain", "failed"]
+            .includes(draft.status)
+        ) throw new Error("Role atau status advisory CodingRun tidak sah.");
+        const summary = boundedTaskText(
+          draft.summary,
+          3_600,
+          "summary advisory CodingRun",
+        );
+        return {
+          advisoryId: opaqueId("advisory", this.makeId()),
+          role: draft.role,
+          status: draft.status,
+          instructionRevision: expectedInstructionRevision,
+          workingSnapshot: repositoryMap.workingSnapshot,
+          scopeDigest,
+          summary,
+          summaryDigest: createHash("sha256").update(summary, "utf8").digest("hex"),
+          createdAt,
+        };
+      });
+      return this.saveRun(run, {
+        advisoryReceipts: [...(run.advisoryReceipts ?? []), ...receipts],
+        events: appendEvent(
+          run.events,
+          makeEvent(
+            this.makeId,
+            "advisory.completed",
+            run.instructionRevision,
+            "read_only_advisory_recorded",
+            createdAt,
           ),
         ),
       });

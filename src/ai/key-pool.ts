@@ -1,12 +1,10 @@
 /**
  * Kumpulan kunci API yang dipakai bergantian.
  *
- * Mode uji memakai kuota gratis Google AI Studio, yang habis lebih cepat
- * daripada pemakaian normal. Menyebar permintaan ke beberapa kunci membuat
- * pengembangan tidak berhenti setiap kali satu kunci kena batas.
- *
- * Ini alat pengembangan, bukan cara menghindari batas layanan. Setiap kunci
- * tetap milik akun yang sama dan tunduk pada ketentuan penyedia.
+ * Rotation tetap provider-local: kelas ini tidak memilih provider cadangan dan
+ * tidak mengubah batas layanan. Composition GMI saat ini memasang satu key;
+ * dukungan lebih dari satu key dipertahankan untuk caller generik dan fault
+ * test yang memang membutuhkannya.
  */
 export class ApiKeyPool {
   private index = 0;

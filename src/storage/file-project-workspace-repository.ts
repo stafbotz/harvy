@@ -183,7 +183,9 @@ function validateProject(value: unknown): asserts value is ProjectWorkspace {
   }
   validIso(project.createdAt, "createdAt");
   validIso(project.updatedAt, "updatedAt");
-  if (project.source?.type === "upload") {
+  if (project.source?.type === "blank") {
+    assertExactKeys(project.source, ["type"], "blank project source");
+  } else if (project.source?.type === "upload") {
     safeKey(project.source.artifactId, "artifactId");
     sha256(project.source.sha256, "artifact sha256");
   } else if (project.source?.type === "github") {
@@ -237,6 +239,7 @@ function validateProject(value: unknown): asserts value is ProjectWorkspace {
       sha256(snapshot.parentSnapshotId, "parentSnapshotId");
     }
     if (
+      snapshot.reason !== "initialization" &&
       snapshot.reason !== "import" &&
       snapshot.reason !== "provisioning" &&
       snapshot.reason !== "coding" &&

@@ -15,13 +15,18 @@ import type {
   ConversationRuntime,
 } from "../src/ai/conversation.js";
 import type { RoutingAssessment } from "../src/ai/model-policy.js";
+import type { Understanding } from "../src/ai/understand.js";
 import { createBot } from "../src/bot/create-bot.js";
-import { PRE_CONSENT_SAFETY } from "../src/bot/onboarding.js";
+import {
+  PRE_CONSENT_SAFETY,
+  STYLE_QUESTION,
+} from "../src/bot/onboarding.js";
 import type { AppConfig } from "../src/config.js";
 import type { DataControlService } from "../src/core/data-control-service.js";
 import type { EconomyService } from "../src/core/economy-service.js";
 import { AgentRunService } from "../src/core/agent-run-service.js";
 import type { HistoryService } from "../src/core/history-service.js";
+import { HISTORY_WINDOW } from "../src/core/history-policy.js";
 import type { InsightService } from "../src/core/insight-service.js";
 import type { MemoryService } from "../src/core/memory-service.js";
 import type { MemoryContextCompiler } from "../src/core/memory-context-compiler.js";
@@ -60,6 +65,92 @@ import { privateAgentScope, scopeKey } from "../src/harness/scope.js";
 import { FileAgentRunRepository } from "../src/storage/file-agent-run-repository.js";
 
 describe("alur adapter Telegram", () => {
+  it("meneruskan foto privat secara transient tanpa menyimpan byte ke history", async () => {
+    const originalFetch = globalThis.fetch;
+    let runtimeSeen: ConversationRuntime | null = null;
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x01, 0xff, 0xd9]);
+    globalThis.fetch = (async () => new Response(jpeg, {
+      status: 200,
+      headers: { "content-length": String(jpeg.byteLength) },
+    })) as typeof fetch;
+    const harness = basicHarness(
+      {
+        understand: async () => understanding({ intent: "question" }),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async (
+          _message: string,
+          _understanding: unknown,
+          _context: unknown,
+          _style: unknown,
+          _triage: unknown,
+          _insight: unknown,
+          _raiseHelp: unknown,
+          runtime: ConversationRuntime,
+        ) => {
+          runtimeSeen = runtime;
+          return "Warna dominannya terlihat jelas.";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      { telegramFilePath: "photos/fixture.jpg" },
+    );
+
+    try {
+      await harness.bot.handleUpdate(photoUpdate("Warna dominannya apa?", 1));
+      await harness.bot.drainPending();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(
+      (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.mediaType,
+      "image/jpeg",
+    );
+    assert.equal(
+      (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.data.byteLength,
+      jpeg.byteLength,
+    );
+    assert.deepEqual(harness.turns.map((turn) => turn.text), [
+      "Warna dominannya apa?",
+      "Warna dominannya terlihat jelas.",
+    ]);
+    assert.doesNotMatch(JSON.stringify(harness.turns), /\/9j\/2wAB|ffd8ffdb/iu);
+  });
+
+  it("tidak mengunduh foto Telegram sebelum consent", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetches = 0;
+    globalThis.fetch = (async () => {
+      fetches += 1;
+      throw new Error("network must not be reached");
+    }) as typeof fetch;
+    const harness = basicHarness(
+      {} as Conversation,
+      {} as TaskService,
+      {
+        profiles: {
+          needsOnboarding: async () => true,
+        } as unknown as ProfileService,
+        telegramFilePath: "photos/fixture.jpg",
+      },
+    );
+
+    try {
+      await harness.bot.handleUpdate(photoUpdate("", 1));
+      await harness.bot.drainPending();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(fetches, 0);
+    assert.equal(
+      harness.telegramCalls.some((call) => call.method === "getFile"),
+      false,
+    );
+    assert.ok(harness.sent.some((text) => /kirim ulang gambarnya/iu.test(text)));
+    assert.equal(harness.turns.length, 0);
+  });
+
   it("commit task mendahului presentasi dan balasan bebas tidak boleh mengarang status", async () => {
     const text =
       "Tolong ingatkan saya satu menit lagi untuk memeriksa ketepatan waktu pengingat ini.";
@@ -419,7 +510,6 @@ describe("alur adapter Telegram", () => {
   it("menyatukan /memori, pertanyaan natural, dan Data & izin pada satu potret", async () => {
     const memory = memoryItem("memory-portrait", "Sekarang kelas 12");
     let portraitCalls = 0;
-    let compilerCalls = 0;
     let portraitCompilerCalls = 0;
     const harness = basicHarness(
       {
@@ -453,7 +543,6 @@ describe("alur adapter Telegram", () => {
             request: string,
             context: HarvyContext,
           ) => {
-            compilerCalls += 1;
             if (/profilku.*preferensi.*hubungan/iu.test(request)) {
               portraitCompilerCalls += 1;
             }
@@ -485,8 +574,7 @@ describe("alur adapter Telegram", () => {
     assert.equal(portraits.length, 3);
     assert.equal(new Set(portraits).size, 1);
     assert.equal(portraitCalls, 3);
-    assert.ok(compilerCalls >= 3);
-    assert.equal(portraitCompilerCalls, 3);
+    assert.equal(portraitCompilerCalls, 0);
     assert.equal(findCallbacks(harness.telegramCalls, "memchange:").length, 3);
     assert.equal(findCallbacks(harness.telegramCalls, "memedit:").length, 0);
     assert.equal(findCallbacks(harness.telegramCalls, "memforget:").length, 0);
@@ -509,6 +597,16 @@ describe("alur adapter Telegram", () => {
           relevantTo: async () => [],
           markUsed: async () => undefined,
         } as unknown as MemoryService,
+        histories: {
+          context: async () => ({
+            summary: "Sedang mengaudit tool pada percakapan aktif.",
+            turns: [],
+          }),
+          append: async () => undefined,
+          compact: async () => undefined,
+          allow: () => undefined,
+          suspend: () => undefined,
+        } as unknown as HistoryService,
       },
     );
 
@@ -517,6 +615,7 @@ describe("alur adapter Telegram", () => {
 
     assert.equal(portraitCalls, 0);
     assert.match(harness.sent.at(-1) ?? "", /Belum banyak/iu);
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /mengaudit tool/iu);
     assert.equal(findCallbacks(harness.telegramCalls, "memchange:").length, 0);
   });
 
@@ -803,7 +902,7 @@ describe("alur adapter Telegram", () => {
         ) => {
           assert.deepEqual(runtime.memoryAcknowledgements, [{
             operation: "updated",
-            content: "Lebih produktif pagi",
+            content: "aku lebih produktif pagi",
             explicit: false,
           }]);
           return naturalReply;
@@ -1422,7 +1521,7 @@ describe("alur adapter Telegram", () => {
 
     assert.deepEqual(inputs.map((input) => input.content), [
       "Sohit adalah pacarku",
-      "Baru pulang dari rumah sakit",
+      "tadi aku habis dari rumah sakit",
     ]);
     assert.equal(inputs[0]?.sensitiveConsent, true);
     assert.equal(inputs[1]?.sensitiveConsent, true);
@@ -2133,16 +2232,36 @@ describe("alur adapter Telegram", () => {
   it("aritmetika sederhana memberi hasil exact tanpa model di Telegram", async () => {
     let understandingCalls = 0;
     let replies = 0;
-    const harness = basicHarness({
-      understand: async () => {
-        understandingCalls += 1;
-        return understanding();
+    const harness = basicHarness(
+      {
+        understand: async () => {
+          understandingCalls += 1;
+          return understanding();
+        },
+        reply: async () => {
+          replies += 1;
+          return "jangan dipakai";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => {
+            throw new Error("aritmetika tidak boleh memuat semantic memory");
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+        histories: {
+          context: async () => {
+            throw new Error("aritmetika tidak boleh memuat history context");
+          },
+          append: async () => null,
+          compact: async () => undefined,
+          allow: () => undefined,
+          suspend: () => undefined,
+        } as unknown as HistoryService,
       },
-      reply: async () => {
-        replies += 1;
-        return "jangan dipakai";
-      },
-    } as unknown as Conversation);
+    );
 
     await harness.bot.handleUpdate(
       messageUpdate("kerjakan soal ini untukku: 24 dibagi 6"),
@@ -2152,6 +2271,15 @@ describe("alur adapter Telegram", () => {
     assert.equal(understandingCalls, 0);
     assert.equal(replies, 0);
     assert.equal(harness.sent.at(-1), "Hasilnya 4.");
+
+    await harness.bot.handleUpdate(
+      messageUpdate("Sekarang jawab 17+28 dengan angka saja."),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(understandingCalls, 0);
+    assert.equal(replies, 0);
+    assert.equal(harness.sent.at(-1), "45");
   });
 
   it("pengingat kosong meminta detail lewat balasan model tanpa menulis task", async () => {
@@ -2403,6 +2531,7 @@ describe("alur adapter Telegram", () => {
   it("memisahkan auto-memory privat dari acute-safety routing", async () => {
     let triageCalls = 0;
     let saved = 0;
+    let storedContent = "";
     const harness = basicHarness(
       {
         classifyTurnBoundary: async () => "complete",
@@ -2428,6 +2557,7 @@ describe("alur adapter Telegram", () => {
           markUsed: async () => undefined,
           remember: async (input: NewMemory) => {
             saved += 1;
+            storedContent = input.content;
             return memoryItem("reading-preference", input.content);
           },
         } as unknown as MemoryService,
@@ -2441,8 +2571,119 @@ describe("alur adapter Telegram", () => {
 
     assert.equal(triageCalls, 0);
     assert.equal(saved, 1);
+    assert.equal(
+      storedContent,
+      "aku kesulitan membaca soal panjang saat ujian",
+      "parafrasa model tidak boleh menjadi canonical primary memory",
+    );
     assert.match(harness.sent.at(-1) ?? "", /ingat untuk ke depan|📍/iu);
     assert.doesNotMatch(harness.sent.join("\n"), /Boleh aku inget/iu);
+  });
+
+  it("mencabut ingatan lama dan menyimpan koreksi grounded dalam satu turn Telegram", async () => {
+    const text = [
+      "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap.",
+      "Kebun itu hanya proyek yang sedang dibahas, bukan profilku.",
+      "Kalau penjelasan teknis panjang, aku sering kehilangan inti.",
+    ].join(" ");
+    const items: MemoryItem[] = [
+      memoryItem("old-english", "Prefers coding conversations in English"),
+      memoryItem("old-garden", "Memiliki kebun kecil"),
+    ];
+    let replyContext: string[] = [];
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({
+          intent: "smalltalk",
+          memoryAction: "remember",
+          memories: [
+            {
+              kind: "preference",
+              content:
+                "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+              sourceEvidence:
+                "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+              sourceSubject: "self",
+              durability: "durable",
+            },
+            {
+              kind: "preference",
+              content:
+                "Lebih mudah memahami penjelasan teknis bila inti didahulukan",
+              sourceEvidence:
+                "Kalau penjelasan teknis panjang, aku sering kehilangan inti",
+              sourceSubject: "self",
+              durability: "durable",
+            },
+          ],
+          memoryRetractions: [
+            {
+              target: "preferensi bahasa Inggris",
+              sourceEvidence:
+                "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+              explicitness: "explicit",
+              confidence: 0.97,
+            },
+            {
+              target: "garden project",
+              sourceEvidence:
+                "Kebun itu hanya proyek yang sedang dibahas, bukan profilku",
+              explicitness: "explicit",
+              confidence: 0.96,
+            },
+          ],
+          semanticOperation: {
+            version: 1,
+            domain: "memory",
+            operation: "remember",
+            target:
+              "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+            subject: "self",
+            reference: "quoted",
+            explicitness: "explicit",
+            evidence:
+              "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+            confidence: 0.96,
+          },
+        }),
+        reply: async (
+          _message: string,
+          _understanding: Understanding,
+          context: HarvyContext,
+        ) => {
+          replyContext = context.memories.map((item) => item.content);
+          return "Oke, dua ingatan lama itu sudah aku hapus. Pola penjelasanmu akan kuingat.";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [...items],
+          list: async () => [...items],
+          forget: async (_ownerId: string, id: string) => {
+            const index = items.findIndex((item) => item.id === id);
+            return index >= 0 ? items.splice(index, 1)[0] ?? null : null;
+          },
+          remember: async (input: NewMemory) => {
+            const item = memoryItem("new-core-first", input.content);
+            items.push(item);
+            return item;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(text));
+    await harness.bot.drainPending();
+
+    assert.deepEqual(items.map((item) => item.content), [
+      "Kalau penjelasan teknis panjang, aku sering kehilangan inti",
+    ]);
+    assert.deepEqual(replyContext, [], "source yang dicabut tidak boleh ikut prompt reply");
+    assert.match(harness.sent.at(-1) ?? "", /sudah aku hapus/iu);
   });
 
   it("memakai onboarding, bukan classifier privasi, sebagai authority privat", async () => {
@@ -3369,11 +3610,11 @@ describe("alur adapter Telegram", () => {
     assert.ok(harness.sent.includes("Percakapan biasa tetap jalan."));
   });
 
-  it("mengarahkan pertanyaan biasa ke root agent cheap-first dan mengikat settlement ke turn", async () => {
+  it("menjawab pertanyaan biasa tanpa tool dan mengikat settlement ke turn", async () => {
     let agentCalls = 0;
     let replyCalls = 0;
     let deliveredTurn: string | null | undefined;
-    let agentRuntime: ConversationRuntime | null = null;
+    let replyRuntime: ConversationRuntime | null = null;
     const publicFocus = {
       kind: "inspect" as const,
       subject: "cara kerja fotosintesis",
@@ -3388,20 +3629,14 @@ describe("alur adapter Telegram", () => {
           intent: "question",
           publicFocus,
         }),
-        agent: async (
-          _message: string,
-          mode: string,
-          _context: HarvyContext,
-          runtime: ConversationRuntime,
-        ) => {
+        agent: async () => {
           agentCalls += 1;
-          agentRuntime = runtime;
-          assert.equal(mode, "tools");
-          return { status: "completed", reply: "Fotosintesis mengubah cahaya menjadi energi kimia." };
+          throw new Error("pertanyaan tanpa tool tidak boleh membuka agent");
         },
-        reply: async () => {
+        reply: async (...args: unknown[]) => {
           replyCalls += 1;
-          return "jalur lama";
+          replyRuntime = args[7] as ConversationRuntime;
+          return "Fotosintesis mengubah cahaya menjadi energi kimia.";
         },
       } as unknown as Conversation,
       {} as TaskService,
@@ -3423,13 +3658,13 @@ describe("alur adapter Telegram", () => {
     await harness.bot.handleUpdate(messageUpdate("jelaskan fotosintesis"));
     await harness.bot.drainPending();
 
-    assert.equal(agentCalls, 1);
-    assert.equal(replyCalls, 0);
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
     assert.ok(harness.sent.some((text) => text.includes("energi kimia")));
     assert.equal(typeof deliveredTurn, "string");
     assert.ok((deliveredTurn?.length ?? 0) > 10);
     assert.deepEqual(
-      (agentRuntime as ConversationRuntime | null)?.publicProgressFocus,
+      (replyRuntime as ConversationRuntime | null)?.publicProgressFocus,
       publicFocus,
     );
   });
@@ -3474,8 +3709,9 @@ describe("alur adapter Telegram", () => {
     );
   });
 
-  it("request pendek bernuansa masuk orkestrator meski di bawah 280 karakter", async () => {
-    let modeSeen = "";
+  it("request pendek bernuansa tanpa tool tetap memakai reply", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
     const harness = basicHarness({
       classifyTurnBoundary: async () => "complete",
       triageRisk: async () => CALM_TRIAGE,
@@ -3488,9 +3724,13 @@ describe("alur adapter Telegram", () => {
           factualStakes: "high",
         }),
       }),
-      agent: async (_message: string, mode: string) => {
-        modeSeen = mode;
-        return { status: "completed", reply: "Kita timbang pilihanmu pelan-pelan." };
+      agent: async () => {
+        agentCalls += 1;
+        throw new Error("nuansa tinggi bukan authority tool");
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Kita timbang pilihanmu pelan-pelan.";
       },
     } as unknown as Conversation);
 
@@ -3499,7 +3739,9 @@ describe("alur adapter Telegram", () => {
     );
     await harness.bot.drainPending();
 
-    assert.equal(modeSeen, "orchestrate");
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
+    assert.match(harness.sent.at(-1) ?? "", /timbang pilihanmu/iu);
   });
 
   it("transformasi mekanis panjang tidak otomatis masuk orkestrator", async () => {
@@ -3544,7 +3786,14 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => understanding({
+          intent: "request",
+          routingAssessment: routingAssessment({
+            planningRequired: true,
+            executionSize: "medium",
+            toolNeed: "execution",
+          }),
+        }),
         agent: async () => ({
           status: "stopped",
           reason: "budget_model_calls",
@@ -3655,6 +3904,7 @@ describe("alur adapter Telegram", () => {
             complexity: "deep",
             planningRequired: true,
             executionSize: "heavy",
+            toolNeed: "execution",
           }),
         }),
         agent: async (
@@ -3711,6 +3961,226 @@ describe("alur adapter Telegram", () => {
     assert.ok(harness.sent.some((text) => text.includes("Rencana gabungan")));
   });
 
+  it("menjaga curhat tentang pekerjaan rumit di chat lane meski model meminta planning", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({
+        intent: "feeling",
+        taskAction: "offer",
+        routingAssessment: routingAssessment({
+          complexity: "normal",
+          planningRequired: true,
+          emotionalNuance: "high",
+          executionSize: "medium",
+        }),
+        suggestedActions: ["listen", "clarify", "prioritize"],
+      }),
+      agent: async () => {
+        agentCalls += 1;
+        throw new Error("konteks pekerjaan bukan authority AgentRun");
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Yang berat itu catatannya berantakan dan takut salah memilih. Kita urai satu-satu.";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate(
+      "Aku tahu harus mulai dari meninjau catatan temuan produk lalu memilih tiga masalah paling penting. Yang berat itu catatannya berantakan dan aku takut salah memprioritaskan.",
+    ));
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
+    assert.ok(harness.sent.some((text) => /kita urai satu-satu/iu.test(text)));
+  });
+
+  it("menjawab permintaan analisis di chat ketika planning tidak membutuhkan tool", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({
+        intent: "request",
+        routingAssessment: routingAssessment({
+          complexity: "normal",
+          ambiguity: "medium",
+          planningRequired: true,
+          executionSize: "medium",
+          toolNeed: "none",
+        }),
+      }),
+      agent: async () => {
+        agentCalls += 1;
+        throw new Error("planning jawaban chat bukan authority tool/AgentRun");
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Tool salah harus diprioritaskan karena dapat merusak kepercayaan.";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate(
+      "Dari prioritas pertama, sebutkan satu eksperimen kecil untuk membuktikan routing tool lebih aman.",
+    ));
+    await harness.bot.drainPending();
+
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
+    assert.ok(harness.sent.some((text) => /merusak kepercayaan/iu.test(text)));
+    assert.equal(
+      harness.sent.some((text) => /Menunggu giliran kerja/iu.test(text)),
+      false,
+      JSON.stringify(harness.sent),
+    );
+  });
+
+  it("tetap menuntaskan permintaan utama saat model salah mengusulkan remember pada negasi", async () => {
+    const message =
+      "Koreksi: ini hanya konteks pekerjaan sekarang. Jangan ingat untuk ke depan. Tolong langsung urutkan tiga prioritas.";
+    let saves = 0;
+    let replyCalls = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({
+          intent: "request",
+          memoryAction: "remember",
+          memories: [{
+            kind: "preference",
+            content: "Selalu membahas pekerjaan tanpa tool",
+          }],
+          semanticOperation: semanticOperation(
+            "memory",
+            "remember",
+            message,
+            message,
+          ),
+          routingAssessment: routingAssessment({
+            planningRequired: true,
+            executionSize: "medium",
+            toolNeed: "none",
+          }),
+        }),
+        agent: async () => {
+          throw new Error("negasi memory tidak boleh membuka agent");
+        },
+        reply: async () => {
+          replyCalls += 1;
+          return "Permintaanmu sudah aku catat. Catatannya udah aku hapus.\n\nUrutannya: tool salah, onboarding, lalu kartu penggunaan.";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          remember: async () => {
+            saves += 1;
+            return null;
+          },
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(message));
+    await harness.bot.drainPending();
+
+    assert.equal(saves, 0);
+    assert.equal(replyCalls, 1);
+    assert.match(harness.sent.at(-1) ?? "", /tool salah, onboarding/iu);
+    assert.doesNotMatch(harness.sent.join("\n"), /udah aku hapus/iu);
+    assert.doesNotMatch(harness.sent.join("\n"), /sudah aku catat/iu);
+    assert.doesNotMatch(
+      harness.sent.join("\n"),
+      /belum bisa menyimpan|ingat untuk ke depan|📍/iu,
+    );
+  });
+
+  it("tidak menambahkan tawaran tugas ketika balasan sudah meminta klarifikasi", async () => {
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({
+        intent: "feeling",
+        taskAction: "offer",
+        task: {
+          title: "Memilih tiga temuan produk terpenting",
+          dueAt: null,
+          remindAt: null,
+          importance: 2,
+        },
+      }),
+      reply: async () =>
+        "Kita urai pelan-pelan. Temuannya paling banyak membahas bagian apa?",
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate(
+      "Aku kewalahan membaca temuan produk dan belum tahu tiga yang paling penting.",
+    ));
+    await harness.bot.drainPending();
+
+    assert.match(harness.sent.at(-1) ?? "", /membahas bagian apa\?/iu);
+    assert.doesNotMatch(harness.sent.join("\n"), /Mau aku catat/iu);
+    assert.equal(findCallbacks(harness.telegramCalls, "save:").length, 0);
+  });
+
+  it("tidak menyisipkan survei gaya saat permintaan sedang menunggu jawaban", async () => {
+    const priorTurns: ConversationTurn[] = Array.from(
+      { length: HISTORY_WINDOW },
+      (_, index) => ({
+        role: index % 2 === 0 ? "user" as const : "harvy" as const,
+        text: `giliran ${index + 1}`,
+        at: new Date().toISOString(),
+      }),
+    );
+    const profileValue = profile({
+      stylePreference: null,
+      styleAskedAt: null,
+    });
+    let styleAsked = 0;
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        triageRisk: async () => CALM_TRIAGE,
+        understand: async () => understanding({ intent: "request" }),
+        reply: async () => "Catatannya sekarang masih campur atau sudah dikelompokkan?",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        profiles: {
+          needsOnboarding: async () => false,
+          load: async () => profileValue,
+          markStyleAsked: async () => {
+            styleAsked += 1;
+            profileValue.styleAskedAt = new Date().toISOString();
+            return profileValue;
+          },
+        } as unknown as ProfileService,
+        histories: {
+          context: async () => ({ summary: null, turns: [...priorTurns] }),
+          append: async () => undefined,
+          compact: async () => undefined,
+          allow: () => undefined,
+          suspend: () => undefined,
+        } as unknown as HistoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate(
+      "Untuk pekerjaan ini, bantu lewat percakapan saja dan tanyakan satu hal.",
+    ));
+    await harness.bot.drainPending();
+
+    assert.equal(styleAsked, 0);
+    assert.equal(harness.sent.some((text) => text === STYLE_QUESTION), false);
+  });
+
   it("menyimpan checkpoint needs_input, melanjutkannya, dan mendebit setelah delivery", async () => {
     const deliveredTurns: Array<string | null | undefined> = [];
     let discarded = 0;
@@ -3720,7 +4190,7 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => toolQuestionUnderstanding(),
         agent: async (
           _request: string,
           _mode: string,
@@ -3785,7 +4255,7 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => toolQuestionUnderstanding(),
         agent: async () => {
           calls += 1;
           return calls === 1
@@ -3858,6 +4328,9 @@ describe("alur adapter Telegram", () => {
         understand: async (message: string) =>
           understanding({
             intent: message.includes("analisis") ? "question" : "smalltalk",
+            routingAssessment: message.includes("analisis")
+              ? routingAssessment({ toolNeed: "external" })
+              : routingAssessment(),
           }),
         agent: async (
           _request: string,
@@ -3922,7 +4395,7 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => toolQuestionUnderstanding(),
         agent: async () => ({
           status: "needs_input",
           prompt: "Rentang tanggal mana yang kamu maksud?",
@@ -4068,7 +4541,7 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => toolQuestionUnderstanding(),
         agent: async () => ({
           status: "needs_input",
           prompt,
@@ -4096,7 +4569,7 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => toolQuestionUnderstanding(),
         agent: async () => ({
           status: "needs_input",
           prompt,
@@ -4130,7 +4603,7 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => toolQuestionUnderstanding(),
         agent: async () => {
           calls += 1;
           return calls === 1
@@ -4173,7 +4646,7 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => toolQuestionUnderstanding(),
         agent: async () => {
           calls += 1;
           return calls === 1
@@ -4216,7 +4689,7 @@ describe("alur adapter Telegram", () => {
       {
         classifyTurnBoundary: async () => "complete",
         triageRisk: async () => CALM_TRIAGE,
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => toolQuestionUnderstanding(),
         agent: async () => {
           calls += 1;
           return calls === 1
@@ -4258,6 +4731,9 @@ describe("alur adapter Telegram", () => {
         triageRisk: async () => CALM_TRIAGE,
         understand: async (message: string) => understanding({
           intent: message.includes("analisis") ? "question" : "smalltalk",
+          routingAssessment: message.includes("analisis")
+            ? routingAssessment({ toolNeed: "external" })
+            : routingAssessment(),
         }),
         agent: async () => {
           calls += 1;
@@ -4547,7 +5023,7 @@ describe("alur adapter Telegram", () => {
     const harness = basicHarness({
       classifyTurnBoundary: async () => "complete",
       triageRisk: async () => CALM_TRIAGE,
-      understand: async () => understanding({ intent: "question" }),
+      understand: async () => toolQuestionUnderstanding(),
       agent: async (
         _message: string,
         _mode: string,
@@ -4943,6 +5419,7 @@ describe("alur adapter Telegram", () => {
       "Menurutmu, apakah pengujian live yang kita jalankan sudah cukup untuk membuktikan Harvy siap dipakai sehari-hari? Nilai bukti dan celah yang masih berisiko.";
     let summaryCalls = 0;
     let agentCalls = 0;
+    let replyCalls = 0;
     const harness = basicHarness({
       classifyTurnBoundary: async () => "complete",
       understand: async () => understanding({
@@ -4965,11 +5442,11 @@ describe("alur adapter Telegram", () => {
       triageRisk: async () => CALM_TRIAGE,
       agent: async () => {
         agentCalls += 1;
-        return {
-          status: "completed",
-          reply: "Penilaian kesiapan produk berdasarkan bukti live.",
-          trace: [],
-        };
+        throw new Error("internal_state model tanpa preflight bukan authority tool");
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Penilaian kesiapan produk berdasarkan bukti live.";
       },
     } as unknown as Conversation, {} as TaskService, {
       economy: {} as EconomyService,
@@ -4985,7 +5462,8 @@ describe("alur adapter Telegram", () => {
     await harness.bot.drainPending();
 
     assert.equal(summaryCalls, 0);
-    assert.equal(agentCalls, 1);
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
     assert.match(harness.sent.at(-1) ?? "", /Penilaian kesiapan produk/u);
     assert.doesNotMatch(harness.sent.join("\n"), /Penggunaan Harvy/u);
   });
@@ -5088,6 +5566,7 @@ describe("work lane active AgentRun Telegram", () => {
                   complexity: "deep",
                   planningRequired: true,
                   executionSize: "heavy",
+                  toolNeed: "execution",
                 })
               : routingAssessment(),
             memories: message === request
@@ -5202,6 +5681,7 @@ describe("work lane active AgentRun Telegram", () => {
             complexity: "deep",
             planningRequired: true,
             executionSize: "heavy",
+            toolNeed: "execution",
           }),
         }),
         agent: async (
@@ -5263,6 +5743,7 @@ describe("work lane active AgentRun Telegram", () => {
             complexity: "deep",
             planningRequired: true,
             executionSize: "heavy",
+            toolNeed: "execution",
           }),
         }),
         agent: async (
@@ -5374,6 +5855,7 @@ describe("work lane active AgentRun Telegram", () => {
               complexity: "deep",
               planningRequired: true,
               executionSize: "heavy",
+              toolNeed: "execution",
             }),
           });
         },
@@ -5472,6 +5954,7 @@ describe("work lane active AgentRun Telegram", () => {
                   complexity: "deep",
                   planningRequired: true,
                   executionSize: "heavy",
+                  toolNeed: "execution",
                 })
               : routingAssessment(),
           }),
@@ -5561,6 +6044,7 @@ describe("work lane active AgentRun Telegram", () => {
             complexity: "deep",
             planningRequired: true,
             executionSize: "heavy",
+            toolNeed: "execution",
           }),
         }),
         agent: async (
@@ -5610,6 +6094,7 @@ describe("work lane active AgentRun Telegram", () => {
             complexity: "deep",
             planningRequired: true,
             executionSize: "heavy",
+            toolNeed: "execution",
           }),
         }),
         agent: async (
@@ -5870,6 +6355,22 @@ function messageUpdate(text: string, updateId = 1): Update {
   };
 }
 
+function photoUpdate(caption: string, updateId = 1): Update {
+  const update = messageUpdate(caption, updateId);
+  if (update.message) {
+    delete update.message.text;
+    update.message.photo = [{
+      file_id: `photo-${updateId}`,
+      file_unique_id: `unique-photo-${updateId}`,
+      width: 32,
+      height: 32,
+      file_size: 8,
+    }];
+    if (caption) update.message.caption = caption;
+  }
+  return update;
+}
+
 function replyMessageUpdate(
   text: string,
   updateId: number,
@@ -5986,6 +6487,7 @@ function installFakeTelegram(
   failSend?: (text: string) => boolean,
   onSend?: (text: string) => Promise<void> | void,
   failTelegramCall?: (method: string, payload: unknown) => boolean,
+  telegramFilePath?: string,
 ): void {
   bot.botInfo = {
     id: 999,
@@ -6022,6 +6524,18 @@ function installFakeTelegram(
         },
       };
     }
+    if (method === "getFile" && telegramFilePath) {
+      const body = payload as { file_id?: string };
+      return {
+        ok: true,
+        result: {
+          file_id: body.file_id ?? "photo-fixture",
+          file_unique_id: "photo-fixture-unique",
+          file_size: 8,
+          file_path: telegramFilePath,
+        },
+      };
+    }
     return { ok: true, result: true };
   }) as Parameters<typeof bot.api.config.use>[0]);
 }
@@ -6042,6 +6556,7 @@ function basicHarness(
     failSend?: (text: string) => boolean;
     onSend?: (text: string) => Promise<void> | void;
     failTelegramCall?: (method: string, payload: unknown) => boolean;
+    telegramFilePath?: string;
     usageDashboard?: Pick<UserUsageSummaryService, "summary">;
     economy?: EconomyService;
   } = {},
@@ -6100,6 +6615,7 @@ function basicHarness(
     overrides.failSend,
     overrides.onSend,
     overrides.failTelegramCall,
+    overrides.telegramFilePath,
   );
   return { bot, sent, turns, telegramCalls };
 }
@@ -6205,6 +6721,15 @@ function routingAssessment(
     confidence: 0.95,
     ...overrides,
   };
+}
+
+function toolQuestionUnderstanding() {
+  return understanding({
+    intent: "question",
+    routingAssessment: routingAssessment({
+      toolNeed: "external",
+    }),
+  });
 }
 
 function findCallback(

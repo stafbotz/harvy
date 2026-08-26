@@ -6,6 +6,7 @@ import {
   explorerTransportRejection,
   isExplorerEvidenceCommitError,
   startObservedWhatsAppRuntime,
+  WhatsAppObserverConnectionGuard,
   type ExplorerSentRecord,
 } from "../scripts/live-exploratory-tester.js";
 import {
@@ -467,6 +468,40 @@ describe("live exploratory runner lifecycle boundaries", () => {
 });
 
 describe("live exploratory runner WhatsApp startup", () => {
+  it("mempertahankan close observer setelah startup open", () => {
+    const connection = new WhatsAppObserverConnectionGuard();
+    assert.deepEqual(connection.observe({ connection: "open" }), {
+      status: "open",
+      reason: null,
+    });
+    assert.doesNotThrow(() => connection.assertOpen());
+
+    assert.deepEqual(connection.observe({
+      connection: "close",
+      lastDisconnect: { error: { output: { statusCode: 401 } } },
+    }), {
+      status: "closed",
+      reason: 401,
+    });
+    assert.throws(
+      () => connection.assertOpen(),
+      /LIVE_EXPLORATION_WHATSAPP_TESTER_CONNECTION_CLOSED_401/u,
+    );
+  });
+
+  it("membedakan observer yang belum open dari close tanpa reason", () => {
+    const connection = new WhatsAppObserverConnectionGuard();
+    assert.throws(
+      () => connection.assertOpen(),
+      /LIVE_EXPLORATION_WHATSAPP_TESTER_CONNECTION_NOT_OPEN/u,
+    );
+    connection.observe({ connection: "close" });
+    assert.throws(
+      () => connection.assertOpen(),
+      /LIVE_EXPLORATION_WHATSAPP_TESTER_CONNECTION_CLOSED$/u,
+    );
+  });
+
   it("menunggu observer ready sebelum runtime dan baru kemudian mengekspos driver", async () => {
     const order = ["observer-attached"];
     let ready = false;

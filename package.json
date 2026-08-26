@@ -19,6 +19,7 @@
     "conformance:sandbox": "tsx scripts/sandbox-conformance-receipt.ts",
     "acceptance:github": "tsx scripts/github-live-acceptance.ts",
     "acceptance:provider": "tsx scripts/provider-live-smoke.ts",
+    "ai:testing:migrate-gmi": "tsx scripts/migrate-gmi-testing-env.ts",
     "acceptance:whatsapp": "tsx scripts/whatsapp-live-acceptance.ts",
     "acceptance:whatsapp-group:managed": "npm run build --silent && tsx scripts/run-whatsapp-group-live-acceptance.ts --create-disposable-group",
     "acceptance:whatsapp-private": "tsx scripts/whatsapp-private-live-acceptance.ts",

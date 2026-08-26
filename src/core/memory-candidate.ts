@@ -11,6 +11,44 @@ export interface ExplicitResponsePreference {
   content: string;
 }
 
+export interface AuthorizedMemoryRetractionEvidence {
+  sourceEvidence: string;
+}
+
+/**
+ * Menolak satu span write bila span yang sama sudah diotorisasi sebagai
+ * pencabutan pada current turn.
+ *
+ * Extractor dapat menghasilkan field terstruktur yang saling bertentangan:
+ * klausa "ini bukan preferensi permanen" sekaligus muncul sebagai retraction
+ * dan candidate/semantic remember. Authority delete harus menang. Pagar ini
+ * hanya membandingkan evidence current-turn; ia tidak menebak intent atau
+ * memperluas target deletion ke candidate lain pada kalimat yang sama.
+ */
+export function memoryEvidenceConflictsWithRetractions(
+  value: string | null | undefined,
+  retractions: readonly AuthorizedMemoryRetractionEvidence[],
+): boolean {
+  const candidate = normalizeRetractionEvidence(value ?? "");
+  if (candidate.length < 8) return false;
+  return retractions.some((retraction) => {
+    const evidence = normalizeRetractionEvidence(retraction.sourceEvidence);
+    if (evidence.length < 8) return false;
+    return candidate === evidence || candidate.includes(evidence) ||
+      evidence.includes(candidate);
+  });
+}
+
+export function memoryCandidateConflictsWithRetractions(
+  candidate: { content: string; sourceEvidence?: string },
+  retractions: readonly AuthorizedMemoryRetractionEvidence[],
+): boolean {
+  return memoryEvidenceConflictsWithRetractions(
+    candidate.sourceEvidence,
+    retractions,
+  ) || memoryEvidenceConflictsWithRetractions(candidate.content, retractions);
+}
+
 /**
  * Pagar grounding untuk kandidat auto-memory dari model.
  *
@@ -36,7 +74,107 @@ export function automaticMemoryCandidateAuthorized(
   ) return false;
   const evidence = compact(candidate.sourceEvidence ?? "");
   if (!evidence) return false;
+  if (isTurnScopedMemoryInstruction(evidence)) return false;
+  if (isHypotheticalMemoryEvidence(rawTurn, evidence)) return false;
   return normalizeEvidence(rawTurn).includes(normalizeEvidence(evidence));
+}
+
+/**
+ * Isi auto-memory harus berasal dari evidence user, bukan parafrasa model.
+ *
+ * Extractor tetap memilih apakah satu klausa layak menjadi kandidat dan jenis
+ * memorinya. Namun begitu consent onboarding dipakai sebagai authority write,
+ * model tidak boleh memperluas “lanjut dalam bahasa Inggris” menjadi “selalu
+ * memilih coding dalam bahasa Inggris”. Menyimpan span yang sudah lolos pagar
+ * provenance menutup celah itu tanpa membuat router bahasa baru.
+ */
+export function groundedAutomaticMemoryContent(
+  rawTurn: string,
+  candidate: {
+    sourceEvidence?: string;
+    sourceSubject?: "self" | "other" | "work";
+    durability?: "durable" | "bounded" | "transient";
+  },
+): string | null {
+  if (!automaticMemoryCandidateAuthorized(rawTurn, candidate)) return null;
+  const evidence = compact(candidate.sourceEvidence ?? "");
+  return evidence || null;
+}
+
+/**
+ * Menolak auto-memory dari klausa bersyarat atau skenario andaian.
+ *
+ * Ini bukan router intent berbasis kata. Model tetap mengusulkan isi dan
+ * metadata semantik; pagar lokal ini hanya menolak persistence saat exact
+ * source evidence berada di bawah pembuka hipotetis pada current turn. False
+ * negative lebih aman daripada mengubah pertanyaan "kalau aku..." menjadi
+ * fakta durable tentang pengguna.
+ */
+export function isHypotheticalMemoryEvidence(
+  rawTurn: string,
+  sourceEvidence: string,
+): boolean {
+  const raw = normalizeEvidence(rawTurn);
+  const evidence = normalizeEvidence(sourceEvidence);
+  if (!raw || !evidence) return false;
+  const index = raw.indexOf(evidence);
+  if (index < 0) return false;
+  const clauseStart = Math.max(
+    raw.lastIndexOf(".", index - 1),
+    raw.lastIndexOf("?", index - 1),
+    raw.lastIndexOf("!", index - 1),
+    raw.lastIndexOf(";", index - 1),
+    raw.lastIndexOf(":", index - 1),
+  ) + 1;
+  const prefix = raw.slice(clauseStart, index + evidence.length).trimStart();
+  const conditional = /^(?:kalau|jika|seandainya|andaikan|misalnya|anggap(?:lah)?|if|suppose|assuming|imagine)\b/iu
+    .test(prefix);
+  if (!conditional) return false;
+
+  // “Kalau penjelasan panjang, aku sering kehilangan inti” menyatakan pola
+  // habitual, bukan skenario rekaan. Marker harus berada pada klausa akibat,
+  // bukan sekadar di premis (“kalau aku selalu memakai…”), agar pengecualian
+  // ini tetap sempit dan fail-closed.
+  const comma = evidence.indexOf(",");
+  const habitualConsequence = /\b(?:aku|saya|i)\s+(?:sering|biasanya|selalu|cenderung|often|usually|always|tend(?:s)?\s+to)\b/iu
+    .exec(evidence);
+  if (
+    (comma >= 0 &&
+      /\b(?:sering|biasanya|selalu|cenderung|often|usually|always|tend(?:s)?\s+to)\b/iu
+        .test(evidence.slice(comma + 1))) ||
+    (habitualConsequence?.index ?? -1) > 10
+  ) return false;
+  return true;
+}
+
+/**
+ * Veto sempit untuk arahan yang jelas dibatasi pada pekerjaan/percakapan ini.
+ *
+ * Model tetap memahami makna lintas bahasa dan mengusulkan kandidat; kode
+ * tidak mencoba menggantikannya dengan router kata kunci. Pagar ini hanya
+ * menolak kontradiksi durability yang dapat dibuktikan dari deiksis current-
+ * scope. Penanda horizon durable yang eksplisit selalu menang.
+ */
+export function isTurnScopedMemoryInstruction(value: string): boolean {
+  const clean = normalizeEvidence(value);
+  if (
+    /\b(?:mulai sekarang|ke depan(?:nya)?|untuk seterusnya|selalu|biasanya|from now on|going forward|always|usually|a partir de ahora|siempre|habitualmente|désormais|toujours)\b/iu
+      .test(clean)
+  ) return false;
+  return /\b(?:percakapan|obrolan|pekerjaan|tugas|permintaan|kasus|chat|conversation|task|request|case)\s+(?:yang\s+)?(?:ini|this)\b/iu
+      .test(clean) ||
+    /\b(?:kali ini|untuk ini|for this (?:chat|conversation|task|request|case))\b/iu
+      .test(clean) ||
+    isCurrentLanguageInstruction(clean);
+}
+
+/** Peralihan bahasa pada giliran/bagian sekarang bukan preferensi durable. */
+function isCurrentLanguageInstruction(value: string): boolean {
+  return /^(?:let'?s\s+)?(?:continue|switch|reply|answer|respond)\b.{0,80}\b(?:in|to|using)\s+(?:the\s+)?(?:[\p{L}-]+\s+)?(?:language|english|indonesian|spanish|french|german|japanese|korean|arabic)\b/iu
+      .test(value) ||
+    /^(?:lanjut(?:kan)?|beralih|ganti|balas|jawab|gunakan|pakai)\b.{0,80}\b(?:(?:dalam|ke|dengan|pakai|gunakan)\s+)?(?:bahasa\s+[\p{L}-]+|inggris|indonesia|spanyol|prancis|jerman|jepang|korea|arab)\b/iu
+      .test(value) ||
+    /^(?:ahora|now)\b.{0,80}\b(?:en|in)\s+[\p{L}-]+\b/iu.test(value);
 }
 
 /**
@@ -312,6 +450,15 @@ function normalize(value: string): string {
 
 function normalizeEvidence(value: string): string {
   return compact(value).normalize("NFKC").toLocaleLowerCase("und");
+}
+
+function normalizeRetractionEvidence(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replaceAll(/\p{M}+/gu, "")
+    .toLocaleLowerCase("und")
+    .replaceAll(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
 }
 
 const CORRECTION_PATTERNS = [

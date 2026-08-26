@@ -18,7 +18,6 @@ import {
 export async function createInstrumentedAiClient(
   config: AppConfig,
   costCenter: UsageCostCenter,
-  allowFallback: boolean,
 ): Promise<AiClient> {
   await acquireLocalRuntimeLock(
     localRuntimeLockPath(config.controlPlane.file),
@@ -58,7 +57,7 @@ export async function createInstrumentedAiClient(
     },
   );
   return new AiClient({
-    ...aiClientOptions(config.ai, { fallback: allowFallback }),
+    ...aiClientOptions(config.ai),
     attemptObserver: ledger,
     environment:
       config.operationalLog.environment === "production" ||

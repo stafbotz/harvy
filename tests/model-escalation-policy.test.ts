@@ -293,6 +293,8 @@ function profile(overrides: Partial<ModelProfile> = {}): ModelProfile {
       namedToolChoice: false,
       structuredOutput: true,
       temperature: true,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: true,

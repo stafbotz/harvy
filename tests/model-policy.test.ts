@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   allowsDeterministicSurface,
   requiresPlannedExecution,
+  requestsAgentTooling,
   resolveModel,
   resolveModelRoute,
   selectConversationModelRole,
@@ -187,18 +188,54 @@ describe("kebijakan pemilihan model", () => {
     }), "conversation");
   });
 
-  it("hanya mengaktifkan durable planning dari assessment tepercaya nonmekanis", () => {
+  it("hanya mengaktifkan durable planning dari eksekusi substansial tepercaya", () => {
     assert.equal(requiresPlannedExecution(assessment({
       planningRequired: true,
       complexity: "deep",
+      executionSize: "medium",
+      toolNeed: "execution",
     })), true);
     assert.equal(requiresPlannedExecution(assessment({
       planningRequired: true,
       confidence: 0.2,
+      executionSize: "heavy",
+      toolNeed: "execution",
     })), false);
     assert.equal(requiresPlannedExecution(assessment({
       planningRequired: true,
       complexity: "mechanical",
+      executionSize: "heavy",
+      toolNeed: "execution",
+    })), false);
+    assert.equal(requiresPlannedExecution(assessment({
+      planningRequired: true,
+      complexity: "deep",
+      executionSize: "heavy",
+      toolNeed: "none",
+    })), false);
+    assert.equal(requiresPlannedExecution(assessment({
+      planningRequired: true,
+      complexity: "deep",
+      executionSize: "small",
+      toolNeed: "external",
+    })), false);
+  });
+
+  it("memisahkan kebutuhan tool dari kebutuhan berpikir mendalam", () => {
+    assert.equal(requestsAgentTooling(assessment({
+      planningRequired: true,
+      complexity: "deep",
+      toolNeed: "none",
+    })), false);
+    assert.equal(requestsAgentTooling(assessment({
+      toolNeed: "internal_state",
+    })), false);
+    assert.equal(requestsAgentTooling(assessment({
+      toolNeed: "calculation",
+    })), false, "label calculation tanpa calculator callable bukan authority agent");
+    assert.equal(requestsAgentTooling(assessment({
+      toolNeed: "external",
+      confidence: 0.2,
     })), false);
   });
 

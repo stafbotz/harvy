@@ -1,7 +1,10 @@
 import type {
+  GitHubBrokerEffect,
   GitHubExactEffect,
   GitHubRepositoryArchiveReference,
 } from "../domain/github.js";
+import { validateGitHubRepositoryBootstrapEffect } from
+  "../domain/github-bootstrap.js";
 import { containsSecretLikeValue } from "../security/credential-like.js";
 import type {
   TrustDomainServiceHandler,
@@ -101,6 +104,13 @@ export class GitHubBrokerServiceHandler implements TrustDomainServiceHandler {
           request.signal,
         ));
       }
+      case "/v1/github-broker/bootstrap-repository": {
+        exactEnvelope(request, ["version", "effect"], false);
+        return json(await this.backend.bootstrapRepository(
+          parseBootstrapEffect(object(request.envelope).effect),
+          request.signal,
+        ));
+      }
       case "/v1/github-broker/push-exact-commit": {
         exactEnvelope(request, ["version", "effect"], true);
         const effect = parseEffect(object(request.envelope).effect);
@@ -125,12 +135,30 @@ export class GitHubBrokerServiceHandler implements TrustDomainServiceHandler {
       }
       case "/v1/github-broker/reconcile-effect": {
         exactEnvelope(request, ["version", "effect"], false);
-        return json(await this.backend.reconcileEffect(parseEffect(object(request.envelope).effect)));
+        return json(await this.backend.reconcileEffect(
+          parseBrokerEffect(object(request.envelope).effect),
+        ));
       }
       default:
         throw routeError("Route GitHub Broker tidak dikenal.");
     }
   }
+}
+
+function parseBrokerEffect(value: unknown): GitHubBrokerEffect {
+  const input = object(value);
+  return input.capability === "github.repository.bootstrap"
+    ? parseBootstrapEffect(input)
+    : parseEffect(input);
+}
+
+function parseBootstrapEffect(value: unknown) {
+  const effect = validateGitHubRepositoryBootstrapEffect(
+    structuredClone(object(value)) as never,
+  );
+  numericId(effect.installationId, "installationId");
+  numericId(effect.repositoryId, "repositoryId");
+  return effect;
 }
 
 function parseEffect(value: unknown): GitHubExactEffect {

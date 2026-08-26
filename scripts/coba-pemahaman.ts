@@ -7,7 +7,7 @@
  * itu untuk pemeriksaan manual — terutama saat menyetel prompt, karena ia
  * menampilkan balasan mentah model apa adanya.
  *
- * Perlu `.env` berisi kunci sungguhan. Pakai `AI_MODE=testing` agar gratis.
+ * Perlu `.env` berisi kunci GMI sungguhan ketika `AI_MODE=testing`.
  *
  *   npx tsx scripts/coba-pemahaman.ts "ingetin aku jam 8 minum obat"
  */
@@ -41,7 +41,6 @@ import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 type DiagnosticPath = "understanding" | "due" | "boundary";
 
 const args = process.argv.slice(2);
-const allowFallback = args.includes("--allow-fallback");
 const path: DiagnosticPath =
   args.includes("--due")
     ? "due"
@@ -51,7 +50,7 @@ const path: DiagnosticPath =
 const rawMessage = args
   .filter(
     (argument) =>
-      !["--due", "--boundary", "--allow-fallback"].includes(argument),
+      !["--due", "--boundary"].includes(argument),
   )
   .join(" ")
   .trim();
@@ -59,13 +58,13 @@ const message = rawMessage.replaceAll("\\n", "\n");
 
 if (!message) {
   console.error(
-    'Pakai: npx tsx scripts/coba-pemahaman.ts [--due|--boundary] [--allow-fallback] "kalimat kamu"',
+    'Pakai: npx tsx scripts/coba-pemahaman.ts [--due|--boundary] "kalimat kamu"',
   );
   process.exit(1);
 }
 
 const config = loadConfig();
-const client = await createInstrumentedAiClient(config, "probe", allowFallback);
+const client = await createInstrumentedAiClient(config, "probe");
 const modelRoute = path === "understanding"
   ? resolveModelRoute("mechanical", config.ai)
   : {
@@ -93,13 +92,7 @@ const execution = DEFAULT_EXECUTION_POLICY.decide({
 
 console.log(`Mode    : ${config.ai.mode}`);
 console.log(`Model   : ${model}`);
-console.log(
-  `Fallback: ${
-    allowFallback && config.ai.fallback
-      ? `aktif (${config.ai.fallback.model})`
-      : "nonaktif"
-  }`,
-);
+console.log("Fallback: nonaktif");
 console.log(`Jalur   : ${pathLabel(path)}`);
 console.log(`Pesan   : ${message}`);
 console.log("");

@@ -1656,7 +1656,10 @@ export class ChannelSetupService {
   ): void {
     const state = this.whatsappVerificationState[role];
     if (!configured) {
-      if (!this.whatsappVerificationOperations.has(role)) {
+      if (
+        !this.whatsappVerificationOperations.has(role) &&
+        this.whatsappState[role].phase === "idle"
+      ) {
         resetWhatsAppVerificationState(state);
       }
       return;
@@ -1726,34 +1729,44 @@ export class ChannelSetupService {
     role: WhatsAppTestRole,
     operation: WhatsAppVerificationOperation,
   ): Promise<void> {
+    let outcome: {
+      status: "accepted" | "rejected" | "unreachable";
+      errorCode: string | null;
+    } | null = null;
     try {
       const status = await this.whatsapp.probe({
         authFolder: whatsappAuthFolder(role, this.paths),
         signal: operation.controller.signal,
       });
       if (!this.currentWhatsAppVerification(role, operation)) return;
-      setWhatsAppVerificationResult(
-        this.whatsappVerificationState[role],
+      outcome = {
         status,
-        this.now(),
-        status === "rejected" ? "CHANNEL_WHATSAPP_SESSION_REJECTED" : null,
-      );
+        errorCode: status === "rejected"
+          ? "CHANNEL_WHATSAPP_SESSION_REJECTED"
+          : null,
+      };
     } catch (error) {
       if (!this.currentWhatsAppVerification(role, operation)) return;
       if (this.closed && operation.controller.signal.aborted) return;
       const code = operation.timedOut
         ? "CHANNEL_WHATSAPP_VERIFICATION_TIMEOUT"
         : safeOperationCode(error, "CHANNEL_WHATSAPP_VERIFICATION_UNAVAILABLE");
-      setWhatsAppVerificationResult(
-        this.whatsappVerificationState[role],
-        isWhatsAppSessionRejection(code) ? "rejected" : "unreachable",
-        this.now(),
-        code,
-      );
+      outcome = {
+        status: isWhatsAppSessionRejection(code) ? "rejected" : "unreachable",
+        errorCode: code,
+      };
     } finally {
       clearTimeout(operation.timer);
       if (this.currentWhatsAppVerification(role, operation)) {
         this.whatsappVerificationOperations.delete(role);
+        if (outcome !== null) {
+          setWhatsAppVerificationResult(
+            this.whatsappVerificationState[role],
+            outcome.status,
+            this.now(),
+            outcome.errorCode,
+          );
+        }
       }
     }
   }
@@ -1771,7 +1784,10 @@ export class ChannelSetupService {
   ): void {
     const state = this.primaryWhatsAppSessionState(id);
     if (!configured) {
-      if (!this.primaryWhatsAppVerificationOperations.has(id)) {
+      if (
+        !this.primaryWhatsAppVerificationOperations.has(id) &&
+        this.primaryWhatsAppPairingState(id).phase === "idle"
+      ) {
         resetWhatsAppVerificationState(state);
       }
       return;
@@ -1842,34 +1858,44 @@ export class ChannelSetupService {
     id: string,
     operation: WhatsAppVerificationOperation,
   ): Promise<void> {
+    let outcome: {
+      status: "accepted" | "rejected" | "unreachable";
+      errorCode: string | null;
+    } | null = null;
     try {
       const status = await this.whatsapp.probe({
         authFolder: this.primaryWhatsAppAccountFolder(id),
         signal: operation.controller.signal,
       });
       if (!this.currentPrimaryWhatsAppVerification(id, operation)) return;
-      setWhatsAppVerificationResult(
-        this.primaryWhatsAppSessionState(id),
+      outcome = {
         status,
-        this.now(),
-        status === "rejected" ? "PRIMARY_WHATSAPP_SESSION_REJECTED" : null,
-      );
+        errorCode: status === "rejected"
+          ? "PRIMARY_WHATSAPP_SESSION_REJECTED"
+          : null,
+      };
     } catch (error) {
       if (!this.currentPrimaryWhatsAppVerification(id, operation)) return;
       if (this.closed && operation.controller.signal.aborted) return;
       const code = operation.timedOut
         ? "PRIMARY_WHATSAPP_VERIFICATION_TIMEOUT"
         : safeOperationCode(error, "PRIMARY_WHATSAPP_VERIFICATION_UNAVAILABLE");
-      setWhatsAppVerificationResult(
-        this.primaryWhatsAppSessionState(id),
-        isWhatsAppSessionRejection(code) ? "rejected" : "unreachable",
-        this.now(),
-        code,
-      );
+      outcome = {
+        status: isWhatsAppSessionRejection(code) ? "rejected" : "unreachable",
+        errorCode: code,
+      };
     } finally {
       clearTimeout(operation.timer);
       if (this.currentPrimaryWhatsAppVerification(id, operation)) {
         this.primaryWhatsAppVerificationOperations.delete(id);
+        if (outcome !== null) {
+          setWhatsAppVerificationResult(
+            this.primaryWhatsAppSessionState(id),
+            outcome.status,
+            this.now(),
+            outcome.errorCode,
+          );
+        }
       }
     }
   }
@@ -1933,6 +1959,25 @@ export class ChannelSetupService {
         });
         if (!this.currentPrimaryWhatsApp(id, operation) || operation.cancelled) {
           return;
+        }
+        const verification = this.primaryWhatsAppSessionState(id);
+        verification.status = "checking";
+        verification.errorCode = null;
+        const status = await this.whatsapp.probe({
+          authFolder,
+          signal: operation.controller.signal,
+        });
+        if (!this.currentPrimaryWhatsApp(id, operation) || operation.cancelled) {
+          return;
+        }
+        setWhatsAppVerificationResult(
+          verification,
+          status,
+          this.now(),
+          status === "rejected" ? "CHANNEL_WHATSAPP_SESSION_REJECTED" : null,
+        );
+        if (status === "rejected") {
+          throw blocked("CHANNEL_WHATSAPP_SESSION_REJECTED");
         }
         const identity = await readWhatsAppAuthIdentity(authFolder);
         await this.assertDistinctPrimaryWhatsAppIdentity(id, identity.jids);
@@ -2292,13 +2337,28 @@ export class ChannelSetupService {
       setPairingState(this.whatsappState[role], "idle");
       return;
     }
-    setPairingState(this.whatsappState[role], "paired");
+    const verification = this.whatsappVerificationState[role];
+    verification.status = "checking";
+    verification.errorCode = null;
+    const status = await this.whatsapp.probe({
+      authFolder: folders.authFolder,
+      signal: operation.controller.signal,
+    });
+    if (!this.currentWhatsApp(role, operation)) return;
+    if (operation.cancelled) {
+      setPairingState(this.whatsappState[role], "idle");
+      return;
+    }
     setWhatsAppVerificationResult(
-      this.whatsappVerificationState[role],
-      "accepted",
+      verification,
+      status,
       this.now(),
-      null,
+      status === "rejected" ? "CHANNEL_WHATSAPP_SESSION_REJECTED" : null,
     );
+    if (status === "rejected") {
+      throw blocked("CHANNEL_WHATSAPP_SESSION_REJECTED");
+    }
+    setPairingState(this.whatsappState[role], "paired");
   }
 
   private async runWhatsAppRevoke(
@@ -2682,7 +2742,16 @@ async function openWhatsAppSocket(authFolder: string): Promise<WhatsAppConnectio
   socket.ev.on("creds.update", () => {
     write = write.then(saveCreds, saveCreds);
   });
-  return { socket, authWrite: () => write };
+  return {
+    socket,
+    authWrite: async () => {
+      let pending: Promise<void>;
+      do {
+        pending = write;
+        await pending;
+      } while (pending !== write);
+    },
+  };
 }
 
 function waitForWhatsAppConnection(

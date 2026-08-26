@@ -10,13 +10,13 @@ describe("ModelProfileRegistry", () => {
   it("mengikat capability ke provider + model tanpa tebakan nama", () => {
     const registry = new ModelProfileRegistry([
       profile("openrouter", "vendor/model"),
-      profile("google-ai-studio", "vendor/model"),
+      profile("gmi-serving", "vendor/model"),
     ]);
 
     assert.equal(registry.require("openrouter", "vendor/model").provider, "openrouter");
     assert.equal(
-      registry.require("google-ai-studio", "vendor/model").provider,
-      "google-ai-studio",
+      registry.require("gmi-serving", "vendor/model").provider,
+      "gmi-serving",
     );
     assert.equal(registry.get("openrouter", "vendor/model-plus"), null);
     assert.throws(
@@ -40,6 +40,18 @@ describe("ModelProfileRegistry", () => {
   });
 
   it("menolak kombinasi reasoning dan limit yang tidak sah", () => {
+    assert.throws(
+      () => new ModelProfileRegistry([{
+        ...profile("gmi-serving", "model-a"),
+        reasoning: {
+          mandatory: false,
+          defaultEffort: "medium",
+          supportedEfforts: ["low", "medium", "high"],
+          wireFormat: "openrouter-reasoning",
+        },
+      }]),
+      /tidak cocok/u,
+    );
     assert.throws(
       () => new ModelProfileRegistry([{
         ...profile("openrouter", "model-a"),
@@ -115,6 +127,8 @@ function profile(provider: string, id: string): ModelProfile {
       namedToolChoice: true,
       structuredOutput: true,
       temperature: true,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: true,

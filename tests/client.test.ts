@@ -720,28 +720,28 @@ describe("AiClient", () => {
     );
   });
 
-  it("menyerialisasi effort Google tanpa field OpenRouter", async () => {
+  it("menyerialisasi effort OpenAI-compatible tanpa field OpenRouter", async () => {
     let body: Record<string, unknown> | null = null;
     globalThis.fetch = async (_input, init) => {
       body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return chatResponse("selesai");
     };
     const registry = modelProfiles(
-      "google-ai-studio",
+      "gmi-serving",
       "openai-reasoning-effort",
     );
     const execution = new ExecutionPolicy().decide({
       tier: "cheap",
       role: "classifier",
       workClass: "mechanical",
-      profile: registry.require("google-ai-studio", "model-uji"),
+      profile: registry.require("gmi-serving", "model-uji"),
       maxOutputTokens: 128,
       deadlineMs: 2_000,
     });
     const client = new AiClient({
       baseUrl: "https://example.invalid",
       keys: new ApiKeyPool(["kunci-uji"]),
-      providerId: "google-ai-studio",
+      providerId: "gmi-serving",
       modelProfiles: registry,
     });
 
@@ -781,6 +781,8 @@ describe("AiClient", () => {
         namedToolChoice: false,
         structuredOutput: true,
         temperature: false,
+        promptCaching: false,
+        imageInput: false,
       },
       continuation: {
         preserveReasoning: true,
@@ -830,7 +832,7 @@ describe("AiClient", () => {
     const client = new AiClient({
       baseUrl: "https://example.invalid",
       keys: new ApiKeyPool(["kunci-uji"]),
-      providerId: "google-ai-studio",
+      providerId: "provider-a",
       attemptObserver: {
         startAttempt: async () => {
           attemptStarts += 1;
@@ -922,9 +924,9 @@ describe("AiClient", () => {
       return chatResponse("tidak boleh tercapai");
     };
     const base = modelProfiles(
-      "google-ai-studio",
+      "gmi-serving",
       "openai-reasoning-effort",
-    ).require("google-ai-studio", "model-uji");
+    ).require("gmi-serving", "model-uji");
     const noTools = new ModelProfileRegistry([{
       ...base,
       supports: {
@@ -933,6 +935,8 @@ describe("AiClient", () => {
         namedToolChoice: false,
         structuredOutput: false,
         temperature: true,
+        promptCaching: false,
+        imageInput: false,
       },
       contextWindow: 1,
       maxOutputTokens: 1,
@@ -940,7 +944,7 @@ describe("AiClient", () => {
     const toolClient = new AiClient({
       baseUrl: "https://example.invalid",
       keys: new ApiKeyPool(["kunci-uji"]),
-      providerId: "google-ai-studio",
+      providerId: "gmi-serving",
       modelProfiles: noTools,
     });
     await assert.rejects(
@@ -956,7 +960,7 @@ describe("AiClient", () => {
     const textClient = new AiClient({
       baseUrl: "https://example.invalid",
       keys: new ApiKeyPool(["kunci-uji"]),
-      providerId: "google-ai-studio",
+      providerId: "gmi-serving",
       modelProfiles: tinyOutput,
     });
     await assert.rejects(
@@ -987,9 +991,9 @@ describe("AiClient", () => {
     const client = new AiClient({
       baseUrl: "https://example.invalid",
       keys,
-      providerId: "google-ai-studio",
+      providerId: "gmi-serving",
       modelProfiles: modelProfiles(
-        "google-ai-studio",
+        "gmi-serving",
         "openai-reasoning-effort",
       ),
       attemptObserver: {
@@ -1186,21 +1190,21 @@ describe("AiClient", () => {
       return chatResponse("selesai");
     };
     const registry = modelProfiles(
-      "google-ai-studio",
+      "gmi-serving",
       "openai-reasoning-effort",
     );
     const execution = new ExecutionPolicy().decide({
       tier: "cheap",
       role: "classifier",
       workClass: "mechanical",
-      profile: registry.require("google-ai-studio", "model-uji"),
+      profile: registry.require("gmi-serving", "model-uji"),
       maxOutputTokens: 128,
       deadlineMs: 2_000,
     });
     const client = new AiClient({
       baseUrl: "https://example.invalid",
       keys: new ApiKeyPool(["kunci-1", "kunci-2"]),
-      providerId: "google-ai-studio",
+      providerId: "gmi-serving",
       modelProfiles: registry,
     });
 
@@ -1997,6 +2001,8 @@ describe("AiClient", () => {
           namedToolChoice: true,
           structuredOutput: true,
           temperature: true,
+          promptCaching: false,
+          imageInput: false,
         },
         continuation: {
           preserveReasoning: false,
@@ -2021,6 +2027,8 @@ describe("AiClient", () => {
           namedToolChoice: false,
           structuredOutput: true,
           temperature: false,
+          promptCaching: false,
+          imageInput: false,
         },
         continuation: {
           preserveReasoning: true,
@@ -2154,6 +2162,8 @@ function modelProfiles(
       namedToolChoice: true,
       structuredOutput: true,
       temperature: true,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: true,

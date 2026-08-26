@@ -182,6 +182,11 @@ const LOCAL_ONLY_PATTERNS = [
 ];
 const RECALL_PATTERNS = [
   /\b(ingat|pernah|sebelumnya|yang lalu|waktu itu|tadi kita|ceritain dulu)\b/u,
+  /\b(?:balik|kembali|lanjut(?:kan)?)\b.{0,80}\b(?:tadi|sebelumnya|yang lalu)\b/u,
+  /\b(?:kode|fungsi|rencana|jawaban|topik|pembahasan|obrolan)\b.{0,40}\b(?:tadi|sebelumnya)\b/u,
+  /\b(?:back|return|continue)\b.{0,80}\b(?:earlier|before|previous(?:ly)?)\b/u,
+  /\b(?:code|function|plan|answer|topic|discussion)\b.{0,40}\b(?:earlier|before|previous(?:ly)?)\b/u,
+  /\b(?:volver|volvamos|regresemos|continuemos)\b.{0,80}\b(?:antes|anterior(?:mente)?)\b/u,
 ];
 const TEMPORAL_PATTERNS = [
   /\b(kapan|jadwal|sekarang|dulu|saat itu|sebelum|sesudah|berubah|terbaru)\b/u,

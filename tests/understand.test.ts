@@ -141,6 +141,64 @@ describe("pembacaan balasan model", () => {
     assert.equal(understanding?.task, null);
   });
 
+  it("merekonsiliasi intent generik bila semantic save explicit membawa payload lengkap", () => {
+    const understanding = parseUnderstanding(JSON.stringify({
+      intent: "request",
+      taskAction: "save",
+      task: {
+        title: "Kembali mengerjakan slide hipotesis",
+        dueAt: null,
+        remindAt: "2026-08-26T16:00:00+07:00",
+        importance: 2,
+      },
+      semanticOperation: {
+        version: 1,
+        domain: "task",
+        operation: "save",
+        target: "kembali mengerjakan slide hipotesis",
+        subject: "self",
+        reference: "none",
+        explicitness: "explicit",
+        evidence: "ingatkan aku 25 menit lagi untuk kembali mengerjakan slide hipotesis",
+        confidence: 0.97,
+      },
+    }));
+
+    assert.equal(understanding?.intent, "task");
+    assert.equal(understanding?.taskAction, "save");
+    assert.equal(
+      understanding?.task?.title,
+      "Kembali mengerjakan slide hipotesis",
+    );
+  });
+
+  it("menolak semantic save explicit yang tidak membawa payload task lengkap", () => {
+    const semanticOperation = {
+      version: 1,
+      domain: "task",
+      operation: "save",
+      target: "kembali mengerjakan slide hipotesis",
+      subject: "self",
+      reference: "none",
+      explicitness: "explicit",
+      evidence: "ingatkan aku nanti",
+      confidence: 0.97,
+    };
+
+    assert.equal(parseUnderstanding(JSON.stringify({
+      intent: "request",
+      taskAction: null,
+      task: null,
+      semanticOperation,
+    })), null);
+    assert.equal(parseUnderstanding(JSON.stringify({
+      intent: "task",
+      taskAction: "save",
+      task: null,
+      semanticOperation,
+    })), null);
+  });
+
   it("mempertahankan payload jadwal khusus untuk semantic task update", () => {
     const understanding = parseUnderstanding(
       JSON.stringify({
@@ -446,6 +504,91 @@ describe("pembacaan balasan model", () => {
       }))?.riskHint.level,
       "possible",
     );
+  });
+
+  it("tidak melebur evidence dari dua klausa dengan horizon berbeda", () => {
+    const understanding = parseUnderstanding(JSON.stringify({
+      intent: "smalltalk",
+      memories: [{
+        kind: "preference",
+        content:
+          "Mudah buntu saat slide penuh teks dan ingin keputusan utama.",
+        sourceEvidence:
+          "aku gampang buntu kalau slide penuh teks. Untuk presentasi ini aku mau keputusan utama dulu",
+        sourceSubject: "self",
+        durability: "bounded",
+      }],
+    }));
+
+    assert.deepEqual(understanding?.memories, []);
+  });
+
+  it("membaca koreksi beberapa ingatan tanpa mengubah mixed turn menjadi form edit", () => {
+    const understanding = parseUnderstanding(JSON.stringify({
+      intent: "memory",
+      memoryAction: "edit",
+      memoryTarget: null,
+      memories: [{
+        kind: "preference",
+        content: "Lebih mudah memahami penjelasan teknis bila inti didahulukan",
+        sourceEvidence:
+          "penjelasan teknis panjang membuatku kehilangan inti",
+        sourceSubject: "self",
+        durability: "durable",
+      }],
+      memoryRetractions: [
+        {
+          target: "preferensi bahasa Inggris",
+          sourceEvidence:
+            "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+          explicitness: "explicit",
+          confidence: 0.96,
+        },
+        {
+          target: "kebun sebagai keadaan permanen",
+          sourceEvidence: "Kebun itu hanya proyek yang sedang dibahas",
+          explicitness: "explicit",
+          confidence: 0.94,
+        },
+      ],
+    }));
+
+    assert.equal(understanding?.intent, "smalltalk");
+    assert.equal(understanding?.memoryAction, null);
+    assert.equal(understanding?.memoryRetractions?.length, 2);
+    assert.equal(
+      understanding?.memoryRetractions?.[0]?.target,
+      "preferensi bahasa Inggris",
+    );
+  });
+
+  it("membuang retraction yang implicit, multi-klausa, atau confidence-nya rusak", () => {
+    const understanding = parseUnderstanding(JSON.stringify({
+      intent: "smalltalk",
+      memories: [],
+      memoryRetractions: [
+        {
+          target: "bahasa Inggris",
+          sourceEvidence: "Itu cuma tadi",
+          explicitness: "implicit",
+          confidence: 0.99,
+        },
+        {
+          target: "kebun",
+          sourceEvidence: "Kebun hanya proyek ini. Jangan jadikan profil",
+          explicitness: "explicit",
+          confidence: 0.99,
+        },
+        {
+          target: "preferensi lama",
+          sourceEvidence: "Preferensi itu keliru",
+          explicitness: "explicit",
+          confidence: 2,
+        },
+      ],
+    }));
+
+    assert.equal(understanding?.memoryRetractions, undefined);
   });
 
   it("membaca assessment routing tertutup tanpa memberi authority model", () => {

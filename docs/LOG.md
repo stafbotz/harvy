@@ -44,6 +44,106 @@ Arsipkan whole entry tertua ke `docs/log/` ketika file ini melewati 24 KiB atau
 12 entri material. Jangan memecah entri dan jangan memindahkan entri yang masih
 memiliki perubahan pengguna yang belum diselesaikan.
 
+## 2026-08-27 — Coding berorientasi goal dan bootstrap GitHub exact
+
+Scope: ProjectWorkspace/CodingRun, project intent, GitHub App Broker, Console
+setup coding, verifikasi session WhatsApp, tes, invariant, ADR, dan status.
+
+Changed: project kini dapat dimulai kosong dan mempunyai ProjectGoal durable,
+acceptance criteria, milestone, blocker, evidence, serta skill deklaratif
+versioned tanpa authority baru. CodingRun mengikat brief/evidence ke goal dan
+menjalankan challenger+verifier read-only sebelum satu integration writer.
+Console setup menambah langkah Komputer kerja dan GitHub dengan secret
+non-reflective serta aktivasi berbasis health/receipt. Repository private kosong
+berhenti pada `bootstrap_required`; konfirmasi exact membuat satu README
+code-owned melalui WAL/idempotency/reconciliation sebelum provisioning. Race UI
+verifikasi WhatsApp ditutup dengan melepas operation fence sebelum status
+terminal dapat terlihat.
+
+Verified: tes integrasi terarah PASS 95/95; smoke Edge nyata PASS pada desktop
+dan mobile termasuk isi/simpan/verifikasi form Compute+GitHub tanpa refleksi
+secret; `npm run check` PASS; `npm test` PASS 1.948/1.948 dalam 236 suite; dan
+`npm run context:check` PASS; `git diff --check` PASS dengan warning line-ending
+Windows.
+
+Not verified: sandbox hostile-code pada Linux non-root nyata; GitHub App,
+bootstrap repository kosong, branch, push, dan draft PR pada remote nonkritis;
+serta coding end-to-end dari akun Telegram/WhatsApp nyata. Test GitHub memakai
+broker/API palsu dan Git object lokal, bukan bukti efek remote.
+
+## 2026-08-26 — Adaptive live mempersempit routing dan potret memori
+
+Scope: percakapan privat Telegram/WhatsApp, model routing, AgentRun admission,
+auto-memory, `/memori`, kualitas keluaran, live exploratory tester, deadline
+Agent Harness, tes, dan kontrak subsystem.
+
+Changed: planning durable kini memerlukan current intent request, assessment
+tepercaya, execution medium/heavy, serta tool execution/external; analysis tanpa
+tool dan internal-state model tidak lagi membuka AgentRun. Kandidat hypothetical,
+current work, dan negated remember ditolak. Balasan tanpa receipt tidak boleh
+mengklaim storage/delete, dan `/memori` hanya memakai primary source yang dapat
+dikendalikan pengguna—history/episode-only tetap konteks percakapan, bukan
+memori. Prosa yang menyisipkan writing system tak diminta diregenerasi sekali
+lalu dibersihkan sempit. Tie deadline invocation dan RunBudget kini tetap
+diatribusikan ke invocation walau dua pembacaan clock berlomba.
+
+Verified: akun Telegram tester benar-benar menjalankan perjalanan adaptif; pesan
+berikutnya dipilih setelah membaca respons Harvy. Focused rerun menuntaskan
+tugas nyata, topic shift, explicit usage, context return, correction, dan
+`/memori` empty tanpa wrong AgentRun atau usage tak diminta. Assessment
+content-free final: usefulness 5, naturalness 4, initiative 4,
+non-repetition 5, UI clarity 5, context coherence 5, correction handling 5.
+Suite perubahan privat PASS 263/263, Agent Harness PASS 28/28 termasuk clock
+race deterministik, `npm run check` PASS, `npm test` PASS 1.896/1.896 dalam 231
+suite, `npm run context:check` PASS dengan warning freshness nonfatal, dan
+`git diff --check` PASS dengan warning line-ending Windows.
+
+Not verified: current build WhatsApp tidak mencapai satu pesan karena session
+akun tester ditolak transport dengan connection closed 401; akun Harvy/runtime
+tidak disentuh oleh run gagal itu. Dogfood tujuh hari, image melalui kanal,
+private coding/GitHub live, dan kalibrasi bahasa luas juga belum selesai.
+
+Next: pasangkan ulang session akun WhatsApp tester lalu ulangi journey adaptif
+yang sama tanpa expected transcript.
+
+## 2026-08-25 — Testing beralih ke GMI tanpa provider fallback
+
+Scope: konfigurasi AI, migrasi environment lokal, evaluator/probe, disclosure
+privasi, model profile, dan dokumentasi operasi.
+
+Changed: Google AI Studio dan AlwaysCodex dicabut dari composition testing;
+runtime, probe, dan evaluator kini selalu memakai satu provider aktif tanpa
+flag fallback. Mode testing memakai endpoint OpenAI-compatible GMI Serving,
+`GMI_API_KEY`, dan target `MiniMaxAI/MiniMax-M3`. Migrasi lokal atomik menghapus
+enam entri provider lama tanpa memindahkan atau mencetak secret, serta kini
+menulis ulang atau membuang komentar konfigurasi legacy agar `.env` tidak
+menampilkan setup yang sudah dicabut. Profile live Google dihapus; sesudah
+smoke exact lulus, profile code-owned MiniMax hanya terbuka untuk endpoint resmi
+GMI dan model exact, sedangkan gateway/model lain tetap compatibility.
+Dokumentasi/status aktif,
+label fixture generik, dan provider-wire binding juga diselaraskan ke GMI;
+penyebutan lama hanya dipertahankan pada migrasi, denylist, ledger historis,
+serta histori keputusan yang ditandai superseded.
+Perubahan penyedia, cache otomatis, dan input gambar transient menaikkan consent
+privat ke v10 dan notice grup ke v11 dengan disclosure satu layanan AI utama
+tanpa pengiriman ulang ke provider cadangan.
+
+Verified: migrasi `.env` menghapus keenam entri lama dan meninggalkan slot GMI
+kosong; suite terarah PASS 134/134, tes WhatsApp privat PASS 47/47,
+suite cleanup provider PASS 89/89, `npm run check` PASS, dan `npm test` PASS
+1.864/1.864 dalam 227 suite. Dua
+artefak build Google yang stale dihapus sebelum run penuh terakhir sehingga
+hasil hanya berasal dari source aktif. Setelah key tersedia lokal,
+`npm run acceptance:provider` lulus terhadap endpoint/model exact untuk basic,
+structured JSON, native tool+continuation, terminal/truncation, context reject,
+timeout, automatic cache reuse, dan input gambar.
+
+Not verified: rotasi/retry lintas key karena hanya satu key tersedia, SLA dan
+retensi provider, serta input gambar melalui kanal Telegram/WhatsApp nyata.
+
+Next: ukur latency/kualitas lewat dogfood kanal dan ulangi smoke rotation hanya
+bila key uji kedua tersedia.
+
 ## 2026-08-25 — Console mengelola credential kanal dan membuktikan session
 
 Scope: Channel Setup, bootstrap Telegram, Console Kanal, backup lokal, dan
@@ -279,102 +379,3 @@ Next: pair ulang WhatsApp A lalu rerun B→A, tutup defect kualitas eksploratif,
 kemudian mulai dogfood tujuh hari pada tiga surface produk dan tiga wawancara;
 siapkan host Linux, repository GitHub nonkritis, fault window send/receipt,
 peserta grup tambahan, serta backup eksternal sebelum peluncuran publik.
-
-## 2026-08-22 — Hardening boundary provider, BYOK, dan GitHub broker
-
-Scope: HTTP response boundary chat/embedding/GitHub, konfigurasi origin AI,
-SecretStore BYOK, ledger file credential broker, downloader Telegram, tes, dan
-kontrak subsystem terkait.
-
-Changed: respons sukses provider chat dan embedding serta JSON GitHub kini
-diputus pada hard byte cap sebelum buffering dan di-decode sebagai UTF-8/JSON
-strict; body error/redirect yang tidak dipakai dibatalkan. Klien GitHub
-credential-domain mempunyai watchdog internal dan selalu melepas archive
-reader. `AI_BASE_URL` primary gagal startup bila bukan HTTPS/loopback aman atau
-membawa credential/query/fragment/path completion penuh. SecretStore tidak lagi
-mempublikasikan cache sebelum replacement durable berhasil, mengoaleskan initial
-read tanpa menyerialisasi cache hit, dan menolak ref/ciphertext rusak serta key
-prototype. Ledger broker memakai primitive atomik-durable bersama dengan
-cleanup temporary/directory sync. Downloader ZIP Telegram juga selalu melepas
-reader lock. Model role, reasoning budget, context, tool eligibility, dan
-quality ceiling tidak diturunkan.
-
-Verified: suite boundary/economy/GitHub terarah PASS 114/114; `npm run check`
-PASS; `npm test` PASS 1.663/1.663 dalam 208 suite termasuk build; `npm audit`
-melaporkan 0 advisory pada 155 dependency; `npm run context:check` PASS dengan
-freshness warning nonfatal untuk `CURRENT.md`; `git diff --check` PASS selain
-peringatan line-ending Windows.
-
-Not verified: provider, Telegram/WhatsApp, GitHub repository, atau sandbox Linux
-live; hostile-network penetration test; crash/power-loss fisik; deployment
-multi-instance; dan advisory dependency yang belum dipublikasikan.
-
-## 2026-08-22 — Semantic operation, transient context, dan menu terpadu
-
-Scope: Understanding, semantic conversation progress, operasi
-usage/task/memory/session, adapter percakapan pribadi Telegram dan WhatsApp,
-context compiler, command catalog, observability, tes, ADR, dan status
-subsystem.
-
-Changed: natural free text kini dipetakan satu kali ke `SemanticOperation`
-tertutup, lalu code tetap memegang authority dengan evidence dari turn aktif,
-explicitness, confidence, subject, dan target yang cocok. Exact slash command
-tetap deterministik. Follow-up seperti `detailnya` dapat merujuk surface usage
-yang berhasil dikirim melalui transient interaction context yang content-free,
-process-local, TTL-scoped, bounded maksimal tiga, dan baru dicatat setelah
-delivery; state akun selalu dibaca ulang. Konteks jawaban percakapan biasa tidak
-lagi memuat katalog capability global, sedangkan planner agent tetap menerima
-subset callable. `/menu` Telegram dan menu teks WhatsApp kini berasal dari satu
-katalog user-facing; help tetap surface terpisah. Routing role-aware,
-specialist orchestration, serta batas authority tidak diubah.
-
-Progress note privat kini memakai `publicFocus` semantic yang dihasilkan di
-understanding call yang sama, melalui schema exact, panjang terbatas, serta
-validasi ulang terhadap reasoning privat, jargon internal, markup, injection,
-dan credential. Phase tetap code-owned dari execution/capability/interruption
-yang benar-benar aktif; Telegram dan WhatsApp baru membawa focus transient
-setelah triase final biasa ke renderer core yang sama, tanpa history, memory,
-checkpoint, log isi, atau call model kosmetik. Jalur safety menahan focus,
-sedangkan focus yang hilang/tidak sah memakai copy generik sebagai fallback
-terakhir.
-
-Verified: suite terarah perubahan lama PASS 339/339 dalam 23 suite dan recheck
-hardening final lama PASS 52/52 dalam 4 suite; progress terarah PASS 186/186
-dalam 9 suite; `npm run check` PASS; `npm test` PASS 1.656/1.656 dalam 206 suite
-termasuk build; `npm run context:check` PASS.
-
-Not verified: perilaku multilingual model/provider live, akun Telegram atau
-WhatsApp nyata, UX setelah process restart (transient context sengaja hilang),
-dan latency/kualitas `publicFocus` provider live. Evaluasi yang dijalankan
-bersifat unit/sintetis, bukan bukti live provider.
-
-## 2026-08-22 — Specialist production opt-in dan role-aware cleanup
-
-Scope: model policy/config/profile, Conversation Agent Runtime, specialist
-delegation/composition, RunBudget handoff, safety role contract, tes, ADR, status,
-dan source instruksi repository.
-
-Changed: consolidated implementation spec lama dihapus agar mapping model
-historis tidak lagi terbaca sebagai desain aktif. Composition production kini
-mempunyai specialist graph opt-in yang default-off dan gagal tertutup tanpa
-exact model berbeda serta profile explicit untuk role kritis. Saat aktif,
-specialist menggantikan parallel legacy; root orchestrator mempertahankan
-konteks relevan, sedangkan worker hanya menerima WorkBrief minimum-necessary
-tanpa credential, capability, raw context verbatim, tool, recursion, atau
-continuation root. Specialist memakai RunBudget root yang sama, actual task
-signals mengalahkan default role, dan invocation exact tidak memakai provider
-fallback. Intelligence safety dapat dipilih code-owned tanpa menaikkan
-authority; default safety belum berubah.
-
-Verified: suite terarah luas PASS 155/155 dalam 18 suite dan recheck specialist
-final PASS 37/37 dalam 5 suite; `npm run check` PASS; `npm test` PASS
-1.626/1.626 dalam 204 suite termasuk build. Pencarian
-source tidak menemukan Terra sebagai runtime hardcode dan tidak menemukan
-reference ke spec yang dihapus.
-
-Not verified: model/provider live, kualitas atau diversity model deployment,
-Telegram production, harga/latency, dan konfigurasi gate aktif nyata.
-
-Next: jalankan provider smoke dengan exact role bindings/profile yang disetujui
-sebelum mengaktifkan gate. Integrasi ResourceRequest scheduler dan planner tool
-discovery tetap pekerjaan terpisah.

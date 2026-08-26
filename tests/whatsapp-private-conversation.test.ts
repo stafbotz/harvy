@@ -33,12 +33,19 @@ import {
 
 describe("WhatsAppPrivateConversation", () => {
   it("aritmetika sederhana memberi hasil exact tanpa model di WhatsApp", async () => {
-    const harness = createHarness(true);
+    const harness = createHarness(true, { failContextRead: true });
     const response = await harness.service.handle(
       message("berapa setengah ditambah seperempat?", "hitung-exact"),
     ) as WhatsAppPrivateReply;
 
     assert.equal(response.text, "Hasilnya 3/4.");
+    assert.equal(harness.understandCalls, 0);
+
+    const numbersOnly = await harness.service.handle(
+      message("Sekarang jawab 17+28 dengan angka saja.", "hitung-angka-saja"),
+    ) as WhatsAppPrivateReply;
+
+    assert.equal(numbersOnly.text, "45");
     assert.equal(harness.understandCalls, 0);
   });
 
@@ -147,6 +154,77 @@ describe("WhatsAppPrivateConversation", () => {
     assert.equal(harness.delivered, 1);
     assert.equal(harness.discarded, 0);
     assert.deepEqual(harness.turnOutcomes, ["completed"]);
+  });
+
+  it("tidak mengunduh gambar sebelum consent dan meminta pengguna mengirim ulang", async () => {
+    let loads = 0;
+    const harness = createHarness(false);
+    const response = await harness.service.handle({
+      ...message("", "image-before-consent"),
+      image: {
+        mediaType: "image/png",
+        declaredBytes: 8,
+        data: Buffer.alloc(0),
+        loadData: async () => {
+          loads += 1;
+          return Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+        },
+      },
+    });
+
+    assert.equal(loads, 0);
+    assert.match(privateReplyText(response), /kirim ulang gambarnya/iu);
+    assert.equal(harness.understandCalls, 0);
+    assert.equal(harness.history.length, 0);
+
+    const accepted = await harness.service.handle(message(
+      "SETUJU",
+      "image-consent-accepted",
+    ));
+    assert.equal(harness.understandCalls, 0);
+    assert.doesNotMatch(privateReplyText(accepted), /Jawaban privat WhatsApp/u);
+  });
+
+  it("meneruskan gambar sesudah consent tanpa menyimpan byte ke history", async () => {
+    let loads = 0;
+    let runtimeSeen: ConversationRuntime | null = null;
+    const harness = createHarness(true, {
+      reply: async (_text, runtime) => {
+        runtimeSeen = runtime;
+        return "Aku melihat bidang berwarna pada gambar.";
+      },
+    });
+    const response = await harness.service.handle({
+      ...message("Warna dominannya apa?", "image-after-consent"),
+      image: {
+        mediaType: "image/png",
+        declaredBytes: 8,
+        data: Buffer.alloc(0),
+        loadData: async () => {
+          loads += 1;
+          return Buffer.from([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]);
+        },
+      },
+    }) as WhatsAppPrivateReply;
+
+    assert.equal(loads, 1);
+    assert.equal(
+      (runtimeSeen as ConversationRuntime | null)?.images?.length,
+      1,
+    );
+    assert.equal(
+      (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.mediaType,
+      "image/png",
+    );
+    assert.equal(
+      (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.data.byteLength,
+      8,
+    );
+    assert.deepEqual(harness.history.map((turn) => turn.text), [
+      "Warna dominannya apa?",
+    ]);
+    assert.doesNotMatch(JSON.stringify(harness.history), /iVBOR|89504e47/iu);
+    await response.onDelivered?.();
   });
 
   it("meneruskan semantic public focus melalui runtime core yang sama", async () => {
@@ -611,13 +689,10 @@ describe("WhatsAppPrivateConversation", () => {
       },
       agent: async () => {
         agentCalls += 1;
-        return {
-          status: "completed",
-          reply: "Penilaian kesiapan produk berdasarkan bukti live.",
-          checkpoint: {} as never,
-          trace: [],
-        };
+        throw new Error("internal_state model tanpa preflight bukan authority tool");
       },
+      reply: async () =>
+        "Penilaian kesiapan produk berdasarkan bukti live.",
     });
 
     const result = await harness.service.handle(
@@ -625,7 +700,7 @@ describe("WhatsAppPrivateConversation", () => {
     );
 
     assert.equal(usageRead, 0);
-    assert.equal(agentCalls, 1);
+    assert.equal(agentCalls, 0);
     assert.match(privateReplyText(result), /Penilaian kesiapan produk/u);
     assert.doesNotMatch(privateReplyText(result), /Penggunaan Harvy/u);
   });
@@ -897,7 +972,7 @@ describe("WhatsAppPrivateConversation", () => {
     assert.match(String(scheduled), /bertanya sekali/u);
     assert.equal(
       harness.activeSession?.checkIn?.at,
-      "2026-08-25T12:00:00.000Z",
+      "2099-08-25T12:00:00.000Z",
     );
 
     const stopped = await harness.service.handle(message(
@@ -999,6 +1074,290 @@ describe("WhatsAppPrivateConversation", () => {
 
     assert.equal(agentCalls, 1);
     assert.match(privateReplyText(planned), /Agent Runtime/u);
+  });
+
+  it("tidak menjalankan agent ketika pengguna hanya menceritakan pekerjaan rumit", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = createHarness(true, {
+      understand: async () => ({
+        ...modelPlanningUnderstanding(),
+        intent: "feeling",
+        taskAction: "offer",
+        routingAssessment: {
+          complexity: "normal",
+          ambiguity: "medium",
+          planningRequired: true,
+          emotionalNuance: "high",
+          executionSize: "medium",
+          factualStakes: "medium",
+          transformationMechanical: false,
+          toolNeed: "none",
+          confidence: 0.85,
+        },
+        suggestedActions: ["listen", "clarify", "prioritize"],
+      }),
+      agent: async () => {
+        agentCalls += 1;
+        throw new Error("konteks pekerjaan bukan authority AgentRun");
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Kita tetap ngobrol dan urai bagian yang terasa paling berat.";
+      },
+    });
+
+    const response = await harness.service.handle(message(
+      "Aku tahu harus mulai dari meninjau catatan temuan produk lalu memilih tiga masalah paling penting. Yang berat itu catatannya berantakan dan aku takut salah memprioritaskan.",
+      "live-wrong-route-regression",
+    ));
+
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
+    assert.match(privateReplyText(response), /tetap ngobrol/iu);
+  });
+
+  it("menjawab planning tanpa tool sebagai chat biasa", async () => {
+    let agentCalls = 0;
+    let replyCalls = 0;
+    const harness = createHarness(true, {
+      understand: async () => ({
+        ...modelPlanningUnderstanding(),
+        routingAssessment: {
+          ...modelPlanningUnderstanding().routingAssessment!,
+          complexity: "normal",
+          planningRequired: true,
+          executionSize: "medium",
+          toolNeed: "none",
+        },
+      }),
+      agent: async () => {
+        agentCalls += 1;
+        throw new Error("planning jawaban chat bukan authority tool/AgentRun");
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Tool salah harus diprioritaskan karena merusak kepercayaan.";
+      },
+    });
+
+    const response = await harness.service.handle(message(
+      "Dari prioritas pertama, sebutkan satu eksperimen kecil untuk membuktikan routing tool lebih aman.",
+      "planning-without-tool",
+    ));
+
+    assert.equal(agentCalls, 0);
+    assert.equal(replyCalls, 1);
+    assert.match(privateReplyText(response), /merusak kepercayaan/iu);
+    assert.doesNotMatch(privateReplyText(response), /Menunggu giliran kerja/iu);
+  });
+
+  it("menuntaskan permintaan utama ketika remember model bertentangan dengan negasi", async () => {
+    const text =
+      "Koreksi: ini hanya konteks pekerjaan sekarang. Jangan ingat untuk ke depan. Tolong langsung urutkan tiga prioritas.";
+    let replyCalls = 0;
+    const harness = createHarness(true, {
+      understand: async () => ({
+        ...modelPlanningUnderstanding(),
+        memoryAction: "remember",
+        memories: [{
+          kind: "preference",
+          content: "Selalu membahas pekerjaan tanpa tool",
+        }],
+        semanticOperation: {
+          version: 1,
+          domain: "memory",
+          operation: "remember",
+          target: text,
+          subject: "self",
+          reference: "none",
+          explicitness: "explicit",
+          evidence: text,
+          confidence: 0.95,
+        },
+        routingAssessment: {
+          ...modelPlanningUnderstanding().routingAssessment!,
+          complexity: "normal",
+          planningRequired: true,
+          executionSize: "medium",
+          toolNeed: "none",
+        },
+      }),
+      agent: async () => {
+        throw new Error("negasi memory tidak boleh membuka agent");
+      },
+      reply: async () => {
+        replyCalls += 1;
+        return "Permintaanmu sudah aku catat. Catatannya udah aku hapus.\n\nUrutannya: tool salah, onboarding, lalu kartu penggunaan.";
+      },
+    });
+
+    const before = harness.memoryCount;
+    const response = await harness.service.handle(message(
+      text,
+      "negative-memory-with-primary-request",
+    ));
+
+    assert.equal(harness.memoryCount, before);
+    assert.equal(replyCalls, 1);
+    assert.match(privateReplyText(response), /tool salah, onboarding/iu);
+    assert.doesNotMatch(privateReplyText(response), /udah aku hapus/iu);
+    assert.doesNotMatch(privateReplyText(response), /sudah aku catat/iu);
+    assert.doesNotMatch(
+      privateReplyText(response),
+      /belum bisa menyimpan|ingat untuk ke depan|📍/iu,
+    );
+  });
+
+  it("mencabut dua ingatan lama dan menyimpan koreksi grounded dalam satu turn WhatsApp", async () => {
+    const ownerId = "whatsapp-user:628777777777@s.whatsapp.net";
+    const text = [
+      "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap.",
+      "Kebun itu hanya proyek yang sedang dibahas, bukan profilku.",
+      "Kalau penjelasan teknis panjang, aku sering kehilangan inti.",
+    ].join(" ");
+    const harness = createHarness(true, {
+      initialMemories: [
+        {
+          id: "old-english",
+          ownerId,
+          kind: "preference",
+          content: "Prefers coding conversations in English",
+          createdAt: "2026-08-23T00:00:00.000Z",
+          lastUsedAt: null,
+          expiresAt: null,
+        },
+        {
+          id: "old-garden",
+          ownerId,
+          kind: "context",
+          content: "Memiliki kebun kecil",
+          createdAt: "2026-08-24T00:00:00.000Z",
+          lastUsedAt: null,
+          expiresAt: null,
+        },
+      ],
+      understand: async () => ({
+        intent: "smalltalk",
+        taskAction: null,
+        memoryAction: "remember",
+        riskHint: NO_RISK_HINT,
+        safetySensitive: false,
+        needsStepByStep: false,
+        routingAssessment: null,
+        task: null,
+        memories: [
+          {
+            kind: "preference",
+            content:
+              "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+            sourceEvidence:
+              "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+            sourceSubject: "self",
+            durability: "durable",
+          },
+          {
+            kind: "preference",
+            content:
+              "Lebih mudah memahami penjelasan teknis bila inti didahulukan",
+            sourceEvidence:
+              "Kalau penjelasan teknis panjang, aku sering kehilangan inti",
+            sourceSubject: "self",
+            durability: "durable",
+          },
+        ],
+        memoryRetractions: [
+          {
+            target: "preferensi bahasa Inggris",
+            sourceEvidence:
+              "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+            explicitness: "explicit",
+            confidence: 0.97,
+          },
+          {
+            target: "garden project",
+            sourceEvidence:
+              "Kebun itu hanya proyek yang sedang dibahas, bukan profilku",
+            explicitness: "explicit",
+            confidence: 0.96,
+          },
+        ],
+        suggestedActions: [],
+        actionGoal: null,
+        controlAction: null,
+        sessionSignal: null,
+        semanticOperation: {
+          version: 1,
+          domain: "memory",
+          operation: "remember",
+          target:
+            "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+          subject: "self",
+          reference: "quoted",
+          explicitness: "explicit",
+          evidence:
+            "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+          confidence: 0.96,
+        },
+      }),
+      reply: async () =>
+        "Oke, dua ingatan lama itu sudah aku hapus. Pola penjelasanmu akan kuingat.",
+    });
+
+    const response = await harness.service.handle(message(
+      text,
+      "memory-retraction-mixed",
+    )) as WhatsAppPrivateReply;
+
+    assert.deepEqual(harness.memoryContents, [
+      "Suka belajar dengan contoh visual",
+      "Kalau penjelasan teknis panjang, aku sering kehilangan inti",
+    ]);
+    assert.equal(
+      harness.rememberedInputs.at(-1)?.content,
+      "Kalau penjelasan teknis panjang, aku sering kehilangan inti",
+    );
+    assert.match(response.text, /sudah aku hapus/iu);
+  });
+
+  it("menahan klaim penghapusan bila target koreksi tidak cocok dengan primary memory", async () => {
+    const text = "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap.";
+    const harness = createHarness(true, {
+      understand: async () => ({
+        intent: "smalltalk",
+        taskAction: null,
+        memoryAction: null,
+        riskHint: NO_RISK_HINT,
+        safetySensitive: false,
+        needsStepByStep: false,
+        routingAssessment: null,
+        task: null,
+        memories: [],
+        memoryRetractions: [{
+          target: "preferensi bahasa Inggris",
+          sourceEvidence:
+            "Bahasa Inggris tadi hanya untuk satu bagian, bukan preferensi tetap",
+          explicitness: "explicit",
+          confidence: 0.97,
+        }],
+        suggestedActions: [],
+        actionGoal: null,
+        controlAction: null,
+        sessionSignal: null,
+        semanticOperation: null,
+      }),
+      reply: async () =>
+        "Catatan bahasa Inggris itu sudah aku hapus. Kita lanjut pakai konteks sekarang.",
+    });
+
+    const response = await harness.service.handle(message(
+      text,
+      "memory-retraction-no-match",
+    ));
+
+    assert.doesNotMatch(privateReplyText(response), /sudah aku hapus/iu);
+    assert.match(privateReplyText(response), /lanjut pakai konteks/iu);
+    assert.equal(harness.memoryCount, 1);
   });
 
   it("sinyal langkah kecil semantik mengalahkan planning kecil di WhatsApp", async () => {
@@ -1768,6 +2127,8 @@ describe("WhatsAppPrivateConversation", () => {
 function createHarness(
   initialConsent: boolean,
   options: {
+    failContextRead?: boolean;
+    initialMemories?: MemoryItem[];
     noteTurnResponseFails?: boolean;
     interruptionRelation?: "addition" | "correction" | "redirect" |
       "independent";
@@ -1807,6 +2168,7 @@ function createHarness(
   readonly historySuspended: number;
   readonly memoriesSuspended: number;
   readonly memoryCount: number;
+  readonly memoryContents: string[];
   rememberedInputs: NewMemory[];
   readonly deletedAll: number;
   history: ConversationTurn[];
@@ -1834,15 +2196,18 @@ function createHarness(
   const taskItems: StudentTask[] = [];
   let activeSession: ActiveSession | null = null;
   let storedTimeZone: string | null = null;
-  const memoryItems: MemoryItem[] = [{
-    id: "memory-1",
-    ownerId: "whatsapp-user:628777777777@s.whatsapp.net",
-    kind: "preference",
-    content: "Suka belajar dengan contoh visual",
-    createdAt: "2026-08-22T00:00:00.000Z",
-    lastUsedAt: null,
-    expiresAt: null,
-  }];
+  const memoryItems: MemoryItem[] = [
+    {
+      id: "memory-1",
+      ownerId: "whatsapp-user:628777777777@s.whatsapp.net",
+      kind: "preference",
+      content: "Suka belajar dengan contoh visual",
+      createdAt: "2026-08-22T00:00:00.000Z",
+      lastUsedAt: null,
+      expiresAt: null,
+    },
+    ...(options.initialMemories ?? []).map((item) => ({ ...item })),
+  ];
   const rememberedInputs: NewMemory[] = [];
   const profile = (): UserProfile => ({
     ownerId: "whatsapp-user:628777777777@s.whatsapp.net",
@@ -1916,7 +2281,8 @@ function createHarness(
       },
       reviewReply: async () => true,
       deterministicTimeReply: () => "Sekarang waktu uji.",
-      understandDueDate: async () => new Date("2026-08-25T12:00:00.000Z"),
+      // Jauh di masa depan agar fixture tidak kedaluwarsa mengikuti jam mesin.
+      understandDueDate: async () => new Date("2099-08-25T12:00:00.000Z"),
       ...(options.agent ? { agent: options.agent } : {}),
       ...(options.presentOperation
         ? { presentOperation: options.presentOperation }
@@ -1926,7 +2292,12 @@ function createHarness(
         : {}),
     },
     history: {
-      context: async () => ({ summary: null, turns: [...history] }),
+      context: async () => {
+        if (options.failContextRead) {
+          throw new Error("aritmetika tidak boleh memuat history context");
+        }
+        return { summary: null, turns: [...history] };
+      },
       append: async (_ownerId: string, role: "user" | "harvy", text: string) => {
         sequence += 1;
         const turn = {
@@ -1945,7 +2316,12 @@ function createHarness(
       },
     },
     memories: {
-      relevantTo: async () => [],
+      relevantTo: async () => {
+        if (options.failContextRead) {
+          throw new Error("aritmetika tidak boleh memuat semantic memory");
+        }
+        return [];
+      },
       list: async () => [...memoryItems],
       forget: async (_ownerId: string, id: string) => {
         const index = memoryItems.findIndex((item) => item.id === id);
@@ -2202,6 +2578,9 @@ function createHarness(
     },
     get memoryCount() {
       return memoryItems.length;
+    },
+    get memoryContents() {
+      return memoryItems.map((item) => item.content);
     },
     get deletedAll() {
       return deletedAll;

@@ -146,15 +146,14 @@ const SCENARIOS: EnvironmentScenario[] = [
 ];
 
 async function runMultiEnvironmentEval() {
-  const allowFallback = process.argv.includes("--allow-fallback");
   const config = loadConfig();
-  const client = await createInstrumentedAiClient(config, "evaluation", allowFallback);
+  const client = await createInstrumentedAiClient(config, "evaluation");
   const conversation = new Conversation(client, config.ai, config.defaultTimezone);
   const groupConversation = new GroupConversation(client, config.ai);
 
   console.log(`=======================================================`);
   console.log(`=== HARVY MULTI-ENVIRONMENT & MULTI-TURN EVALUATOR ===`);
-  console.log(`Mode AI: ${config.ai.mode} | Fallback Allowed: ${allowFallback}`);
+  console.log(`Mode AI: ${config.ai.mode} | Fallback Allowed: false`);
   console.log(`Total Lingkungan: ${SCENARIOS.length}`);
   console.log(`=======================================================\n`);
 

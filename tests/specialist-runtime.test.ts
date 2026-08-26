@@ -122,6 +122,8 @@ function profile(id: string, orchestrator: boolean): ModelProfile {
       namedToolChoice: orchestrator,
       structuredOutput: true,
       temperature: true,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: false,

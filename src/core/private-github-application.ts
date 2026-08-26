@@ -5,8 +5,10 @@ import type {
   GitHubExactEffect,
   GitHubInstallationConnection,
   GitHubRepositoryPage,
+  GitHubRepositorySelection,
 } from "../domain/github.js";
 import type { WorkspacePrincipal } from "../domain/workspace.js";
+import type { ProjectWorkspace } from "../domain/project-workspace.js";
 import type { WorkspaceAgentScope } from "../harness/scope.js";
 import type { AuthenticatedWorkspaceActor, WorkspaceActorResolver } from "./workspace-coding-controller.js";
 import { WorkspaceAuthorityService } from "./workspace-authority-service.js";
@@ -42,6 +44,18 @@ export interface PrivateGitHubPublishConfirmation {
   receipt: GitHubEffectReceipt;
   nextOffer: PrivateGitHubPublishOffer | null;
 }
+
+export type PrivateGitHubSelectionOutcome =
+  | {
+      status: "bootstrap_required";
+      selection: GitHubRepositorySelection;
+      project: null;
+    }
+  | {
+      status: "provisioned";
+      selection: GitHubRepositorySelection;
+      project: ProjectWorkspace;
+    };
 
 interface StoredOffer {
   view: PrivateGitHubPublishOffer;
@@ -128,7 +142,7 @@ export class PrivateGitHubApplication {
   async selectAndProvision(
     actor: AuthenticatedWorkspaceActor,
     input: { connectionId: string; repositoryId: string },
-  ) {
+  ): Promise<PrivateGitHubSelectionOutcome> {
     const resolved = await this.resolveActor(actor);
     return this.exclusive(resolved.principal.principalKey, async () => {
       const { scope, session } = await this.scopeSession(resolved.principal);
@@ -147,6 +161,9 @@ export class PrivateGitHubApplication {
         input,
         selectionGrant,
       );
+      if (selection.status === "bootstrap_required") {
+        return { status: "bootstrap_required", selection, project: null };
+      }
       const provisionGrant = this.confirmations.issueInteractive(
         scope,
         resolved.interactionId,
@@ -173,7 +190,63 @@ export class PrivateGitHubApplication {
         lastRunId: null,
         updatedAt: this.now().toISOString(),
       }, session.revision);
-      return provisioned;
+      return { status: "provisioned", ...provisioned };
+    });
+  }
+
+  async bootstrapAndProvision(
+    actor: AuthenticatedWorkspaceActor,
+    selectionId: string,
+  ): Promise<Extract<PrivateGitHubSelectionOutcome, { status: "provisioned" }>> {
+    const resolved = await this.resolveActor(actor);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const { scope, session } = await this.scopeSession(resolved.principal);
+      const selection = await this.connections.loadSelection(selectionId);
+      if (!selection || selection.ownerWorkspaceKey !== scope.workspaceKey) {
+        throw new Error("Selection repository GitHub tidak ditemukan.");
+      }
+      const bootstrapGrant = this.confirmations.issueInteractive(
+        scope,
+        resolved.interactionId,
+        {
+          action: "github.repository.bootstrap",
+          connectionId: selection.installationConnectionId,
+          repositoryId: selection.repositoryId,
+          selectionId: selection.selectionId,
+        },
+      );
+      const ready = await this.installations.bootstrapEmptyRepository(
+        scope,
+        selection.selectionId,
+        bootstrapGrant,
+      );
+      const provisionGrant = this.confirmations.issueInteractive(
+        scope,
+        resolved.interactionId,
+        {
+          action: "github.repository.provision",
+          connectionId: ready.installationConnectionId,
+          repositoryId: ready.repositoryId,
+          selectionId: ready.selectionId,
+        },
+      );
+      const provisioned = await this.installations.provisionRepository(
+        scope,
+        ready.selectionId,
+        provisionGrant,
+      );
+      await this.sessions.save({
+        version: 1,
+        principalKey: session.principalKey,
+        channel: session.channel,
+        workspaceKey: scope.workspaceKey,
+        projectId: provisioned.project.id,
+        projectRevision: provisioned.project.revision,
+        foregroundRunId: null,
+        lastRunId: null,
+        updatedAt: this.now().toISOString(),
+      }, session.revision);
+      return { status: "provisioned", ...provisioned };
     });
   }
 

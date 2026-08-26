@@ -333,6 +333,7 @@ function providerPublicName(providerId: string | null): string {
     openrouter: "OpenRouter",
     xai: "xAI",
     anthropic: "Anthropic",
+    // Provider retired tetap diberi label manusiawi untuk ledger historis.
     "google-ai-studio": "Google AI Studio",
     deepseek: "DeepSeek",
     moonshot: "Moonshot",

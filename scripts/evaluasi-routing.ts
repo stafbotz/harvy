@@ -13,13 +13,11 @@ import {
 } from "./routing-eval-corpus.js";
 
 const all = process.argv.includes("--all");
-const allowFallback = process.argv.includes("--allow-fallback");
 const selectedCases = all ? ROUTING_EVAL_CASES : ROUTING_EVAL_CASES.slice(0, 1);
 const config = loadConfig();
 const client = await createInstrumentedAiClient(
   config,
   "evaluation",
-  allowFallback,
 );
 const model = resolveModel("ambitious", config.ai);
 const profile = resolveModelProfile("ambitious", config.ai);
@@ -35,7 +33,7 @@ const failed = results.filter((result) => result.failures.length > 0);
 console.log(JSON.stringify({
   mode: config.ai.mode,
   model,
-  fallbackAllowed: allowFallback && config.ai.fallback !== null,
+  fallbackAllowed: false,
   cases: selectedCases.length,
   variants: results.length,
   passed: results.length - failed.length,

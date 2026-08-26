@@ -83,6 +83,8 @@ import {
   ChannelSetupService,
   primaryWhatsAppRuntimeFingerprint,
 } from "./operations/channel-setup.js";
+import { CodingRuntimeSetupService } from
+  "./operations/coding-runtime-setup.js";
 import { installThirdPartyConsoleSecretGuard } from
   "./observability/third-party-console-guard.js";
 import { startCheckInWorker } from "./reminders/checkin-worker.js";
@@ -1101,6 +1103,9 @@ const channelSetup = config.controlPlane.console.enabled
       },
     })
   : null;
+const codingSetup = config.controlPlane.console.enabled
+  ? new CodingRuntimeSetupService({ runtimeActive: true })
+  : null;
 const consoleServer = config.controlPlane.console.enabled
   ? new ConsoleServer(
       controlPlane,
@@ -1110,6 +1115,7 @@ const consoleServer = config.controlPlane.console.enabled
       undefined,
       economy,
       channelSetup,
+      codingSetup,
     )
   : null;
 

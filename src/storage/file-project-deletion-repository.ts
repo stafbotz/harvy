@@ -234,7 +234,11 @@ function validateRecord(value: ProjectDeletionRecord): void {
   positive(value.expectedProjectRevision, "expectedProjectRevision");
   positive(value.revision, "revision");
   validIso(value.projectCreatedAt, "projectCreatedAt");
-  if (value.projectSource !== "upload" && value.projectSource !== "github") {
+  if (
+    value.projectSource !== "blank" &&
+    value.projectSource !== "upload" &&
+    value.projectSource !== "github"
+  ) {
     throw new Error("Source project deletion tidak sah.");
   }
   validIso(value.requestedAt, "requestedAt");

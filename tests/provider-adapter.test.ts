@@ -69,6 +69,58 @@ describe("provider adapter", () => {
     }), [{ role: "user", content: "halo" }]);
   });
 
+  it("menempelkan gambar transient hanya pada giliran user terakhir", () => {
+    const base = openRouterProfile();
+    const profile: ModelProfile = {
+      ...base,
+      supports: { ...base.supports, imageInput: true },
+    };
+    const wire = serializeProviderMessages([
+      { role: "system", content: "aturan" },
+      { role: "user", content: "pertanyaan lama" },
+      { role: "assistant", content: "jawaban lama" },
+      { role: "user", content: "apa isi gambar ini?" },
+    ], {
+      providerId: profile.provider,
+      modelId: profile.id,
+      profile,
+      imageInputs: [{
+        type: "input_image",
+        mediaType: "image/png",
+        data: Uint8Array.from([1, 2, 3]),
+        detail: "low",
+      }],
+    });
+
+    assert.equal(wire[1]?.content, "pertanyaan lama");
+    assert.deepEqual(wire[3], {
+      role: "user",
+      content: [
+        { type: "text", text: "apa isi gambar ini?" },
+        {
+          type: "image_url",
+          image_url: {
+            url: "data:image/png;base64,AQID",
+            detail: "low",
+          },
+        },
+      ],
+    });
+    assert.throws(
+      () => serializeProviderMessages([{ role: "system", content: "aturan" }], {
+        providerId: profile.provider,
+        modelId: profile.id,
+        profile,
+        imageInputs: [{
+          type: "input_image",
+          mediaType: "image/png",
+          data: Uint8Array.from([1]),
+        }],
+      }),
+      /giliran user/u,
+    );
+  });
+
   it("menolak continuation lintas model, siklik, dan terlalu besar", () => {
     const profile = openRouterProfile();
     const valid = assistantTurn({
@@ -119,8 +171,8 @@ describe("provider adapter", () => {
     };
     assert.throws(
       () => serializeProviderMessages([opaqueWithoutBinding], {
-        providerId: "google-ai-studio",
-        modelId: "gemini-model",
+        providerId: "provider-uji",
+        modelId: "model-uji",
       }),
       /tidak mempunyai provider binding/u,
     );
@@ -159,6 +211,8 @@ function deepSeekProfile(): ModelProfile {
       namedToolChoice: false,
       structuredOutput: true,
       temperature: false,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: true,
@@ -186,6 +240,8 @@ function openRouterProfile(): ModelProfile {
       namedToolChoice: true,
       structuredOutput: true,
       temperature: true,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: true,

@@ -10,7 +10,7 @@
  * normalisasi dan pemecahan bubble pada lapisan model. Tombol, pending, dan
  * state adapter diuji terpisah lewat create-bot-flow.test.
  *
- * Perlu `.env` berisi kunci sungguhan. Pakai `AI_MODE=testing` agar gratis.
+ * Perlu `.env` berisi kunci GMI sungguhan ketika `AI_MODE=testing`.
  *
  *   npx tsx scripts/coba-balasan.ts "aku capek banget hari ini"
  *   npx tsx scripts/coba-balasan.ts --riwayat "yang tadi gimana"
@@ -45,7 +45,6 @@ import { AgentHarness } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 
 const flags = new Set(process.argv.slice(2).filter((arg) => arg.startsWith("--")));
-const allowFallback = flags.has("--allow-fallback");
 const message = process.argv
   .slice(2)
   .filter((arg) => !arg.startsWith("--"))
@@ -55,7 +54,7 @@ const message = process.argv
 
 if (!message) {
   console.error(
-    'Pakai: npx tsx scripts/coba-balasan.ts [--riwayat|--riwayat=file.json] [--listen|--advice] [--allow-fallback] "kalimat kamu"',
+    'Pakai: npx tsx scripts/coba-balasan.ts [--riwayat|--riwayat=file.json] [--listen|--advice] "kalimat kamu"',
   );
   process.exit(1);
 }
@@ -107,7 +106,7 @@ const SAMPLE_TURNS: ConversationTurn[] = [
 
 const config = loadConfig();
 const conversation = new Conversation(
-  await createInstrumentedAiClient(config, "probe", allowFallback),
+  await createInstrumentedAiClient(config, "probe"),
   config.ai,
   config.defaultTimezone,
   undefined,
@@ -126,13 +125,7 @@ const context = {
 };
 
 console.log(`Mode    : ${config.ai.mode}`);
-console.log(
-  `Fallback: ${
-    allowFallback && config.ai.fallback
-      ? `aktif (${config.ai.fallback.model})`
-      : "nonaktif"
-  }`,
-);
+console.log("Fallback: nonaktif");
 console.log(`Gaya    : ${style ?? "belum ditentukan"}`);
 console.log(`Riwayat : ${context.turns.length} giliran contoh`);
 console.log(`Pesan   : ${message}`);

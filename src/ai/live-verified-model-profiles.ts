@@ -1,65 +1,68 @@
 import type { ModelProfile } from "./model-profile.js";
 
-const GOOGLE_OPENAI_HOST = "generativelanguage.googleapis.com";
-const GOOGLE_OPENAI_PATH = "/v1beta/openai";
+const GMI_HOST = "api.gmi-serving.com";
+const GMI_PATH = "/v1";
 
 /**
- * Capability record promoted only after the exact wire profile passed
- * `scripts/provider-live-smoke.ts` against Google AI Studio on 2026-08-20.
- * Digest after ModelProfileRegistry normalization:
- * 4d4c4f299b84b5a1767c96a54e6591a53c06a90807aba16d78a04fe4967d7d5c
+ * Exact wire profile untuk MiniMax-M3 di endpoint resmi GMI Serving.
+ *
+ * Probe live 2026-08-25 membuktikan completion, temperature, JSON object,
+ * named native tool, assistant/tool continuation, input gambar data URL, dan
+ * passive prefix cache. Endpoint `/models` melaporkan context 1_048_576.
+ * Model tidak mengembalikan reasoning continuation pada wire ini, sehingga
+ * Harvy sengaja tidak mengaktifkan reasoning/replay yang belum terbukti.
  */
-const GEMINI_3_5_FLASH_LITE: ModelProfile = {
-  id: "gemini-3.5-flash-lite",
-  provider: "google-ai-studio",
+const GMI_MINIMAX_M3: ModelProfile = {
+  id: "MiniMaxAI/MiniMax-M3",
+  provider: "gmi-serving",
   verification: "explicit",
   reasoning: {
-    mandatory: true,
-    defaultEffort: "minimal",
-    supportedEfforts: ["minimal", "low", "medium", "high"],
-    wireFormat: "openai-reasoning-effort",
+    mandatory: false,
+    defaultEffort: "none",
+    supportedEfforts: [],
+    wireFormat: "none",
   },
   supports: {
     tools: true,
     toolChoice: true,
-    // Live smoke deliberately proved the portable `required` form. A named
-    // choice remains closed until its exact Google compatibility wire is run.
-    namedToolChoice: false,
+    namedToolChoice: true,
     structuredOutput: true,
-    // Google deprecated sampling parameters for this model generation.
-    temperature: false,
+    temperature: true,
+    promptCaching: true,
+    imageInput: true,
   },
   continuation: {
-    preserveReasoning: true,
+    preserveReasoning: false,
     preserveAssistantMessage: true,
   },
   contextWindow: 1_048_576,
-  maxOutputTokens: 65_536,
+  maxOutputTokens: null,
 };
 
 /**
- * Return code-owned profiles only for the exact official trust endpoint.
- * A gateway or provider-compatible URL must declare and verify its own wire.
+ * Capability code-owned hanya berlaku pada kombinasi provider, model, dan
+ * endpoint resmi yang persis sama. Gateway kompatibel harus membawa profile
+ * operatornya sendiri dan menjalani smoke terpisah.
  */
 export function liveVerifiedModelProfiles(
   providerId: string,
   baseUrl: string,
 ): readonly ModelProfile[] {
-  if (
-    providerId !== "google-ai-studio" ||
-    !isOfficialGoogleOpenAiEndpoint(baseUrl)
-  ) return [];
-  return [GEMINI_3_5_FLASH_LITE];
+  if (providerId !== "gmi-serving" || !isOfficialGmiEndpoint(baseUrl)) {
+    return [];
+  }
+  return [GMI_MINIMAX_M3];
 }
 
-function isOfficialGoogleOpenAiEndpoint(value: string): boolean {
+function isOfficialGmiEndpoint(value: string): boolean {
   try {
     const parsed = new URL(value);
     return parsed.protocol === "https:" &&
-      parsed.hostname === GOOGLE_OPENAI_HOST &&
+      parsed.hostname === GMI_HOST &&
+      parsed.port === "" &&
       parsed.username === "" && parsed.password === "" &&
       parsed.search === "" && parsed.hash === "" &&
-      parsed.pathname.replace(/\/+$/u, "") === GOOGLE_OPENAI_PATH;
+      parsed.pathname.replace(/\/+$/u, "") === GMI_PATH;
   } catch {
     return false;
   }

@@ -8,17 +8,12 @@ import {
 const AI_ENV_KEYS = [
   "AI_MODE",
   "AI_BASE_URL",
-  "GOOGLE_AI_STUDIO_API_KEYS",
+  "GMI_API_KEY",
   "AI_MODEL_TESTING",
   "AI_MODEL_TESTING_CHEAP",
   "AI_MODEL_TESTING_EFFICIENT",
   "AI_MODEL_TESTING_AMBITIOUS",
   "AI_MODEL_TESTING_TOUGHEST",
-  "AI_TESTING_FALLBACK_BASE_URL",
-  "AI_TESTING_FALLBACK_API_KEY",
-  "AI_TESTING_FALLBACK_MODEL",
-  "AI_TESTING_FALLBACK_PROVIDER_ID",
-  "AI_TESTING_FALLBACK_COOLDOWN_MS",
   "OPENROUTER_API_KEY",
   "AI_MODEL_CHEAP",
   "AI_MODEL_EFFICIENT",
@@ -31,17 +26,17 @@ const AI_ENV_KEYS = [
   "MEMORY_EMBEDDING_MODEL",
 ] as const;
 
-describe("konfigurasi fallback AI testing", () => {
+describe("konfigurasi provider AI", () => {
   it("mengaktifkan embedding hanya dengan model opt-in eksplisit", () => {
     withAiEnvironment(validTestingEnvironment(), () => {
       assert.equal(loadAiConfig().memoryEmbeddingModel, null);
     });
     withAiEnvironment(validTestingEnvironment({
-      MEMORY_EMBEDDING_MODEL: "gemini-embedding-001",
+      MEMORY_EMBEDDING_MODEL: "embedding-model-uji",
     }), () => {
       assert.equal(
         loadAiConfig().memoryEmbeddingModel,
-        "gemini-embedding-001",
+        "embedding-model-uji",
       );
     });
     withAiEnvironment(validTestingEnvironment({
@@ -54,48 +49,27 @@ describe("konfigurasi fallback AI testing", () => {
     });
   });
 
-  it("membaca fallback lengkap dan dapat mematikannya untuk evaluator", () => {
-    withAiEnvironment(validTestingEnvironment({
-      AI_TESTING_FALLBACK_BASE_URL:
-        "https://fallback.example/api/v3/",
-      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
-      AI_TESTING_FALLBACK_MODEL: "model-cadangan",
-      AI_TESTING_FALLBACK_COOLDOWN_MS: "45000",
-    }), () => {
+  it("memakai GMI sebagai provider testing tunggal tanpa fallback", () => {
+    withAiEnvironment(validTestingEnvironment(), () => {
       const config = loadAiConfig();
       assert.equal(config.mode, "testing");
-      assert.equal(
-        config.fallback?.baseUrl,
-        "https://fallback.example/api/v3",
-      );
-      assert.equal(config.fallback?.model, "model-cadangan");
-      assert.equal(config.fallback?.modelInQuery, true);
-      assert.equal(config.fallback?.cooldownMs, 45_000);
-      assert.equal(config.fallback?.keys.take(), "rahasia-cadangan");
-      assert.equal(
-        aiClientOptions(config, { fallback: false }).fallback,
-        null,
-      );
+      assert.equal(config.providerId, "gmi-serving");
+      assert.equal(config.baseUrl, "https://api.gmi-serving.com/v1");
+      assert.equal(config.keys.take(), "gmi-test-key");
+      assert.equal(aiClientOptions(config).fallback, null);
       assert.equal(
         config.modelProfiles.require(
-          "google-ai-studio",
+          "gmi-serving",
           "model-testing",
         ).reasoning.wireFormat,
         "none",
       );
       assert.equal(
         config.modelProfiles.require(
-          "google-ai-studio",
+          "gmi-serving",
           "model-testing",
         ).verification,
         "compatibility",
-      );
-      assert.equal(
-        config.modelProfiles.require(
-          "testing-fallback",
-          "model-cadangan",
-        ).reasoning.wireFormat,
-        "none",
       );
     });
   });
@@ -108,18 +82,13 @@ describe("konfigurasi fallback AI testing", () => {
       AI_MODEL_AMBITIOUS: "model-production-ambitious",
       AI_MODEL_TOUGHEST: "model-production-toughest",
       AI_TOUGHEST_PRIVACY_DOMAIN: "provider.approved",
-      AI_TESTING_FALLBACK_BASE_URL: "https://fallback.example/api/v3",
-      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
-      AI_TESTING_FALLBACK_MODEL: "model-cadangan",
-      AI_TESTING_FALLBACK_PROVIDER_ID: "always-codex",
     }), () => {
       const catalog = loadAiConfig().configuredModels;
       assert.deepEqual(
         catalog.map((model) => `${model.providerId}:${model.modelId}`),
         [
-          "always-codex:model-cadangan",
-          "google-ai-studio:model-testing",
-          "google-ai-studio:model-testing-cheap",
+          "gmi-serving:model-testing",
+          "gmi-serving:model-testing-cheap",
           "openrouter:model-production-ambitious",
           "openrouter:model-production-cheap",
           "openrouter:model-production-efficient",
@@ -127,17 +96,12 @@ describe("konfigurasi fallback AI testing", () => {
         ],
       );
       assert.equal(
-        catalog.find((model) => model.modelId === "model-cadangan")?.active,
-        true,
-      );
-      assert.equal(
         catalog.find((model) => model.modelId === "model-production-cheap")?.active,
         false,
       );
       assert.equal(loadAiConfig().toughest, null);
       const serialized = JSON.stringify(catalog);
-      assert.doesNotMatch(serialized, /rahasia-cadangan|fallback\.example/u);
-      assert.match(serialized, /AI_TESTING_FALLBACK_MODEL/u);
+      assert.doesNotMatch(serialized, /gmi-test-key|api\.gmi-serving\.com/u);
     });
   });
 
@@ -167,7 +131,7 @@ describe("konfigurasi fallback AI testing", () => {
         },
       }),
       AI_MODEL_PROFILES: JSON.stringify([
-        explicitProfile("google-ai-studio", "model-orchestrator"),
+        explicitProfile("gmi-serving", "model-orchestrator"),
       ]),
     }), () => {
       const config = loadAiConfig();
@@ -181,7 +145,7 @@ describe("konfigurasi fallback AI testing", () => {
       const configured = config.configuredModels.find(
         (model) => model.modelId === "model-orchestrator",
       );
-      assert.equal(configured?.providerId, "google-ai-studio");
+      assert.equal(configured?.providerId, "gmi-serving");
       assert.equal(configured?.active, true);
       assert.deepEqual(configured?.sources, [{
         environmentVariable: "AI_MODEL_ROLE_BINDINGS.orchestrator",
@@ -192,7 +156,7 @@ describe("konfigurasi fallback AI testing", () => {
       }]);
       assert.equal(
         config.modelProfiles.require(
-          "google-ai-studio",
+          "gmi-serving",
           "model-orchestrator",
         ).verification,
         "explicit",
@@ -259,7 +223,7 @@ describe("konfigurasi fallback AI testing", () => {
       AI_MODEL_TESTING_TOUGHEST: "model-testing-toughest",
       AI_TOUGHEST_PRIVACY_DOMAIN: "provider.approved",
       AI_MODEL_PROFILES: JSON.stringify([
-        explicitProfile("google-ai-studio", "model-testing-toughest"),
+        explicitProfile("gmi-serving", "model-testing-toughest"),
       ]),
     }), () => {
       const config = loadAiConfig();
@@ -274,7 +238,7 @@ describe("konfigurasi fallback AI testing", () => {
       assert.deepEqual(toughest?.sources[0]?.tiers, ["toughest"]);
       assert.equal(
         config.modelProfiles.require(
-          "google-ai-studio",
+          "gmi-serving",
           "model-testing-toughest",
         ).verification,
         "explicit",
@@ -320,7 +284,7 @@ describe("konfigurasi fallback AI testing", () => {
     });
   });
 
-  it("menolak ID model dan provider env yang tidak dapat dikatalogkan", () => {
+  it("menolak ID model rusak dan testing tanpa key GMI", () => {
     withAiEnvironment(validTestingEnvironment({
       AI_MODEL_TESTING: "model<rusak",
     }), () => {
@@ -329,60 +293,12 @@ describe("konfigurasi fallback AI testing", () => {
         hasCode("CONFIG_AI_MODEL_TESTING_INVALID"),
       );
     });
-    withAiEnvironment(validTestingEnvironment({
-      AI_TESTING_FALLBACK_BASE_URL: "https://fallback.example/api/v3",
-      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
-      AI_TESTING_FALLBACK_MODEL: "model-cadangan",
-      AI_TESTING_FALLBACK_PROVIDER_ID: "provider tidak sah",
-    }), () => {
+    withAiEnvironment(validTestingEnvironment({ GMI_API_KEY: "" }), () => {
       assert.throws(
         () => loadAiConfig(),
-        hasCode("CONFIG_AI_TESTING_FALLBACK_PROVIDER_ID_INVALID"),
+        hasCode("CONFIG_GMI_KEY_MISSING"),
       );
     });
-  });
-
-  it("membolehkan mode testing tanpa fallback", () => {
-    withAiEnvironment(validTestingEnvironment(), () => {
-      const config = loadAiConfig();
-      assert.equal(config.fallback, null);
-    });
-  });
-
-  it("menolak konfigurasi fallback yang hanya terisi sebagian", () => {
-    withAiEnvironment(validTestingEnvironment({
-      AI_TESTING_FALLBACK_BASE_URL:
-        "https://fallback.example/api/v3",
-    }), () => {
-      assert.throws(
-        () => loadAiConfig(),
-        hasCode("CONFIG_TESTING_FALLBACK_INCOMPLETE"),
-      );
-    });
-  });
-
-  it("menolak URL fallback yang dapat membawa secret atau path endpoint penuh", () => {
-    const invalid = [
-      "http://fallback.example/api/v3",
-      "https://user:secret@fallback.example/api/v3",
-      "https://fallback.example/api/v3?apikey=secret",
-      "https://fallback.example/api/v3#bagian",
-      "https://fallback.example/api/v3/chat/completions",
-      "bukan-url",
-    ];
-    for (const baseUrl of invalid) {
-      withAiEnvironment(validTestingEnvironment({
-        AI_TESTING_FALLBACK_BASE_URL: baseUrl,
-        AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
-        AI_TESTING_FALLBACK_MODEL: "model-cadangan",
-      }), () => {
-        assert.throws(
-          () => loadAiConfig(),
-          hasCode("CONFIG_TESTING_FALLBACK_URL_INVALID"),
-          baseUrl,
-        );
-      });
-    }
   });
 
   it("memvalidasi base URL primary sebelum API key dapat dikirim", () => {
@@ -411,24 +327,7 @@ describe("konfigurasi fallback AI testing", () => {
     });
   });
 
-  it("menolak cooldown nol", () => {
-    withAiEnvironment(validTestingEnvironment({
-      AI_TESTING_FALLBACK_BASE_URL:
-        "https://fallback.example/api/v3",
-      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
-      AI_TESTING_FALLBACK_MODEL: "model-cadangan",
-      AI_TESTING_FALLBACK_COOLDOWN_MS: "0",
-    }), () => {
-      assert.throws(
-        () => loadAiConfig(),
-        hasCode(
-          "CONFIG_AI_TESTING_FALLBACK_COOLDOWN_MS_INVALID",
-        ),
-      );
-    });
-  });
-
-  it("tidak pernah mengaktifkan fallback testing di production", () => {
+  it("mempertahankan OpenRouter sebagai provider production", () => {
     withAiEnvironment({
       AI_MODE: "production",
       OPENROUTER_API_KEY: "openrouter",
@@ -440,13 +339,10 @@ describe("konfigurasi fallback AI testing", () => {
       AI_MODEL_PROFILES: JSON.stringify([
         explicitProfile("openrouter", "model-production-toughest"),
       ]),
-      AI_TESTING_FALLBACK_BASE_URL:
-        "https://fallback.example/api/v3",
-      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
-      AI_TESTING_FALLBACK_MODEL: "model-cadangan",
     }, () => {
       const config = loadAiConfig();
-      assert.equal(config.fallback, null);
+      assert.equal(config.providerId, "openrouter");
+      assert.equal(aiClientOptions(config).fallback, null);
       assert.equal(
         config.modelProfiles.require(
           "openrouter",
@@ -466,7 +362,7 @@ describe("konfigurasi fallback AI testing", () => {
       AI_BASE_URL: "https://gateway.example/v1",
     }), () => {
       const profile = loadAiConfig().modelProfiles.require(
-        "google-ai-studio",
+        "gmi-serving",
         "model-testing",
       );
       assert.equal(profile.reasoning.wireFormat, "none");
@@ -474,43 +370,31 @@ describe("konfigurasi fallback AI testing", () => {
     });
   });
 
-  it("memakai profile live-verified hanya pada model dan endpoint Google exact", () => {
+  it("mempromosikan MiniMax hanya pada endpoint GMI resmi yang sudah lulus smoke", () => {
     withAiEnvironment(validTestingEnvironment({
-      AI_MODEL_TESTING: "gemini-3.5-flash-lite",
+      AI_MODEL_TESTING: "MiniMaxAI/MiniMax-M3",
     }), () => {
       const profile = loadAiConfig().modelProfiles.require(
-        "google-ai-studio",
-        "gemini-3.5-flash-lite",
+        "gmi-serving",
+        "MiniMaxAI/MiniMax-M3",
       );
       assert.equal(profile.verification, "explicit");
-      assert.equal(profile.reasoning.defaultEffort, "minimal");
-      assert.equal(profile.supports.temperature, false);
-      assert.equal(profile.continuation.preserveReasoning, true);
+      assert.equal(profile.reasoning.defaultEffort, "none");
+      assert.equal(profile.continuation.preserveReasoning, false);
+      assert.equal(profile.supports.promptCaching, true);
+      assert.equal(profile.supports.imageInput, true);
     });
-
     withAiEnvironment(validTestingEnvironment({
-      AI_MODEL_TESTING: "gemini-3.5-flash-lite",
+      AI_MODEL_TESTING: "MiniMaxAI/MiniMax-M3",
       AI_BASE_URL: "https://gateway.example/v1",
     }), () => {
-      assert.equal(loadAiConfig().modelProfiles.require(
-        "google-ai-studio",
-        "gemini-3.5-flash-lite",
-      ).verification, "compatibility");
-    });
-  });
-
-  it("tidak mengaktifkan profile live-verified pada pasangan fallback aktif", () => {
-    withAiEnvironment(validTestingEnvironment({
-      AI_MODEL_TESTING: "gemini-3.5-flash-lite",
-      AI_TESTING_FALLBACK_BASE_URL: "https://fallback.example/api/v3",
-      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
-      AI_TESTING_FALLBACK_MODEL: "gemini-3.5-flash-lite",
-      AI_TESTING_FALLBACK_PROVIDER_ID: "google-ai-studio",
-    }), () => {
-      assert.equal(loadAiConfig().modelProfiles.require(
-        "google-ai-studio",
-        "gemini-3.5-flash-lite",
-      ).verification, "compatibility");
+      assert.equal(
+        loadAiConfig().modelProfiles.require(
+          "gmi-serving",
+          "MiniMaxAI/MiniMax-M3",
+        ).verification,
+        "compatibility",
+      );
     });
   });
 
@@ -518,12 +402,12 @@ describe("konfigurasi fallback AI testing", () => {
     withAiEnvironment(validTestingEnvironment({
       AI_MODEL_CHEAP: "model-production-cheap",
       AI_MODEL_PROFILES: JSON.stringify([
-        explicitProfile("google-ai-studio", "model-testing"),
+        explicitProfile("gmi-serving", "model-testing"),
         explicitProfile("openrouter", "model-production-cheap"),
       ]),
     }), () => {
       const profile = loadAiConfig().modelProfiles.require(
-        "google-ai-studio",
+        "gmi-serving",
         "model-testing",
       );
       assert.equal(profile.verification, "explicit");
@@ -546,7 +430,7 @@ describe("konfigurasi fallback AI testing", () => {
   it("menolak profile model asing, duplikat, dan schema yang tidak sah", () => {
     withAiEnvironment(validTestingEnvironment({
       AI_MODEL_PROFILES: JSON.stringify([
-        explicitProfile("google-ai-studio", "model-asing"),
+        explicitProfile("gmi-serving", "model-asing"),
       ]),
     }), () => {
       assert.throws(
@@ -555,7 +439,7 @@ describe("konfigurasi fallback AI testing", () => {
       );
     });
 
-    const duplicate = explicitProfile("google-ai-studio", "model-testing");
+    const duplicate = explicitProfile("gmi-serving", "model-testing");
     for (const value of [
       "bukan-json",
       JSON.stringify([duplicate, duplicate]),
@@ -578,38 +462,6 @@ describe("konfigurasi fallback AI testing", () => {
     }
   });
 
-  it("menolak capability explicit pada provider fallback testing", () => {
-    withAiEnvironment(validTestingEnvironment({
-      AI_TESTING_FALLBACK_BASE_URL: "https://fallback.example/api/v3",
-      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
-      AI_TESTING_FALLBACK_MODEL: "model-cadangan",
-      AI_MODEL_PROFILES: JSON.stringify([
-        explicitProfile("testing-fallback", "model-cadangan"),
-      ]),
-    }), () => {
-      assert.throws(
-        () => loadAiConfig(),
-        hasCode("CONFIG_AI_MODEL_PROFILES_FALLBACK_UNSUPPORTED"),
-      );
-    });
-  });
-
-  it("menolak capability explicit bila model primary juga dipakai fallback aktif", () => {
-    withAiEnvironment(validTestingEnvironment({
-      AI_TESTING_FALLBACK_BASE_URL: "https://fallback.example/api/v3",
-      AI_TESTING_FALLBACK_API_KEY: "rahasia-cadangan",
-      AI_TESTING_FALLBACK_MODEL: "model-testing",
-      AI_TESTING_FALLBACK_PROVIDER_ID: "google-ai-studio",
-      AI_MODEL_PROFILES: JSON.stringify([
-        explicitProfile("google-ai-studio", "model-testing"),
-      ]),
-    }), () => {
-      assert.throws(
-        () => loadAiConfig(),
-        hasCode("CONFIG_AI_MODEL_PROFILES_FALLBACK_UNSUPPORTED"),
-      );
-    });
-  });
 });
 
 function explicitProfile(provider: string, id: string) {
@@ -630,6 +482,8 @@ function explicitProfile(provider: string, id: string) {
       namedToolChoice: true,
       structuredOutput: true,
       temperature: true,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: true,
@@ -647,7 +501,7 @@ function validTestingEnvironment(
 ): Partial<Record<(typeof AI_ENV_KEYS)[number], string>> {
   return {
     AI_MODE: "testing",
-    GOOGLE_AI_STUDIO_API_KEYS: "google-satu,google-dua",
+    GMI_API_KEY: "gmi-test-key",
     AI_MODEL_TESTING: "model-testing",
     ...overrides,
   };

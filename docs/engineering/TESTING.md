@@ -80,13 +80,11 @@ metrik perilaku, dan tetap membuat exit code gagal. Metrik tanpa sampel harus
 `null`, bukan satu. Artefak dan batas interpretasi run 30 Juli 2026 berada di
 [`../evidence/group-conversation-2026-07-30/README.md`](../evidence/group-conversation-2026-07-30/README.md).
 
-Semua evaluator model nyata sengaja **primary-only secara default**, walaupun
-runtime testing mempunyai provider cadangan. Gunakan `--allow-fallback` hanya
-untuk run availability; ringkasan harus menulis `fallbackAllowed: true` dan
-`modelScope: "primary-or-fallback"`. Run itu tidak boleh menggantikan baseline
-kualitas satu model karena kasus-kasusnya mungkin dikerjakan model berbeda.
-Dua probe manual juga primary-only secara default dan menampilkan fallback
-beserta modelnya ketika operator memilih `--allow-fallback`.
+Semua evaluator dan probe model nyata memakai provider aktif tunggal. Runtime
+testing tidak mempunyai provider cadangan dan runner tidak menerima flag untuk
+mengaktifkannya. Ringkasan wajib menulis `fallbackAllowed: false` dan
+`modelScope: "primary-only"`, sehingga setiap baseline kualitas dapat
+diatribusikan ke satu provider dan model yang benar-benar dikonfigurasi.
 
 Baseline sebelum setup orkestrasi pada 25 Juli 2026 adalah 10 test lulus dalam
 4 suite. Setelah seluruh percakapan dipindahkan ke model AI pada 26 Juli 2026,
@@ -303,21 +301,21 @@ node --test dist/tests/model-profile.test.js dist/tests/execution-policy.test.js
 
 Gate ini wajib membuktikan profile exact/fail-closed dan schema
 `AI_MODEL_PROFILES`, custom base tanpa tebakan capability, effort hanya turun,
-wire Google/OpenRouter/DeepSeek sintetis, omission tool choice yang tidak
+wire OpenAI-compatible/OpenRouter/DeepSeek sintetis, omission tool choice yang tidak
 didukung, message allowlist, binding provider+model, batas reasoning details,
 no-log reasoning, penolakan response nonterminal, key tidak berputar pada
 penolakan lokal, serta metadata ledger content-free. Tes adapter DeepSeek bukan
 bukti provider production. Live smoke harus memakai data sintetis dan mencatat
 model/profile exact serta tanggal dokumentasi capability yang diverifikasi.
 
-Pada 20 Agustus 2026, `npm run acceptance:provider` lulus terhadap
-`google-ai-studio/gemini-3.5-flash-lite` dengan profile digest
-`4d4c4f299b84b5a1767c96a54e6591a53c06a90807aba16d78a04fe4967d7d5c`.
-Yang diamati: effort wire, native tool `finish_reason=tool_calls`, thought
-signature, assistant+signature replay, terminal `stop`, output ceiling
-`length` yang diklasifikasi truncated, context-pressure rejection sebelum
-network, timeout, dan dua retry attempt. Fallback dinonaktifkan selama smoke;
-hasil ini bukan bukti fallback, SLA, Telegram, atau kualitas `toughest`.
+Bukti Google 20 Agustus 2026 tetap histori pada LOG, tetapi provider tersebut
+tidak lagi berada pada composition testing. Pada 25 Agustus 2026,
+`npm run acceptance:provider` lulus terhadap endpoint resmi GMI dan exact model
+`MiniMaxAI/MiniMax-M3`: basic completion, structured JSON, native tool +
+tool-result continuation, terminal/truncation, context rejection lokal,
+timeout, input gambar, dan automatic cache reuse terbukti. Satu key saja
+tersedia sehingga rotasi/retry lintas key tidak dapat dijalankan. Tidak ada
+provider fallback yang menutupi hasil smoke.
 
 Tes wajib membuktikan root sederhana memakai `cheap`, pekerjaan kompleks
 memakai root `ambitious`, dan mode testing dapat memetakan keduanya ke satu
@@ -358,11 +356,11 @@ ditahan cycle guard kernel. Fast path waktu harus mencakup tepat satu vokatif
 wajib membawa prompt yang dijawab bersama teks jawaban setelah round-trip
 serialisasi/restart, tanpa menyimpan transcript provider. Nama+schema executor
 harus ikut authority hash agar perubahan kontrak menghentikan checkpoint lama.
-Request native tidak boleh masuk fallback sebelum provider fallback itu
-diverifikasi.
+Request native tidak boleh berpindah provider atau diturunkan menjadi jalur
+JSON/text ketika provider aktif gagal.
 
 RunBudget wajib membuktikan reservasi atomik pada worker concurrent; satu akun
-untuk root, retry, fallback, dan worker; physical attempt tetap dihitung ketika
+untuk root, retry, dan worker; physical attempt tetap dihitung ketika
 4xx melepas reservation; serta 408/5xx/timeout/network/JSON rusak/usage tidak
 aman/truncation tanpa usage dibebankan unknown. Reported cost pada attempt
 unknown tidak boleh hilang. Actual overage wajib menghentikan policy+executor
@@ -412,7 +410,7 @@ di atas; Telegram post-fix tetap NOT RUN.
 Matriks bukti dan checklist Telegram staging Agent Acceptance v1 berada di
 [`../evidence/agent-acceptance-v1-2026-08-04/README.md`](../evidence/agent-acceptance-v1-2026-08-04/README.md).
 
-### Provider cadangan mode testing
+### Provider GMI mode testing
 
 Pengujian terarah tanpa jaringan:
 
@@ -421,29 +419,26 @@ npm run build
 node --test dist/tests/client.test.js dist/tests/ai-config.test.js
 ```
 
-Tes klien wajib membuktikan primary sukses tidak menyentuh cadangan; transport
-error/timeout/5xx langsung berpindah; 429 merotasi kunci primary dulu dan hanya
-membuka circuit bila seluruh kunci sudah dicoba; batas satu percobaan tidak
-membuka circuit dari 429 satu key; 4xx lain, keluaran rusak, batas usage lokal,
-dan cancellation lifecycle tidak berpindah; kedua provider gagal tetap
-berakhir; circuit melewati primary lalu mencobanya lagi setelah cooldown; dan
-model/telemetry menggunakan model cadangan yang benar. Tes konfigurasi wajib
-membuktikan tiga nilai utama harus
-hadir bersama, URL hanya HTTPS tanpa kredensial/query, cooldown positif, serta
-production tidak pernah mengaktifkan cadangan.
+Tes klien wajib membuktikan request hanya memakai provider aktif, retry tetap
+bounded pada provider tersebut, 4xx non-retryable/keluaran rusak/batas usage
+lokal/cancellation gagal tertutup, URL hanya HTTPS atau loopback tanpa
+kredensial/query, dan metadata ledger tidak memuat prompt maupun balasan.
+Profile exact code-owned hanya boleh aktif untuk exact endpoint resmi GMI dan
+exact model MiniMax; custom gateway atau model lain kembali ke compatibility.
 
 Smoke provider nyata hanya memakai pesan sintetis tanpa data pengguna:
 
-1. Periksa endpoint daftar model dan salin ID persis, termasuk kapitalisasi.
-2. Kirim satu chat-completion pendek memakai Bearer header. API key tidak boleh
-   muncul di URL, output terminal, atau log.
-3. Jalankan satu request `AiClient` dengan primary yang sengaja gagal lokal dan
-   pastikan `ai_fallback_activated` diikuti completion dari origin `fallback`.
-4. Ulangi satu request dengan `AbortController` lifecycle dan pastikan tidak ada
-   call cadangan.
-5. Catat HTTP status, bentuk kontrak, tanggal, dan keterbatasannya. Satu respons
-   200 bukan bukti SLA, privasi/retensi, kualitas model, atau production
-   readiness.
+1. Jalankan `npm run acceptance:provider`; smoke memakai prefix acak dan gambar
+   kecil buatan lokal, bukan data pengguna.
+2. Pastikan basic, structured output, named tool, continuation, image, output
+   ceiling, context pressure, dan timeout tercatat per-stage tanpa isi prompt.
+3. Untuk cache otomatis, request pertama dan kedua harus memakai prefix unik
+   yang sama. Cache-read kedua harus meningkat; field cache-write boleh nol atau
+   hilang karena GMI tidak menjanjikan metrik write.
+4. Bila lebih dari satu key tersedia, buktikan retry/rotation. Satu key harus
+   dilaporkan sebagai `not_exercisable`, bukan dikarang lulus.
+5. Catat exact endpoint/model/profile dan keterbatasannya. Smoke tidak
+   membuktikan SLA, privasi/retensi, kualitas percakapan, atau kanal live.
 
 ### Harvy Console dan ledger
 
@@ -547,7 +542,19 @@ Lakukan bagian ini jika perubahan menyentuh bot, konfigurasi waktu,
 penyimpanan, atau pengingat:
 
 Bagian ini memerlukan kunci API sungguhan. Jalankan dengan `AI_MODE=testing`
-supaya tidak berbiaya.
+agar memakai environment uji yang terisolasi; request provider tetap dapat
+berbiaya.
+
+Exploratory 26 Agustus 2026 dijalankan adaptif dari akun Telegram tester:
+pesan berikutnya ditentukan setelah membaca respons nyata, bukan expected
+transcript. Run menuntaskan tugas format evaluasi, topic shift, explicit usage,
+context return, dan correction. Defect routing chat→AgentRun, kandidat
+hypothetical/negasi, klaim lifecycle tanpa receipt, portrait yang mencampur
+history, penutup generik, serta aksara asing ditemukan dari run awal dan
+disederhanakan menjadi regresi. Focused rerun current build kemudian lulus
+scope itu. Percobaan WhatsApp current build berhenti sebelum satu pesan karena
+session tester ditolak transport dengan 401; status itu **FAIL/BLOCKED**, bukan
+bukti kanal live.
 
 1. Gunakan bot dan akun uji, bukan data pengguna nyata.
 2. Jalankan `/start` dan `/bantuan`. Pada akun yang belum pernah berkenalan,
@@ -579,28 +586,37 @@ supaya tidak berbiaya.
 
 ### Memori dan riwayat
 
-Transkrip 26 Juli 2026 sudah membuktikan sebagian jalur lama dan menemukan
-kegagalan. Alur setelah `ADR-007` belum dijalankan ulang melalui Telegram;
-setiap langkah di bawah tetap harus diberi status PASS/FAIL/NOT RUN sendiri.
+Transkrip 26 Juli 2026 membuktikan sebagian jalur lama dan menemukan kegagalan.
+Full/focused journey 24–26 Agustus sudah membuktikan sebagian besar jalur
+current melalui Telegram, tetapi setiap langkah di bawah tetap harus diberi
+status PASS/FAIL/NOT RUN sendiri; satu journey tidak otomatis mencakup semuanya.
 Phase E/F kini tersambung pada jalur privat lewat `MemoryContextCompiler`.
 Tes otomatis mengunci FTS/vector/graph fusion, provenance, current/as-of,
 contradiction/supersession, suppression, export/delete, restart, dan race.
-Provider embedding nyata dan perilaku Telegram tetap **NOT RUN** sampai langkah
-manual terkait dijalankan; jangan menurunkan bukti unit menjadi klaim live.
+Provider embedding nyata tetap **NOT RUN**. Perilaku Telegram mempunyai bukti
+live parsial pada journey 24–26 Agustus, tetapi langkah yang tidak tercakup
+tetap **NOT RUN**; jangan menurunkan bukti unit atau satu journey menjadi klaim
+matrix live lengkap.
 
-13. Sebutkan sesuatu yang biasa, misalnya "aku kelas 11 IPA". Pastikan Harvy
-    menanggapinya secara natural dan, bila perlu, membuat jelas bahwa hal itu
-    akan diingat. Jika balasan utama sudah jelas, tidak boleh ada note kedua.
-    `📍` boleh muncul sebagai write/update tetapi tidak wajib; `💭` tidak boleh
-    dipakai sebagai tanda save. Tidak ada tombol Lupakan per item.
-14. Sebutkan sesuatu yang sensitif, misalnya kondisi kesehatan atau keadaan
-    keluarga. Pastikan Harvy **bertanya lebih dulu** dan tidak menyimpan apa pun
-    sebelum dijawab. Pasal 4 nomor 3.
-15. Tekan "Jangan" pada tawaran itu, lalu tanyakan apa yang Harvy ingat.
-    Pastikan hal tadi memang tidak muncul dalam potret pemahamannya.
+13. Sebutkan sesuatu yang biasa, misalnya "aku kelas 11 IPA". Sesudah consent
+    onboarding aktif, pastikan Harvy menanggapinya natural tanpa meminta izin
+    per-item. Jika write benar-benar commit, acknowledgement harus menyatu
+    dengan jawaban utama dan tidak boleh ada note kedua. `📍` boleh muncul
+    sebagai write/update tetapi tidak wajib; `💭` tidak boleh dipakai sebagai
+    tanda save. Tidak ada tombol Lupakan per item.
+14. Sebutkan preferensi atau keadaan personal non-credential. Pastikan tidak
+    muncul prompt `SIMPAN MEMORI`/`JANGAN SIMPAN`; onboarding adalah authority
+    privat. Lalu kirim password, OTP, token, atau API key sintetis dan pastikan
+    credential tetap tidak ditulis meskipun onboarding sudah disetujui.
+15. Tulis hypothetical, pekerjaan yang baru sedang dibahas, dan negasi seperti
+    "jangan ingat ini", lalu tanyakan apa yang Harvy ingat. Pastikan semuanya
+    tidak dipromosikan menjadi primary memory dan Harvy tidak mengklaim sudah
+    menyimpan/menghapus tanpa receipt.
 16. Tulis "apa yang kamu ingat tentang aku". Pastikan potret naratif yang sama
     dengan `/memori` muncul tanpa ID/metadata teknis atau tombol per item; hanya
-    tombol `Ubah` yang mengembalikan pengguna ke percakapan bebas.
+    tombol `Ubah` yang mengembalikan pengguna ke percakapan bebas. History,
+    summary, recent turn, dan episode-only tidak boleh muncul sebagai memori;
+    bila primary memory kosong, potret harus empty meskipun chat panjang.
 17. Sebut sesuatu, lalu pada pesan berikutnya rujuk dengan "yang tadi itu".
     Pastikan Harvy mengerti tanpa diberi tahu ulang. Ini yang membedakan riwayat
     yang benar-benar tersambung dari riwayat yang hanya tersimpan.

@@ -28,7 +28,7 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   dan menyediakan jalur safety tanpa consent. Bubble setelah pesan pertama
   tidak dikirim ke model atau dinilai safety sebelum consent. Setelah consent,
   batas bubble yang ditahan dipertahankan dan matcher lokal menilai tiap bagian.
-- Consent onboarding versi 8 mengotorisasi auto-memory ordinary maupun personal
+- Consent onboarding versi 10 mengotorisasi auto-memory ordinary maupun personal
   pada scope Telegram privat. Candidate baru tidak meminta izin atau memberi
   tombol lupakan/urungkan per-item; Harvy baru memberi acknowledgment natural
   setelah commit. Credential tetap ditolak dan kontrol lihat/koreksi/hapus
@@ -92,7 +92,10 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
 - Cold smalltalk dan reminder tanpa isi tidak lagi dijawab tabel regex statis;
   keduanya memakai understanding/reply model. Planning durable juga tidak lagi
   dipaksa dari kata seperti `rencana` atau `langkah`: adapter hanya menerima
-  `RoutingAssessment.planningRequired` yang tepercaya dan nonmekanis.
+  current intent `request` dengan `RoutingAssessment.planningRequired`
+  tepercaya, nonmekanis, `executionSize medium|heavy`, dan `toolNeed
+  execution|external`. `toolNeed:none` atau `internal_state` dari model tidak
+  memberi authority untuk membuka AgentRun.
 - Surface yang berhasil terkirim mencatat maksimal tiga referen interaksi
   content-free selama sepuluh menit, terisolasi per owner+channel+conversation.
   State ini hanya membantu anaphora, hilang saat restart, dan tidak masuk
@@ -126,6 +129,20 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
 
 ## Batas dan defect aktif
 
+- Exploratory current-build 26 Agustus benar-benar dijalankan dari akun
+  Telegram tester dan pesan berikutnya dipilih dari respons Harvy, bukan dari
+  expected transcript. Perjalanan menyelesaikan tugas format evaluasi nyata,
+  mengganti topik, meminta usage secara eksplisit, kembali ke konteks lama, dan
+  memberi koreksi. Run awal menemukan chat-only analysis salah membuka
+  AgentRun, kandidat hypothetical/current-work, klaim record/delete tanpa
+  receipt, `/memori` yang mencampur history, penutup generik, serta satu aksara
+  asing dan typo. Setelah perbaikan, focused rerun tidak membuka AgentRun untuk
+  chat tanpa tool, tidak menampilkan usage kecuali diminta, mempertahankan
+  konteks saat topik kembali, menjawab koreksi tanpa klaim storage, dan
+  mempertahankan `/memori` empty walau history panjang. Assessment content-free
+  final adalah usefulness 5, naturalness 4, initiative 4, non-repetition 5,
+  UI clarity 5, context coherence 5, correction handling 5, selesai tanpa
+  defect baru pada scope focused tersebut. Ini bukan bukti dogfood tujuh hari.
 - Build yang diuji oleh full live acceptance pada 24 Agustus lulus 8/8 melalui
   akun tester nyata. Scope mencakup
   consent/menu, task+reminder proaktif yang benar-benar jatuh tempo,
@@ -201,13 +218,17 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   lulus smoke resmi, tetapi sandbox Linux, GitHub App remote, Telegram
   upload/callback CodingRun, dan draft PR belum diuji end-to-end live pada
   deployment ini; runtime tetap default-off.
+- Input gambar sudah lulus smoke provider nyata dan tes adapter, tetapi belum
+  dikirim lewat akun Telegram tester pada build ini; jangan menyebutnya live
+  channel-proven.
 - Work lane baru satu foreground dan belum mempunyai job queue kedua,
   replacement policy, archive Anchor, storage multi-instance, atau receipt
   selain outbound Telegram.
 - Build yang menjalani focused journey 25 Agustus mempunyai bukti live untuk
-  commit-first task dan reminder relatif Indonesia. Kualitas
-  `SemanticOperation` lintas bahasa serta parafrasa luas tetap baru dibuktikan
-  schema/policy, fixture, dan eval provider.
+  commit-first task dan reminder relatif Indonesia. Journey 26 Agustus memberi
+  bukti live tambahan untuk usage natural, routing chat-vs-work, kontrol memori,
+  context return, dan correction; `SemanticOperation` lintas bahasa serta
+  parafrasa luas tetap belum terkalibrasi.
 
 ## Bukti dan pointer
 

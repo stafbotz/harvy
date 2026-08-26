@@ -2,6 +2,10 @@ import type { LocalGitObjectBundleReference } from "./local-git.js";
 
 export type ProjectWorkspaceSource =
   | {
+      /** Project dibuat langsung di Workspace tanpa archive atau remote. */
+      type: "blank";
+    }
+  | {
       type: "upload";
       artifactId: string;
       sha256: string;
@@ -47,7 +51,13 @@ export interface ProjectWorkspaceRevision {
   revision: number;
   snapshotId: string;
   parentSnapshotId: string | null;
-  reason: "import" | "provisioning" | "coding" | "replacement" | "rollback";
+  reason:
+    | "initialization"
+    | "import"
+    | "provisioning"
+    | "coding"
+    | "replacement"
+    | "rollback";
   /** Idempotency key for a prepared CodingRun commit effect. */
   effectId?: string;
   git?: ProjectWorkspaceGitState;

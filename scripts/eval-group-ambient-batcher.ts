@@ -114,14 +114,13 @@ async function withSmartRetry<T>(
 }
 
 async function runGroupAmbientBatcherEval() {
-  const allowFallback = process.argv.includes("--allow-fallback");
   const config = loadConfig();
-  const client = await createInstrumentedAiClient(config, "evaluation", allowFallback);
+  const client = await createInstrumentedAiClient(config, "evaluation");
   const groupConversation = new GroupConversation(client, config.ai);
 
   console.log(`===================================================================`);
   console.log(`=== HARVY GROUP AMBIENT PARTICIPATION & MESSAGE BATCHER EVALUATOR ===`);
-  console.log(`Mode AI: ${config.ai.mode} | Fallback: ${allowFallback}`);
+  console.log(`Mode AI: ${config.ai.mode} | Fallback: false`);
   console.log(`Total Anggota Grup: 20 Anggota (Anggota1 - Anggota20)`);
   console.log(`Total Batch Pesan: ${GROUP_STREAM.length} Stream (Tanpa Tag/Mention Harvy)`);
   console.log(`===================================================================\n`);

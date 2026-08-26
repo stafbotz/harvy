@@ -18,19 +18,30 @@ import {
   type RunBudgetPolicy,
 } from "../core/run-budget.js";
 import type {
+  CodingAdvisoryDraft,
+  CodingAdvisoryInput,
   CodingCoordinatorRunView,
   CodingWorkerAction,
   CodingWorkerDriver,
   CodingWorkerInput,
 } from "../core/coding-run-coordinator.js";
 import { containsSecretLikeValue } from "../security/credential-like.js";
+import {
+  createModelSpecialistWorker,
+} from "./specialist.js";
+import type {
+  SpecialistRequest,
+  SpecialistWorker,
+} from "../agent/specialist-delegation.js";
+import type { AgentHandoff, WorkBrief } from "../domain/agent-handoff.js";
 
 const CODING_TIER = "ambitious" as const;
 const DEFAULT_DEADLINE_MS = 60_000;
 const DEFAULT_MAX_THREADS = 256;
 const MAX_PACKET_CHARACTERS = 512_000;
+const MAX_ADVISORY_SUMMARY_CHARACTERS = 3_600;
 
-type CodingAiClient = Pick<AiClient, "completeToolTurn">;
+type CodingAiClient = Pick<AiClient, "complete" | "completeToolTurn">;
 
 interface CodingThread {
   instructionRevision: number;
@@ -56,7 +67,7 @@ const DEFAULT_CODING_BUDGET: RunBudgetPolicy = Object.freeze({
     maxModelCalls: 128,
     deadlineMs: 2 * 60 * 60_000,
     compactAtContextRatio: 0.82,
-    maxConcurrentWorkers: 1,
+    maxConcurrentWorkers: 2,
   }),
 });
 
@@ -74,6 +85,7 @@ export class AiCodingWorkerDriver implements CodingWorkerDriver {
   readonly #executionPolicy: ExecutionPolicy;
   readonly #now: () => number;
   readonly #budgetPolicy: RunBudgetPolicy;
+  readonly #specialist: SpecialistWorker;
 
   constructor(
     private readonly client: CodingAiClient,
@@ -103,6 +115,63 @@ export class AiCodingWorkerDriver implements CodingWorkerDriver {
       },
       prices: options.budget?.prices ?? routing.prices,
     };
+    this.#specialist = createModelSpecialistWorker(
+      client,
+      routing,
+      this.#executionPolicy,
+    );
+  }
+
+  async advise(
+    input: CodingAdvisoryInput,
+    signal?: AbortSignal,
+  ): Promise<CodingAdvisoryDraft[]> {
+    if (signal?.aborted) throw abortError();
+    const serialized = jsonForPrompt(input);
+    if (
+      serialized.length > MAX_PACKET_CHARACTERS ||
+      containsSecretLikeValue(serialized)
+    ) throw new Error("Paket coding advisory terlalu besar atau credential-like.");
+    const budget = this.budgetFor(input.run);
+    budget.assertStep(input.run.counters.coordinatorDecisions - 1);
+    const roles = ["challenger", "verifier"] as const;
+    const execute = async (
+      role: (typeof roles)[number],
+    ): Promise<CodingAdvisoryDraft> => {
+      const request: SpecialistRequest = {
+        role,
+        brief: advisoryBrief(input, role),
+      };
+      try {
+        const handoff = await this.#specialist(request, {
+          runId: input.run.runId,
+          ownerId: input.run.projectId,
+          role,
+          signal: signal ?? new AbortController().signal,
+          runBudget: budget,
+          workSignals: role === "verifier"
+            ? { difficulty: "deep", stakes: "high", uncertainty: "medium" }
+            : { difficulty: "deep", stakes: "medium", uncertainty: "high" },
+        });
+        const summary = advisorySummary(handoff);
+        if (containsSecretLikeValue(summary)) {
+          return failedAdvisory(role, "Handoff ditolak oleh pemeriksaan credential.");
+        }
+        return { role, status: handoff.status, summary };
+      } catch (error) {
+        if (
+          signal?.aborted ||
+          (error instanceof Error && error.name === "AbortError")
+        ) throw abortError();
+        return failedAdvisory(role, "Penasihat read-only tidak menghasilkan handoff sah.");
+      }
+    };
+    if (budget.maxConcurrentWorkers >= roles.length) {
+      return Promise.all(roles.map((role) => execute(role)));
+    }
+    const drafts: CodingAdvisoryDraft[] = [];
+    for (const role of roles) drafts.push(await execute(role));
+    return drafts;
   }
 
   async next(
@@ -251,6 +320,97 @@ function codingPacket(input: CodingWorkerInput): unknown {
     run: input.run,
     previousObservation: input.previousObservation,
   };
+}
+
+function advisoryBrief(
+  input: CodingAdvisoryInput,
+  role: "challenger" | "verifier",
+): WorkBrief {
+  const run = input.run;
+  const repositoryMap = run.repositoryMap;
+  const goal = role === "challenger"
+    ? `Tantang scope, asumsi, risiko, dan urutan implementasi untuk: ${run.taskBrief.objective}`
+    : `Susun rubric verifikasi independen dan kasus gagal untuk: ${run.taskBrief.objective}`;
+  const constraints = [
+    ...run.taskBrief.initialConstraints,
+    ...run.constraints.map((constraint) => constraint.content),
+    "Penasihat read-only: jangan mengusulkan atau mengklaim mutasi repository.",
+    "Jangan menganggap validator lulus tanpa receipt code-owned.",
+  ].slice(0, 24);
+  const facts = [
+    `Phase current: ${run.phase}.`,
+    `Instruction revision: ${run.instructionRevision}.`,
+    repositoryMap
+      ? `Repository map: ${repositoryMap.entryCount} entries dan ${repositoryMap.symbolCount} symbols.`
+      : "Repository map belum tersedia.",
+    `Working diff observation: ${input.repositoryEvidence.diff.digest}.`,
+  ];
+  const evidence = [
+    {
+      id: `tree:${input.repositoryEvidence.tree.digest}`,
+      source: "tool_observation" as const,
+      summary: repositoryMap
+        ? `Tree current lengkap dengan ${repositoryMap.entryCount} entries; digest ${input.repositoryEvidence.tree.digest}.`
+        : `Tree current digest ${input.repositoryEvidence.tree.digest}.`,
+    },
+    {
+      id: `diff:${input.repositoryEvidence.diff.digest}`,
+      source: "tool_observation" as const,
+      summary: `Diff current dibaca read-only; digest ${input.repositoryEvidence.diff.digest}.`,
+    },
+  ];
+  return {
+    version: 1,
+    goal: boundedText(goal, 2_000),
+    originalRequestRef: run.runId,
+    facts,
+    constraints,
+    evidence,
+    assumptions: [],
+    plan: (run.plan?.steps ?? []).map((step) => step.description).slice(0, 24),
+    openQuestions: [],
+    acceptanceCriteria: run.taskBrief.acceptanceCriteria.slice(0, 24),
+    requestedCapabilities: [],
+  };
+}
+
+function advisorySummary(handoff: AgentHandoff): string {
+  const sections = [
+    `Status: ${handoff.status}`,
+    handoff.workProduct ? `Work product: ${boundedText(handoff.workProduct, 1_800)}` : "",
+    compactList("Facts", handoff.facts, 5),
+    compactList("Assumptions", handoff.assumptions, 5),
+    compactList("Plan", handoff.plan, 7),
+    compactList("Open questions", handoff.openQuestions, 5),
+    `Confidence: ${handoff.confidence.toFixed(2)}`,
+    handoff.failureCodes.length > 0
+      ? `Failure codes: ${handoff.failureCodes.join(", ")}`
+      : "",
+  ].filter(Boolean).join("\n");
+  return boundedText(sections, MAX_ADVISORY_SUMMARY_CHARACTERS);
+}
+
+function compactList(
+  label: string,
+  values: readonly string[],
+  maximum: number,
+): string {
+  if (values.length === 0) return "";
+  return `${label}:\n${values.slice(0, maximum).map((value) =>
+    `- ${boundedText(value, 420)}`
+  ).join("\n")}`;
+}
+
+function failedAdvisory(
+  role: "challenger" | "verifier",
+  summary: string,
+): CodingAdvisoryDraft {
+  return { role, status: "failed", summary };
+}
+
+function boundedText(value: string, maximum: number): string {
+  const clean = value.trim().replaceAll(/[\u0000-\u001f\u007f]/gu, " ");
+  return clean.slice(0, maximum);
 }
 
 function codingUserMessage(packetJson: string, continuation: boolean): string {

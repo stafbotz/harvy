@@ -94,6 +94,7 @@ export interface GitHubInstallationConnection {
 }
 
 export type GitHubRepositorySelectionStatus =
+  | "bootstrap_required"
   | "selected"
   | "archive_ready"
   | "project_created"
@@ -113,7 +114,10 @@ export interface GitHubRepositorySelection {
   repositoryFullName: string;
   visibility: GitHubRepositoryVisibility;
   defaultBranch: string;
-  baseCommit: string;
+  /** Null only while an explicitly confirmed empty repository awaits bootstrap. */
+  baseCommit: string | null;
+  /** Append-only WAL for the code-owned first commit of a truly empty repository. */
+  bootstrapAttempts: GitHubRepositoryBootstrapAttempt[];
   selectedByMembershipId: string;
   selectedAclEpoch: number;
   status: GitHubRepositorySelectionStatus;
@@ -131,6 +135,7 @@ export type GitHubInteractiveAction =
   | "github.install.status"
   | "github.install.repositories.list"
   | "github.repository.select"
+  | "github.repository.bootstrap"
   | "github.repository.provision"
   | "github.install.revoke";
 
@@ -394,7 +399,9 @@ export interface GitHubRepositoryAccess {
   repositoryFullName: string;
   visibility: GitHubRepositoryVisibility;
   defaultBranch: string;
-  baseCommit: string;
+  /** Null iff the repository has no branch at all. */
+  baseCommit: string | null;
+  empty: boolean;
   targetBranch: string | null;
   targetBranchHead: string | null;
   canRead: boolean;
@@ -410,6 +417,45 @@ export interface GitHubBrokerHealth {
   checkedAt: string;
   reason: string | null;
 }
+
+/**
+ * Exact, content-defined mutation used only to initialize a truly empty
+ * private repository. It is intentionally separate from CodingRun publish
+ * effects because no project/run exists before repository provisioning.
+ */
+export interface GitHubRepositoryBootstrapEffect {
+  effectId: string;
+  attempt: number;
+  capability: "github.repository.bootstrap";
+  ownerWorkspaceKey: string;
+  installationConnectionId: string;
+  selectionId: string;
+  installationId: string;
+  repositoryId: string;
+  repositoryFullName: string;
+  visibility: "private";
+  defaultBranch: string;
+  expectedHead: null;
+  path: "README.md";
+  contentSha256: string;
+  commitMessage: "Initialize repository for Harvy";
+}
+
+export interface GitHubRepositoryBootstrapAttempt {
+  confirmationId: string;
+  approvedByMembershipId: string;
+  approvedAclEpoch: number;
+  effect: GitHubRepositoryBootstrapEffect;
+  status: "prepared" | "committed" | "unknown" | "not_committed";
+  externalCommit: string | null;
+  url: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type GitHubBrokerEffect =
+  | GitHubExactEffect
+  | GitHubRepositoryBootstrapEffect;
 
 export type GitHubBrokerTransportResult = {
   effectId: string;
@@ -488,6 +534,10 @@ export interface GitHubBrokerTransport {
     targetBranch: string | null,
     signal?: AbortSignal,
   ): Promise<GitHubRepositoryAccess>;
+  bootstrapRepository(
+    effect: GitHubRepositoryBootstrapEffect,
+    signal?: AbortSignal,
+  ): Promise<GitHubBrokerTransportResult>;
   createBranch(
     effect: GitHubExactEffect,
     signal?: AbortSignal,
@@ -502,7 +552,7 @@ export interface GitHubBrokerTransport {
     signal?: AbortSignal,
   ): Promise<GitHubBrokerTransportResult>;
   reconcileEffect(
-    effect: GitHubExactEffect,
+    effect: GitHubBrokerEffect,
     signal?: AbortSignal,
   ): Promise<GitHubBrokerTransportResult>;
 }
@@ -531,6 +581,13 @@ implements GitHubBrokerTransport, GitHubInstallationTransport {
     _targetBranch: string | null,
     _signal?: AbortSignal,
   ): Promise<GitHubRepositoryAccess> {
+    throw new Error(this.reason);
+  }
+
+  async bootstrapRepository(
+    _effect: GitHubRepositoryBootstrapEffect,
+    _signal?: AbortSignal,
+  ): Promise<GitHubBrokerTransportResult> {
     throw new Error(this.reason);
   }
 
@@ -603,7 +660,7 @@ implements GitHubBrokerTransport, GitHubInstallationTransport {
   }
 
   async reconcileEffect(
-    _effect: GitHubExactEffect,
+    _effect: GitHubBrokerEffect,
     _signal?: AbortSignal,
   ): Promise<GitHubBrokerTransportResult> {
     throw new Error(this.reason);

@@ -7,7 +7,6 @@
  * observation mentah, memori, atau riwayat.
  *
  *   npx tsx scripts/coba-agent.ts
- *   npx tsx scripts/coba-agent.ts --allow-fallback
  */
 import { Conversation } from "../src/ai/conversation.js";
 import { createModelAgentWorker } from "../src/ai/agent.js";
@@ -22,9 +21,8 @@ import {
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 
-const allowFallback = process.argv.slice(2).includes("--allow-fallback");
 const config = loadConfig();
-const client = await createInstrumentedAiClient(config, "probe", allowFallback);
+const client = await createInstrumentedAiClient(config, "probe");
 let agendaDays: number | null = null;
 const syntheticAgenda: AgentCapabilityExecutor<{
   days: number;
@@ -105,7 +103,7 @@ const conversation = new Conversation(
 );
 
 console.log(`Mode    : ${config.ai.mode}`);
-console.log(`Fallback: ${allowFallback && config.ai.fallback ? "aktif" : "nonaktif"}`);
+console.log("Fallback: nonaktif");
 console.log("Data    : sintetis; tanpa memori, riwayat, atau state pengguna");
 
 const simple = await conversation.agent(

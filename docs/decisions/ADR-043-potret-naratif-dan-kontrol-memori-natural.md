@@ -6,6 +6,9 @@
   acknowledgement memakai receipt commit dan bahasa percakapan kontekstual
 - **Amandemen:** 24 Agustus 2026 — consent onboarding privat mengotorisasi
   auto-memory; prompt dan tombol consent per-item dihapus
+- **Amandemen:** 26 Agustus 2026 — potret hanya memakai primary memory yang
+  dapat dikendalikan pengguna; history, recent turn, dan episode-only tidak
+  lagi dipresentasikan sebagai hal yang Harvy "ingat"
 - **Disupersesi sebagian:** ADR-044 menggantikan guard frasa pada poin 6 dan 9
   dengan `SemanticOperation` tervalidasi; lexical matching tetap hanya untuk
   ranking target owner-local
@@ -31,12 +34,14 @@ pengalaman percakapan.
    kendali pengguna, tetapi layar tidak lagi merender record satu per satu.
    Narasi disintesis ulang setiap kali diminta dan tidak pernah disimpan sebagai
    canonical memory.
-3. **Context synthesis tetap bounded dan selective.** Query khusus potret
-   meminta primary, episode relevan, semantic, graph, dan user model melalui
-   `MemoryContextCompiler`. Budget compiler tetap 8 item/3.000 karakter;
-   renderer prompt membatasi 16 primary, 12 evidence, dan 1.800 karakter shared
-   experience. Procedure, error lesson, seluruh archive mentah, dan raw recent
-   turn tidak masuk synthesis. Giliran biasa tidak membayar request ini.
+3. **Context synthesis tetap bounded, selective, dan dapat dikendalikan.**
+   Entry point privat membangun potret dari maksimal 16 primary memory. Evidence
+   turunan maksimal 12 item hanya boleh ikut bila masih mempunyai
+   `sourceMemoryIds` ke primary source yang dapat dilihat, dikoreksi, atau
+   dilupakan pengguna. Summary, raw recent turn, episode-only, shared
+   experience, procedure, error lesson, dan archive tidak masuk potret. History
+   tetap dapat membantu percakapan dan rujukan "yang tadi", tetapi bukan daftar
+   memori. Giliran biasa tidak membayar request synthesis ini.
 4. **Ketidakpastian dirender sebagai bahasa manusia.** Status dan validity
    membantu model membedakan keadaan current, superseded, dan uncertain.
    Parser output menolak bullet/database dump, panjang di atas 1.600 karakter,
@@ -91,6 +96,8 @@ pengalaman percakapan.
 Positif:
 
 - pengguna melihat bagaimana Harvy memahaminya, bukan isi storage mentah;
+- isi potret tetap mempunyai primary source yang dapat dikendalikan pengguna,
+  sehingga percakapan sesaat tidak berubah diam-diam menjadi klaim memori;
 - perubahan dan ketidakpastian dapat ditulis tanpa dipaksa menjadi fakta
   absolut;
 - satu renderer mencegah `/memori`, pertanyaan natural, dan Data & izin
@@ -105,11 +112,15 @@ Positif:
 Trade-off dan batas:
 
 - membuka potret non-empty membutuhkan satu request synthesis tambahan;
-- Context Pack yang diterima synthesis membawa status/validity tetapi belum
-  membawa confidence dan stability user-model sebagai field terpisah;
+- potret tidak menceritakan pengalaman percakapan yang belum dipromosikan ke
+  primary memory; continuity pengalaman tetap hadir di percakapan, bukan pada
+  layar kontrol memori;
+- evidence turunan yang kelak diterima synthesis dapat membawa status/validity,
+  tetapi wajib tetap menunjuk primary source aktif;
 - matcher scoped forget bersifat lexical dengan alias topik dan hanya dapat
-  menghapus primary source yang cocok. Detail episode-only tanpa primary source
-  memerlukan target yang lebih spesifik atau forget-all; dan
+  menghapus primary source yang cocok. Episode-only tidak muncul pada potret;
+  lifecycle history dan full data deletion tetap merupakan kontrol terpisah;
+  dan
 - kualitas tone naratif tetap bergantung pada model, sehingga output divalidasi
   dan gagal ke copy aman alih-alih menampilkan dump primary.
 
@@ -121,4 +132,7 @@ context route/budget, ketidakpastian, larangan metadata, empty state, tombol
 correction kuliah/relasi, explicit remember item-scoped, auto-memory privat
 pasca-onboarding, hard exclusion credential, receipt sebelum acknowledgement, semantik
 opsional `📍`/`💭`, larangan duplicate note/log per-item, cascade lama, serta
-regresi command dan memory suite.
+regresi command dan memory suite. Rerun Telegram nyata 26 Agustus juga
+membuktikan `/memori` tetap empty setelah percakapan panjang ketika tidak ada
+primary memory, sementara konteks percakapan masih dapat dipakai saat topik
+kembali.

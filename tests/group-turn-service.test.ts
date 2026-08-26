@@ -47,9 +47,12 @@ describe("giliran grup", () => {
     assert.match(notice, /setelah 9 hari/i);
     assert.match(notice, /collector perusahaan/i);
     assert.doesNotMatch(notice, /bawaan 14 hari/i);
-    assert.match(notice, /satu atau lebih penyedia/i);
-    assert.match(notice, /dikirim ulang ke penyedia cadangan/i);
-    assert.equal(GROUP_NOTICE_VERSION, 9);
+    assert.match(notice, /satu layanan model AI utama pihak ketiga/i);
+    assert.match(notice, /tidak mengirim ulang.*penyedia cadangan/i);
+    assert.equal(GROUP_NOTICE_VERSION, 11);
+    assert.match(notice, /cache penyedia/i);
+    assert.match(notice, /hanya mencatat hitungan token cache tanpa isi/i);
+    assert.match(notice, /gambar grup belum diproses/i);
     assert.match(notice, /terpisah per grup dan per anggota/i);
     assert.match(notice, /sensitif tidak pernah kusimpan otomatis/i);
     assert.match(notice, /permintaan awal dan judul pekerjaan/i);
@@ -63,7 +66,7 @@ describe("giliran grup", () => {
     assert.match(notice, /tetap tunduk pada batas retensi 7 hari bila cleanup penyimpanan sementara gagal/i);
   });
 
-  it("mengirim notice v9 lagi sebelum memproses grup yang baru melihat v8", async () => {
+  it("mengirim notice v11 lagi sebelum memproses grup yang baru melihat v10", async () => {
     const events: string[] = [];
     const runtime = createRuntime({
       events,
@@ -74,7 +77,7 @@ describe("giliran grup", () => {
     await runtime.memories.markNoticeSent(
       "whatsapp:grup@g.us",
       "utama",
-      8,
+      10,
     );
 
     assert.equal(
@@ -84,7 +87,7 @@ describe("giliran grup", () => {
     assert.deepEqual(events, ["notice", "reply:halo"]);
     assert.equal(
       (await runtime.memories.binding("whatsapp:grup@g.us"))?.noticeVersion,
-      9,
+      11,
     );
   });
 

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  CodingAdvisoryReceipt,
   CodingPlanStep,
   CodingRun,
   CodingTaskBrief,
@@ -69,6 +70,11 @@ export interface CodingCoordinatorRunView {
     NonNullable<CodingRun["taskReviewReceipts"]>[number],
     "receiptId" | "status" | "instructionRevision" | "completedAt"
   >>;
+  advisories?: Array<Pick<
+    CodingAdvisoryReceipt,
+    "advisoryId" | "role" | "status" | "instructionRevision" |
+      "summary" | "summaryDigest" | "createdAt"
+  >>;
   counters: CodingRun["counters"];
   limits: CodingRun["limits"];
 }
@@ -86,12 +92,30 @@ export interface CodingWorkerInput {
   previousObservation: CodingWorkerObservation | null;
 }
 
+export interface CodingAdvisoryInput {
+  run: CodingCoordinatorRunView;
+  repositoryEvidence: {
+    tree: CodingWorkerObservation;
+    diff: CodingWorkerObservation;
+  };
+}
+
+export interface CodingAdvisoryDraft {
+  role: CodingAdvisoryReceipt["role"];
+  status: CodingAdvisoryReceipt["status"];
+  summary: string;
+}
+
 /** Provider/model policy adapter. It receives no conversation or personal memory. */
 export interface CodingWorkerDriver {
   next(
     input: CodingWorkerInput,
     signal?: AbortSignal,
   ): Promise<CodingWorkerAction>;
+  advise?(
+    input: CodingAdvisoryInput,
+    signal?: AbortSignal,
+  ): Promise<CodingAdvisoryDraft[]>;
 }
 
 export type CodingCoordinatorRepositoryTools = Pick<
@@ -122,6 +146,13 @@ export interface CodingCoordinatorEngine {
     input: {
       steps: Array<Pick<CodingPlanStep, "stage" | "description" | "paths">>;
     },
+    expectedStateRevision?: number,
+  ): Promise<CodingRun>;
+  recordAdvisories?(
+    scope: WorkspaceAgentScope,
+    runId: string,
+    expectedInstructionRevision: number,
+    drafts: readonly CodingAdvisoryDraft[],
     expectedStateRevision?: number,
   ): Promise<CodingRun>;
   applyPatch(
@@ -380,6 +411,80 @@ export class CodingRunCoordinator {
       const tools = await this.engine.writerTools(scope, runId);
       run = await this.requireRun(scope, runId);
       if (terminal(run)) return { outcome: "terminal", actions, run };
+      const currentAdvisories = (run.advisoryReceipts ?? []).filter((receipt) =>
+        receipt.instructionRevision === run.instructionRevision
+      );
+      if (
+        run.phase === "planning" && this.worker.advise &&
+        this.engine.recordAdvisories &&
+        currentAdvisories.length === 0
+      ) {
+        if (
+          run.counters.coordinatorDecisions >=
+            run.limits.maxCoordinatorDecisions
+        ) {
+          const paused = await this.engine.pauseCoordinator(
+            scope,
+            runId,
+            "decision_budget",
+            "Batas keputusan kumulatif run ini tercapai sebelum advisory read-only dapat diselesaikan.",
+          );
+          return { outcome: "action_budget", actions, run: paused };
+        }
+        run = await this.engine.reserveCoordinatorDecision(
+          scope,
+          runId,
+          run.stateRevision,
+        );
+        const advisoryStateRevision = run.stateRevision;
+        const advisoryInstructionRevision = run.instructionRevision;
+        const [tree, diff] = await Promise.all([
+          tools.tree(advisoryInstructionRevision, { maxDepth: 8 }),
+          tools.diff(advisoryInstructionRevision),
+        ]);
+        const advisoryInput: CodingAdvisoryInput = {
+          run: runView(run),
+          repositoryEvidence: {
+            tree: this.observe("workspace.tree", tree),
+            diff: this.observe("workspace.diff", diff),
+          },
+        };
+        const rawDrafts = await this.engine.runCoordinatorDecision(
+          scope,
+          runId,
+          advisoryStateRevision,
+          this.workerTimeoutMs,
+          signal,
+          (workerSignal) => this.worker.advise!(advisoryInput, workerSignal),
+        );
+        const drafts = validateAdvisoryDrafts(rawDrafts);
+        const current = await this.requireRun(scope, runId);
+        if (
+          current.stateRevision !== advisoryStateRevision ||
+          current.instructionRevision !== advisoryInstructionRevision ||
+          current.status !== run.status || current.phase !== run.phase
+        ) throw new Error("CodingRun berubah selama advisory; handoff lama dibuang.");
+        const advised = await this.engine.recordAdvisories(
+          scope,
+          runId,
+          advisoryInstructionRevision,
+          drafts,
+          advisoryStateRevision,
+        );
+        previousObservation = this.observe("advisory.completed", {
+          receipts: (advised.advisoryReceipts ?? [])
+            .filter((receipt) =>
+              receipt.instructionRevision === advisoryInstructionRevision
+            )
+            .map((receipt) => ({
+              role: receipt.role,
+              status: receipt.status,
+              summaryDigest: receipt.summaryDigest,
+            })),
+        });
+        await this.reportProgress(advised);
+        continue;
+      }
       if (
         run.counters.coordinatorDecisions >=
           run.limits.maxCoordinatorDecisions
@@ -774,6 +879,32 @@ function validateAction(input: CodingWorkerAction): CodingWorkerAction {
   }
 }
 
+function validateAdvisoryDrafts(input: readonly CodingAdvisoryDraft[]): CodingAdvisoryDraft[] {
+  if (!Array.isArray(input) || input.length !== 2) {
+    throw new Error("Coding advisory wajib memuat dua handoff.");
+  }
+  const result = input.map((draft) => {
+    if (!draft || typeof draft !== "object" || Array.isArray(draft)) {
+      throw new Error("Coding advisory bukan object.");
+    }
+    exactKeys(draft, ["role", "status", "summary"]);
+    if (
+      (draft.role !== "challenger" && draft.role !== "verifier") ||
+      !["completed", "partial", "plan_conflict", "uncertain", "failed"]
+        .includes(draft.status)
+    ) throw new Error("Role atau status coding advisory tidak sah.");
+    return {
+      role: draft.role,
+      status: draft.status,
+      summary: safeText(draft.summary, "coding advisory summary", 8_000),
+    };
+  });
+  if (new Set(result.map((draft) => draft.role)).size !== 2) {
+    throw new Error("Role coding advisory harus challenger dan verifier.");
+  }
+  return result;
+}
+
 function runView(run: CodingRun): CodingCoordinatorRunView {
   return Object.freeze({
     runId: run.runId,
@@ -794,6 +925,17 @@ function runView(run: CodingRun): CodingCoordinatorRunView {
     diff: structuredClone(run.diff),
     validators: run.validatorReceipts.map(receiptSummary),
     taskReviews: (run.taskReviewReceipts ?? []).map(taskReviewSummary),
+    advisories: (run.advisoryReceipts ?? [])
+      .filter((receipt) => receipt.instructionRevision === run.instructionRevision)
+      .map((receipt) => ({
+        advisoryId: receipt.advisoryId,
+        role: receipt.role,
+        status: receipt.status,
+        instructionRevision: receipt.instructionRevision,
+        summary: receipt.summary,
+        summaryDigest: receipt.summaryDigest,
+        createdAt: receipt.createdAt,
+      })),
     counters: structuredClone(run.counters),
     limits: structuredClone(run.limits),
   });

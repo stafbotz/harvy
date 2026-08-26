@@ -7,7 +7,7 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type {
-  GitHubExactEffect,
+  GitHubBrokerEffect,
   GitHubRepositoryArchiveReference,
 } from "../domain/github.js";
 import { writeDurableBytesAtomic } from "../storage/durable-file.js";
@@ -30,6 +30,7 @@ export interface BrokerInstallationSessionRecord {
 export type BrokerEffectPhase =
   | "admitted"
   | "objects_uploading"
+  | "repository_bootstrap_sending"
   | "ref_update_sending"
   | "pr_create_sending"
   | "terminal";
@@ -38,7 +39,7 @@ export interface BrokerEffectRecord {
   version: 1;
   effectId: string;
   effectDigest: string;
-  effect: GitHubExactEffect;
+  effect: GitHubBrokerEffect;
   phase: BrokerEffectPhase;
   status: "pending" | "committed" | "not_committed" | "unknown";
   externalId: string | null;
@@ -210,7 +211,14 @@ function parseEffect(value: unknown): BrokerEffectRecord {
   ], "effect broker");
   if (record.version !== 1 || !safeText(record.effectId, 512) ||
     typeof record.effectDigest !== "string" || !/^[a-f0-9]{64}$/u.test(record.effectDigest) ||
-    !["admitted", "objects_uploading", "ref_update_sending", "pr_create_sending", "terminal"]
+    ![
+      "admitted",
+      "objects_uploading",
+      "repository_bootstrap_sending",
+      "ref_update_sending",
+      "pr_create_sending",
+      "terminal",
+    ]
       .includes(record.phase ?? "") ||
     !["pending", "committed", "not_committed", "unknown"].includes(record.status ?? "") ||
     (record.externalId !== null && !safeText(record.externalId, 512)) ||

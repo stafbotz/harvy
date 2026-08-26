@@ -85,7 +85,7 @@ export class GitHubApiClient {
   }
 
   async apiJson(input: {
-    method: "GET" | "POST" | "PATCH";
+    method: "GET" | "POST" | "PUT" | "PATCH";
     path: string;
     authorization: string;
     body?: unknown;
@@ -209,7 +209,7 @@ export class GitHubApiClient {
 
   async #json(input: {
     origin: string;
-    method: "GET" | "POST" | "PATCH";
+    method: "GET" | "POST" | "PUT" | "PATCH";
     path: string;
     authorization: string;
     body?: unknown;

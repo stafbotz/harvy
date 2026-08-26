@@ -30,6 +30,7 @@ import {
 import {
   allowsDeterministicSurface,
   requiresPlannedExecution,
+  requestsAgentTooling,
   selectGlobalRoute,
 } from "../ai/model-policy.js";
 import {
@@ -65,22 +66,27 @@ import {
 import type { HistoryService } from "../core/history-service.js";
 import type { MemoryContextCompiler } from "../core/memory-context-compiler.js";
 import type { MemoryService } from "../core/memory-service.js";
-import { memoriesMatchingNaturalTarget } from
+import { memoryRetractionAuthorized, memoriesMatchingNaturalTarget } from
   "../core/memory-natural-control.js";
 import {
   containsForbiddenMemorySecret,
   isSensitiveMemory,
 } from "../core/memory-policy.js";
 import {
-  automaticMemoryCandidateAuthorized,
   deriveMemoryMetadata,
   exactExplicitMemoryCandidate,
+  groundedAutomaticMemoryContent,
   inferExplicitResponsePreference,
+  memoryCandidateConflictsWithRetractions,
+  memoryEvidenceConflictsWithRetractions,
 } from "../core/memory-candidate.js";
 import {
   explicitMemoryRememberAuthority,
   normalizeMemoryWriteEmoji,
   replyAcknowledgesMemoryWrite,
+  replyClaimsMemoryDeletion,
+  withoutUnconfirmedMemoryRecordClaims,
+  withoutUnconfirmedMemoryDeletionClaims,
   withoutUnconfirmedMemoryWriteClaims,
 } from "../core/memory-explicit-consent.js";
 import type { ExtractedMemory } from "../ai/understand.js";
@@ -194,6 +200,17 @@ import type { PrivateGitHubPublishOffer } from
   "../core/private-github-application.js";
 import { renderCodingRunAnchor } from "../coding/coding-run-anchor.js";
 import {
+  GOAL_COMMAND_HELP,
+  parseGoalCommand,
+  parseSkillCommand,
+  SKILL_COMMAND_HELP,
+} from "../coding/project-intent-command.js";
+import {
+  renderProjectGoal,
+  renderProjectSkill,
+  renderProjectSkills,
+} from "../coding/project-intent-presentation.js";
+import {
   semanticConfidenceBucket,
   semanticOperationContextAvailable,
   semanticOperationAuthorized,
@@ -225,7 +242,7 @@ export interface WhatsAppPrivateConversationDependencies {
     Conversation,
     "assessTurnBoundary" | "classifyTurnInterruption" |
       "agent" | "presentOperation" |
-      "presentScheduledCheckIn"
+      "presentScheduledCheckIn" | "interpretProjectIntent"
   >>;
   history: Pick<
     HistoryService,
@@ -325,6 +342,15 @@ interface WhatsAppMemoryBatch {
     content: string;
     operation: "saved" | "updated" | "already-known";
     explicit: boolean;
+  }>;
+}
+
+interface WhatsAppForgottenMemoryBatch {
+  forgotten: MemoryItem[];
+  acknowledgements: Array<{
+    content: string;
+    operation: "forgotten";
+    explicit: true;
   }>;
 }
 
@@ -474,12 +500,12 @@ export class WhatsAppPrivateConversation {
     const previous = this.ingressChains.get(ownerId) ?? Promise.resolve();
     const task = previous.catch(() => undefined).then(async () => {
       if (!this.acceptingIngress) return;
-      const text = message.text.trim();
-      if (!text && !message.document) return;
+      const text = privateConversationText(message);
+      if (!text && !message.document && !message.image) return;
       const needsOnboarding = await this.dependencies.profiles.needsOnboarding(
         ownerId,
       );
-      const runIngress = needsOnboarding || message.document
+      const runIngress = needsOnboarding || message.document || message.image
         ? null
         : await this.reserveActiveRunIngress(ownerId, message);
       if (runIngress) {
@@ -497,7 +523,7 @@ export class WhatsAppPrivateConversation {
         return;
       }
       if (
-        needsOnboarding || message.document ||
+        needsOnboarding || message.document || message.image ||
         isDeterministicPrivateControl(text)
       ) {
         this.batcher.cancelAndEnqueue(ownerId, async () => {
@@ -1235,6 +1261,7 @@ export class WhatsAppPrivateConversation {
       },
       {
         seed: batch.turnId,
+        minimumUpdateIntervalMs: 15_000,
         onError: (operation, error) => {
           this.logger.warn(
             "whatsapp_private_progress_operation_failed",
@@ -1260,8 +1287,6 @@ export class WhatsAppPrivateConversation {
     );
     if (interruptionEvent) {
       progress.report(interruptionEvent);
-    } else {
-      progress.report({ phase: "reading", detail: "general" });
     }
 
     try {
@@ -1359,8 +1384,8 @@ export class WhatsAppPrivateConversation {
     ownerId: string,
     message: WhatsAppPrivateMessage,
   ): Promise<WhatsAppPrivateReplyResult> {
-    const text = message.text.trim();
-    if (!text && !message.document) return null;
+    const text = privateConversationText(message);
+    if (!text && !message.document && !message.image) return null;
 
     const usageCommand = parseUsageDashboardCommand(text);
     if (usageCommand === "invalid") return USAGE_COMMAND_TARGET_REJECTED;
@@ -1462,10 +1487,16 @@ export class WhatsAppPrivateConversation {
       if (isConsentAcceptance(text)) {
         return this.acceptConsent(ownerId, message);
       }
-      const onboarding = await this.beginOnboarding(ownerId, text);
-      if (!message.document) return onboarding;
-      const documentNotice =
-        "Setelah menyetujui, kirim ulang file ZIP supaya berkas tidak ditahan sebelum izin.";
+      // Caption dan placeholder gambar tidak boleh diputar ulang tanpa byte
+      // medianya sesudah consent; pengguna memang diminta mengirim gambar ulang.
+      const onboarding = await this.beginOnboarding(
+        ownerId,
+        message.image ? "" : text,
+      );
+      if (!message.document && !message.image) return onboarding;
+      const documentNotice = message.image
+        ? "Setelah menyetujui, kirim ulang gambarnya supaya media tidak ditahan sebelum izin."
+        : "Setelah menyetujui, kirim ulang file ZIP supaya berkas tidak ditahan sebelum izin.";
       return {
         text: [onboarding.text, documentNotice].filter(Boolean).join("\n\n"),
         presentationBubbles: [
@@ -1477,6 +1508,27 @@ export class WhatsAppPrivateConversation {
 
     if (message.document) {
       return this.uploadProjectZip(message);
+    }
+
+    if (message.image && message.image.data.byteLength === 0) {
+      if (!message.image.loadData) {
+        return "Gambar ini tidak lagi tersedia untuk diunduh. Coba kirim ulang, ya.";
+      }
+      try {
+        const data = await message.image.loadData();
+        const { loadData: _loadData, ...descriptor } = message.image;
+        message = {
+          ...message,
+          image: { ...descriptor, data },
+        };
+      } catch (error) {
+        this.logger.warn(
+          "whatsapp_private_image_rejected",
+          "Gambar privat WhatsApp ditolak setelah gerbang izin.",
+          { errorType: error instanceof Error ? error.name : "unknown" },
+        );
+        return "Gambarnya tidak bisa kubaca atau terlalu besar. Kirim JPEG, PNG, atau WebP maksimal 5 MiB, ya.";
+      }
     }
 
     if (isConsentWithdrawal(text)) {
@@ -1593,6 +1645,10 @@ export class WhatsAppPrivateConversation {
         return this.exportDataReply(ownerId);
       case "project":
         return this.handleProjectCommand(ownerId, message, tail);
+      case "goal":
+        return this.handleGoalCommand(message, tail);
+      case "skill":
+        return this.handleSkillCommand(ownerId, message, tail);
       case "code":
         return this.startCoding(ownerId, message, tail);
       case "code_status":
@@ -1981,6 +2037,151 @@ export class WhatsAppPrivateConversation {
     };
   }
 
+  private async handleNaturalProjectIntent(
+    ownerId: string,
+    message: WhatsAppPrivateMessage,
+    understanding: Understanding,
+    context: HarvyContext,
+    runtime: ConversationRuntime,
+  ): Promise<ComposedPrivateReply | null> {
+    const text = privateConversationText(message);
+    const semantic = understanding.semanticOperation;
+    if (
+      !semantic ||
+      !["project", "goal", "skill"].includes(semantic.domain) ||
+      !semanticOperationAuthorized(text, semantic, {
+        domain: semantic.domain,
+        operations: semantic.domain === "project"
+          ? ["create", "list", "show"]
+          : semantic.domain === "goal"
+            ? ["show", "set", "complete", "block", "resolve"]
+            : ["list", "create", "apply"],
+        minConfidence: 0.85,
+        explicitness: ["explicit"],
+        references: ["none", "current", "recent", "quoted"],
+      })
+    ) return null;
+
+    await this.appendUserHistory(ownerId, text, runtime);
+    await ensurePrivateCurrent(runtime);
+    const coding = this.dependencies.codingRuntime;
+    if (!coding) {
+      return {
+        text: "Runtime coding belum diaktifkan oleh deployment Harvy.",
+        storeHistory: true,
+      };
+    }
+    const actor = this.privateCodingActor(message);
+    let response: string;
+    if (semantic.domain === "project" && semantic.operation === "list") {
+      const projects = await coding.application.listProjects(actor);
+      response = projects.length === 0
+        ? "Workspace aktif belum mempunyai project."
+        : ["Project di workspace aktif:", ...projects.map((project) =>
+            `• ${project.projectId} — ${project.source}, revision ${project.revision}`
+          )].join("\n");
+    } else if (semantic.domain === "project" && semantic.operation === "show") {
+      const selected = (await coding.application.current(actor)).selection;
+      response = selected.projectId
+        ? [
+            "Project aktif:",
+            `Workspace: ${selected.workspaceKey}`,
+            `Project: ${selected.projectId}`,
+            `Revision: ${selected.projectRevision}`,
+          ].join("\n")
+        : "Belum ada project aktif.";
+    } else if (semantic.domain === "goal" && semantic.operation === "show") {
+      response = renderProjectGoal(await coding.application.currentGoal(actor));
+    } else if (semantic.domain === "goal" && semantic.operation === "complete") {
+      response = renderProjectGoal(await coding.application.completeGoal(actor));
+    } else if (semantic.domain === "skill" && semantic.operation === "list") {
+      response = renderProjectSkills(await coding.application.listSkills(actor));
+    } else {
+      const interpreter = this.dependencies.conversation.interpretProjectIntent;
+      const proposal = interpreter
+        ? await interpreter.call(
+            this.dependencies.conversation,
+            text,
+            semantic,
+            context,
+            { ...runtime, ownerId, channel: "whatsapp" },
+          )
+        : null;
+      await ensurePrivateCurrent(runtime);
+      if (!proposal) {
+        response = "Aku menangkap tindakan projectnya, tetapi detailnya belum cukup pasti. Jelaskan nama, tujuan, atau skill yang dimaksud dalam satu pesan.";
+      } else if (proposal.kind === "project-create") {
+        const selected = await coding.application.createBlankProject(
+          actor,
+          proposal.displayName,
+        );
+        response = [
+          `Project kosong “${proposal.displayName}” sudah dibuat dan dipilih.`,
+          `Workspace: ${selected.workspaceKey}`,
+          `Project: ${selected.projectId}`,
+          "Berikutnya tetapkan tujuan dan bukti selesai yang kamu inginkan.",
+        ].join("\n");
+      } else if (proposal.kind === "goal-set") {
+        response = renderProjectGoal(await coding.application.setGoal(actor, {
+          objective: proposal.objective,
+          acceptanceCriteria: proposal.acceptanceCriteria,
+          ...(proposal.milestones ? { milestones: proposal.milestones } : {}),
+        }));
+      } else if (proposal.kind === "goal-block") {
+        response = renderProjectGoal(await coding.application.addGoalBlocker(
+          actor,
+          proposal.summary,
+        ));
+      } else if (proposal.kind === "goal-resolve") {
+        response = renderProjectGoal(
+          await coding.application.resolveGoalBlockerByReference(
+            actor,
+            proposal.query,
+          ),
+        );
+      } else if (proposal.kind === "skill-create") {
+        const { kind: _kind, ...definition } = proposal;
+        response = renderProjectSkill(
+          await coding.application.createSkillFromLatestEvidence(
+            actor,
+            definition,
+          ),
+        );
+      } else {
+        let pendingRun: Parameters<NonNullable<Parameters<
+          typeof coding.application.startCodingWithSkill
+        >[3]>>[0] | null = null;
+        const handle = await coding.application.startCodingWithSkill(
+          actor,
+          proposal.nameOrId,
+          proposal.request,
+          (run) => { pendingRun = run; },
+        );
+        this.trackCodingCompletion(ownerId, message, handle);
+        response = pendingRun
+          ? renderCodingRunAnchor(pendingRun).text
+          : handle.initialAnchor.text;
+      }
+    }
+    await ensurePrivateCurrent(runtime);
+    this.logger.info(
+      "semantic_route_selected",
+      "Intent project natural WhatsApp dijalankan.",
+      {
+        semanticDomain: semantic.domain,
+        semanticOperation: semantic.operation,
+        confidenceBucket: semanticConfidenceBucket(semantic),
+        route: "project-intent",
+        deterministic: false,
+      },
+    );
+    return {
+      text: response,
+      storeHistory: true,
+      interaction: { domain: semantic.domain, operation: semantic.operation },
+    };
+  }
+
   private async handleProjectCommand(
     _ownerId: string,
     message: WhatsAppPrivateMessage,
@@ -1989,6 +2190,18 @@ export class WhatsAppPrivateConversation {
     const runtime = this.dependencies.codingRuntime;
     if (!runtime) return "Runtime coding belum diaktifkan oleh deployment Harvy.";
     const actor = this.privateCodingActor(message);
+    if (/^init\s+/iu.test(input)) {
+      const selected = await runtime.application.createBlankProject(
+        actor,
+        input.replace(/^init\s+/iu, ""),
+      );
+      return [
+        "Project kosong dibuat dan dipilih.",
+        `Workspace: ${selected.workspaceKey}`,
+        `Project: ${selected.projectId}`,
+        "Tetapkan tujuan dengan /goal sebelum mulai coding.",
+      ].join("\n");
+    }
     if (/^new\s+/iu.test(input)) {
       const selected = await runtime.application.createWorkspace(
         actor,
@@ -2037,6 +2250,7 @@ export class WhatsAppPrivateConversation {
     }
     return [
       "Kelola project coding:",
+      "/project init <nama>",
       "/project new <nama>",
       "/project list",
       "/project use <workspaceKey>",
@@ -2045,6 +2259,70 @@ export class WhatsAppPrivateConversation {
       "/project group-confirm <kode dari grup>",
       "Atau kirim sebuah file ZIP.",
     ].join("\n");
+  }
+
+  private async handleGoalCommand(
+    message: WhatsAppPrivateMessage,
+    input: string,
+  ): Promise<string> {
+    const runtime = this.dependencies.codingRuntime;
+    if (!runtime) return "Runtime coding belum diaktifkan oleh deployment Harvy.";
+    const actor = this.privateCodingActor(message);
+    const command = parseGoalCommand(input);
+    if (command.kind === "show") {
+      return renderProjectGoal(await runtime.application.currentGoal(actor));
+    }
+    if (command.kind === "set") {
+      return renderProjectGoal(await runtime.application.setGoal(actor, command.input));
+    }
+    if (command.kind === "complete") {
+      return renderProjectGoal(await runtime.application.completeGoal(actor));
+    }
+    if (command.kind === "block") {
+      return renderProjectGoal(await runtime.application.addGoalBlocker(actor, command.summary));
+    }
+    if (command.kind === "resolve") {
+      return renderProjectGoal(await runtime.application.resolveGoalBlocker(actor, command.blockerId));
+    }
+    if (command.kind === "confirm") {
+      return renderProjectGoal(await runtime.application.confirmManualGoalCriterion(
+        actor,
+        command.criterionId,
+        command.summary,
+      ));
+    }
+    return GOAL_COMMAND_HELP;
+  }
+
+  private async handleSkillCommand(
+    ownerId: string,
+    message: WhatsAppPrivateMessage,
+    input: string,
+  ): Promise<string> {
+    const runtime = this.dependencies.codingRuntime;
+    if (!runtime) return "Runtime coding belum diaktifkan oleh deployment Harvy.";
+    const actor = this.privateCodingActor(message);
+    const command = parseSkillCommand(input);
+    if (command.kind === "list") {
+      return renderProjectSkills(await runtime.application.listSkills(actor));
+    }
+    if (command.kind === "create") {
+      return renderProjectSkill(await runtime.application.createSkill(actor, command.input));
+    }
+    if (command.kind === "apply") {
+      let pendingRun: Parameters<NonNullable<Parameters<
+        typeof runtime.application.startCodingWithSkill
+      >[3]>>[0] | null = null;
+      const handle = await runtime.application.startCodingWithSkill(
+        actor,
+        command.nameOrId,
+        command.request,
+        (run) => { pendingRun = run; },
+      );
+      this.trackCodingCompletion(ownerId, message, handle);
+      return pendingRun ? renderCodingRunAnchor(pendingRun).text : handle.initialAnchor.text;
+    }
+    return SKILL_COMMAND_HELP;
   }
 
   private async uploadProjectZip(
@@ -2156,6 +2434,14 @@ export class WhatsAppPrivateConversation {
         connectionId: parts[0]!,
         repositoryId: parts[1]!,
       });
+      if (provisioned.status === "bootstrap_required") {
+        return [
+          "Repository privat ini benar-benar kosong.",
+          "Harvy belum menulis apa pun. Untuk melanjutkan, Harvy perlu membuat commit baseline code-owned berupa README.md pada default branch.",
+          `Repository: ${provisioned.selection.repositoryFullName}`,
+          `Konfirmasi: /github bootstrap ${provisioned.selection.selectionId}`,
+        ].join("\n\n");
+      }
       return [
         "Repository GitHub sudah menjadi project workspace terisolasi.",
         `Repository: ${provisioned.selection.repositoryFullName}`,
@@ -2163,11 +2449,23 @@ export class WhatsAppPrivateConversation {
         `Project: ${provisioned.project.id}`,
       ].join("\n");
     }
+    if (/^bootstrap\s+/iu.test(input)) {
+      const selectionId = input.replace(/^bootstrap\s+/iu, "").trim();
+      const provisioned = await github.bootstrapAndProvision(actor, selectionId);
+      return [
+        "Baseline repository dibuat dan project workspace sudah siap.",
+        `Repository: ${provisioned.selection.repositoryFullName}`,
+        `Base commit: ${provisioned.selection.baseCommit}`,
+        `Project: ${provisioned.project.id}`,
+        "Mulai dengan /code <task>.",
+      ].join("\n");
+    }
     return [
       "/github connect",
       "/github status <connectionId>",
       "/github repos <connectionId>",
       "/github use <connectionId> <repositoryId>",
+      "/github bootstrap <selectionId> — hanya untuk repo privat kosong",
     ].join("\n");
   }
 
@@ -2571,14 +2869,55 @@ export class WhatsAppPrivateConversation {
     runtime: ConversationRuntime = {},
     urgentBoundary = false,
   ): Promise<ComposedPrivateReply> {
-    const text = message.text;
-    const [profile, activeSession, relevant, conversationContext] =
-      await Promise.all([
-        this.dependencies.profiles.load(ownerId),
-        this.dependencies.sessions.active(ownerId),
-        this.dependencies.memories.relevantTo(ownerId, text),
-        this.dependencies.history.context(ownerId),
-      ]);
+    const text = privateConversationText(message);
+    const hasImageInput = Boolean(message.image?.data.byteLength);
+    if (message.image?.data.byteLength) {
+      runtime = {
+        ...runtime,
+        images: [
+          ...(runtime.images ?? []),
+          {
+            type: "input_image",
+            mediaType: message.image.mediaType,
+            data: message.image.data,
+            detail: "auto",
+          },
+        ],
+      };
+    }
+    const activeControl = hasImageInput
+      ? null
+      : await this.handleLocalActiveRunControl(
+          ownerId,
+          message,
+          turnId,
+          runtime,
+        );
+    if (activeControl) return activeControl;
+
+    const [profile, activeSession] = await Promise.all([
+      this.dependencies.profiles.load(ownerId),
+      this.dependencies.sessions.active(ownerId),
+    ]);
+    await ensurePrivateCurrent(runtime);
+    const timeZone = profile.timeZone ?? this.options.defaultTimezone;
+    const immediateDanger = hasExplicitImmediateDangerSignal(text);
+    const arithmeticReply = !hasImageInput && !activeSession &&
+        !immediateDanger && !urgentBoundary
+      ? deterministicArithmeticReply(text)
+      : null;
+    if (arithmeticReply) {
+      await this.noteTurnSignal(ownerId, turnId, "deterministic-fast-path");
+      await this.appendUserHistory(ownerId, text, runtime);
+      return { text: arithmeticReply, storeHistory: true };
+    }
+
+    // Retrieval memory/history dapat membayar embedding atau I/O. Hitungan
+    // exact di atas tidak membutuhkan context dan tidak boleh menunggunya.
+    const [relevant, conversationContext] = await Promise.all([
+      this.dependencies.memories.relevantTo(ownerId, text),
+      this.dependencies.history.context(ownerId),
+    ]);
     await ensurePrivateCurrent(runtime);
     let context: HarvyContext = {
       summary: conversationContext.summary,
@@ -2590,37 +2929,19 @@ export class WhatsAppPrivateConversation {
         conversationId: ownerId,
       }),
     };
-    const timeZone = profile.timeZone ?? this.options.defaultTimezone;
 
-    const activeControl = await this.handleLocalActiveRunControl(
-      ownerId,
-      message,
-      turnId,
-      runtime,
-    );
-    if (activeControl) return activeControl;
-
-    if (canUseModelIdentityFastPath(text, context.turns)) {
+    if (!hasImageInput && canUseModelIdentityFastPath(text, context.turns)) {
       await this.noteTurnSignal(ownerId, turnId, "deterministic-fast-path");
       await this.appendUserHistory(ownerId, text, runtime);
       return { text: CAPYBARA_MODEL_REPLY, storeHistory: true };
     }
-    if (canUseDirectTimeFastPath(text, context.turns)) {
+    if (!hasImageInput && canUseDirectTimeFastPath(text, context.turns)) {
       await this.noteTurnSignal(ownerId, turnId, "deterministic-fast-path");
       await this.appendUserHistory(ownerId, text, runtime);
       return {
         text: this.dependencies.conversation.deterministicTimeReply(timeZone),
         storeHistory: true,
       };
-    }
-    const immediateDanger = hasExplicitImmediateDangerSignal(text);
-    const arithmeticReply = !activeSession && !immediateDanger && !urgentBoundary
-      ? deterministicArithmeticReply(text)
-      : null;
-    if (arithmeticReply) {
-      await this.noteTurnSignal(ownerId, turnId, "deterministic-fast-path");
-      await this.appendUserHistory(ownerId, text, runtime);
-      return { text: arithmeticReply, storeHistory: true };
     }
 
     let understanding = immediateDanger || urgentBoundary
@@ -2699,7 +3020,11 @@ export class WhatsAppPrivateConversation {
       understanding = safetyOnlyUnderstanding();
     }
 
-    const publicProgressFocus = assessment.level === "biasa"
+    const exposeSemanticProgressFocus =
+      runtime.interruptionRelation !== "correction" &&
+      runtime.interruptionRelation !== "redirect";
+    const publicProgressFocus = assessment.level === "biasa" &&
+        exposeSemanticProgressFocus
       ? understanding?.publicFocus ?? null
       : null;
     runtime = { ...runtime, publicProgressFocus };
@@ -2709,7 +3034,7 @@ export class WhatsAppPrivateConversation {
     );
     if (focusEvent) runtime.progress?.report(focusEvent);
 
-    if (understanding && assessment.level === "biasa") {
+    if (!hasImageInput && understanding && assessment.level === "biasa") {
       const semantic = understanding.semanticOperation;
       const deterministicSurfaceEligible = allowsDeterministicSurface(
         understanding.routingAssessment,
@@ -2812,7 +3137,10 @@ export class WhatsAppPrivateConversation {
       assessment.routing,
       immediateDanger,
     );
-    if (assessment.level === "biasa" && effectPermissions.generalState) {
+    if (
+      !hasImageInput && assessment.level === "biasa" &&
+      effectPermissions.generalState
+    ) {
       const mailboxReply = await this.handleActiveRunMailboxAfterSafety(
         ownerId,
         message,
@@ -2820,7 +3148,22 @@ export class WhatsAppPrivateConversation {
       );
       if (mailboxReply) return mailboxReply;
     }
-    const proposedRoute = understanding
+    if (
+      !hasImageInput && understanding && assessment.level === "biasa" &&
+      effectPermissions.generalState
+    ) {
+      const projectReply = await this.handleNaturalProjectIntent(
+        ownerId,
+        message,
+        understanding,
+        context,
+        runtime,
+      );
+      if (projectReply) return projectReply;
+    }
+    const proposedRoute = hasImageInput
+      ? { kind: "conversation" as const }
+      : understanding
       ? immediateUnderstandingRoute(understanding, text)
       : { kind: "conversation" as const };
     const routeAllowed = proposedRoute.kind === "show-tasks"
@@ -3131,7 +3474,34 @@ export class WhatsAppPrivateConversation {
       )
       ? activeSession
       : null;
-    const remembered = effectPermissions.generalState
+    const retracted = !hasImageInput &&
+        route.kind === "conversation" &&
+        effectPermissions.explicitControl
+      ? await this.retractCorrectedMemories(
+          ownerId,
+          text,
+          understanding,
+          runtime,
+        )
+      : { forgotten: [], acknowledgements: [] };
+    if (retracted.forgotten.length > 0) {
+      const forgottenIds = new Set(retracted.forgotten.map((item) => item.id));
+      context = {
+        ...context,
+        memories: context.memories.filter((item) =>
+          !forgottenIds.has(item.id)
+        ),
+        ...(context.retrieved
+          ? {
+              retrieved: context.retrieved.filter((item) =>
+                !item.sourceMemoryIds.some((id) => forgottenIds.has(id))
+              ),
+            }
+          : {}),
+      };
+    }
+    await ensurePrivateCurrent(runtime);
+    const remembered = !hasImageInput && effectPermissions.generalState
       ? await this.storeTurnMemories(
           ownerId,
           text,
@@ -3150,14 +3520,20 @@ export class WhatsAppPrivateConversation {
     let activeRunMemoryNotice: string | null = null;
     try {
       await ensurePrivateCurrent(runtime);
-      const requiresLiveState = liveStateRequirement(text) !== null;
-      const guidedSmallStep = effectPermissions.generalState &&
+      const requiresLiveState = !hasImageInput &&
+        liveStateRequirement(text) !== null;
+      const guidedSmallStep = !hasImageInput &&
+        effectPermissions.generalState &&
         !activeSession &&
         prefersGuidedSmallStep(
           understanding.suggestedActions ?? [],
           understanding.routingAssessment,
         );
-      const requiresAgentPlanning = !guidedSmallStep &&
+      // Planning complexity is advisory; it is not permission to execute.
+      // Mentions of difficult work in a feeling/context turn stay in the chat
+      // lane until the user actually asks Harvy to do the work.
+      const requiresAgentPlanning = !hasImageInput && !guidedSmallStep &&
+        understanding.intent === "request" &&
         requiresPlannedExecution(understanding.routingAssessment);
       const agentIntent = understanding.intent === "request" ||
           requiresAgentPlanning
@@ -3177,7 +3553,13 @@ export class WhatsAppPrivateConversation {
         : "tools";
       // Sesi adalah konteks lunak, bukan alasan menurunkan permintaan planning
       // explicit ke reply biasa. Ini juga menjaga parity dengan Telegram.
-      const useAgent = (!engagedSession || requiresAgentPlanning) &&
+      const hasAgentAuthority =
+        (understanding.intent === "question" ||
+          understanding.intent === "request") &&
+        (requiresLiveState || requiresAgentPlanning ||
+          requestsAgentTooling(understanding.routingAssessment));
+      const useAgent = !hasImageInput && hasAgentAuthority &&
+        (!engagedSession || requiresAgentPlanning) &&
         (globalRoute === "specialized" || globalRoute === "orchestrate") &&
         Boolean(this.dependencies.conversation.agent);
       let reply: string;
@@ -3186,7 +3568,7 @@ export class WhatsAppPrivateConversation {
       } else if (remembered.failure === "write-unavailable") {
         reply = MEMORY_SAVE_UNAVAILABLE;
       } else if (
-        useAgent &&
+        useAgent && requiresAgentPlanning &&
         this.dependencies.agentRuns &&
         this.dependencies.proactive
       ) {
@@ -3226,7 +3608,10 @@ export class WhatsAppPrivateConversation {
             style: profile.stylePreference,
             intent: agentIntent,
             routingAssessment: understanding.routingAssessment ?? null,
-            memoryAcknowledgements: remembered.acknowledgements,
+            memoryAcknowledgements: [
+              ...retracted.acknowledgements,
+              ...remembered.acknowledgements,
+            ],
           },
         );
         reply = agentResultMessage(result);
@@ -3246,11 +3631,26 @@ export class WhatsAppPrivateConversation {
             timeZone,
             session: engagedSession,
             routingAssessment: understanding.routingAssessment ?? null,
-            memoryAcknowledgements: remembered.acknowledgements,
+            memoryAcknowledgements: [
+              ...retracted.acknowledgements,
+              ...remembered.acknowledgements,
+            ],
           },
         );
       }
       reply = normalizeTelegramText(reply);
+      reply = withoutUnconfirmedMemoryRecordClaims(reply) ||
+        "Aku dengar koreksimu.";
+      if (retracted.acknowledgements.length === 0) {
+        reply = withoutUnconfirmedMemoryDeletionClaims(reply) ||
+          "Aku dengar koreksimu.";
+      } else if (!activeRunLaunch && !replyClaimsMemoryDeletion(reply)) {
+        reply = [
+          reply.trimEnd(),
+          "",
+          memoryRetractionNotice(),
+        ].join("\n");
+      }
       if (
         remembered.acknowledgements.length === 0 &&
         remembered.uncommitted &&
@@ -3259,10 +3659,15 @@ export class WhatsAppPrivateConversation {
         reply = withoutUnconfirmedMemoryWriteClaims(reply) ||
           "Aku dengar yang kamu ceritakan.";
       }
-      if (activeRunLaunch && remembered.acknowledgements.length > 0) {
-        activeRunMemoryNotice = normalizeMemoryWriteEmoji(
-          memoryWriteNotice(remembered),
-        );
+      if (
+        activeRunLaunch &&
+        (remembered.acknowledgements.length > 0 ||
+          retracted.acknowledgements.length > 0)
+      ) {
+        const notice = memoryLifecycleNotice(retracted, remembered);
+        activeRunMemoryNotice = remembered.acknowledgements.length > 0
+          ? normalizeMemoryWriteEmoji(notice)
+          : notice;
       } else if (
         remembered.acknowledgements.length > 0 &&
         !replyAcknowledgesMemoryWrite(reply)
@@ -3292,7 +3697,16 @@ export class WhatsAppPrivateConversation {
           () => undefined,
         );
       }
-      throw error;
+      if (retracted.acknowledgements.length > 0 && !activeRunLaunch) {
+        this.logger.warn(
+          "whatsapp_memory_retraction_reply_failed",
+          "Koreksi memori berhasil tetapi wording model gagal; receipt lokal dipakai.",
+          { errorType: error instanceof Error ? error.name : "unknown" },
+        );
+        guarded = memoryRetractionNotice();
+      } else {
+        throw error;
+      }
     }
     const sessionSignal = engagedSession
       ? authorizedSessionSignal(
@@ -3417,6 +3831,51 @@ export class WhatsAppPrivateConversation {
     return stored;
   }
 
+  private async retractCorrectedMemories(
+    ownerId: string,
+    text: string,
+    understanding: Understanding,
+    runtime: ConversationRuntime,
+  ): Promise<WhatsAppForgottenMemoryBatch> {
+    const proposals = (understanding.memoryRetractions ?? []).filter(
+      (proposal) => memoryRetractionAuthorized(text, proposal),
+    );
+    if (proposals.length === 0) {
+      return { forgotten: [], acknowledgements: [] };
+    }
+
+    const current = await this.dependencies.memories.list(ownerId);
+    await ensurePrivateCurrent(runtime);
+    const selected = new Map<string, MemoryItem>();
+    for (const proposal of proposals) {
+      for (const item of memoriesMatchingNaturalTarget(
+        current,
+        proposal.target,
+      )) {
+        selected.set(item.id, item);
+      }
+    }
+    if (selected.size === 0 || selected.size > 8) {
+      return { forgotten: [], acknowledgements: [] };
+    }
+
+    await this.discardAgentRunForPrivateDataChange(ownerId);
+    await ensurePrivateCurrent(runtime);
+    const forgotten: MemoryItem[] = [];
+    for (const item of selected.values()) {
+      const removed = await this.dependencies.memories.forget(ownerId, item.id);
+      if (removed) forgotten.push(removed);
+    }
+    return {
+      forgotten,
+      acknowledgements: forgotten.map((item) => ({
+        content: item.content,
+        operation: "forgotten" as const,
+        explicit: true as const,
+      })),
+    };
+  }
+
   private async storeTurnMemories(
     ownerId: string,
     text: string,
@@ -3425,12 +3884,21 @@ export class WhatsAppPrivateConversation {
     runtime: ConversationRuntime,
   ): Promise<WhatsAppMemoryBatch> {
     const explicitResponsePreference = inferExplicitResponsePreference(text);
+    const authorizedMemoryRetractions =
+      (understanding.memoryRetractions ?? []).filter((proposal) =>
+        memoryRetractionAuthorized(text, proposal)
+      );
     // Sama dengan Telegram: turn yang dibuktikan sebagai satu instruksi bentuk
     // jawaban memakai canonical candidate lokal saja agar parafrasa model tidak
     // berubah menjadi prompt consent kedua.
     const proposedMemories: ExtractedMemory[] = explicitResponsePreference
       ? [explicitResponsePreference]
-      : [...understanding.memories];
+      : understanding.memories.filter((memory) =>
+        !memoryCandidateConflictsWithRetractions(
+          memory,
+          authorizedMemoryRetractions,
+        )
+      );
     const explicitResponsePreferenceForbidden = Boolean(
       explicitResponsePreference &&
         containsForbiddenMemorySecret(explicitResponsePreference.content),
@@ -3453,7 +3921,15 @@ export class WhatsAppPrivateConversation {
     const explicitRememberSignaled = explicitResponsePreference === null &&
       understanding.memoryAction === "remember" &&
       understanding.taskAction === null &&
-      understanding.task === null;
+      understanding.task === null &&
+      !memoryEvidenceConflictsWithRetractions(
+        understanding.semanticOperation?.evidence,
+        authorizedMemoryRetractions,
+      ) &&
+      !memoryEvidenceConflictsWithRetractions(
+        understanding.semanticOperation?.target,
+        authorizedMemoryRetractions,
+      );
     const explicit = explicitRememberSignaled
       ? explicitMemoryRememberAuthority(
           text,
@@ -3516,29 +3992,37 @@ export class WhatsAppPrivateConversation {
     }
     const saved: MemoryItem[] = [];
     const acknowledgements: WhatsAppMemoryBatch["acknowledgements"] = [];
-    let uncommitted = candidates.some((candidate, index) =>
-      !explicitIndexes.has(index) &&
-      !automaticMemoryCandidateAuthorized(text, candidate)
-    );
+    let uncommitted = candidates.some((candidate, index) => {
+      if (explicitIndexes.has(index)) return false;
+      const grounded = groundedAutomaticMemoryContent(text, candidate);
+      return grounded === null || containsForbiddenMemorySecret(grounded);
+    });
     try {
       for (const [index, candidate] of candidates.entries()) {
         const explicitlyAuthorized = explicitIndexes.has(index);
-        if (
-          !explicitlyAuthorized &&
-          !automaticMemoryCandidateAuthorized(text, candidate)
-        ) continue;
-        const privateCandidate = isSensitiveMemory(candidate);
+        const grounded = explicitlyAuthorized
+          ? candidate.content
+          : groundedAutomaticMemoryContent(text, candidate);
+        if (!grounded || containsForbiddenMemorySecret(grounded)) continue;
+        const candidateToStore = explicitlyAuthorized
+          ? candidate
+          : {
+              ...candidate,
+              content: grounded,
+              ...deriveMemoryMetadata(candidate.kind, grounded, text),
+            };
+        const privateCandidate = isSensitiveMemory(candidateToStore);
         // Scope ini hanya dicapai setelah consent onboarding aktif. Kandidat
         // percakapan biasa boleh commit tanpa prompt per-item; explicit remember
         // tetap ditandai agar kegagalan permintaannya dijawab dengan jujur.
         const stored = await this.dependencies.memories.remember({
           ownerId,
-          kind: candidate.kind,
-          content: candidate.content,
-          ...(candidate.sourceSequences
-            ? { sourceSequences: [...candidate.sourceSequences] }
+          kind: candidateToStore.kind,
+          content: candidateToStore.content,
+          ...(candidateToStore.sourceSequences
+            ? { sourceSequences: [...candidateToStore.sourceSequences] }
             : {}),
-          ...memoryKnowledgeFields(candidate),
+          ...memoryKnowledgeFields(candidateToStore),
           ...(privateCandidate
             ? { sensitivity: "personal" as const, sensitiveConsent: true }
             : {}),
@@ -3547,14 +4031,14 @@ export class WhatsAppPrivateConversation {
           saved.push(stored);
           acknowledgements.push({
             content: stored.content,
-            operation: candidate.correction ? "updated" : "saved",
+            operation: candidateToStore.correction ? "updated" : "saved",
             explicit: explicitlyAuthorized,
           });
           continue;
         }
         const duplicate = (await this.dependencies.memories.list(ownerId))
           .find((item) => item.content.toLocaleLowerCase("id-ID") ===
-            candidate.content.toLocaleLowerCase("id-ID"));
+            candidateToStore.content.toLocaleLowerCase("id-ID"));
         if (duplicate) {
           if (explicitlyAuthorized) {
             acknowledgements.push({
@@ -4218,6 +4702,22 @@ function memoryWriteNotice(batch: WhatsAppMemoryBatch): string {
   }
 }
 
+function memoryRetractionNotice(): string {
+  return "Oke, ingatan lama yang kamu koreksi sudah aku hapus.";
+}
+
+function memoryLifecycleNotice(
+  retracted: WhatsAppForgottenMemoryBatch,
+  remembered: WhatsAppMemoryBatch,
+): string {
+  return [
+    ...(retracted.acknowledgements.length > 0 ? [memoryRetractionNotice()] : []),
+    ...(remembered.acknowledgements.length > 0
+      ? [memoryWriteNotice(remembered)]
+      : []),
+  ].join(" ");
+}
+
 function interruptiblePrivatePause(
   ms: number,
   signal?: AbortSignal,
@@ -4388,6 +4888,14 @@ function boundedDelivery(
     replyText,
     outboundText: `${cleanPrefix}${separator}${replyText}`,
   };
+}
+
+function privateConversationText(message: WhatsAppPrivateMessage): string {
+  const text = message.text.trim();
+  if (text) return text;
+  return message.image
+    ? "Tolong bantu aku memahami gambar ini."
+    : "";
 }
 
 function failureMessage(error: unknown): string {

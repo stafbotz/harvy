@@ -17,6 +17,7 @@ import {
 } from "../src/core/workspace-authority-service.js";
 import type {
   GitHubBrokerHealth,
+  GitHubBrokerEffect,
   GitHubBrokerTransport,
   GitHubBrokerTransportResult,
   GitHubConnectionState,
@@ -31,6 +32,7 @@ import type {
   GitHubInteractiveGrant,
   GitHubRepositoryAccess,
   GitHubRepositoryArchiveReference,
+  GitHubRepositoryBootstrapEffect,
   GitHubRepositoryPage,
 } from "../src/domain/github.js";
 import type { WorkspaceAgentScope } from "../src/harness/scope.js";
@@ -264,6 +266,113 @@ describe("GitHub installation lifecycle durable", () => {
     );
     assert.equal(cancelled?.status, "cancelled");
     assert.equal(fixture.transport.preparedCommits.length, 1);
+  });
+
+  it("mem-bootstrap repository privat kosong secara eksplisit lalu memprovision project", async () => {
+    const fixture = await createActiveFixture();
+    fixture.transport.baseCommit = null;
+    const selectGrant = fixture.confirmations.issue(
+      fixture.scope,
+      "github.repository.select",
+      fixture.connection.connectionId,
+      "repo-1",
+    );
+    const selected = await fixture.service.selectRepository(
+      fixture.scope,
+      { connectionId: fixture.connection.connectionId, repositoryId: "repo-1" },
+      selectGrant,
+    );
+    assert.equal(selected.status, "bootstrap_required");
+    assert.equal(selected.baseCommit, null);
+    assert.deepEqual(selected.bootstrapAttempts, []);
+    assert.deepEqual(fixture.transport.preparedCommits, []);
+
+    const prematureProvisionGrant = fixture.confirmations.issue(
+      fixture.scope,
+      "github.repository.provision",
+      fixture.connection.connectionId,
+      "repo-1",
+      selected.selectionId,
+    );
+    await assert.rejects(
+      fixture.service.provisionRepository(
+        fixture.scope,
+        selected.selectionId,
+        prematureProvisionGrant,
+      ),
+      /tidak dapat diprovisioning/iu,
+    );
+    assert.equal((await fixture.projects.list(fixture.scope)).length, 0);
+
+    const bootstrapGrant = fixture.confirmations.issue(
+      fixture.scope,
+      "github.repository.bootstrap",
+      fixture.connection.connectionId,
+      "repo-1",
+      selected.selectionId,
+    );
+    fixture.transport.beforeBootstrap = async () => {
+      const durable = await fixture.repository.loadSelection(selected.selectionId);
+      assert.equal(durable?.status, "bootstrap_required");
+      assert.equal(durable?.bootstrapAttempts.length, 1);
+      assert.equal(durable?.bootstrapAttempts[0]?.status, "prepared");
+    };
+    fixture.transport.failBootstrapOnce = true;
+    await assert.rejects(
+      fixture.service.bootstrapEmptyRepository(
+        fixture.scope,
+        selected.selectionId,
+        bootstrapGrant,
+      ),
+      /bootstrap timeout simulasi/iu,
+    );
+    const interrupted = await fixture.repository.loadSelection(selected.selectionId);
+    assert.equal(interrupted?.status, "bootstrap_required");
+    assert.equal(interrupted?.bootstrapAttempts[0]?.status, "prepared");
+
+    const restartedService = new GitHubInstallationService(
+      new FileGitHubConnectionRepository(fixture.connectionFile),
+      fixture.transport,
+      fixture.transport,
+      fixture.confirmations,
+      fixture.authority,
+      fixture.projects,
+      () => NOW,
+      fixture.ids,
+    );
+    const ready = await restartedService.bootstrapEmptyRepository(
+      fixture.scope,
+      selected.selectionId,
+      bootstrapGrant,
+    );
+    assert.equal(ready.status, "archive_ready");
+    assert.equal(ready.baseCommit, "d".repeat(40));
+    assert.equal(ready.archive?.commit, "d".repeat(40));
+    assert.equal(ready.bootstrapAttempts.length, 1);
+    assert.equal(ready.bootstrapAttempts[0]?.status, "committed");
+    assert.equal(ready.bootstrapAttempts[0]?.externalCommit, "d".repeat(40));
+    assert.equal(new Set(fixture.transport.bootstrapEffectIds).size, 1);
+    assert.equal(fixture.transport.bootstrapCalls, 2);
+
+    const provisionGrant = fixture.confirmations.issue(
+      fixture.scope,
+      "github.repository.provision",
+      fixture.connection.connectionId,
+      "repo-1",
+      selected.selectionId,
+    );
+    const provisioned = await fixture.service.provisionRepository(
+      fixture.scope,
+      selected.selectionId,
+      provisionGrant,
+    );
+    assert.equal(provisioned.selection.status, "bound");
+    assert.ok(provisioned.project.git);
+    assert.equal(provisioned.project.git.baseCommit, "d".repeat(40));
+    assert.equal((await fixture.projects.list(fixture.scope)).length, 1);
+
+    const metadata = await readFile(fixture.connectionFile, "utf8");
+    assert.equal(metadata.includes(bootstrapGrant.proof), false);
   });
 
   it("mengunduh archive exact dan memulihkan project deterministic tanpa duplikasi", async () => {
@@ -830,14 +939,18 @@ class FakeGitHubInstallationTransport
 implements GitHubInstallationTransport, GitHubBrokerTransport {
   failBeginOnce = false;
   failPrepareOnce = false;
+  failBootstrapOnce = false;
   beforeBegin: (() => Promise<void>) | null = null;
   beforePrepare: (() => Promise<void>) | null = null;
+  beforeBootstrap: (() => Promise<void>) | null = null;
   beforeDownload: (() => void | Promise<void>) | null = null;
   beginSessions: string[] = [];
   preparedCommits: string[] = [];
   listCalls = 0;
   downloadCalls = 0;
-  baseCommit = BASE;
+  baseCommit: string | null = BASE;
+  bootstrapCalls = 0;
+  bootstrapEffectIds: string[] = [];
   downloadOverride: Buffer | null = null;
   failDownload = false;
   readonly archiveBytes = buildZip([
@@ -931,6 +1044,7 @@ implements GitHubInstallationTransport, GitHubBrokerTransport {
       visibility: "private",
       defaultBranch: "main",
       baseCommit: this.baseCommit,
+      empty: this.baseCommit === null,
       targetBranch: null,
       targetBranchHead: null,
       canRead: true,
@@ -992,6 +1106,20 @@ implements GitHubInstallationTransport, GitHubBrokerTransport {
     return committed(effect);
   }
 
+  async bootstrapRepository(
+    effect: GitHubRepositoryBootstrapEffect,
+  ): Promise<GitHubBrokerTransportResult> {
+    this.bootstrapCalls += 1;
+    this.bootstrapEffectIds.push(effect.effectId);
+    await this.beforeBootstrap?.();
+    this.baseCommit = "d".repeat(40);
+    if (this.failBootstrapOnce) {
+      this.failBootstrapOnce = false;
+      throw new Error("bootstrap timeout simulasi");
+    }
+    return committed(effect);
+  }
+
   async pushExactCommit(
     effect: GitHubExactEffect,
     _bundle: AsyncIterable<Uint8Array>,
@@ -1006,13 +1134,24 @@ implements GitHubInstallationTransport, GitHubBrokerTransport {
   }
 
   async reconcileEffect(
-    effect: GitHubExactEffect,
+    effect: GitHubBrokerEffect,
   ): Promise<GitHubBrokerTransportResult> {
     return committed(effect);
   }
 }
 
-function committed(effect: GitHubExactEffect): GitHubBrokerTransportResult {
+function committed(effect: GitHubBrokerEffect): GitHubBrokerTransportResult {
+  if (effect.capability === "github.repository.bootstrap") {
+    const commit = "d".repeat(40);
+    return {
+      effectId: effect.effectId,
+      status: "committed",
+      operationFenced: true,
+      externalId: commit,
+      url: `https://github.com/${effect.repositoryFullName}/commit/${commit}`,
+      completedAt: NOW.toISOString(),
+    };
+  }
   return {
     effectId: effect.effectId,
     status: "committed",

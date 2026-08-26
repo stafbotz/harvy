@@ -35,7 +35,14 @@ export class PinnedCodingRuntimeConformanceVerifier
 export async function loadCodingRuntimeConformanceReceipt(
   path: string,
 ): Promise<CodingRuntimeConformanceReceipt> {
-  const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+  return parseCodingRuntimeConformanceReceipt(
+    JSON.parse(await readFile(path, "utf8")) as unknown,
+  );
+}
+
+export function parseCodingRuntimeConformanceReceipt(
+  parsed: unknown,
+): CodingRuntimeConformanceReceipt {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("File conformance runtime coding tidak sah.");
   }

@@ -78,14 +78,13 @@ export const MULTI_TOPIC_CASES: readonly MultiTopicEvalCase[] = [
 ];
 
 async function runMultiTopicEval() {
-  const allowFallback = process.argv.includes("--allow-fallback");
   const config = loadConfig();
-  const client = await createInstrumentedAiClient(config, "evaluation", allowFallback);
+  const client = await createInstrumentedAiClient(config, "evaluation");
   const conversation = new Conversation(client, config.ai, config.defaultTimezone);
 
   console.log(`=== EMULASI UJI CROSSLAYER MULTI-TOPIK HARVY ===`);
   console.log(`Mode AI: ${config.ai.mode}`);
-  console.log(`Fallback Allowed: ${allowFallback}`);
+  console.log("Fallback Allowed: false");
   console.log(`Total Kasus: ${MULTI_TOPIC_CASES.length}\n`);
 
   const results = [];

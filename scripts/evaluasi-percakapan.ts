@@ -51,7 +51,6 @@ import {
 } from "./eval-corpus.js";
 
 const all = process.argv.includes("--all");
-const allowFallback = process.argv.includes("--allow-fallback");
 const conversationOnly = process.argv.includes("--conversation-only");
 const compactOutput = process.argv.includes("--compact");
 const requested = Number(
@@ -77,7 +76,7 @@ const concurrency = integerArgument("--concurrency=", 1, 1, 8);
 const intervalMs = integerArgument("--interval-ms=", 0, 0, 60_000);
 const config = loadConfig();
 const conversation = new Conversation(
-  await createInstrumentedAiClient(config, "evaluation", allowFallback),
+  await createInstrumentedAiClient(config, "evaluation"),
   config.ai,
   config.defaultTimezone,
 );
@@ -128,11 +127,8 @@ console.log(
   JSON.stringify(
     {
       mode: config.ai.mode,
-      fallbackAllowed: allowFallback && config.ai.fallback !== null,
-      modelScope:
-        allowFallback && config.ai.fallback !== null
-          ? "primary-or-fallback"
-          : "primary-only",
+      fallbackAllowed: false,
+      modelScope: "primary-only",
       concurrency,
       intervalMs,
       cases: allResults.length,

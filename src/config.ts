@@ -1,8 +1,5 @@
 import { parse, resolve } from "node:path";
-import type {
-  AiClientOptions,
-  AiFallbackOptions,
-} from "./ai/client.js";
+import type { AiClientOptions } from "./ai/client.js";
 import { ApiKeyPool } from "./ai/key-pool.js";
 import {
   COGNITIVE_MODEL_ROLES,
@@ -38,9 +35,9 @@ import {
   "./operations/primary-channel-credentials.js";
 
 /**
- * `testing` memakai satu model gratis lewat Google AI Studio, dengan beberapa
- * kunci yang dipakai bergantian. `production` memakai tiga model lewat
- * OpenRouter, dipilih menurut kesulitan pekerjaan.
+ * `testing` memakai GMI Serving melalui wire OpenAI-compatible tanpa provider
+ * fallback. `production` memakai tiga model lewat OpenRouter, dipilih menurut
+ * kesulitan pekerjaan.
  */
 export type AiMode = "testing" | "production";
 
@@ -49,8 +46,6 @@ export interface AiConfig {
   providerId: string;
   keys: ApiKeyPool;
   baseUrl: string;
-  /** Provider cadangan yang hanya boleh hidup dalam mode testing. */
-  fallback: AiFallbackOptions | null;
   testingModel: string;
   /**
    * Model uji per tingkatan. Kosong berarti memakai `testingModel`.
@@ -149,18 +144,16 @@ export interface RuntimeAppConfig extends AppConfig {
   groupAgentRunCleanupFile: string;
 }
 
-const GOOGLE_BASE_URL =
-  "https://generativelanguage.googleapis.com/v1beta/openai";
+const GMI_BASE_URL = "https://api.gmi-serving.com/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export function aiClientOptions(
   config: AiConfig,
-  options: { fallback?: boolean } = {},
 ): AiClientOptions {
   return {
     baseUrl: config.baseUrl,
     keys: config.keys,
-    fallback: options.fallback === false ? null : config.fallback,
+    fallback: null,
     providerId: config.providerId,
     modelProfiles: config.modelProfiles,
   };
@@ -557,12 +550,11 @@ export function loadAiConfig(): AiConfig {
   } satisfies Record<ModelTier, TierPrice>;
 
   if (mode === "testing") {
-    const keys = ApiKeyPool.parse(process.env.GOOGLE_AI_STUDIO_API_KEYS);
-    if (keys.length === 0) {
+    const apiKey = process.env.GMI_API_KEY?.trim();
+    if (!apiKey) {
       throw configurationError(
-        "CONFIG_GOOGLE_KEYS_MISSING",
-        "GOOGLE_AI_STUDIO_API_KEYS wajib diisi ketika AI_MODE=testing. " +
-          "Beberapa kunci boleh dipisah koma.",
+        "CONFIG_GMI_KEY_MISSING",
+        "GMI_API_KEY wajib diisi ketika AI_MODE=testing.",
       );
     }
     if (!testingModel) {
@@ -572,9 +564,8 @@ export function loadAiConfig(): AiConfig {
       );
     }
 
-    const fallback = loadTestingFallback();
     const baseUrl = validatedAiBaseUrl(
-      process.env.AI_BASE_URL?.trim() || GOOGLE_BASE_URL,
+      process.env.AI_BASE_URL?.trim() || GMI_BASE_URL,
     );
     const configuredModels = configuredModelCatalog({
       mode,
@@ -582,31 +573,26 @@ export function loadAiConfig(): AiConfig {
       testingModels,
       models,
       roleBindings,
-      activeFallback: fallback,
       testingToughestModel,
       productionToughestModel,
     });
     const explicitProfiles = loadExplicitModelProfiles();
     const modelProfiles = configuredModelProfiles({
       configuredModels,
-      codeOwnedProfiles: liveVerifiedModelProfiles(
-        "google-ai-studio",
-        baseUrl,
-      ),
+      codeOwnedProfiles: liveVerifiedModelProfiles("gmi-serving", baseUrl),
       explicitProfiles,
     });
     const toughest = configuredToughest(
-      "google-ai-studio",
+      "gmi-serving",
       activeToughestModel,
       activeToughestPrivacyDomain,
       modelProfiles,
     );
     return {
       mode,
-      providerId: "google-ai-studio",
-      keys: new ApiKeyPool(keys),
+      providerId: "gmi-serving",
+      keys: new ApiKeyPool([apiKey]),
       baseUrl,
-      fallback,
       testingModel,
       testingModels,
       models,
@@ -648,7 +634,6 @@ export function loadAiConfig(): AiConfig {
     testingModels,
     models,
     roleBindings,
-    activeFallback: null,
     testingToughestModel,
     productionToughestModel,
   });
@@ -669,7 +654,6 @@ export function loadAiConfig(): AiConfig {
     providerId: "openrouter",
     keys: new ApiKeyPool([apiKey]),
     baseUrl,
-    fallback: null,
     testingModel,
     testingModels,
     models,
@@ -845,6 +829,8 @@ function parseExplicitModelProfile(value: unknown): ModelProfile {
     "namedToolChoice",
     "structuredOutput",
     "temperature",
+    "promptCaching",
+    "imageInput",
   ]);
   const continuation = exactRecord(profile["continuation"], [
     "preserveReasoning",
@@ -870,6 +856,8 @@ function parseExplicitModelProfile(value: unknown): ModelProfile {
       namedToolChoice: requiredBoolean(supports["namedToolChoice"]),
       structuredOutput: requiredBoolean(supports["structuredOutput"]),
       temperature: requiredBoolean(supports["temperature"]),
+      promptCaching: requiredBoolean(supports["promptCaching"]),
+      imageInput: requiredBoolean(supports["imageInput"]),
     },
     continuation: {
       preserveReasoning: requiredBoolean(continuation["preserveReasoning"]),
@@ -953,6 +941,8 @@ function configuredModelProfiles(input: {
         namedToolChoice: primary,
         structuredOutput: primary,
         temperature: true,
+        promptCaching: false,
+        imageInput: false,
       },
       continuation: {
         preserveReasoning: false,
@@ -964,17 +954,9 @@ function configuredModelProfiles(input: {
   }
   for (const profile of input.codeOwnedProfiles) {
     const key = `${profile.provider}\u0000${profile.id}`;
-    const configured = input.configuredModels.find(
-      (model) => model.providerId === profile.provider && model.modelId === profile.id,
-    );
-    if (!configured) continue;
-    // Registry saat ini tidak dapat membawa profile berbeda untuk primary dan
-    // fallback pada pasangan yang sama. Tetap compatibility sampai fallback
-    // wire contract mempunyai bukti dan execution plan sendiri.
-    if (configured.sources.some(
-      (source) => source.origin === "fallback" && source.active,
-    )) continue;
-    profiles.set(key, profile);
+    // Profile endpoint resmi boleh tersedia untuk model yang belum dipilih;
+    // ia baru aktif bila pasangan exact itu memang ada di katalog runtime.
+    if (profiles.has(key)) profiles.set(key, profile);
   }
   for (const profile of input.explicitProfiles) {
     const key = `${profile.provider}\u0000${profile.id}`;
@@ -982,19 +964,6 @@ function configuredModelProfiles(input: {
       throw configurationError(
         "CONFIG_AI_MODEL_PROFILES_UNKNOWN",
         `AI_MODEL_PROFILES memuat model yang tidak dikonfigurasi: ${profile.provider}/${profile.id}.`,
-      );
-    }
-    const configured = input.configuredModels.find(
-      (model) => model.providerId === profile.provider && model.modelId === profile.id,
-    );
-    if (
-      configured?.sources.some(
-        (source) => source.origin === "fallback" && source.active,
-      )
-    ) {
-      throw configurationError(
-        "CONFIG_AI_MODEL_PROFILES_FALLBACK_UNSUPPORTED",
-        "AI_MODEL_PROFILES belum boleh mengaktifkan capability provider fallback.",
       );
     }
     profiles.set(key, profile);
@@ -1045,7 +1014,6 @@ function configuredModelCatalog(input: {
   testingModels: Partial<Record<ModelTier, string>>;
   models: Record<ModelTier, string>;
   roleBindings: Partial<Record<CognitiveModelRole, CognitiveModelBinding>>;
-  activeFallback: AiFallbackOptions | null;
   testingToughestModel: string;
   productionToughestModel: string;
 }): ConfiguredModel[] {
@@ -1075,7 +1043,7 @@ function configuredModelCatalog(input: {
 
   if (input.testingModel) {
     const servedTiers = tiers.filter((tier) => !input.testingModels[tier]);
-    add("google-ai-studio", input.testingModel, {
+    add("gmi-serving", input.testingModel, {
       environmentVariable: "AI_MODEL_TESTING",
       mode: "testing",
       origin: "primary",
@@ -1086,7 +1054,7 @@ function configuredModelCatalog(input: {
   for (const tier of tiers) {
     const modelId = input.testingModels[tier];
     if (modelId) {
-      add("google-ai-studio", modelId, {
+      add("gmi-serving", modelId, {
         environmentVariable: `AI_MODEL_TESTING_${tier.toUpperCase()}`,
         mode: "testing",
         origin: "primary",
@@ -1096,7 +1064,7 @@ function configuredModelCatalog(input: {
     }
   }
   if (input.testingToughestModel) {
-    add("google-ai-studio", input.testingToughestModel, {
+    add("gmi-serving", input.testingToughestModel, {
       environmentVariable: "AI_MODEL_TESTING_TOUGHEST",
       mode: "testing",
       origin: "primary",
@@ -1127,7 +1095,7 @@ function configuredModelCatalog(input: {
   }
 
   const roleProvider = input.mode === "testing"
-    ? "google-ai-studio"
+    ? "gmi-serving"
     : "openrouter";
   for (const role of COGNITIVE_MODEL_ROLES) {
     const binding = input.roleBindings[role];
@@ -1138,21 +1106,6 @@ function configuredModelCatalog(input: {
       origin: "primary",
       tiers: [binding.tier],
       active: true,
-    });
-  }
-
-  const fallbackModel = process.env.AI_TESTING_FALLBACK_MODEL?.trim() ?? "";
-  if (fallbackModel) {
-    const fallbackProvider = input.activeFallback?.providerId ?? readLabel(
-      "AI_TESTING_FALLBACK_PROVIDER_ID",
-      "testing-fallback",
-    );
-    add(fallbackProvider, fallbackModel, {
-      environmentVariable: "AI_TESTING_FALLBACK_MODEL",
-      mode: "testing",
-      origin: "fallback",
-      tiers: [...tiers],
-      active: input.mode === "testing" && input.activeFallback !== null,
     });
   }
 
@@ -1207,66 +1160,6 @@ function configuredModelId(name: string, value: string): string {
 
 function cleanConfiguredProviderId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$/u.test(value);
-}
-
-function loadTestingFallback(): AiFallbackOptions | null {
-  const baseUrl =
-    process.env.AI_TESTING_FALLBACK_BASE_URL?.trim() ?? "";
-  const apiKey =
-    process.env.AI_TESTING_FALLBACK_API_KEY?.trim() ?? "";
-  const model =
-    process.env.AI_TESTING_FALLBACK_MODEL?.trim() ?? "";
-  const configured = Boolean(baseUrl || apiKey || model);
-  if (!configured) return null;
-  if (!baseUrl || !apiKey || !model) {
-    throw configurationError(
-      "CONFIG_TESTING_FALLBACK_INCOMPLETE",
-      "AI_TESTING_FALLBACK_BASE_URL, AI_TESTING_FALLBACK_API_KEY, dan " +
-        "AI_TESTING_FALLBACK_MODEL harus diisi bersama.",
-    );
-  }
-
-  return {
-    baseUrl: validatedFallbackBaseUrl(baseUrl),
-    keys: new ApiKeyPool([apiKey]),
-    model,
-    providerId: readLabel(
-      "AI_TESTING_FALLBACK_PROVIDER_ID",
-      "testing-fallback",
-    ),
-    modelInQuery: true,
-    cooldownMs: readPositiveNumber(
-      "AI_TESTING_FALLBACK_COOLDOWN_MS",
-      30_000,
-    ),
-  };
-}
-
-function validatedFallbackBaseUrl(value: string): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw configurationError(
-      "CONFIG_TESTING_FALLBACK_URL_INVALID",
-      "AI_TESTING_FALLBACK_BASE_URL harus berupa URL HTTPS yang sah.",
-    );
-  }
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    /\/chat\/completions\/?$/u.test(url.pathname)
-  ) {
-    throw configurationError(
-      "CONFIG_TESTING_FALLBACK_URL_INVALID",
-      "AI_TESTING_FALLBACK_BASE_URL harus berupa base URL HTTPS tanpa " +
-        "kredensial, query, fragment, atau akhiran /chat/completions.",
-    );
-  }
-  return url.toString().replace(/\/+$/u, "");
 }
 
 function validatedAiBaseUrl(value: string): string {

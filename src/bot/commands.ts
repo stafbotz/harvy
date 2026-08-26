@@ -214,6 +214,22 @@ const COMMANDS: readonly UserCommandDefinition[] = [
     requires: "coding",
   },
   {
+    command: "goal",
+    description: "Kelola tujuan durable project",
+    category: "coding",
+    channels: ["telegram", "whatsapp"],
+    detail: "Lihat atau ubah tujuan, kriteria selesai, milestone, dan blocker project aktif.",
+    requires: "coding",
+  },
+  {
+    command: "skill",
+    description: "Kelola skill deklaratif project",
+    category: "coding",
+    channels: ["telegram", "whatsapp"],
+    detail: "Buat atau gunakan prosedur berversi tanpa memberi Harvy permission baru.",
+    requires: "coding",
+  },
+  {
     command: "code_status",
     description: "Lihat status CodingRun",
     category: "coding",

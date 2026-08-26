@@ -30,7 +30,6 @@ import {
 
 const SCHEMA = "harvy.group-direct-eval.v3";
 const DIRECT_P95_TARGET_MS = 7_000;
-const allowFallback = process.argv.includes("--allow-fallback");
 const perTopic = numericArgument("--limit-per-topic=", 4);
 const concurrency = numericArgument("--concurrency=", 3);
 const requestsPerMinute = numericArgument("--rpm=", 24);
@@ -60,7 +59,7 @@ if (selected.length === 0) {
 }
 const config = loadConfig();
 const conversation = new GroupConversation(
-  await createInstrumentedAiClient(config, "evaluation", allowFallback),
+  await createInstrumentedAiClient(config, "evaluation"),
   config.ai,
 );
 const requestLimiter = createRequestLimiter(
@@ -98,11 +97,8 @@ const summary = {
   syntheticOnly: true,
   mode: config.ai.mode,
   model: resolveModel("efficient", config.ai),
-  fallbackAllowed: allowFallback && config.ai.fallback !== null,
-  modelScope:
-    allowFallback && config.ai.fallback !== null
-      ? "primary-or-fallback"
-      : "primary-only",
+  fallbackAllowed: false,
+  modelScope: "primary-only",
   pipelineVersion: GROUP_CONVERSATION_PIPELINE_VERSION,
   corpusVersion: GROUP_EVAL_CORPUS_VERSION,
   signature: createHash("sha256")

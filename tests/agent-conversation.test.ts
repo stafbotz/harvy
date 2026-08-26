@@ -148,6 +148,8 @@ describe("Conversation agent runtime", () => {
           namedToolChoice: false,
           structuredOutput: true,
           temperature: true,
+          promptCaching: false,
+          imageInput: false,
         },
         continuation: {
           preserveReasoning: true,
@@ -1512,6 +1514,8 @@ describe("Conversation agent runtime", () => {
           namedToolChoice: true,
           structuredOutput: true,
           temperature: true,
+          promptCaching: false,
+          imageInput: false,
         },
         continuation: {
           preserveReasoning: true,

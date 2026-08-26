@@ -30,6 +30,16 @@ import type { LongTermMemoryRetriever } from
 const NOW = new Date("2026-08-09T10:00:00.000Z");
 
 describe("memory query plan", () => {
+  it("mengaktifkan episodic recall untuk rujukan natural kembali ke topik lama", () => {
+    for (const text of [
+      "Balik ke kode tadi; keputusan batas 30 dan 31 apa?",
+      "Let's go back to the function from earlier.",
+      "Volvamos al plan anterior.",
+    ]) {
+      assert.equal(planMemoryQuery(text, { now: NOW }).routes.episodic, true, text);
+    }
+  });
+
   it("mempertahankan raw request dan tidak membawa authority", () => {
     const raw = "  Apa yang pernah aku ceritakan tentang aljabar?  ";
     const plan = planMemoryQuery(raw, { now: NOW });

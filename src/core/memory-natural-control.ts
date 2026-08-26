@@ -1,9 +1,44 @@
 import type { MemoryItem } from "../domain/memory.js";
 import {
+  semanticEvidenceMatches,
   semanticOperationAuthorized,
   type SemanticOperation,
   type SemanticReference,
 } from "../domain/semantic-operation.js";
+
+export interface MemoryRetractionProposal {
+  target: string;
+  sourceEvidence: string;
+  explicitness: "explicit";
+  confidence: number;
+}
+
+/**
+ * Pagar authority untuk koreksi natural atas primary memory.
+ *
+ * Proposal model hanya diterima bila satu klausa current turn menjadi evidence
+ * exact, confidence tinggi, targetnya item-scoped, dan tidak mencoba berubah
+ * menjadi bulk deletion. Target kemudian masih harus cocok dengan source milik
+ * owner sebelum `MemoryService.forget` dapat menghasilkan receipt.
+ */
+export function memoryRetractionAuthorized(
+  message: string,
+  proposal: MemoryRetractionProposal,
+): boolean {
+  const target = proposal.target.trim().replaceAll(/\s+/gu, " ");
+  const evidence = proposal.sourceEvidence.trim().replaceAll(/\s+/gu, " ");
+  if (
+    proposal.explicitness !== "explicit" || proposal.confidence < 0.85 ||
+    !target || target.length > 160 || !evidence || evidence.length > 240 ||
+    /[\u0000-\u001f\u007f]/u.test(`${target}${evidence}`) ||
+    containsMultipleClauses(evidence) ||
+    !semanticEvidenceMatches(message, evidence)
+  ) return false;
+
+  const normalizedTarget = normalize(target);
+  return !/^(?:semua|seluruh|semuanya|everything|all)(?:\s+(?:ingatan|memori|memory|memories))?$/iu
+    .test(normalizedTarget);
+}
 
 /** Semantic evidence proposes meaning; code still owns mutation authority. */
 export function hasExplicitMemoryForgetRequest(
@@ -122,6 +157,8 @@ const TOPIC_ALIASES: readonly string[][] = [
   ["kuliah", "kampus", "universitas", "jurusan"],
   ["pasangan", "pacar", "hubungan", "relasi"],
   ["belajar", "pelajaran", "kelas", "les"],
+  ["english", "inggris"],
+  ["garden", "gardening", "kebun", "berkebun", "tanaman"],
 ];
 
 const STOP_WORDS = new Set([
@@ -140,3 +177,8 @@ const STOP_WORDS = new Set([
   "tentang",
   "yang",
 ]);
+
+function containsMultipleClauses(value: string): boolean {
+  const withoutTrailing = value.trim().replace(/[.!?;]+$/u, "");
+  return /[.!?;]\s+\S/u.test(withoutTrailing);
+}

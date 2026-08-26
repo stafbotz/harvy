@@ -1157,6 +1157,7 @@ function validateAccess(
     "visibility",
     "defaultBranch",
     "baseCommit",
+    "empty",
     "targetBranch",
       "targetBranchHead",
       "canRead",
@@ -1177,11 +1178,14 @@ function validateAccess(
     typeof access.canWriteWorkflows !== "boolean" ||
     typeof access.canCreatePullRequest !== "boolean" ||
     access.targetBranch !== targetBranch ||
+    access.empty !== (access.baseCommit === null) ||
     (access.targetBranchHead !== null &&
       !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(access.targetBranchHead))
   ) throw new Error("Metadata akses GitHub App tidak sah.");
   validBranch(access.defaultBranch);
-  validCommit(access.baseCommit, "remote baseCommit");
+  if (access.baseCommit !== null) {
+    validCommit(access.baseCommit, "remote baseCommit");
+  }
 }
 
 function validateTransportResult(

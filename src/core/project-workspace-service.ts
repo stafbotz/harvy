@@ -200,6 +200,71 @@ export class ProjectWorkspaceService {
     });
   }
 
+  /** Membuat snapshot kosong yang tetap content-addressed dan terisolasi. */
+  async createBlank(scope: WorkspaceAgentScope): Promise<ProjectWorkspace> {
+    await this.requirePermissions(scope, ["artifact.write", "code.write"]);
+    const projectId = opaqueId("project", this.makeId());
+    const createdAt = this.now().toISOString();
+    return this.guardedExclusive(
+      scope,
+      ["artifact.write", "code.write"],
+      projectId,
+      async () => this.exclusive("__storage-quota__", async () => {
+        let attemptSnapshot: string | null = null;
+        await this.assertNotDeleting(scope.workspaceKey, projectId);
+        if (await this.repository.load(projectId)) {
+          throw new Error("ProjectWorkspace id sudah ada.");
+        }
+        await this.assertOwnerQuota(scope.workspaceKey, projectId, 0, 0, true);
+        try {
+          const manifest = await this.installBlankSnapshot(
+            scope.workspaceKey,
+            projectId,
+          );
+          attemptSnapshot = manifest.snapshotId;
+          await this.assertOwnerQuota(scope.workspaceKey, projectId, 0, 2, true);
+          const revision: ProjectWorkspaceRevision = {
+            revision: 1,
+            snapshotId: manifest.snapshotId,
+            parentSnapshotId: null,
+            reason: "initialization",
+            git: {
+              baseCommit: LOCAL_GIT_UPLOAD_ROOT_COMMIT,
+              headCommit: LOCAL_GIT_UPLOAD_ROOT_COMMIT,
+              branch: `harvy/blank-${manifest.snapshotId.slice(0, 12)}`,
+            },
+            createdAt,
+          };
+          const saved = await this.repository.create({
+            id: projectId,
+            ownerWorkspaceKey: scope.workspaceKey,
+            source: { type: "blank" },
+            baseSnapshot: manifest.snapshotId,
+            snapshotHistory: [revision],
+            git: structuredClone(revision.git!),
+            storageUsage: { artifactBytes: 0, snapshotBytes: 0 },
+            localGitCommitReceipts: [],
+            createdAt,
+            updatedAt: createdAt,
+          });
+          if (saved.status === "conflict") {
+            throw new Error("ProjectWorkspace id sudah ada.");
+          }
+          return saved.workspace;
+        } catch (error) {
+          if (attemptSnapshot) {
+            await this.removeUnreferencedSnapshot(
+              scope.workspaceKey,
+              projectId,
+              attemptSnapshot,
+            );
+          }
+          throw error;
+        }
+      }),
+    );
+  }
+
   async createFromUpload(
     scope: WorkspaceAgentScope,
     archive: Buffer,
@@ -1822,6 +1887,43 @@ export class ProjectWorkspaceService {
     );
   }
 
+  private async installBlankSnapshot(
+    ownerWorkspaceKey: string,
+    projectId: string,
+  ): Promise<ProjectSnapshotManifest> {
+    const stagingId = opaqueId("stage", this.makeId());
+    const staging = join(this.storageRoot, "staging", stagingId);
+    await assertNoManagedSymlink(this.storageRoot, staging);
+    try {
+      await mkdir(staging, { recursive: true });
+      const manifest = await scanProjectTree(staging, {
+        ...(this.treeLimits ? { limits: this.treeLimits } : {}),
+        now: this.now,
+      });
+      const snapshot = this.rawSnapshotPath(
+        ownerWorkspaceKey,
+        projectId,
+        manifest.snapshotId,
+      );
+      await assertNoManagedSymlink(this.storageRoot, snapshot);
+      await mkdir(resolve(snapshot, ".."), { recursive: true });
+      if (!await exists(snapshot)) {
+        await rename(staging, snapshot);
+        await makeTreeReadOnly(snapshot);
+      }
+      await this.writeManifest(ownerWorkspaceKey, projectId, manifest);
+      const projectLike = {
+        id: projectId,
+        ownerWorkspaceKey,
+        snapshotHistory: [{ snapshotId: manifest.snapshotId }],
+      } as ProjectWorkspace;
+      await this.verifySnapshot(projectLike, manifest.snapshotId);
+      return manifest;
+    } finally {
+      await rm(staging, { recursive: true, force: true });
+    }
+  }
+
   private async installArchiveSnapshot(
     ownerWorkspaceKey: string,
     projectId: string,
@@ -2134,7 +2236,7 @@ export class ProjectWorkspaceService {
     projectId: string;
     expectedProjectRevision: number;
     projectCreatedAt: string;
-    projectSource: "upload" | "github";
+    projectSource: "blank" | "upload" | "github";
     status: "requested" | "cleanup_required" | "completed";
     completedSteps: import("../domain/project-deletion.js").ProjectDeletionStep[];
   }> {

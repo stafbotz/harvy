@@ -38,16 +38,30 @@ import {
 /**
  * Klien chat completion yang netral penyedia.
  *
- * OpenRouter, Google AI Studio, dan provider cadangan mode uji menyediakan
- * permukaan yang kompatibel dengan OpenAI, sehingga satu klien cukup untuk
+ * GMI Serving, OpenRouter, dan target kompatibel yang dipasang caller
+ * menyediakan permukaan OpenAI-compatible, sehingga satu klien cukup untuk
  * semuanya. Alamat, kunci, model, dan bentuk autentikasi berasal dari
- * konfigurasi.
+ * konfigurasi. Composition runtime tidak memasang provider fallback; dukungan
+ * fallback kelas ini tetap ada hanya untuk boundary dan fault test terisolasi.
  *
  * Memakai `fetch` bawaan Node 22; tidak ada dependency baru.
  */
 export interface ChatTextMessage {
   role: "system" | "user" | "assistant";
   content: string;
+}
+
+export type ChatImageMediaType = "image/jpeg" | "image/png" | "image/webp";
+
+/**
+ * Byte gambar hanya hidup selama invocation. Provider adapter mengubahnya
+ * menjadi data URL sesaat sebelum fetch; caller tidak perlu membuat URL publik.
+ */
+export interface ChatInputImagePart {
+  type: "input_image";
+  mediaType: ChatImageMediaType;
+  data: Uint8Array;
+  detail?: "auto" | "low" | "high";
 }
 
 /** Respons assistant yang harus diputar ulang sebelum hasil tool. */
@@ -133,12 +147,18 @@ export type AiRequestOperation =
   | "group-plan-ambient"
   | "group-revalidate-ambient"
   | "group-reply"
+  | "project-intent-extraction"
   | "private-operation-presentation"
   | "private-checkin-presentation";
 
 export interface ChatRequest {
   model: string;
   messages: ChatMessage[];
+  /**
+   * Media transient untuk giliran user terakhir. Dipisahkan dari transcript
+   * agar byte gambar tidak dapat ikut tersimpan saat messages dipersistenkan.
+   */
+  imageInputs?: readonly ChatInputImagePart[];
   /** Rendah untuk ekstraksi, lebih tinggi untuk percakapan. */
   temperature?: number;
   maxTokens?: number;
@@ -309,6 +329,10 @@ const MAX_REASONING_DETAILS_CHARACTERS = 512_000;
 const MAX_REASONING_DETAILS_DEPTH = 32;
 const MAX_REASONING_DETAILS_NODES = 8_192;
 const MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_INPUT_IMAGES = 4;
+const MAX_INPUT_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_INPUT_IMAGE_BYTES = 10 * 1024 * 1024;
+const ESTIMATED_TOKENS_PER_INPUT_IMAGE = 8_192;
 
 export class AiClient {
   private readonly logger: OperationalLogger;
@@ -745,6 +769,9 @@ export class AiClient {
       providerId: provider.providerId,
       modelId: request.model,
       profile,
+      ...(request.imageInputs?.length
+        ? { imageInputs: request.imageInputs }
+        : {}),
     });
     const providerOptions = serializeProviderOptions({
       providerId: provider.providerId,
@@ -1303,6 +1330,8 @@ function readTokenUsage(
         prompt_tokens?: unknown;
         completion_tokens?: unknown;
         total_tokens?: unknown;
+        cache_read_input_tokens?: unknown;
+        cache_creation_input_tokens?: unknown;
         cost?: unknown;
         cost_details?: { upstream_inference_cost?: unknown };
         prompt_tokens_details?: {
@@ -1355,10 +1384,11 @@ function readTokenUsage(
       ),
       cacheReadTokens:
         nonNegativeInteger(usage?.prompt_tokens_details?.cached_tokens) ??
-        nonNegativeInteger(usage?.prompt_tokens_details?.cache_read_tokens),
-      cacheWriteTokens: nonNegativeInteger(
-        usage?.prompt_tokens_details?.cache_write_tokens,
-      ),
+        nonNegativeInteger(usage?.prompt_tokens_details?.cache_read_tokens) ??
+        nonNegativeInteger(usage?.cache_read_input_tokens),
+      cacheWriteTokens:
+        nonNegativeInteger(usage?.prompt_tokens_details?.cache_write_tokens) ??
+        nonNegativeInteger(usage?.cache_creation_input_tokens),
       providerCostUsd: readProviderCost(payload),
       providerGenerationId: providerGenerationId(payload),
     };
@@ -1418,22 +1448,27 @@ function normalizedFinishReason(value: unknown): string | null {
 /** Estimator provider-neutral yang juga dipakai preflight context pressure. */
 export function estimateChatRequestInputTokens(request: ChatRequest): number {
   const messageCharacters = request.messages.reduce(
-    (sum, message) =>
-      sum +
-      (typeof message.content === "string" ? message.content.length : 0) +
+    (sum, message) => {
+      const contentCharacters = typeof message.content === "string"
+        ? message.content.length
+        : 0;
+      return sum +
+      contentCharacters +
       (message.role === "assistant" && "tool_calls" in message
         ? toolCallsWireCharacters(message.tool_calls) +
           assistantContinuationCharacters(message.continuation)
         : 0) +
       (message.role === "tool"
         ? message.tool_call_id.length + (message.name?.length ?? 0)
-        : 0),
+        : 0);
+    },
     0,
   );
   const toolCharacters = request.tools
     ? safeSerializedLength(request.tools)
     : 0;
-  return Math.ceil((messageCharacters + toolCharacters) / 4);
+  return Math.ceil((messageCharacters + toolCharacters) / 4) +
+    (request.imageInputs?.length ?? 0) * ESTIMATED_TOKENS_PER_INPUT_IMAGE;
 }
 
 function toolCallsWireCharacters(toolCalls: readonly ChatToolCall[]): number {
@@ -1902,6 +1937,7 @@ function assertExecutionRequest(
   profile: ModelProfile | null,
   timeoutMs: number,
 ): void {
+  assertImageInputs(request, profile);
   const execution = request.execution;
   if (request.runBudget && !execution) {
     throw new AiError("RunBudget model memerlukan execution plan tepercaya.");
@@ -2002,6 +2038,41 @@ function assertExecutionRequest(
     !profile.supports.namedToolChoice
   ) {
     throw new AiError("Profile model tidak mendukung named tool choice.");
+  }
+}
+
+function assertImageInputs(
+  request: ChatRequest,
+  profile: ModelProfile | null,
+): void {
+  const images = request.imageInputs ?? [];
+  if (images.length === 0) return;
+  if (
+    profile?.verification !== "explicit" ||
+    !profile.supports.imageInput
+  ) {
+    throw new AiError("Profile model tidak mendukung input gambar.");
+  }
+  if (images.length > MAX_INPUT_IMAGES) {
+    throw new AiError("Jumlah gambar dalam satu request terlalu banyak.");
+  }
+  let totalBytes = 0;
+  for (const image of images) {
+    if (
+      !(image.data instanceof Uint8Array) ||
+      image.data.byteLength < 1 ||
+      image.data.byteLength > MAX_INPUT_IMAGE_BYTES ||
+      !["image/jpeg", "image/png", "image/webp"].includes(image.mediaType) ||
+      (image.detail !== undefined &&
+        image.detail !== "auto" && image.detail !== "low" &&
+        image.detail !== "high")
+    ) {
+      throw new AiError("Input gambar tidak sah atau terlalu besar.");
+    }
+    totalBytes += image.data.byteLength;
+  }
+  if (totalBytes > MAX_TOTAL_INPUT_IMAGE_BYTES) {
+    throw new AiError("Total ukuran gambar dalam satu request terlalu besar.");
   }
 }
 

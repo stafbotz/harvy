@@ -84,6 +84,62 @@ interface ExplorerDriver {
   close(): Promise<void>;
 }
 
+interface WhatsAppConnectionUpdate {
+  connection?: string;
+  lastDisconnect?: { error?: unknown } | null;
+}
+
+export type WhatsAppObserverConnectionStatus =
+  | { status: "connecting" | "open"; reason: null }
+  | { status: "closed"; reason: number | null };
+
+/**
+ * Status `open` saat startup bukan jaminan socket observer tetap hidup.
+ * Guard ini mempertahankan close berikutnya agar send/flush tidak berubah
+ * menjadi kegagalan generik atau, lebih buruk, settle tanpa response.
+ */
+export class WhatsAppObserverConnectionGuard {
+  private current: WhatsAppObserverConnectionStatus = {
+    status: "connecting",
+    reason: null,
+  };
+
+  observe(
+    update: WhatsAppConnectionUpdate,
+  ): WhatsAppObserverConnectionStatus | null {
+    if (update.connection === "open") {
+      this.current = { status: "open", reason: null };
+      return this.snapshot();
+    }
+    if (update.connection === "connecting") {
+      this.current = { status: "connecting", reason: null };
+      return this.snapshot();
+    }
+    if (update.connection === "close") {
+      this.current = {
+        status: "closed",
+        reason: whatsAppDisconnectReason(update.lastDisconnect?.error),
+      };
+      return this.snapshot();
+    }
+    return null;
+  }
+
+  snapshot(): WhatsAppObserverConnectionStatus {
+    return { ...this.current };
+  }
+
+  assertOpen(): void {
+    if (this.current.status === "open") return;
+    if (this.current.status === "closed") {
+      throw blocked(this.current.reason === null
+        ? "LIVE_EXPLORATION_WHATSAPP_TESTER_CONNECTION_CLOSED"
+        : `LIVE_EXPLORATION_WHATSAPP_TESTER_CONNECTION_CLOSED_${this.current.reason}`);
+    }
+    throw blocked("LIVE_EXPLORATION_WHATSAPP_TESTER_CONNECTION_NOT_OPEN");
+  }
+}
+
 interface RuntimeHandle {
   restart(): Promise<void>;
   stop(): Promise<number>;
@@ -1169,6 +1225,15 @@ async function startWhatsApp(
     () => saveTail,
     messageScope,
     onQuarantinedSurface,
+    (status) => {
+      emit({
+        type: "observer_channel_status",
+        channel: "whatsapp",
+        status: status.status,
+        reason: status.reason,
+        contentPersistence: "none",
+      });
+    },
   );
   return await startObservedWhatsAppRuntime({
     driver,
@@ -1208,26 +1273,40 @@ function createWhatsAppDriver(
   onQuarantinedSurface: (
     operation: ExplorerSurfaceEvent["operation"],
   ) => void,
+  onConnectionStatus: (status: WhatsAppObserverConnectionStatus) => void,
 ): ExplorerDriver {
   const replyable = new Map<string, WAMessage>();
   let lastObservedAt = 0;
+  const connection = new WhatsAppObserverConnectionGuard();
+  const onConnection = (update: WhatsAppConnectionUpdate): void => {
+    const status = connection.observe(update);
+    if (status) onConnectionStatus(status);
+  };
+  socket.ev.on("connection.update", onConnection);
   const onMessages = (event: { messages: WAMessage[]; type: string }): void => {
     if (event.type !== "notify") return;
     for (const raw of event.messages) {
-      if (raw.key.fromMe || !messageComesFromHarvy(raw, harvyIdentities)) {
-        continue;
-      }
+      if (raw.key.fromMe) continue;
       const parsed = parseWhatsAppSurfaceEvent(raw);
       if (parsed.operation === "other" || !parsed.surfaceMessageId) continue;
-      lastObservedAt = Date.now();
       if (!isLiveExplorationWhatsAppMessageId(
         parsed.surfaceMessageId,
         messageScope,
         "harvy",
       )) {
-        onQuarantinedSurface(parsed.operation);
+        // Identity aliases can legitimately shift between PN and LID, but an
+        // unscoped surface must never be attributed to this run. Report only
+        // traffic that otherwise looks like it came from the paired Harvy
+        // account so unrelated chats remain invisible to the runner.
+        if (messageComesFromHarvy(raw, harvyIdentities)) {
+          onQuarantinedSurface(parsed.operation);
+        }
         continue;
       }
+      // The random per-run message scope is the causal authority here. It is
+      // stronger than a cached PN/LID alias and remains stable across the
+      // addressing-mode changes that previously hid real Harvy replies.
+      lastObservedAt = Date.now();
       const technicalId = `wa:${parsed.surfaceMessageId}`;
       if (parsed.operation === "create") replyable.set(technicalId, raw);
       onSurface({
@@ -1243,21 +1322,49 @@ function createWhatsAppDriver(
 
   return {
     async send(text) {
-      await sendWhatsApp(socket, destination, text, messageScope);
+      connection.assertOpen();
+      try {
+        await sendWhatsApp(socket, destination, text, messageScope);
+      } catch (error) {
+        const reason = whatsAppDisconnectReason(error);
+        if (reason !== null) {
+          onConnection({
+            connection: "close",
+            lastDisconnect: { error },
+          });
+          connection.assertOpen();
+        }
+        throw error;
+      }
     },
     async reply(surface, text) {
+      connection.assertOpen();
       const technical = aliases.technicalIdFor(surface);
       const anchor = technical ? replyable.get(technical) : undefined;
       if (!anchor) throw blocked("LIVE_EXPLORATION_SURFACE_NOT_REPLYABLE");
-      await sendWhatsApp(socket, destination, text, messageScope, anchor);
+      try {
+        await sendWhatsApp(socket, destination, text, messageScope, anchor);
+      } catch (error) {
+        const reason = whatsAppDisconnectReason(error);
+        if (reason !== null) {
+          onConnection({
+            connection: "close",
+            lastDisconnect: { error },
+          });
+          connection.assertOpen();
+        }
+        throw error;
+      }
     },
     async click() {
       throw blocked("LIVE_EXPLORATION_WHATSAPP_CLICK_UNAVAILABLE");
     },
     async flushObservation() {
+      connection.assertOpen();
       const startedAt = Date.now();
       lastObservedAt = Math.max(lastObservedAt, startedAt);
       while (Date.now() - startedAt < WHATSAPP_OBSERVATION_FLUSH_MAX_MS) {
+        connection.assertOpen();
         const quietFor = Date.now() - lastObservedAt;
         if (quietFor >= WHATSAPP_OBSERVATION_QUIET_MS) {
           return { timedOut: false };
@@ -1267,6 +1374,7 @@ function createWhatsAppDriver(
       return { timedOut: true };
     },
     async close() {
+      socket.ev.off("connection.update", onConnection);
       socket.ev.off("messages.upsert", onMessages);
       await socket.end(undefined).catch(() => undefined);
       await saveTail();
@@ -1547,13 +1655,21 @@ function waitForWhatsAppOpen(
       cleanup();
       reject(blocked("LIVE_EXPLORATION_WHATSAPP_CONNECTION_TIMEOUT"));
     }, timeoutMs);
-    const handler = (update: { connection?: string }) => {
+    const handler = (update: {
+      connection?: string;
+      lastDisconnect?: { error?: unknown } | null;
+    }) => {
       if (update.connection === "open") {
         cleanup();
         resolvePromise();
       } else if (update.connection === "close") {
         cleanup();
-        reject(blocked("LIVE_EXPLORATION_WHATSAPP_CONNECTION_CLOSED"));
+        const reason = whatsAppDisconnectReason(update.lastDisconnect?.error);
+        reject(blocked(
+          reason === null
+            ? "LIVE_EXPLORATION_WHATSAPP_CONNECTION_CLOSED"
+            : `LIVE_EXPLORATION_WHATSAPP_CONNECTION_CLOSED_${reason}`,
+        ));
       }
     };
     const cleanup = () => {
@@ -1562,6 +1678,18 @@ function waitForWhatsAppOpen(
     };
     socket.ev.on("connection.update", handler);
   });
+}
+
+function whatsAppDisconnectReason(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const candidate = error as {
+    output?: { statusCode?: unknown };
+    statusCode?: unknown;
+  };
+  const value = candidate.output?.statusCode ?? candidate.statusCode;
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? value
+    : null;
 }
 
 function messageComesFromHarvy(

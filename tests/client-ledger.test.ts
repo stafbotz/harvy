@@ -48,6 +48,44 @@ class AttemptObserver implements ProviderAttemptObserver {
 }
 
 describe("AiClient usage ledger", () => {
+  it("membaca metrik cache otomatis dari field usage OpenAI dan Anthropic-compatible", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 2,
+        total_tokens: 22,
+        cache_read_input_tokens: 14,
+        cache_creation_input_tokens: 6,
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+    try {
+      const attempts = new AttemptObserver();
+      const client = new AiClient({
+        baseUrl: "https://provider.example/v1",
+        providerId: "provider-test",
+        keys: new ApiKeyPool(["key-test"]),
+        fallback: null,
+        attemptObserver: attempts,
+      });
+      assert.equal(await client.complete({
+        model: "model-test",
+        messages: [{ role: "user", content: "halo" }],
+        usage: {
+          ownerId: "student",
+          tier: "cheap",
+          purpose: "reply",
+          safetyCritical: false,
+        },
+      }), "ok");
+      assert.equal(attempts.finishes[0]?.result.usage.cacheReadTokens, 14);
+      assert.equal(attempts.finishes[0]?.result.usage.cacheWriteTokens, 6);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("menghubungkan primary gagal dan fallback berhasil tanpa double logical settlement", async () => {
     const originalFetch = globalThis.fetch;
     let calls = 0;
@@ -72,19 +110,19 @@ describe("AiClient usage ledger", () => {
       const attempts = new AttemptObserver();
       const client = new AiClient({
         baseUrl: "https://primary.example/v1",
-        providerId: "google-ai-studio",
+        providerId: "primary-test",
         keys: new ApiKeyPool(["primary-key"]),
         fallback: {
           baseUrl: "https://fallback.example/v1",
-          providerId: "deepseek",
+          providerId: "fallback-test",
           keys: new ApiKeyPool(["fallback-key"]),
-          model: "deepseek-v4-flash",
+          model: "fallback-model",
         },
         usageObserver: logical,
         attemptObserver: attempts,
       });
       const result = await client.complete({
-        model: "gemini-flash-lite",
+        model: "primary-model",
         messages: [{ role: "user", content: "halo" }],
         usage: {
           ownerId: "student",
@@ -98,14 +136,14 @@ describe("AiClient usage ledger", () => {
       assert.equal(logical.before.length, 1);
       assert.equal(logical.after.length, 1);
       assert.equal(logical.after[0]?.succeeded, true);
-      assert.equal(logical.after[0]?.context.model, "deepseek-v4-flash");
+      assert.equal(logical.after[0]?.context.model, "fallback-model");
       assert.equal(attempts.starts.length, 2);
       assert.equal(attempts.finishes.length, 2);
       assert.equal(new Set(attempts.starts.map((item) => item.requestId)).size, 1);
       assert.deepEqual(attempts.starts.map((item) => item.attemptNo), [1, 2]);
       assert.deepEqual(attempts.starts.map((item) => item.origin), ["primary", "fallback"]);
-      assert.deepEqual(attempts.starts.map((item) => item.providerId), ["google-ai-studio", "deepseek"]);
-      assert.deepEqual(attempts.starts.map((item) => item.modelId), ["gemini-flash-lite", "deepseek-v4-flash"]);
+      assert.deepEqual(attempts.starts.map((item) => item.providerId), ["primary-test", "fallback-test"]);
+      assert.deepEqual(attempts.starts.map((item) => item.modelId), ["primary-model", "fallback-model"]);
       assert.equal(attempts.finishes[0]?.result.status, "network_error");
       assert.equal(attempts.finishes[1]?.result.status, "completed");
       assert.equal(attempts.finishes[1]?.result.usage.providerCostUsd, "0.0004");

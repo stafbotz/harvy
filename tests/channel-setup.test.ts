@@ -214,12 +214,62 @@ describe("ChannelSetupService", () => {
       assert.doesNotMatch(service.qrSvg("whatsapp", "harvy"), new RegExp(whatsapp.qr, "u"));
 
       whatsapp.finishPairing("harvy");
-      await waitUntil(async () => (await service.snapshot()).whatsapp.harvy.configured);
+      await waitUntil(async () =>
+        (await service.snapshot()).whatsapp.harvy.phase === "paired"
+      );
+      assert.deepEqual(whatsapp.events.slice(-2), [
+        "pair:ready:harvy",
+        "probe:harvy",
+      ]);
       assert.equal((await service.snapshot()).whatsapp.tester.configured, false);
 
       service.startWhatsAppRevoke("harvy");
       await waitUntil(async () => !(await service.snapshot()).whatsapp.harvy.configured);
       assert.deepEqual(whatsapp.revokedRoles, ["harvy"]);
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("tidak menandai pairing WhatsApp siap sebelum sesi tersimpan lolos koneksi ulang", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harvy-channel-whatsapp-pair-probe-"));
+    const paths = liveAcceptancePaths(root);
+    const whatsapp = new ControlledWhatsAppAdapter();
+    const service = new ChannelSetupService({
+      paths,
+      ...isolatedPrimaryChannelOptions(root),
+      telegramAdapter: new ControlledTelegramAdapter(),
+      whatsappAdapter: whatsapp,
+      pairingTimeoutMs: 10_000,
+    });
+    try {
+      await service.initialize();
+      service.startWhatsApp("tester");
+      await waitUntil(async () =>
+        (await service.snapshot()).whatsapp.tester.phase === "awaiting_scan"
+      );
+      whatsapp.setProbeOutcome(paths.whatsappTesterAuth, "rejected");
+      whatsapp.finishPairing("tester");
+      await waitUntil(async () =>
+        (await service.snapshot()).whatsapp.tester.phase === "error"
+      );
+
+      const tester = (await service.snapshot()).whatsapp.tester;
+      assert.equal(tester.configured, true);
+      assert.equal(tester.phase, "error");
+      assert.equal(tester.errorCode, "CHANNEL_WHATSAPP_SESSION_REJECTED");
+      assert.equal(tester.session.status, "rejected");
+      assert.ok(tester.session.checkedAt);
+      assert.equal(
+        tester.session.errorCode,
+        "CHANNEL_WHATSAPP_SESSION_REJECTED",
+      );
+      assert.equal((await service.snapshot()).whatsapp.ready, false);
+      assert.deepEqual(whatsapp.events.slice(-2), [
+        "pair:ready:tester",
+        "probe:tester",
+      ]);
     } finally {
       await service.close();
       await rm(root, { recursive: true, force: true });

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { explicitMemoryRememberAuthority } from "../src/core/memory-explicit-consent.js";
+import {
+  explicitMemoryRememberAuthority,
+  replyClaimsMemoryDeletion,
+  replyClaimsDefinitiveMemoryRecordWrite,
+  withoutUnconfirmedMemoryRecordClaims,
+  withoutUnconfirmedMemoryDeletionClaims,
+} from "../src/core/memory-explicit-consent.js";
 import type { SemanticOperation } from "../src/domain/semantic-operation.js";
 
 describe("authority explicit remember", () => {
@@ -117,6 +123,36 @@ describe("authority explicit remember", () => {
     }
   });
 
+  it("menolak constraint current task walau model salah menandainya explicit remember", () => {
+    const message =
+      "Jangan buat pekerjaan latar dan jangan pakai tool; bantu aku lewat percakapan ini saja.";
+    assert.equal(
+      explicitMemoryRememberAuthority(
+        message,
+        [{ content: "Lebih suka selalu dibantu tanpa tool" }],
+        remember(message, "cara kerja yang diminta"),
+      ),
+      null,
+    );
+  });
+
+  it("menolak exact evidence negatif walau model mengusulkan remember", () => {
+    for (const message of [
+      "Jangan ingat ini untuk ke depan; lanjut bantu urutkan prioritas.",
+      "Do not remember this; continue answering my main request.",
+    ]) {
+      assert.equal(
+        explicitMemoryRememberAuthority(
+          message,
+          [{ content: "Preferensi permanen yang tidak diminta" }],
+          remember(message, message),
+        ),
+        null,
+        message,
+      );
+    }
+  });
+
   it("mengenali credential tetapi tidak memberi candidate authority", () => {
     for (const message of [
       "remember password emailku adalah CONTOH_SANDI_123",
@@ -133,6 +169,59 @@ describe("authority explicit remember", () => {
       assert.equal(authority?.forbiddenSecret, true, message);
       assert.deepEqual(authority?.candidateIndexes, [], message);
     }
+  });
+});
+
+describe("klaim penghapusan memori", () => {
+  it("mengenali klaim deletion tanpa receipt dalam bahasa Indonesia dan Inggris", () => {
+    for (const text of [
+      "Catatannya udah aku hapus.",
+      "Memori yang tadi telah dilupakan.",
+      "I have deleted that note.",
+      "The memory has been removed.",
+    ]) {
+      assert.equal(replyClaimsMemoryDeletion(text), true, text);
+    }
+  });
+
+  it("membuang hanya klaim deletion dan mempertahankan jawaban utama", () => {
+    const reply = [
+      "Catatannya udah aku hapus.",
+      "",
+      "Keputusan utamanya: tool hanya berjalan bila permintaan memang membutuhkan eksekusi.",
+    ].join("\n");
+
+    assert.equal(
+      withoutUnconfirmedMemoryDeletionClaims(reply),
+      "Keputusan utamanya: tool hanya berjalan bila permintaan memang membutuhkan eksekusi.",
+    );
+  });
+
+  it("tidak menghapus penjelasan yang jujur bahwa tidak ada receipt deletion", () => {
+    const reply = "Aku belum menghapus catatan apa pun.";
+    assert.equal(replyClaimsMemoryDeletion(reply), false);
+    assert.equal(withoutUnconfirmedMemoryDeletionClaims(reply), reply);
+  });
+});
+
+describe("klaim pencatatan memori tanpa receipt", () => {
+  it("membuang klaim definitive tetapi menjaga keputusan produk", () => {
+    const reply = [
+      "Permintaanmu sudah aku catat.",
+      "Keputusan utamanya: kita akan memperbaiki pemilihan tool lebih dulu.",
+    ].join("\n\n");
+
+    assert.equal(replyClaimsDefinitiveMemoryRecordWrite(reply.split("\n")[0]!), true);
+    assert.equal(
+      withoutUnconfirmedMemoryRecordClaims(reply),
+      "Keputusan utamanya: kita akan memperbaiki pemilihan tool lebih dulu.",
+    );
+    assert.equal(
+      replyClaimsDefinitiveMemoryRecordWrite(
+        "Keputusan utamanya: kita akan memperbaiki pemilihan tool lebih dulu.",
+      ),
+      false,
+    );
   });
 });
 

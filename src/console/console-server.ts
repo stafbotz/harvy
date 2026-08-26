@@ -33,6 +33,10 @@ import {
   type ChannelSetupService,
   type WhatsAppTestRole,
 } from "../operations/channel-setup.js";
+import {
+  CodingRuntimeSetupError,
+  type CodingRuntimeSetupService,
+} from "../operations/coding-runtime-setup.js";
 import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "./assets.js";
 
 const SESSION_COOKIE = "harvy_console_session";
@@ -96,6 +100,7 @@ export class ConsoleServer {
     private readonly now: () => number = () => Date.now(),
     private readonly economy: EconomyService | null = null,
     private readonly channelSetup: ChannelSetupService | null = null,
+    private readonly codingSetup: CodingRuntimeSetupService | null = null,
   ) {
     if (options.host !== "127.0.0.1") {
       throw new Error("Harvy Console local-first hanya boleh bind ke 127.0.0.1.");
@@ -117,6 +122,7 @@ export class ConsoleServer {
   async start(): Promise<ConsoleStartResult> {
     if (this.server || this.origin) throw new Error("Console sudah berjalan.");
     await this.channelSetup?.initialize();
+    await this.codingSetup?.initialize();
     await this.controlPlane.initialize();
     const server = createServer((request, response) => {
       void this.handle(request, response).catch((error: unknown) => {
@@ -361,6 +367,17 @@ export class ConsoleServer {
   }
 
   private async handleRead(url: URL, response: ServerResponse): Promise<void> {
+    if (url.pathname === "/api/v1/coding-setup") {
+      if (!this.codingSetup) {
+        throw new HttpError(
+          503,
+          "coding_setup_unavailable",
+          "Pengelola compute dan GitHub belum dikonfigurasi.",
+        );
+      }
+      sendJson(response, 200, await this.codingSetup.snapshot());
+      return;
+    }
     if (url.pathname === "/api/v1/channel-setup") {
       if (!this.channelSetup) {
         throw new HttpError(
@@ -1052,6 +1069,189 @@ export class ConsoleServer {
         }
       }
 
+      if (url.pathname.startsWith("/api/v1/coding-setup/")) {
+        const setup = this.codingSetup;
+        if (!setup) {
+          throw new HttpError(
+            503,
+            "coding_setup_unavailable",
+            "Pengelola compute dan GitHub belum dikonfigurasi.",
+          );
+        }
+        if (
+          url.pathname === "/api/v1/coding-setup/compute" &&
+          request.method === "POST"
+        ) {
+          const updated = await this.runMutation(
+            session,
+            "coding_configuration_update",
+            "coding_compute",
+            async () => {
+              const body = await readJsonObject(request, 256 * 1_024);
+              const fields = [
+                "sandboxOrigin",
+                "sandboxKeyId",
+                "sandboxHmacSecret",
+                "localGitOrigin",
+                "localGitKeyId",
+                "localGitHmacSecret",
+                "conformanceReceipt",
+                "allowInsecureLoopback",
+                "codingAiPrivacyDomain",
+              ];
+              assertExactKeys(body, fields, true);
+              assertRequiredKeys(body, [
+                "sandboxOrigin",
+                "sandboxKeyId",
+                "localGitOrigin",
+                "localGitKeyId",
+                "allowInsecureLoopback",
+              ]);
+              return setup.saveCompute({
+                sandboxOrigin: readString(body.sandboxOrigin, "sandboxOrigin", 2_048),
+                sandboxKeyId: readString(body.sandboxKeyId, "sandboxKeyId", 64),
+                sandboxHmacSecret: readOptionalSecret(body.sandboxHmacSecret, 8_192),
+                localGitOrigin: readString(body.localGitOrigin, "localGitOrigin", 2_048),
+                localGitKeyId: readString(body.localGitKeyId, "localGitKeyId", 64),
+                localGitHmacSecret: readOptionalSecret(body.localGitHmacSecret, 8_192),
+                conformanceReceipt: readOptionalMultiline(
+                  body.conformanceReceipt,
+                  64 * 1_024,
+                ),
+                allowInsecureLoopback: readBoolean(
+                  body.allowInsecureLoopback,
+                  "allowInsecureLoopback",
+                ),
+                codingAiPrivacyDomain: readOptionalString(
+                  body.codingAiPrivacyDomain,
+                  "codingAiPrivacyDomain",
+                  128,
+                ),
+              });
+            },
+          );
+          sendJson(response, 200, updated);
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/coding-setup/compute/verify" &&
+          request.method === "POST"
+        ) {
+          const updated = await this.runMutation(
+            session,
+            "coding_connection_verify",
+            "coding_compute",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, []);
+              return setup.verifyAndEnableCompute();
+            },
+          );
+          sendJson(response, 200, updated);
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/coding-setup/compute/disable" &&
+          request.method === "POST"
+        ) {
+          const updated = await this.runMutation(
+            session,
+            "coding_configuration_update",
+            "coding_compute",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, []);
+              return setup.disable("compute");
+            },
+          );
+          sendJson(response, 200, updated);
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/coding-setup/github" &&
+          request.method === "POST"
+        ) {
+          const updated = await this.runMutation(
+            session,
+            "coding_configuration_update",
+            "coding_github",
+            async () => {
+              const body = await readJsonObject(request, 256 * 1_024);
+              const fields = [
+                "brokerOrigin",
+                "brokerKeyId",
+                "brokerHmacSecret",
+                "appId",
+                "appSlug",
+                "clientId",
+                "clientSecret",
+                "privateKeyPem",
+                "callbackUrl",
+              ];
+              assertExactKeys(body, fields, true);
+              assertRequiredKeys(body, [
+                "brokerOrigin",
+                "brokerKeyId",
+                "appId",
+                "appSlug",
+                "clientId",
+                "callbackUrl",
+              ]);
+              return setup.saveGitHub({
+                brokerOrigin: readString(body.brokerOrigin, "brokerOrigin", 2_048),
+                brokerKeyId: readString(body.brokerKeyId, "brokerKeyId", 64),
+                brokerHmacSecret: readOptionalSecret(body.brokerHmacSecret, 8_192),
+                appId: readString(body.appId, "appId", 20),
+                appSlug: readString(body.appSlug, "appSlug", 100),
+                clientId: readString(body.clientId, "clientId", 256),
+                clientSecret: readOptionalSecret(body.clientSecret, 8_192),
+                privateKeyPem: readOptionalMultiline(
+                  body.privateKeyPem,
+                  128 * 1_024,
+                ),
+                callbackUrl: readString(body.callbackUrl, "callbackUrl", 2_048),
+              });
+            },
+          );
+          sendJson(response, 200, updated);
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/coding-setup/github/verify" &&
+          request.method === "POST"
+        ) {
+          const updated = await this.runMutation(
+            session,
+            "coding_connection_verify",
+            "coding_github",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, []);
+              return setup.verifyAndEnableGitHub();
+            },
+          );
+          sendJson(response, 200, updated);
+          return;
+        }
+        if (
+          url.pathname === "/api/v1/coding-setup/github/disable" &&
+          request.method === "POST"
+        ) {
+          const updated = await this.runMutation(
+            session,
+            "coding_configuration_update",
+            "coding_github",
+            async () => {
+              const body = await readJsonObject(request);
+              assertExactKeys(body, []);
+              return setup.disable("github");
+            },
+          );
+          sendJson(response, 200, updated);
+          return;
+        }
+      }
+
       if (this.options.setupOnly === true) {
         await this.controlPlane.audit(
           session.ref,
@@ -1395,6 +1595,9 @@ function asRequestError(error: unknown): HttpError | null {
   if (error instanceof ChannelSetupError) {
     return new HttpError(error.status, error.code, error.message);
   }
+  if (error instanceof CodingRuntimeSetupError) {
+    return new HttpError(error.status, error.code, error.message);
+  }
   if (error instanceof ControlPlaneConflictError) {
     return new HttpError(409, "version_conflict", error.message);
   }
@@ -1434,13 +1637,16 @@ function apiError(code: string, message: string): { error: { code: string; messa
   return { error: { code, message } };
 }
 
-async function readJsonObject(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJsonObject(
+  request: IncomingMessage,
+  maximumBytes = BODY_LIMIT_BYTES,
+): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > BODY_LIMIT_BYTES) {
+    if (size > maximumBytes) {
       throw new HttpError(413, "body_too_large", "Body melebihi batas Console.");
     }
     chunks.push(buffer);
@@ -1578,6 +1784,29 @@ function readBoolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") {
     throw new HttpError(400, "invalid_field", `Field ${field} tidak sah.`);
   }
+  return value;
+}
+
+function readOptionalString(
+  value: unknown,
+  field: string,
+  maximum: number,
+): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  return readString(value, field, maximum);
+}
+
+function readOptionalSecret(value: unknown, maximum: number): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  return readOpaqueSecret(value, "credential", maximum);
+}
+
+function readOptionalMultiline(value: unknown, maximum: number): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (
+    typeof value !== "string" || !value.trim() || value.length > maximum ||
+    /[\u0000\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
+  ) throw new HttpError(400, "invalid_field", "Field multiline tidak sah.");
   return value;
 }
 
@@ -1728,6 +1957,26 @@ function describeMutation(
   url: URL,
   method: string | undefined,
 ): MutationDescriptor {
+  if (
+    method === "POST" &&
+    (url.pathname === "/api/v1/coding-setup/compute/verify" ||
+      url.pathname === "/api/v1/coding-setup/github/verify")
+  ) {
+    return {
+      action: "coding_connection_verify",
+      targetRef: url.pathname.includes("/github")
+        ? "coding_github"
+        : "coding_compute",
+    };
+  }
+  if (method === "POST" && url.pathname.startsWith("/api/v1/coding-setup/")) {
+    return {
+      action: "coding_configuration_update",
+      targetRef: url.pathname.includes("/github")
+        ? "coding_github"
+        : "coding_compute",
+    };
+  }
   if (
     method === "POST" &&
     url.pathname === "/api/v1/channel-setup/primary/whatsapp/verify"
@@ -1918,6 +2167,7 @@ function enrollmentTarget(value: unknown): string | null {
 function errorCode(error: unknown): string {
   if (error instanceof HttpError) return error.code;
   if (error instanceof ChannelSetupError) return error.code;
+  if (error instanceof CodingRuntimeSetupError) return error.code;
   if (error instanceof ControlPlaneConflictError) return "version_conflict";
   if (error instanceof ControlPlaneValidationError) return "validation_rejected";
   return "internal_error";

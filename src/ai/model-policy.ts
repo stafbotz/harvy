@@ -204,7 +204,33 @@ export function requiresPlannedExecution(
   if (!assessment || assessment.confidence < 0.55) return false;
   const mechanical = assessment.complexity === "mechanical" ||
     assessment.transformationMechanical;
-  return assessment.planningRequired && !mechanical;
+  const executionBacked = assessment.toolNeed === "execution" ||
+    assessment.toolNeed === "external";
+  const substantial = assessment.executionSize === "medium" ||
+    assessment.executionSize === "heavy";
+  return assessment.planningRequired && !mechanical && executionBacked &&
+    substantial;
+}
+
+/**
+ * Menilai apakah assessment meminta kemampuan tool, bukan sekadar penalaran.
+ *
+ * Nilai ini tetap advisory dan tidak pernah cukup untuk mutasi state. Adapter
+ * masih wajib membuktikan intent, scope, permission, serta authority operasi.
+ * `internal_state` sengaja tidak diterima dari model saja: jalur itu harus
+ * dibuktikan oleh preflight state-live code-owned pada adapter.
+ */
+export function requestsAgentTooling(
+  assessment: RoutingAssessment | null | undefined,
+): boolean {
+  if (!assessment || assessment.confidence < 0.55) return false;
+  // `calculation` tidak menunjuk capability callable tertentu. Operasi
+  // aritmetika sempit selesai di fast path exact; bentuk lain tetap mendapat
+  // jawaban model biasa. Memberi Agent Runtime authority hanya dari label ini
+  // pernah mengirim 17+28 ke terminal/planner generik dan berakhir tanpa
+  // jawaban. Execution/external tetap membutuhkan runtime tool sungguhan.
+  return assessment.toolNeed === "execution" ||
+    assessment.toolNeed === "external";
 }
 
 /**

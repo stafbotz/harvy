@@ -49,6 +49,28 @@ const EPISODE_CONTEXT_FIELD_PRIORITY = [
 
 type EpisodeClaimField = (typeof EPISODE_CLAIM_FIELDS)[number];
 
+export function episodeDraftHasClaims(draft: EpisodeSummaryDraft): boolean {
+  return EPISODE_CLAIM_FIELDS.some((field) => draft[field].length > 0);
+}
+
+/**
+ * Empty episode boleh membuang basa-basi, tetapi tidak boleh menghapus source
+ * yang jelas membawa artefak atau pekerjaan substantif. False positive di
+ * sini hanya menahan raw turn untuk retry; false negative menghilangkan
+ * konteks pengguna secara permanen dari hot history.
+ */
+export function episodeSourceRequiresClaims(
+  turns: readonly StoredConversationTurn[],
+): boolean {
+  const texts = turns.map((turn) => turn.text.trim()).filter(Boolean);
+  const totalCharacters = texts.reduce((sum, text) => sum + text.length, 0);
+  return totalCharacters >= 480 || texts.some((text) =>
+    text.length >= 160 ||
+    /```[\s\S]*?```/u.test(text) ||
+    text.split(/\r?\n/u).filter((line) => line.trim()).length >= 3
+  );
+}
+
 /**
  * Membaca rancangan episode sebagai input tidak tepercaya.
  *
@@ -128,6 +150,9 @@ export function createConversationEpisode(
   const first = turns[0];
   const last = turns.at(-1);
   if (!cleanDraft || !first || !last) return null;
+  if (
+    !episodeDraftHasClaims(cleanDraft) && episodeSourceRequiresClaims(turns)
+  ) return null;
 
   return {
     schemaVersion: EPISODE_SCHEMA_VERSION,

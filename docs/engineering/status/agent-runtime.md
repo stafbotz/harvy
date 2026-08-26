@@ -145,16 +145,17 @@ agent, scope/authority, atau executor internal.
 
 ## Batas dan defect aktif
 
-- Provider primary current lulus native tool call, thought-signature reasoning
-  continuation, tool-result replay, truncation/pressure, timeout, dan retry.
-  Full Telegram current juga meluluskan planning 3/3/3 melalui satu anchor
-  mutable. Tool/action CodingRun dari kanal tetap belum diuji live.
-- Native fallback sengaja nonaktif sampai wire contract provider cadangan
-  dibuktikan kompatibel.
-- Profile compatibility tidak mengaktifkan reasoning. Profile code-owned
-  `google-ai-studio/gemini-3.5-flash-lite` pada endpoint resmi lulus live smoke
-  effort/tool/thought-signature replay/finish/pressure/timeout/retry; capability
-  explicit fallback tetap sengaja ditolak.
+- Smoke exact GMI/MiniMax 25 Agustus sudah meluluskan native tool,
+  continuation, structured output, truncation/pressure lokal, timeout, gambar,
+  dan automatic cache reuse. Full Telegram lama juga meluluskan planning 3/3/3
+  melalui satu anchor mutable; build GMI terbaru baru diuji live pada jalur
+  percakapan/routing, bukan seluruh tool/action CodingRun.
+- Runtime testing hanya mempunyai primary `gmi-serving`; provider fallback dan
+  flag evaluator untuk mengaktifkannya sudah dicabut.
+- Profile compatibility tidak mengaktifkan reasoning. Exact endpoint GMI +
+  MiniMax-M3 memakai profile code-owned tanpa reasoning replay; custom gateway
+  atau model lain tetap compatibility. Retry lintas key belum dapat diuji
+  karena hanya satu key tersedia.
 - Visible verbosity sudah menjadi field policy terpisah, tetapi belum ada
   dashboard/UX tuning lintas seluruh surface. Validator-driven `toughest`
   sudah dirangkai untuk coding, tetap tidak mempunyai target aktif secara

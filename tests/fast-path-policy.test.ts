@@ -20,6 +20,10 @@ describe("fast path percakapan privat", () => {
       deterministicArithmeticReply("aku buru-buru, langsung kasih hasil 17 x 8"),
       "Hasilnya 136.",
     );
+    assert.equal(
+      deterministicArithmeticReply("Sekarang jawab 17+28 dengan angka saja."),
+      "45",
+    );
   });
 
   it("tidak membajak narasi, beberapa operasi, atau pembagian nol", () => {

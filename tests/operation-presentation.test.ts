@@ -89,6 +89,23 @@ describe("operation presentation", () => {
     assert.equal(renderOperationPresentation(BRIEF, null), BRIEF.fallbackText);
   });
 
+  it("menolak klaim reminder sudah dikirim pada receipt jadwal masa depan", () => {
+    assert.equal(
+      renderOperationPresentation(BRIEF, {
+        acknowledgement: "Sip, sudah kuingatkan pas waktunya ya.",
+        nextStepIndex: null,
+      }),
+      BRIEF.fallbackText,
+    );
+    assert.match(
+      renderOperationPresentation(BRIEF, {
+        acknowledgement: "Sip, pengingatnya sudah terpasang.",
+        nextStepIndex: null,
+      }),
+      /^Sip, pengingatnya sudah terpasang\./u,
+    );
+  });
+
   it("membungkus input pengguna sehingga tidak dapat menutup envelope", () => {
     const input = operationPresentationInput({
       ...BRIEF,

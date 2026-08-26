@@ -127,7 +127,6 @@ function routing(privacyDomain = "workspace.private"): AiConfig {
     providerId: "openrouter",
     keys: new ApiKeyPool(["test-key-never-used"]),
     baseUrl: "https://provider.invalid/v1",
-    fallback: null,
     testingModel: "",
     testingModels: {},
     models: {
@@ -166,6 +165,8 @@ function profile(): ModelProfile {
       namedToolChoice: false,
       structuredOutput: true,
       temperature: true,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: true,

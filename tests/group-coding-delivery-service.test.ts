@@ -160,7 +160,7 @@ async function createFixture() {
     accountId: "account-a",
     groupName: "Coding",
     joinedAt: "2026-08-15T07:00:00.000Z",
-    noticeVersion: 9,
+    noticeVersion: 10,
     noticeSentAt: "2026-08-15T07:01:00.000Z",
     disabledAt: null,
   };

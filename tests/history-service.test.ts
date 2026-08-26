@@ -242,7 +242,9 @@ describe("HistoryService", () => {
     const chunks: StoredConversationTurn[][] = [];
     const service = new HistoryService(store, async (turns) => {
       chunks.push(structuredClone(turns));
-      return emptyDraft();
+      return draft("Backlog percakapan tetap mempunyai provenance.", [
+        turns[0]!.sequence,
+      ]);
     });
 
     for (let index = 0; index < 45; index += 1) {

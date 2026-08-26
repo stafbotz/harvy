@@ -1,8 +1,8 @@
 # Status Project Workspace dan Coding
 
-Refreshed: 2026-08-24 pada provider live, coding local-E2E, dan acceptance grup
-parsial. Bukti penuh terakhir harus dibaca di `docs/LOG.md`; status live tetap
-dipisahkan dari test otomatis.
+Refreshed: 2026-08-27 pada coding local-E2E, setup Console, dan bootstrap
+repository kosong. Bukti provider/kanal live terakhir harus dibaca di
+`docs/LOG.md`; status live tetap dipisahkan dari test otomatis.
 
 ## Ada di kode
 
@@ -14,6 +14,20 @@ dipisahkan dari test otomatis.
   tombstone-first deletion tetap berlaku. Metadata executable Git dibawa lewat
   manifest pada Windows; deployment POSIX tetap memverifikasi mode filesystem
   nyata.
+- Project dapat dimulai benar-benar kosong tanpa ZIP atau GitHub. Source
+  `blank`, snapshot awal, branch kerja, deletion inventory, dan control-plane
+  memakai kontrak Workspace yang sama; tidak ada file sintetis yang diam-diam
+  dianggap sebagai pekerjaan pengguna.
+- `ProjectGoal` durable menyimpan objective, acceptance criteria code/GitHub/
+  manual, milestone, keputusan, blocker, dan evidence. CodingRun baru mengikat
+  brief ke goal aktif; milestone baru dimulai setelah admission run berhasil
+  dan evidence baru dicatat setelah efek terkait commit. Skill project bersifat
+  deklaratif, versioned, evidence-bound, dan hanya boleh meminta tool dari
+  allowlist; ia tidak membawa kode/plugin executable atau authority baru.
+- Telegram dan WhatsApp privat mempunyai command parity `/project new`,
+  `/goal`, dan `/skill`. Interpreter intent project berbasis model dapat
+  menangani bahasa natural, tetapi command code-owned tetap jalur deterministik
+  dan seluruh mutasi melewati service authority yang sama.
 - Backend sandbox production tersedia sebagai service Linux non-root terpisah:
   rootless Podman, image digest-pinned, seccomp profile, user namespace,
   capability drop, `no-new-privileges`, read-only root, private PID/IPC/UTS/
@@ -42,9 +56,12 @@ dipisahkan dari test otomatis.
 - `AiCodingWorkerDriver` menjalankan loop tool-call bounded map → plan →
   search/read → structured patch → sandbox → validator → task review →
   finalize. Satu budget kumulatif dan continuation exact dipakai; provider
-  fallback coding dinonaktifkan sampai profile fallback live-proven. Hanya
-  integration writer yang menulis. Validator test/lint/typecheck/build berasal
-  dari image sandbox immutable, bukan command model.
+  fallback coding dinonaktifkan. Sebelum integrasi, tepat dua advisory
+  read-only berbeda—challenger dan verifier—hanya menerima tree/diff serta
+  WorkBrief minimum-necessary; keduanya tidak mempunyai tool mutasi. Hanya
+  integration writer yang menulis, dan advisory stale dibuang bila revision
+  berubah. Validator test/lint/typecheck/build berasal dari image sandbox
+  immutable, bukan command model.
 - RunMailbox/ChangeSet/instruction revision, state CAS, provider+sandbox
   quiescence, stale action discard, cancellation, durable evidence, commit
   barrier, dan recovery tetap menjadi gate. ZIP acceptance otomatis membuktikan
@@ -66,6 +83,12 @@ dipisahkan dari test otomatis.
   OAuth callback, repository listing/access refresh, archive exact, create
   `harvy/*`, non-force exact push dari object bundle, draft PR, dan
   reconciliation fail-closed.
+- Selection repository private yang benar-benar kosong berhenti pada
+  `bootstrap_required`. Setelah konfirmasi exact terpisah, broker membuat satu
+  baseline `README.md` code-owned melalui Contents API. Attempt WAL disimpan
+  sebelum boundary, effect ID/payload hash dipakai ulang setelah timeout atau
+  restart, remote ref direkonsiliasi, lalu archive dan ProjectWorkspace baru
+  diprovisi. Bootstrap bukan izin branch, push, atau draft PR.
 - Klien GitHub credential-domain memiliki watchdog internal 30 detik walau
   caller lupa membawa signal, membatasi JSON sebelum buffering, membatalkan
   body status/redirect yang tidak dipakai, dan tidak membawa Authorization ke
@@ -86,6 +109,12 @@ dipisahkan dari test otomatis.
   WhatsApp network admission. Urutannya sandbox lease recovery, receipt GitHub
   ambigu, deletion tombstone, CodingRun/pending barrier, lalu conformance gate.
   Shutdown menyegel scheduler/worker/reconciler sebelum sandbox ditutup.
+- `npm run console:setup` mempunyai langkah terpisah **Komputer kerja** dan
+  **GitHub**. Console menyimpan origin, HMAC service identity, receipt
+  hostile-sandbox, serta credential GitHub App ke file lokal berizin sempit;
+  secret tidak dibaca kembali ke browser. Aktivasi compute memeriksa health dan
+  identity receipt exact, sedangkan GitHub baru aktif setelah compute serta
+  Broker lolos probe. Runtime aktif meminta restart setelah perubahan.
 - Group coding sekarang reachable sesudah observation authority WhatsApp dan
   sebelum ambient batching. Actor dibentuk dari message normalized tepercaya;
   link memerlukan admin grup + `workspace.manage`, reference run durable, dan
@@ -110,23 +139,27 @@ dipisahkan dari test otomatis.
   pada image+seccomp+host exact. `npm run acceptance:sandbox` pada host ini gagal
   tertutup dengan `SANDBOX_ACCEPTANCE_REQUIRES_LINUX_HOST`.
 - GitHub App credential, installation, dan repository uji nonkritis tidak
-  tersedia. Broker dan conformance test otomatis ada, tetapi branch/commit/PR
-  remote belum diverifikasi live. GitHub runtime tetap opt-in dan setup harus
-  menyediakan private key, OAuth secret, state secret, service HMAC, callback,
-  dan repository test. Preflight resmi berhenti sebelum efek dengan
+  tersedia pada host verifikasi. Broker dan conformance test otomatis ada,
+  tetapi branch/commit/PR remote—termasuk bootstrap repository kosong—belum
+  diverifikasi live. GitHub runtime tetap opt-in; Console menyediakan jalur
+  setup private key, OAuth secret, state secret, service HMAC, callback, dan
+  Broker, tetapi repository test serta konfirmasi efek tetap diperlukan.
+  Preflight resmi berhenti sebelum efek dengan
   `GITHUB_LIVE_ACCEPTANCE_REQUIRES_CREATE_NONCRITICAL_DRAFT_PR`.
-- Profile primary exact `google-ai-studio/gemini-3.5-flash-lite` pada endpoint
-  resmi lulus live smoke reasoning/tool continuation, thought-signature replay,
-  finish/truncation, pressure, timeout, retry, dan output ceiling. Fallback
-  coding tetap tertutup; target `toughest` belum dikonfigurasi dan belum live.
+- Bukti profile Google lama tidak lagi menjadi profile runtime testing.
+  `gmi-serving/MiniMaxAI/MiniMax-M3` sudah lulus smoke exact umum dan memakai
+  profile code-owned, tetapi CodingRun provider live, target `toughest`, dan
+  coding kanal nyata belum boleh diklaim aktif.
 - WhatsApp GroupAgentRun lulus scope grup nyata dua-akun untuk anchor, ambient,
   correction+duplicate replay, status, safety, dan cancel. Ini belum acceptance
   group-coding: participant kedua, assigned question, Workspace provisioning,
   crash/reconnect, dan publish privat belum dijalankan.
-- Jalur coding lokal targeted lulus 67/67: private application end-to-end,
-  CodingRun engine/coordinator, local Git nyata, OCI contract, conformance
-  receipt, group-coding ingress/delivery/driver/lifecycle. Bukti ini tidak
-  mengaktifkan capability dan tidak menggantikan sandbox/GitHub remote live.
+- Jalur coding lokal mencakup private application end-to-end, ProjectGoal dan
+  skill, blank project, advisory read-only, CodingRun engine/coordinator, local
+  Git nyata, OCI contract, conformance receipt, setup Console, bootstrap
+  repository kosong dengan fake broker, serta group-coding lifecycle. Bukti
+  ini tidak mengaktifkan capability dan tidak menggantikan sandbox/GitHub
+  remote live.
 - Store control-plane project/run/evidence/deletion/GitHub/group, broker ledger,
   local-git operation ledger, dan outbound delivery masih file/single-service.
   SQLite lease sandbox memberi CAS lintas proses hanya untuk lease itu. Belum

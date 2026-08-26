@@ -19,6 +19,16 @@ import {
   type PrivateCodingSession,
 } from "../storage/file-private-coding-session-store.js";
 import { containsSecretLikeValue } from "../security/credential-like.js";
+import type {
+  ProjectGoal,
+  ProjectSkill,
+  ProjectSkillVersion,
+} from "../domain/project-intent.js";
+import {
+  ProjectIntentService,
+  type SaveProjectSkillInput,
+  type SetProjectGoalInput,
+} from "./project-intent-service.js";
 
 export interface PrivateCodingRunOutcome {
   run: CodingRun;
@@ -73,6 +83,7 @@ export class PrivateCodingApplication {
     private readonly progress: CodingRunProgressHub,
     private readonly now: () => Date = () => new Date(),
     private readonly groupCodingRepository: GroupCodingRepository | null = null,
+    private readonly projectIntents: ProjectIntentService | null = null,
   ) {}
 
   start(): void {
@@ -357,6 +368,221 @@ export class PrivateCodingApplication {
     });
   }
 
+  async createBlankProject(
+    actor: AuthenticatedWorkspaceActor,
+    displayNameInput: string,
+  ): Promise<PrivateCodingSelectionView & { project: ProjectWorkspace }> {
+    this.assertAdmission();
+    const resolved = await this.resolveActor(actor);
+    const displayName = taskText(displayNameInput, 80);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const session = await this.session(resolved.principal);
+      assertNoForeground(session);
+      const workspace = await this.controller.createWorkspace(actor, {
+        displayName,
+      });
+      const selectedWorkspace = await this.saveSession(session, {
+        workspaceKey: workspace.workspaceKey,
+        projectId: null,
+        projectRevision: null,
+        foregroundRunId: null,
+        lastRunId: null,
+      });
+      const created = await this.controller.createBlankProject(actor, {
+        workspaceKey: workspace.workspaceKey,
+      });
+      const scope = await this.requireScope(
+        workspace.workspaceKey,
+        resolved.principal,
+      );
+      const project = await this.projects.get(scope, created.projectId);
+      if (!project || project.revision !== created.revision) {
+        throw new Error("Project kosong tidak dapat dimuat ulang.");
+      }
+      const saved = await this.saveSession(selectedWorkspace, {
+        workspaceKey: workspace.workspaceKey,
+        projectId: project.id,
+        projectRevision: project.revision,
+        foregroundRunId: null,
+        lastRunId: null,
+      });
+      return { ...selection(saved), project };
+    });
+  }
+
+  async setGoal(
+    actor: AuthenticatedWorkspaceActor,
+    input: SetProjectGoalInput,
+  ): Promise<ProjectGoal> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const session = await this.session(resolved.principal);
+      assertNoForeground(session);
+      const bound = await this.boundSelection(session, resolved.principal);
+      return intents.setGoal(bound.scope, bound.project.id, input);
+    });
+  }
+
+  async currentGoal(actor: AuthenticatedWorkspaceActor): Promise<ProjectGoal | null> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    const session = await this.session(resolved.principal);
+    const bound = await this.boundSelection(session, resolved.principal);
+    return intents.goal(bound.scope, bound.project.id);
+  }
+
+  async completeGoal(actor: AuthenticatedWorkspaceActor): Promise<ProjectGoal> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const session = await this.session(resolved.principal);
+      assertNoForeground(session);
+      const bound = await this.boundSelection(session, resolved.principal);
+      return intents.completeGoal(bound.scope, bound.project.id);
+    });
+  }
+
+  async addGoalBlocker(
+    actor: AuthenticatedWorkspaceActor,
+    summary: string,
+  ): Promise<ProjectGoal> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const session = await this.session(resolved.principal);
+      assertNoForeground(session);
+      const bound = await this.boundSelection(session, resolved.principal);
+      return intents.addBlocker(bound.scope, bound.project.id, summary);
+    });
+  }
+
+  async resolveGoalBlocker(
+    actor: AuthenticatedWorkspaceActor,
+    blockerId: string,
+  ): Promise<ProjectGoal> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const session = await this.session(resolved.principal);
+      assertNoForeground(session);
+      const bound = await this.boundSelection(session, resolved.principal);
+      return intents.resolveBlocker(bound.scope, bound.project.id, blockerId);
+    });
+  }
+
+  async resolveGoalBlockerByReference(
+    actor: AuthenticatedWorkspaceActor,
+    query: string,
+  ): Promise<ProjectGoal> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const session = await this.session(resolved.principal);
+      assertNoForeground(session);
+      const bound = await this.boundSelection(session, resolved.principal);
+      return intents.resolveBlockerByQuery(bound.scope, bound.project.id, query);
+    });
+  }
+
+  async confirmManualGoalCriterion(
+    actor: AuthenticatedWorkspaceActor,
+    criterionId: string,
+    summary: string,
+  ): Promise<ProjectGoal> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const session = await this.session(resolved.principal);
+      assertNoForeground(session);
+      const bound = await this.boundSelection(session, resolved.principal);
+      return intents.recordEvidence(bound.scope, bound.project.id, {
+        ref: `user-confirmation:${taskText(criterionId, 128)}`,
+        kind: "user_confirmation",
+        summary: taskText(summary, 2_000),
+        satisfyCriterionIds: [criterionId],
+      });
+    });
+  }
+
+  async createSkill(
+    actor: AuthenticatedWorkspaceActor,
+    input: SaveProjectSkillInput,
+  ): Promise<ProjectSkill> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const session = await this.session(resolved.principal);
+      assertNoForeground(session);
+      const bound = await this.boundSelection(session, resolved.principal);
+      return intents.createSkill(bound.scope, bound.project.id, input);
+    });
+  }
+
+  async createSkillFromLatestEvidence(
+    actor: AuthenticatedWorkspaceActor,
+    input: Omit<SaveProjectSkillInput, "sourceEvidenceRefs">,
+  ): Promise<ProjectSkill> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    return this.exclusive(resolved.principal.principalKey, async () => {
+      const session = await this.session(resolved.principal);
+      assertNoForeground(session);
+      const bound = await this.boundSelection(session, resolved.principal);
+      const sourceEvidenceRefs = await intents.latestEvidenceRefs(
+        bound.scope,
+        bound.project.id,
+      );
+      if (sourceEvidenceRefs.length === 0) {
+        throw new Error(
+          "Skill belum dapat dibuat: selesaikan minimal satu CodingRun yang menghasilkan evidence goal.",
+        );
+      }
+      return intents.createSkill(bound.scope, bound.project.id, {
+        ...input,
+        sourceEvidenceRefs,
+      });
+    });
+  }
+
+  async listSkills(actor: AuthenticatedWorkspaceActor): Promise<ProjectSkill[]> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    const session = await this.session(resolved.principal);
+    const bound = await this.boundSelection(session, resolved.principal);
+    return intents.listSkills(bound.scope, bound.project.id);
+  }
+
+  async skillForApply(
+    actor: AuthenticatedWorkspaceActor,
+    nameOrId: string,
+  ): Promise<ProjectSkillVersion> {
+    const intents = this.requireProjectIntents();
+    const resolved = await this.resolveActor(actor);
+    const session = await this.session(resolved.principal);
+    const bound = await this.boundSelection(session, resolved.principal);
+    return intents.skillForApply(bound.scope, bound.project.id, nameOrId);
+  }
+
+  async startCodingWithSkill(
+    actor: AuthenticatedWorkspaceActor,
+    nameOrId: string,
+    requestInput: string,
+    listener?: CodingRunProgressListener,
+  ): Promise<PrivateCodingRunHandle> {
+    const skill = await this.skillForApply(actor, nameOrId);
+    const request = taskText(requestInput);
+    const skillContext = [
+      `Gunakan skill deklaratif \"${skill.name}\" versi ${skill.version}.`,
+      `Tujuan skill: ${skill.description}`,
+      ...skill.preconditions.map((item) => `Precondition: ${item}`),
+      ...skill.steps.map((item, index) => `Langkah ${index + 1}: ${item}`),
+      ...skill.verification.map((item) => `Verifikasi: ${item}`),
+      "Skill ini tidak memberi izin atau capability baru; gunakan hanya tool runtime yang tersedia.",
+    ].join("\n");
+    return this.startCoding(actor, `${request}\n\n${skillContext}`, listener);
+  }
+
   async startCoding(
     actor: AuthenticatedWorkspaceActor,
     requestInput: string,
@@ -369,15 +595,32 @@ export class PrivateCodingApplication {
       const session = await this.session(resolved.principal);
       assertNoForeground(session);
       const bound = await this.boundSelection(session, resolved.principal);
+      const goal = await this.projectIntents?.goal(
+        bound.scope,
+        bound.project.id,
+      ) ?? null;
+      if (goal?.status === "blocked") {
+        throw new Error("ProjectGoal masih mempunyai blocker terbuka.");
+      }
+      if (goal?.status === "completed" || goal?.status === "cancelled") {
+        throw new Error("ProjectGoal sudah terminal; perbarui tujuan sebelum CodingRun baru.");
+      }
       const brief: CodingTaskBrief = {
         request,
-        objective: request,
-        acceptanceCriteria: [
-          "Perubahan memenuhi permintaan dan seluruh validator code-owned terbaru lulus.",
-          "Diff task-level ditinjau dan perubahan tidak terkait diminimalkan.",
-        ],
+        objective: goal?.objective ?? request,
+        acceptanceCriteria: goal
+          ? goal.acceptanceCriteria.map((criterion) => criterion.text)
+          : [
+              "Perubahan memenuhi permintaan dan seluruh validator code-owned terbaru lulus.",
+              "Diff task-level ditinjau dan perubahan tidak terkait diminimalkan.",
+            ],
         initialConstraints: [
           "Jangan mengubah public API kecuali permintaan membutuhkannya secara eksplisit.",
+          ...(goal
+            ? [
+                `Pertahankan ProjectGoal ${goal.goalId} revision ${goal.revision}; jangan menyatakan selesai tanpa evidence untuk setiap criterion.`,
+              ]
+            : []),
         ],
       };
       const created = await this.controller.createCodingRun(actor, {
@@ -386,6 +629,9 @@ export class PrivateCodingApplication {
         expectedProjectRevision: bound.project.revision,
         brief,
       });
+      if (goal) {
+        await this.projectIntents!.startMilestone(bound.scope, bound.project.id);
+      }
       await this.saveSession(session, {
         workspaceKey: bound.scope.workspaceKey,
         projectId: bound.project.id,
@@ -657,6 +903,29 @@ export class PrivateCodingApplication {
         }
       }
     }
+    if (run.status === "completed" && localCommit && this.projectIntents) {
+      try {
+        const goal = await this.projectIntents.goal(
+          scope,
+          run.binding.projectId,
+        );
+        if (goal) {
+          await this.projectIntents.recordEvidence(
+            scope,
+            run.binding.projectId,
+            {
+              ref: `coding-run:${run.runId}`,
+              kind: "coding_run",
+              summary:
+                `CodingRun selesai pada project revision ${projectRevision ?? run.result?.projectRevision ?? "unknown"}; validator code-owned dan local Git commit tersedia.`,
+              satisfyKinds: ["code"],
+            },
+          );
+        }
+      } catch {
+        stoppedReason ??= "project_goal_evidence_failed";
+      }
+    }
     await this.exclusive(principal.principalKey, async () => {
       const session = await this.session(principal);
       if (session.foregroundRunId === run.runId) {
@@ -714,6 +983,13 @@ export class PrivateCodingApplication {
     const run = await this.runs.get(scope, runId);
     if (!run) throw new Error("CodingRun tidak ditemukan.");
     return run;
+  }
+
+  private requireProjectIntents(): ProjectIntentService {
+    if (!this.projectIntents) {
+      throw new Error("ProjectGoal dan skill belum dikonfigurasi pada runtime coding.");
+    }
+    return this.projectIntents;
   }
 
   async resolveActor(actor: AuthenticatedWorkspaceActor) {

@@ -4,6 +4,8 @@ import { GitHubAppBackend } from "./github-app/github-app-backend.js";
 import { GitHubBrokerServiceHandler } from "./github-app/github-broker-service-handler.js";
 import { GitHubInstallationCallbackServer } from "./github-app/github-installation-callback-server.js";
 import { TrustDomainHttpServer } from "./transport/trust-domain-http-server.js";
+import { loadManagedGitHubBrokerServiceConfigurationSync } from
+  "./operations/coding-runtime-setup.js";
 
 async function main(): Promise<void> {
   rejectForeignCredentials(process.env);
@@ -71,6 +73,45 @@ interface ServiceConfig {
 }
 
 async function loadConfig(): Promise<ServiceConfig> {
+  const managed = loadManagedGitHubBrokerServiceConfigurationSync();
+  if (managed) {
+    const clientSecret = (await secureFile(
+      managed.clientSecretFile,
+      16 * 1_024,
+    )).toString("utf8").trim();
+    if (
+      clientSecret.length < 8 || clientSecret.length > 8_192 ||
+      /[\r\n\0]/u.test(clientSecret)
+    ) throw new Error("GITHUB_APP_CLIENT_SECRET_INVALID");
+    return {
+      dataRoot: managed.dataRoot,
+      appId: managed.appId,
+      appSlug: managed.appSlug,
+      clientId: managed.clientId,
+      clientSecret,
+      privateKey: await secureFile(managed.privateKeyFile, 128 * 1_024),
+      stateSecret: decodeSecret(
+        await secureFile(managed.stateSecretFile, 16 * 1_024),
+        "GITHUB_APP_STATE_SECRET_INVALID",
+      ),
+      callbackUrl: managed.callbackUrl,
+      gitCommand: managed.gitCommand,
+      commandEnvironment: commandEnvironment(),
+      hmacKeyId: managed.hmacKeyId,
+      hmacSecret: decodeSecret(
+        await secureFile(managed.hmacSecretFile, 16 * 1_024),
+        "GITHUB_BROKER_HMAC_SECRET_INVALID",
+      ),
+      rpcHost: managed.rpcHost,
+      rpcPort: managed.rpcPort,
+      rpcPublicOrigin: managed.rpcPublicOrigin,
+      rpcTls: null,
+      callbackHost: managed.callbackHost,
+      callbackPort: managed.callbackPort,
+      callbackPublicOrigin: managed.callbackPublicOrigin,
+      callbackTls: null,
+    };
+  }
   const rpcTls = await tlsPair("HARVY_GITHUB_BROKER_RPC_TLS_KEY_FILE", "HARVY_GITHUB_BROKER_RPC_TLS_CERT_FILE");
   const callbackTls = await tlsPair(
     "HARVY_GITHUB_BROKER_CALLBACK_TLS_KEY_FILE",
@@ -91,11 +132,6 @@ async function loadConfig(): Promise<ServiceConfig> {
     requiredPath("HARVY_GITHUB_BROKER_HMAC_SECRET_FILE"),
     16 * 1_024,
   ), "GITHUB_BROKER_HMAC_SECRET_INVALID");
-  const commandEnvironment: Record<string, string> = {};
-  for (const name of ["PATH", "HOME", "TMPDIR"] as const) {
-    const value = process.env[name]?.trim();
-    if (value) commandEnvironment[name] = value;
-  }
   return {
     dataRoot: requiredPath("HARVY_GITHUB_BROKER_DATA_ROOT"),
     appId: requiredText("HARVY_GITHUB_APP_ID", /^\d{1,20}$/u),
@@ -106,7 +142,7 @@ async function loadConfig(): Promise<ServiceConfig> {
     stateSecret,
     callbackUrl: requiredText("HARVY_GITHUB_APP_CALLBACK_URL", /^https:\/\/[^\s]+$/u),
     gitCommand: process.env.HARVY_GITHUB_BROKER_GIT_COMMAND?.trim() || "git",
-    commandEnvironment,
+    commandEnvironment: commandEnvironment(),
     hmacKeyId: requiredText("HARVY_GITHUB_BROKER_HMAC_KEY_ID", /^[A-Za-z0-9_-]{3,64}$/u),
     hmacSecret,
     rpcHost: process.env.HARVY_GITHUB_BROKER_RPC_LISTEN_HOST?.trim() || "127.0.0.1",
@@ -118,6 +154,15 @@ async function loadConfig(): Promise<ServiceConfig> {
     callbackPublicOrigin: process.env.HARVY_GITHUB_BROKER_CALLBACK_PUBLIC_ORIGIN?.trim() || null,
     callbackTls,
   };
+}
+
+function commandEnvironment(): Readonly<Record<string, string>> {
+  const result: Record<string, string> = {};
+  for (const name of ["PATH", "HOME", "TMPDIR"] as const) {
+    const value = process.env[name]?.trim();
+    if (value) result[name] = value;
+  }
+  return result;
 }
 
 async function tlsPair(

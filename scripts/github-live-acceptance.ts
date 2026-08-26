@@ -83,6 +83,10 @@ async function main(): Promise<void> {
     !access.canRead || !access.canPush || !access.canCreatePullRequest) {
     throw new Error("GITHUB_LIVE_ACCEPTANCE_REPOSITORY_AUTHORITY_MISMATCH");
   }
+  if (access.empty || access.baseCommit === null) {
+    throw new Error("GITHUB_LIVE_ACCEPTANCE_REPOSITORY_REQUIRES_BOOTSTRAP");
+  }
+  const baseCommit = access.baseCommit;
   if (access.targetBranchHead !== null) {
     throw new Error("GITHUB_LIVE_ACCEPTANCE_BRANCH_ALREADY_EXISTS");
   }
@@ -104,7 +108,7 @@ async function main(): Promise<void> {
       config.ownerWorkspaceKey,
       config.installationId,
       config.repositoryId,
-      access.baseCommit,
+      baseCommit,
       archiveOperation,
       signal,
     );
@@ -139,7 +143,7 @@ async function main(): Promise<void> {
       projectId,
       snapshotId: first.descriptor.snapshotId,
       workspaceRevision: 1,
-      baseCommit: access.baseCommit,
+      baseCommit,
       branch,
     });
     await localGit.prepare(firstBinding, first.descriptor, first.open(), signal);
@@ -150,7 +154,7 @@ async function main(): Promise<void> {
       projectId,
       snapshotId: second.descriptor.snapshotId,
       workspaceRevision: 2,
-      baseCommit: access.baseCommit,
+      baseCommit,
       branch,
     });
     await localGit.prepare(secondBinding, second.descriptor, second.open(), signal);
@@ -165,7 +169,7 @@ async function main(): Promise<void> {
       second.open(),
       signal,
     );
-    if (commit.parentCommit !== access.baseCommit || commit.sourceWorkspaceRevision !== 2) {
+    if (commit.parentCommit !== baseCommit || commit.sourceWorkspaceRevision !== 2) {
       throw new Error("GITHUB_LIVE_ACCEPTANCE_LOCAL_COMMIT_NOT_EXACT");
     }
 
@@ -181,11 +185,11 @@ async function main(): Promise<void> {
       instructionRevision: 0,
       branch,
       commit: commit.commit,
-      baseCommit: access.baseCommit,
+      baseCommit,
       baseBranch: access.defaultBranch,
     } as const;
 
-    const syntheticStaleBase = access.baseCommit === "0".repeat(40)
+    const syntheticStaleBase = baseCommit === "0".repeat(40)
       ? "1".repeat(40)
       : "0".repeat(40);
     const staleEffect = exactEffect({
@@ -239,7 +243,7 @@ async function main(): Promise<void> {
     const pushEffect = exactEffect({
       ...common,
       capability: "github.push_branch",
-      expectedTargetHead: access.baseCommit,
+      expectedTargetHead: baseCommit,
       objectBundle: commit.objectBundle,
       title: null,
       body: null,
@@ -281,7 +285,7 @@ async function main(): Promise<void> {
       branch,
       signal,
     );
-    if (finalAccess.baseCommit !== access.baseCommit || finalAccess.targetBranchHead !== commit.commit) {
+    if (finalAccess.baseCommit !== baseCommit || finalAccess.targetBranchHead !== commit.commit) {
       throw new Error("GITHUB_LIVE_ACCEPTANCE_REMOTE_STATE_NOT_EXACT");
     }
     process.stdout.write(`${JSON.stringify({
@@ -293,7 +297,7 @@ async function main(): Promise<void> {
       repositoryFullName: access.repositoryFullName,
       repositoryVisibility: access.visibility,
       baseBranch: access.defaultBranch,
-      baseCommit: access.baseCommit,
+      baseCommit,
       branch,
       commit: commit.commit,
       treeHash: commit.treeHash,
@@ -461,6 +465,9 @@ function rejectForeignCredentials(env: NodeJS.ProcessEnv): void {
     /^HARVY_GITHUB_APP_/u,
     /^OPENAI_/u,
     /^OPENROUTER_/u,
+    /^GMI_API_KEY$/u,
+    // Retired names remain blocked during local migration.
+    /^AI_TESTING_FALLBACK_/u,
     /^GOOGLE_AI_STUDIO_API_KEYS$/u,
     /^TELEGRAM_BOT_TOKEN$/u,
     /^WHATSAPP_/u,

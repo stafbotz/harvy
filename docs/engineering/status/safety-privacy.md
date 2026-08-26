@@ -1,7 +1,7 @@
 # Status — Safety dan Privacy
 
-Refreshed: 25 Agustus 2026 pada auto-memory, safety live lintas kanal, probe
-model nyata, dan verifikasi cleanup journey. Angka gerbang penuh terbaru
+Refreshed: 26 Agustus 2026 pada auto-memory, receipt lifecycle, safety live
+lintas kanal, probe model nyata, dan verifikasi cleanup journey. Angka gerbang penuh terbaru
 dicatat di `docs/LOG.md`. Untuk
 perubahan di area ini, baca bagian Constitution dan invariant yang relevan
 sebelum mengubah kontraknya.
@@ -32,12 +32,16 @@ sebelum mengubah kontraknya.
   state percakapan umum hanya pada calm yang pasti.
 - Acute triage tidak lagi menilai privacy. Pada grup, `contextPrivacy` terpisah
   hanya mengizinkan raw rolling context; null/sensitive no-retain tanpa UX
-  support. Consent onboarding privat versi 8 menjadi authority auto-memory
+  support. Consent onboarding privat versi 10 menjadi authority auto-memory
   ordinary maupun personal tanpa prompt/tombol per-item. Model ekstraksi hanya
   mengusulkan isi; primary masih mengikat owner/lifecycle/dedupe/limit dan
   menolak credential. Classifier `memory-privacy` dipensiunkan karena tidak lagi
   menentukan authority. Perintah explicit remember tetap dibuktikan dari raw
   turn dan exact candidate agar intent serta kegagalan tidak dikarang model.
+  Hypothetical, pekerjaan yang baru sedang dibahas, dan turn yang menegasikan
+  simpan/ingat tidak boleh dipromosikan menjadi kandidat primary. Balasan bebas
+  juga tidak boleh mengklaim sudah menyimpan atau menghapus ingatan tanpa
+  receipt code-owned dari operasi yang sesuai.
   Grup tidak mewarisi consent privat: kandidat member-local implicit dilewati
   tanpa write/prompt, explicit remember tetap item-scoped, dan shared room tetap
   memerlukan konfirmasi admin.
@@ -50,11 +54,19 @@ sebelum mengubah kontraknya.
 - Hanya triase danger yang berhasil dan sudah delivered boleh menjadi safety
   note; retensi dibatasi, dukungan/failed triage tidak dicatat, dan full delete
   menghapus note tersebut.
-- Consent onboarding menjelaskan penggunaan model/provider dan delegasi
-  terbatas. Hanya pesan pertama boleh ditriase sebelum consent; bubble lain
+- Consent onboarding v10 dan notice grup v11 menjelaskan satu provider utama,
+  tanpa pengiriman ulang ke provider cadangan, automatic prompt-prefix cache,
+  serta delegasi terbatas. Hanya
+  pesan pertama boleh ditriase sebelum consent; bubble lain
   ditahan lokal dengan batas bubble aslinya. Setelah consent, matcher lokal
   menilai tiap bubble sehingga marker konteks lama tidak memveto emergency
   baru.
+- Gambar hanya aktif pada Telegram privat dan WhatsApp privat. Media baru
+  diunduh sesudah consent, byte dikirim transient ke provider yang sama, dan
+  tidak masuk history, memory, checkpoint, atau log; caption tetap diperlakukan
+  sebagai teks biasa. Pengguna harus mengirim ulang gambar pada giliran lain.
+  Media grup sengaja belum diaktifkan karena authority/audience multianggota
+  memerlukan kontrak terpisah.
 - Runtime grup menyelesaikan authority+binding+notice sebelum model. Pesan
   ordinary tidak memanggil triage; support pasti tidak direview rutin. Bubble
   pra-join dibuang sebelum matcher/model dan revocation membatalkan assessment
@@ -82,6 +94,10 @@ sebelum mengubah kontraknya.
   lihat/koreksi/hapus membuatnya dapat diaudit pengguna, tetapi tidak menjamin
   akurasi. Jangan mengklaim semua fakta penting pasti menjadi kandidat atau
   false-positive/false-negative sudah terukur. Credential tetap hard-excluded.
+- Guard hypothetical/negasi dan receipt claim lulus tes serta rerun Telegram
+  nyata 26 Agustus, tetapi belum terkalibrasi pada ragam bahasa luas. Build yang
+  sama belum memperoleh rerun WhatsApp karena session akun penguji ditolak
+  transport dengan 401 sebelum ada pesan.
 - Baseline evaluator provider sebelumnya lulus 60/60. Corpus current bertambah
   dua kasus memori; seluruh 62 kasus akhirnya lulus tanpa quality failure,
   termasuk support, self-harm, kekerasan, dan kedua kandidat memori. Bukti ini

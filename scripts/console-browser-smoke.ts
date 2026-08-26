@@ -13,6 +13,11 @@ import {
   type WhatsAppPairingAdapter,
 } from "../src/operations/channel-setup.js";
 import {
+  CodingRuntimeSetupService,
+  codingRuntimeSetupPaths,
+  type CodingRuntimeSetupProbes,
+} from "../src/operations/coding-runtime-setup.js";
+import {
   liveAcceptancePaths,
   loadRepositoryEnvironment,
   saveTelegramBotCredential,
@@ -333,6 +338,8 @@ async function main(): Promise<void> {
     assert.deepEqual(desktopState.browserErrors, []);
     assert.deepEqual(client.runtimeFailures, []);
 
+    await auditCodingSetup(client);
+
     await evaluate(client, `document.getElementById("primary-manage-open").click()`);
     await waitForEvaluation(
       client,
@@ -478,14 +485,27 @@ async function main(): Promise<void> {
 
     whatsapp.setProbeOutcome("harvy", "accepted");
     await evaluate(client, `document.getElementById("channels-refresh").click()`);
-    await waitForEvaluation(
-      client,
-      `document.getElementById("whatsapp-harvy-status")?.textContent==="Sesi valid" &&
-        document.getElementById("whatsapp-route-status")?.textContent==="Sesi valid" &&
-        document.getElementById("channels-refresh")?.disabled===false &&
-        !document.getElementById("notice")?.classList.contains("warning")`,
-      "CONSOLE_BROWSER_WHATSAPP_REVERIFIED_STATE_TIMEOUT",
-    );
+    try {
+      await waitForEvaluation(
+        client,
+        `document.getElementById("whatsapp-harvy-status")?.textContent==="Sesi valid" &&
+          document.getElementById("whatsapp-route-status")?.textContent==="Sesi valid" &&
+          document.getElementById("channels-refresh")?.disabled===false &&
+          !document.getElementById("notice")?.classList.contains("warning")`,
+        "CONSOLE_BROWSER_WHATSAPP_REVERIFIED_STATE_TIMEOUT",
+      );
+    } catch (error) {
+      const state = await evaluate(client, `(() => ({
+        status:document.getElementById("whatsapp-harvy-status")?.textContent,
+        route:document.getElementById("whatsapp-route-status")?.textContent,
+        buttonDisabled:document.getElementById("channels-refresh")?.disabled,
+        notice:document.getElementById("notice")?.textContent,
+        warning:document.getElementById("notice")?.classList.contains("warning"),
+        globalError:document.getElementById("global-error-text")?.textContent,
+        globalErrorHidden:document.getElementById("global-error")?.classList.contains("hidden"),
+      }))()`);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}:${JSON.stringify(state)}`);
+    }
 
     const screenshotPath = process.env.HARVY_CONSOLE_SCREENSHOT?.trim();
     if (screenshotPath) {
@@ -947,6 +967,246 @@ async function auditExternalSetupQr(): Promise<void> {
   }
 }
 
+async function auditCodingSetup(client: CdpClient): Promise<void> {
+  const sandboxSecret = "s".repeat(43);
+  const localGitSecret = "l".repeat(43);
+  const brokerSecret = "g".repeat(43);
+  const clientSecret = "github-client-secret-browser-smoke";
+  const privateKey = browserPrivateKeyPem();
+  const receipt = JSON.stringify(browserConformanceReceipt());
+
+  await evaluate(
+    client,
+    `document.querySelector('[data-setup-tab="compute"]').click()`,
+  );
+  await waitForEvaluation(
+    client,
+    `(() => {
+      const panel=document.getElementById("tab-compute");
+      return panel && !panel.classList.contains("hidden") &&
+        document.getElementById("page-title")?.textContent==="Komputer kerja" &&
+        document.getElementById("compute-status")?.textContent==="Belum diatur" &&
+        document.getElementById("compute-editor")?.open===true;
+    })()`,
+    "CONSOLE_BROWSER_COMPUTE_INITIAL_STATE_TIMEOUT",
+  );
+  await evaluate(client, `(() => {
+    document.getElementById("compute-sandbox-origin-input").value="http://127.0.0.1:8443";
+    document.getElementById("compute-sandbox-key-id").value="sandbox-browser-v1";
+    document.getElementById("compute-sandbox-secret").value=${JSON.stringify(sandboxSecret)};
+    document.getElementById("compute-git-origin-input").value="http://127.0.0.1:8444";
+    document.getElementById("compute-git-key-id").value="local-git-browser-v1";
+    document.getElementById("compute-git-secret").value=${JSON.stringify(localGitSecret)};
+    document.getElementById("compute-receipt").value=${JSON.stringify(receipt)};
+    document.getElementById("compute-privacy-domain").value="workspace.private";
+    document.getElementById("compute-insecure-loopback").checked=true;
+    document.getElementById("compute-form").requestSubmit();
+    return true;
+  })()`);
+  await waitForEvaluation(
+    client,
+    `document.getElementById("compute-status")?.textContent==="Menunggu verifikasi" &&
+      document.getElementById("compute-verify")?.disabled===false &&
+      document.getElementById("compute-sandbox-secret")?.value==="" &&
+      document.getElementById("compute-git-secret")?.value==="" &&
+      document.getElementById("compute-receipt")?.value===""`,
+    "CONSOLE_BROWSER_COMPUTE_SAVED_STATE_TIMEOUT",
+  );
+  await evaluate(client, `document.getElementById("compute-verify").click()`);
+  await waitForEvaluation(
+    client,
+    `document.getElementById("compute-status")?.textContent==="Aktif" &&
+      document.getElementById("compute-disable")?.classList.contains("hidden")===false &&
+      document.getElementById("compute-verify")?.disabled===false`,
+    "CONSOLE_BROWSER_COMPUTE_VERIFY_TIMEOUT",
+  );
+  const compute = await evaluate<{
+    activeStep: string | null;
+    browserErrors: string[];
+    overflow: boolean;
+    origins: string[];
+    secretInputsEmpty: boolean;
+    stepWidthDelta: number;
+  }>(client, `(() => {
+    const steps=[...document.querySelectorAll("[data-setup-tab]")]
+      .map((item)=>item.getBoundingClientRect().width);
+    return {
+      activeStep:document.querySelector("[data-setup-tab].active")?.dataset.setupTab||null,
+      browserErrors:window.__harvyBrowserErrors||[],
+      overflow:document.documentElement.scrollWidth>window.innerWidth+1,
+      origins:[
+        document.getElementById("compute-sandbox-origin").textContent,
+        document.getElementById("compute-git-origin").textContent,
+      ],
+      secretInputsEmpty:[...document.querySelectorAll("#compute-form input[type=password]")]
+        .every((input)=>input.value===""),
+      stepWidthDelta:Math.max(...steps)-Math.min(...steps),
+    };
+  })()`);
+  assert.equal(compute.activeStep, "compute");
+  assert.equal(compute.overflow, false);
+  assert.deepEqual(compute.origins, [
+    "http://127.0.0.1:8443",
+    "http://127.0.0.1:8444",
+  ]);
+  assert.equal(compute.secretInputsEmpty, true);
+  assert.ok(compute.stepWidthDelta <= 1);
+  assert.deepEqual(compute.browserErrors, []);
+
+  await evaluate(
+    client,
+    `document.querySelector('[data-setup-tab="github"]').click()`,
+  );
+  await waitForEvaluation(
+    client,
+    `(() => {
+      const panel=document.getElementById("tab-github");
+      return panel && !panel.classList.contains("hidden") &&
+        document.getElementById("page-title")?.textContent==="GitHub" &&
+        document.getElementById("github-status")?.textContent==="Belum diatur" &&
+        document.getElementById("github-editor")?.open===true;
+    })()`,
+    "CONSOLE_BROWSER_GITHUB_INITIAL_STATE_TIMEOUT",
+  );
+  await evaluate(client, `(() => {
+    document.getElementById("github-app-id").value="123456";
+    document.getElementById("github-app-slug").value="harvy-browser-smoke";
+    document.getElementById("github-client-id").value="Iv1.harvy-browser";
+    document.getElementById("github-client-secret").value=${JSON.stringify(clientSecret)};
+    document.getElementById("github-private-key").value=${JSON.stringify(privateKey)};
+    document.getElementById("github-callback-url").value="https://github.harvy.example/v1/github-app/callback";
+    document.getElementById("github-broker-origin-input").value="http://127.0.0.1:8445";
+    document.getElementById("github-broker-key-id").value="github-browser-v1";
+    document.getElementById("github-broker-secret").value=${JSON.stringify(brokerSecret)};
+    document.getElementById("github-form").requestSubmit();
+    return true;
+  })()`);
+  await waitForEvaluation(
+    client,
+    `document.getElementById("github-status")?.textContent==="Menunggu Broker" &&
+      document.getElementById("github-credential-status")?.textContent==="Tersimpan" &&
+      document.getElementById("github-verify")?.disabled===false &&
+      document.getElementById("github-client-secret")?.value==="" &&
+      document.getElementById("github-private-key")?.value==="" &&
+      document.getElementById("github-broker-secret")?.value===""`,
+    "CONSOLE_BROWSER_GITHUB_SAVED_STATE_TIMEOUT",
+  );
+  await evaluate(client, `document.getElementById("github-verify").click()`);
+  await waitForEvaluation(
+    client,
+    `document.getElementById("github-status")?.textContent==="Aktif" &&
+      document.getElementById("github-broker-status")?.textContent==="Terhubung" &&
+      document.getElementById("github-disable")?.classList.contains("hidden")===false &&
+      document.getElementById("github-verify")?.disabled===false`,
+    "CONSOLE_BROWSER_GITHUB_VERIFY_TIMEOUT",
+  );
+  const github = await evaluate<{
+    activeStep: string | null;
+    appName: string;
+    browserErrors: string[];
+    callback: string;
+    overflow: boolean;
+    secretInputsEmpty: boolean;
+  }>(client, `(() => ({
+    activeStep:document.querySelector("[data-setup-tab].active")?.dataset.setupTab||null,
+    appName:document.getElementById("github-app-name").textContent,
+    browserErrors:window.__harvyBrowserErrors||[],
+    callback:document.getElementById("github-callback-origin").textContent,
+    overflow:document.documentElement.scrollWidth>window.innerWidth+1,
+    secretInputsEmpty:[...document.querySelectorAll("#github-form input[type=password],#github-private-key")]
+      .every((input)=>input.value===""),
+  }))()`);
+  assert.equal(github.activeStep, "github");
+  assert.equal(github.appName, "GitHub App · harvy-browser-smoke");
+  assert.equal(github.callback, "Callback: https://github.harvy.example");
+  assert.equal(github.overflow, false);
+  assert.equal(github.secretInputsEmpty, true);
+  assert.deepEqual(github.browserErrors, []);
+
+  await setViewport(client, 390, 844, 1);
+  await nextBrowserPaint(client);
+  const mobile = await evaluate<{
+    overflow: boolean;
+    setupSteps: number;
+    visiblePanels: number;
+  }>(client, `(() => ({
+    overflow:document.documentElement.scrollWidth>window.innerWidth+1,
+    setupSteps:document.querySelectorAll("[data-setup-tab]").length,
+    visiblePanels:[...document.querySelectorAll(".tabpanel")]
+      .filter((item)=>!item.classList.contains("hidden")).length,
+  }))()`);
+  assert.equal(mobile.overflow, false);
+  assert.equal(mobile.setupSteps, 3);
+  assert.equal(mobile.visiblePanels, 1);
+  await setViewport(client, 1440, 1000, 1);
+
+  await evaluate(
+    client,
+    `document.querySelector('[data-setup-tab="channels"]').click()`,
+  );
+  await waitForEvaluation(
+    client,
+    `!document.getElementById("tab-channels")?.classList.contains("hidden") &&
+      document.getElementById("page-title")?.textContent==="Kanal"`,
+    "CONSOLE_BROWSER_CHANNEL_RETURN_TIMEOUT",
+  );
+  assert.deepEqual(client.runtimeFailures, []);
+}
+
+function browserCodingSetupProbes(): CodingRuntimeSetupProbes {
+  return {
+    async compute() {
+      return {
+        sandbox: {
+          available: true,
+          runtime: "isolated-linux",
+          identity: {
+            serviceIdentityDigest: "1".repeat(64),
+            runtimeImageDigest: "2".repeat(64),
+            policyDigest: "3".repeat(64),
+          },
+          checkedAt: "2026-08-26T09:00:00.000Z",
+          reason: null,
+        },
+        localGit: {
+          available: true,
+          protocol: "harvy-local-git/1",
+          checkedAt: "2026-08-26T09:00:00.000Z",
+          reason: null,
+        },
+      };
+    },
+    async github() {
+      return {
+        available: true,
+        protocol: "harvy-github-broker/1",
+        checkedAt: "2026-08-26T09:00:00.000Z",
+        reason: null,
+      };
+    },
+  };
+}
+
+function browserConformanceReceipt() {
+  return {
+    version: 1,
+    serviceIdentityDigest: "1".repeat(64),
+    runtimeImageDigest: "2".repeat(64),
+    policyDigest: "3".repeat(64),
+    suiteDigest: "4".repeat(64),
+    verifiedAt: "2026-08-26T08:55:00.000Z",
+    expiresAt: "2026-09-02T08:55:00.000Z",
+  };
+}
+
+function browserPrivateKeyPem(): string {
+  return [
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "ZmFrZS1wcml2YXRlLWtleS1mb3VuZGFyeQ==",
+    "-----END RSA PRIVATE KEY-----",
+  ].join("\n");
+}
+
 async function createConsole(root: string): Promise<{
   server: ConsoleServer;
   whatsapp: EmptyWhatsAppAdapter;
@@ -1020,6 +1280,11 @@ async function createConsole(root: string): Promise<{
       },
     },
   });
+  const codingSetup = new CodingRuntimeSetupService({
+    paths: codingRuntimeSetupPaths(join(root, "coding-setup")),
+    probes: browserCodingSetupProbes(),
+    now: () => new Date("2026-08-26T09:00:00.000Z"),
+  });
   const server = new ConsoleServer(
     control,
     ledger,
@@ -1033,6 +1298,7 @@ async function createConsole(root: string): Promise<{
     undefined,
     null,
     channels,
+    codingSetup,
   );
   return { server, whatsapp };
 }

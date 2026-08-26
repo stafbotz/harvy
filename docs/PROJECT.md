@@ -498,15 +498,11 @@ konfigurasi. Repository tidak mengklaim assignment provider/model tertentu
 aktif sampai profile serta deployment exact benar-benar diverifikasi.
 
 Produksi memakai OpenRouter sebagai gerbang tunggal agar tagihan tidak tersebar.
-Selama pengembangan, `AI_MODE=testing` mengarahkan seluruh tier/role fallback ke
-satu model Google AI Studio kecuali override tier atau exact role binding
-diisi. Mode testing boleh
-memasang satu provider OpenAI-compatible sebagai cadangan agar gangguan
-sementara primary tidak menghentikan seluruh percakapan. Cadangan tidak pernah
-aktif di production, tidak menggantikan batas keselamatan, dan dapat menerima
-permintaan yang sama setelah primary gagal; persetujuan pengguna dan notice
-grup menjelaskan kemungkinan lebih dari satu penyedia. Menghentikan mode uji
-cukup mengubah `AI_MODE` menjadi `production`.
+Selama pengembangan, `AI_MODE=testing` mengarahkan seluruh tier/role yang tidak
+di-override ke satu model GMI Serving.
+Runtime, probe, dan evaluator tidak mempunyai provider fallback: satu request
+hanya menuju provider mode aktif. Menghentikan mode uji cukup mengubah
+`AI_MODE` menjadi `production`.
 
 Seluruh ID model berada di `.env`, termasuk optional
 `AI_MODEL_ROLE_BINDINGS`; tidak ada ID model di business policy. Nama dan harga model
@@ -517,10 +513,9 @@ credential dan base URL tidak ikut ke browser.
 
 Capability baru juga tidak ditebak dari tier atau gateway. Registry memasangkan
 provider+ID exact; model memakai kontrak compatibility tanpa profile operator
-atau record live code-owned. Profile
-`google-ai-studio/gemini-3.5-flash-lite` pada endpoint resmi menjadi record
-code-owned pertama setelah live smoke exact; custom gateway dan fallback tetap
-tertutup. Execution policy kini
+atau record live code-owned. Target testing `gmi-serving/MiniMaxAI/MiniMax-M3`
+belum dipromosikan menjadi profile explicit sebelum provider smoke exact
+lulus. Execution policy kini
 memisahkan role, requested/effective effort, dan verbosity metadata dari tier,
 tetapi routing model masih tiga tier. RunBudget kumulatif sekarang menjadi
 prerequisite yang tersedia untuk Agent Runtime privat. Ceiling general sekarang

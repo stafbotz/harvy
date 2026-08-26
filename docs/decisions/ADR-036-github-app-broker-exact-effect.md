@@ -2,6 +2,7 @@
 
 - **Status:** Diterima
 - **Tanggal:** 11 Agustus 2026
+- **Terakhir diperluas:** 27 Agustus 2026
 - **Pemilik keputusan:** pemilik produk Harvy
 - **Terkait:** ADR-016, ADR-027, ADR-033, ADR-035
 
@@ -60,10 +61,18 @@ Harvy, sandbox, prompt, metadata project, atau receipt.
     `project_created`; selection dan repository binding dipromosikan atomik.
     Revocation lokal membuat efek lama gagal tertutup; remote App unlink tetap
     tanggung jawab broker credential-owning.
-11. Project deletion hanya mem-purge connection, approval/receipt, dan
+11. Repository private yang benar-benar kosong tidak boleh langsung diprovisi.
+    Selection masuk state `bootstrap_required`; capability dan konfirmasi exact
+    `github.repository.bootstrap` yang terpisah membuat tepat satu commit
+    baseline code-owned `README.md` pada default branch melalui broker. Attempt
+    dengan effect ID dan payload hash deterministik ditulis sebelum boundary;
+    timeout/restart mengulang effect yang sama dan merekonsiliasi remote head,
+    bukan membuat commit kedua. Isi bootstrap tidak berasal dari prompt dan
+    authority ini tidak mengizinkan branch, push, atau draft PR berikutnya.
+12. Project deletion hanya mem-purge connection, approval/receipt, dan
     repository selection credential-free lokal setelah receipt ambigu selesai.
     Ia tidak menghapus repository, branch, PR, atau installation GitHub remote.
-12. Receipt `unknown` dapat dienumerasi sebagai locator content-free dan
+13. Receipt `unknown` dapat dienumerasi sebagai locator content-free dan
     direkonsiliasi oleh worker observation-only tanpa scope pengguna. Worker
     hanya memanggil endpoint reconcile, memproses satu page per siklus,
     non-overlap, dan mencatat agregat. Authority historis exact boleh menerima
@@ -76,7 +85,8 @@ Harvy, sandbox, prompt, metadata project, atau receipt.
 Policy broker dapat menolak stale/replay/force dan bundle substitution tanpa
 melihat credential GitHub. Daemon local-git, credential-owning GitHub App
 broker, HMAC verifier server-side, installation flow, private confirmation,
-exact bundle push, draft PR, serta startup reconciliation kini tersedia dan
-tetap default-off. Ledger service masih file/single-service dan GitHub E2E belum
-live-accepted dengan App+repository uji; conformance fake bukan bukti remote
-effect linearizable atau publish production multi-instance.
+bootstrap repository kosong, exact bundle push, draft PR, serta startup
+reconciliation kini tersedia dan tetap default-off. Ledger service masih
+file/single-service dan GitHub E2E belum live-accepted dengan App+repository
+uji; conformance fake bukan bukti remote effect linearizable atau publish
+production multi-instance.

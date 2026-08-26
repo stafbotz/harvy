@@ -1,56 +1,53 @@
 # Current Context
 
-Refreshed: 2026-08-24
-Baseline: fe363c9
+Refreshed: 2026-08-27
+Baseline: d4a56ef
 Context-Version: 1
 
 ## Verified baseline
 
-- Working tree material berada di atas commit dasar `fe363c9` pada `main`;
-  tidak ada commit implementasi, push, atau PR baru.
-- `npm run check` PASS. `npm test` PASS 1.776/1.776 dalam 221 suite. Evaluasi
-  provider nyata PASS 60/60 (42 percakapan + 18 boundary/interruption) tanpa
-  fallback, provider failure, atau execution failure.
-- Smoke build final mencapai `application_ready` lalu IPC
-  `shutdown_completed`, tanpa proses/lock tersisa. Drill backup state lokal
-  PASS create→verify→restore terenkripsi; preflight WhatsApp privat gagal
-  tertutup sebelum koneksi karena konfirmasi operator belum tersedia.
+- Perubahan material yang dirangkum di sini dimulai di atas commit dasar
+  `d4a56ef` pada `main`; status commit dan push aktual tetap dibaca dari Git.
+- `npm run check` PASS; tes integrasi coding/GitHub/Console terarah PASS 95/95;
+  `npm test` PASS 1.948/1.948 dalam 236 suite; `git diff --check` PASS selain
+  warning line-ending Windows.
+- Smoke Edge nyata PASS pada desktop/mobile: login, navigasi tiga langkah setup,
+  isi/simpan/verifikasi Compute+GitHub, non-reflection secret, dan layout. Ini
+  memakai probe/storage sementara dan bukan bukti remote live.
 
 ## Recent material changes
 
-- Telegram privat dan WhatsApp privat kini memakai katalog capability serta
-  executor yang sama: percakapan, task/reminder, session/check-in, data control,
-  Workspace ZIP, private coding, GitHub, dan AgentRun durable. UI tetap mengikuti
-  kanal; WhatsApp grup tetap aktif sebagai produk beta, bukan dibekukan.
-- Reminder/check-in memakai intent delivery at-most-once dan owner queue untuk
-  menahan duplikat setelah crash, dengan trade-off hasil ambigu dapat kehilangan
-  satu kiriman. Consent onboarding privat versi 8 mengotorisasi auto-memory
-  ordinary/personal tanpa prompt atau tombol per-item; adapter tetap memegang
-  authority, credential ditolak, dan grup melewati kandidat implicit tanpa
-  write. Classifier privacy-memory terpisah sudah dipensiunkan.
-- Supervisor single-child menambah restart berbatas, graceful IPC, dan runtime
-  lock recovery. Backup lokal memakai archive authenticated-encrypted dan
-  restore ke direktori baru. Evaluator menilai outcome nyata seperti hasil
-  hitung, reminder kosong, timezone, sesi, safety, dan human bridge.
+- Testing memakai GMI/MiniMax sebagai provider tunggal tanpa fallback. Cache
+  otomatis hanya dicatat content-free; input gambar privat bersifat transient.
+  Routing memisahkan authority dari assessment model, auto-memory privat consent
+  v10 tidak meminta izin per item, dan `/memori` hanya menampilkan primary memory
+  yang dapat dikendalikan pengguna.
+- Project dapat dimulai kosong, mempunyai ProjectGoal durable serta skill
+  deklaratif evidence-bound, dan memakai intent natural yang tetap melewati
+  authority code-owned. CodingRun menjalankan challenger+verifier read-only
+  sebelum satu integration writer dan baru mencatat evidence sesudah commit.
+- Console setup memisahkan Kanal, Komputer kerja, dan GitHub. Repository private
+  kosong memakai konfirmasi bootstrap exact, WAL/idempotency/reconciliation,
+  satu README code-owned, lalu provisioning; branch/push/draft PR tetap approval
+  terpisah. Race klik verifikasi WhatsApp sesudah status terminal juga ditutup.
 
 ## Active cross-subsystem blockers
 
-- Current build sudah dipakai bercakap lewat tester nyata Telegram dan dua nomor
-  WhatsApp terpisah. Focus auto-memory Telegram lulus 3/3; WhatsApp membuktikan
-  auto-memory+recall serta planning, tetapi full run masing-masing masih tertahan
-  pada timeout sesi/check-in Telegram dan safety nonkrisis WhatsApp. Grup latest
-  build, reconnect, receipt ack WhatsApp, dogfood tujuh hari, dan tiga wawancara
-  belum selesai.
+- Build terdahulu sudah dipakai lewat akun Telegram tester dan dua akun WhatsApp
+  terpisah, tetapi perubahan coding/Console terbaru belum diuji end-to-end dari
+  kanal nyata. Dogfood tujuh hari, tiga wawancara, image live, interruption
+  panjang, reconnect, dan fault window send/receipt masih terbuka.
 - Host ini Windows tanpa runtime OCI Linux non-root dan tidak mempunyai GitHub
-  App/repository uji. Hostile-code conformance, branch/push/draft PR, provider
-  fallback, dan critic `toughest` masih belum terbukti live.
+  App/repository uji nonkritis. Hostile-code conformance, bootstrap repository
+  kosong, branch/push/draft PR remote, CodingRun provider live, serta critic
+  `toughest` belum terbukti live.
 - Backup belum mempunyai kunci durable, jadwal, atau salinan eksternal/lintas
   mesin. Control-plane/coding/group/GitHub storage masih single-service tanpa
   distributed lease, outbox/dispatcher, shared store, dan reconciliation
   multi-instance; jangan klaim siap horizontal atau siap peluncuran publik.
-- Corpus provider adalah regresi terbatas, bukan pengukuran FP/FN safety yang
-  terkalibrasi. Learning group/project/connector/multimodal, LLM synthesis,
-  cold ANN, dan skill promotion belum dirangkai.
+- Corpus provider adalah regresi terbatas, bukan pengukuran FP/FN safety/memory
+  yang terkalibrasi. Jangan menyamakan suite fake/local, smoke provider, atau
+  browser Console dengan bukti usefulness pengguna dan efek remote.
 
 ## Route to detail
 

@@ -27,7 +27,7 @@ GitHub, multi-human, dan crash pada exact delivery window belum lengkap.
   lihat/hapus memori, serta `/hapus-data` dengan konfirmasi exact mempunyai
   perintah teks tertutup. Kontrol lihat/hapus/ekspor tetap dapat dipakai tanpa
   consent AI aktif.
-- Consent onboarding versi 8 mengotorisasi auto-memory ordinary maupun personal
+- Consent onboarding versi 10 mengotorisasi auto-memory ordinary maupun personal
   pada scope WhatsApp privat. Candidate baru tidak memunculkan prompt
   `SIMPAN MEMORI`/`JANGAN SIMPAN`; acknowledgment natural hanya sesudah commit,
   credential tetap ditolak, dan `/memori` menampilkan item exact untuk kontrol
@@ -40,8 +40,10 @@ GitHub, multi-human, dan crash pada exact delivery window belum lengkap.
   deterministic dipanggil.
 - Cold smalltalk serta reminder tanpa isi sekarang memakai understanding/reply
   model, bukan tabel regex. Planning durable hanya hidup dari
-  `RoutingAssessment.planningRequired` tepercaya dan nonmekanis; kata seperti
-  `rencana` atau `langkah` tidak lagi menjadi override adapter.
+  current intent `request` dengan `RoutingAssessment.planningRequired`
+  tepercaya, nonmekanis, `executionSize medium|heavy`, dan `toolNeed
+  execution|external`; kata seperti `rencana` atau `langkah` tidak menjadi
+  override adapter, dan `internal_state` model bukan authority state-live.
 - Private upsert dideduplikasi per account+pengirim lalu dilepas dari callback
   event agar bubble baru tetap dapat masuk selama model bekerja. Setelah
   consent, `MessageBatcher` dan semantic boundary yang sama dengan Telegram
@@ -138,7 +140,7 @@ GitHub, multi-human, dan crash pada exact delivery window belum lengkap.
   `not_committed`, dan `unknown`; replay committed tidak mengirim ulang,
   sedangkan delivery ambigu atau recovery restart menjadi `partial|unknown`
   tanpa retry. Watermark assigned answer diambil sesudah delivery.
-- Notice v9 mengungkap record GroupAgentRun kondisional, ledger upaya/delivery,
+- Notice v11 mengungkap record GroupAgentRun kondisional, ledger upaya/delivery,
   hasil final committed, data/provenance, audience grup, file lokal terpisah,
   retensi maksimal tujuh hari, batas terhadap memori/riwayat privat dan
   transcript model, serta cleanup saat Harvy dinonaktifkan/dikeluarkan.
@@ -290,10 +292,12 @@ GitHub, multi-human, dan crash pada exact delivery window belum lengkap.
 
 ## Batas dan defect aktif
 
-- Policy auto-memory versi 8 dan full private flow sudah diuji ulang melalui dua
-  akun nyata, termasuk reminder/check-in proaktif, safety, ekspor, cleanup, dan
-  restart child. Interupsi di tengah burst/provider, network disconnect murni,
-  serta crash tepat di antara send dan receipt masih belum dibuktikan.
+- Perilaku auto-memory sebelum consent v10 dan full private flow pernah diuji
+  ulang melalui dua akun nyata, termasuk reminder/check-in proaktif, safety,
+  ekspor, cleanup, dan restart child. Kontrak current v10 serta perbaikan
+  routing/portrait/receipt 26 Agustus lulus otomatis, tetapi belum memperoleh
+  rerun WhatsApp live. Interupsi di tengah burst/provider, network disconnect
+  murni, serta crash tepat di antara send dan receipt juga belum dibuktikan.
 - Grup nyata sudah membuktikan notice, ambient isolation, removal/re-add,
   safety, GroupAgentRun correction/status/cancel, duplicate ID, dan shutdown
   pada scope dua-akun. Memory member/room, adaptive timing luas, peserta manusia
@@ -302,17 +306,18 @@ GitHub, multi-human, dan crash pada exact delivery window belum lengkap.
 - WhatsApp privat sudah mempunyai parity otomatis untuk percakapan, task dan
   reminder, sesi dan check-in, memori/safety/kontrol data, ekspor, Workspace
   ZIP, private coding, GitHub, dan active AgentRun durable. Pairing serta runner
-  dua akun khusus kini tersedia. WhatsApp A Harvy uji dan WhatsApp B tester
-  telah mencapai durable pair-success nyata dengan credential terpisah.
+  dua akun khusus kini tersedia. Akun Harvy uji dan akun penguji telah mencapai
+  durable pair-success nyata dengan credential terpisah.
   Build acceptance tersebut membuktikan percakapan/task/session/memory/safety/planning/
   export/delete sebagai satu run penuh dan percakapan sesudah restart child.
   Interupsi burst, Workspace/CodingRun/GitHub, exact crash window, network
   disconnect, dan kualitas UX dogfood tetap belum terbukti.
-- Rerun exact build sesudah perbaikan presentasi task belum mencapai percakapan:
-  WhatsApp menolak linked session Harvy A sebagai `needs-operator` reason `401`.
-  Runner exploratory sekarang mengekspos status koneksi content-free dan gagal
-  cepat tanpa menggantung, tetapi A perlu dipasangkan ulang sebelum B dapat
-  memverifikasi perubahan tersebut live. Credential-ready lokal tetap bukan
+- Rerun current build 26 Agustus belum mencapai percakapan: WhatsApp menolak
+  linked session akun penguji dengan connection closed `401` sebelum satu pesan
+  dikirim. Runner mengekspos status koneksi content-free dan gagal cepat tanpa
+  menggantung; akun Harvy/runtime tidak disentuh oleh run gagal tersebut. Sesi
+  penguji perlu dipasangkan ulang sebelum ia dapat memverifikasi perubahan
+  routing, output, dan memori secara live. Credential-ready lokal tetap bukan
   bukti transport-ready.
 - Percobaan tersebut juga membuktikan dependency Signal dapat menulis object
   session kriptografis langsung ke stdout meski logger Baileys silent. Guard

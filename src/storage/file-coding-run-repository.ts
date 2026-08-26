@@ -216,7 +216,7 @@ function validateRun(value: unknown): asserts value is CodingRun {
     "updatedAt", "completedAt", "expiresAt",
   ], [
     "taskReviewReceipts", "repositoryMap", "plan", "admission",
-    "pendingQuestion",
+    "pendingQuestion", "advisoryReceipts",
   ], "run");
   const run = value as CodingRun;
   if (run.version !== 1 && run.version !== 2) throw new Error("Versi CodingRun tidak sah.");
@@ -316,7 +316,9 @@ function validateRun(value: unknown): asserts value is CodingRun {
     !Array.isArray(run.events) ||
     run.events.length > MAX_DURABLE_EVENTS ||
     !Array.isArray(run.validatorReceipts) ||
-    (run.taskReviewReceipts !== undefined && !Array.isArray(run.taskReviewReceipts))
+    (run.taskReviewReceipts !== undefined && !Array.isArray(run.taskReviewReceipts)) ||
+    (run.advisoryReceipts !== undefined && !Array.isArray(run.advisoryReceipts)) ||
+    (run.advisoryReceipts?.length ?? 0) > 128
   ) {
     throw new Error("Event atau receipt CodingRun tidak sah.");
   }
@@ -435,11 +437,60 @@ function validateRun(value: unknown): asserts value is CodingRun {
     ) throw new Error("Evidence unrelated changes task review tidak sah.");
     validIso(receipt.completedAt, "task review completedAt");
   }
+  const advisoryKeys = new Set<string>();
+  for (const receipt of run.advisoryReceipts ?? []) {
+    assertObjectKeys(receipt, [
+      "advisoryId", "role", "status", "instructionRevision",
+      "workingSnapshot", "scopeDigest", "summary", "summaryDigest",
+      "createdAt",
+    ], [], "coding advisory receipt");
+    safeKey(receipt.advisoryId, "coding advisory id");
+    if (
+      (receipt.role !== "challenger" && receipt.role !== "verifier") ||
+      !["completed", "partial", "plan_conflict", "uncertain", "failed"]
+        .includes(receipt.status) ||
+      !Number.isSafeInteger(receipt.instructionRevision) ||
+      receipt.instructionRevision < 0 ||
+      receipt.instructionRevision > run.instructionRevision ||
+      typeof receipt.summary !== "string" || !receipt.summary.trim() ||
+      receipt.summary.length > 3_600 || /\p{Cc}/u.test(receipt.summary) ||
+      containsSecretLikeValue(receipt.summary)
+    ) throw new Error("Coding advisory receipt tidak sah.");
+    sha256(receipt.workingSnapshot, "coding advisory workingSnapshot");
+    sha256(receipt.scopeDigest, "coding advisory scopeDigest");
+    sha256(receipt.summaryDigest, "coding advisory summaryDigest");
+    if (
+      createHash("sha256").update(receipt.summary, "utf8").digest("hex") !==
+        receipt.summaryDigest
+    ) throw new Error("Digest summary coding advisory tidak cocok.");
+    const repositoryMap = run.repositoryMap;
+    if (
+      receipt.instructionRevision === run.instructionRevision &&
+      repositoryMap &&
+      createHash("sha256").update(JSON.stringify({
+        runId: run.runId,
+        projectId: run.binding.projectId,
+        instructionRevision: receipt.instructionRevision,
+        repositoryMapDigest: repositoryMap.mapDigest,
+        taskContractDigest: taskContractDigest(run),
+      }), "utf8").digest("hex") !== receipt.scopeDigest
+    ) throw new Error("Scope digest coding advisory tidak cocok.");
+    validIso(receipt.createdAt, "coding advisory createdAt");
+    const key = `${receipt.instructionRevision}:${receipt.role}`;
+    if (advisoryKeys.has(key)) {
+      throw new Error("Role coding advisory duplikat pada revision.");
+    }
+    advisoryKeys.add(key);
+  }
   if (run.repositoryMap !== undefined && run.repositoryMap !== null) {
     validateRepositoryMap(run.repositoryMap);
     if (run.repositoryMap.instructionRevision !== run.instructionRevision) {
       throw new Error("Repository map tidak cocok dengan instruction revision CodingRun.");
     }
+    if ((run.advisoryReceipts ?? []).some((receipt) =>
+      receipt.instructionRevision === run.instructionRevision &&
+      receipt.workingSnapshot !== run.repositoryMap!.workingSnapshot
+    )) throw new Error("Coding advisory current tidak cocok repository map.");
   }
   if (run.plan !== undefined && run.plan !== null) {
     validatePlan(run.plan);
@@ -793,6 +844,8 @@ function validateImmutableState(current: CodingRun, next: CodingRun): void {
     next.validatorReceipts.length < current.validatorReceipts.length ||
     (next.taskReviewReceipts ?? []).length <
       (current.taskReviewReceipts ?? []).length ||
+    (next.advisoryReceipts ?? []).length <
+      (current.advisoryReceipts ?? []).length ||
     next.commitReceipts.length < current.commitReceipts.length ||
     JSON.stringify(current.constraints) !== JSON.stringify(
       next.constraints.slice(0, current.constraints.length),
@@ -808,6 +861,12 @@ function validateImmutableState(current: CodingRun, next: CodingRun): void {
       (next.taskReviewReceipts ?? []).slice(
         0,
         (current.taskReviewReceipts ?? []).length,
+      ),
+    ) ||
+    JSON.stringify(current.advisoryReceipts ?? []) !== JSON.stringify(
+      (next.advisoryReceipts ?? []).slice(
+        0,
+        (current.advisoryReceipts ?? []).length,
       ),
     ) ||
     JSON.stringify(current.commitReceipts) !== JSON.stringify(
@@ -840,6 +899,7 @@ function validateInitialState(run: CodingRun): void {
     run.changeSets.length !== 0 ||
     run.validatorReceipts.length !== 0 ||
     (run.taskReviewReceipts?.length ?? 0) !== 0 ||
+    (run.advisoryReceipts?.length ?? 0) !== 0 ||
     run.repositoryMap !== null ||
     run.plan !== null ||
     run.diff !== null ||

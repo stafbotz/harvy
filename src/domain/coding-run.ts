@@ -121,6 +121,7 @@ export type CodingRunEventType =
   | "run.started"
   | "mapping.started"
   | "mapping.completed"
+  | "advisory.completed"
   | "planning.started"
   | "editing.started"
   | "patch.applied"
@@ -256,6 +257,23 @@ export interface CodingRunCounters {
 }
 
 /**
+ * Handoff bounded dari model penasihat read-only. Ia bukan validator atau
+ * authority: integration writer tetap harus membuktikan hasil lewat tool dan
+ * receipt code-owned.
+ */
+export interface CodingAdvisoryReceipt {
+  advisoryId: string;
+  role: "challenger" | "verifier";
+  status: "completed" | "partial" | "plan_conflict" | "uncertain" | "failed";
+  instructionRevision: number;
+  workingSnapshot: string;
+  scopeDigest: string;
+  summary: string;
+  summaryDigest: string;
+  createdAt: string;
+}
+
+/**
  * Human-visible question that makes `waiting_input` an explicit, targeted
  * state instead of a generic pause. Platform ingress binds the answer to the
  * mutable Run Anchor; arbitrary conversation is never copied here.
@@ -353,6 +371,8 @@ export interface CodingRun {
   taskReviewReceipts?: CodingTaskReviewReceipt[];
   /** Optional only for loading pre-plan local records; new runs set both. */
   repositoryMap?: CodingRepositoryMapReceipt | null;
+  /** Optional while loading records created before read-only coding advice. */
+  advisoryReceipts?: CodingAdvisoryReceipt[];
   plan?: CodingRunPlan | null;
   diff: CodingDiffSummary | null;
   limits: CodingRunLimits;

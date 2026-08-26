@@ -29,6 +29,10 @@ export interface ModelProfile {
     namedToolChoice: boolean;
     structuredOutput: boolean;
     temperature: boolean;
+    /** Prefix cache otomatis provider; tidak menyiratkan cache_control explicit. */
+    promptCaching: boolean;
+    /** Input gambar transient pada user message OpenAI-compatible. */
+    imageInput: boolean;
   };
   continuation: {
     preserveReasoning: boolean;
@@ -155,7 +159,7 @@ function immutableProfile(candidate: ModelProfile): ModelProfile {
   if (
     (candidate.provider === "openrouter" &&
       providerWire !== "none" && providerWire !== "openrouter-reasoning") ||
-    (candidate.provider === "google-ai-studio" &&
+    (candidate.provider === "gmi-serving" &&
       providerWire !== "none" && providerWire !== "openai-reasoning-effort") ||
     (candidate.provider === "deepseek" &&
       providerWire !== "none" && providerWire !== "deepseek-thinking")

@@ -151,6 +151,8 @@ export type ConsoleAuditAction =
   | "channel_connection_verify"
   | "channel_credential_update"
   | "channel_credential_revoke"
+  | "coding_configuration_update"
+  | "coding_connection_verify"
   | "runtime_mode_update"
   | "unknown_mutation";
 

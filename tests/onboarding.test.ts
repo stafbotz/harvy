@@ -51,8 +51,14 @@ describe("naskah perkenalan", () => {
     assert.match(consent, new RegExp(TEST_TERMS_URL));
     // Framing sebagai janji bersama.
     assert.match(consent, /janji di antara kita/i);
-    assert.match(CONSENT_DETAIL, /model utama.*memori dan riwayat tersimpan/i);
-    assert.match(CONSENT_DETAIL, /dikirim ulang ke layanan cadangan/i);
+    assert.match(CONSENT_DETAIL, /layanan AI utama.*memori dan riwayat tersimpan/i);
+    assert.match(CONSENT_DETAIL, /tidak mengirim ulang.*penyedia cadangan/i);
+    assert.match(CONSENT_DETAIL, /otomatis memakai ulang.*cache penyedia/i);
+    assert.match(CONSENT_DETAIL, /tidak mengirim perintah cache-write khusus/i);
+    assert.match(CONSENT_DETAIL, /gambar JPEG, PNG, atau WebP/i);
+    assert.match(CONSENT_DETAIL, /Byte gambar tidak masuk riwayat, memori, checkpoint pekerjaan, atau log/i);
+    assert.match(CONSENT_DETAIL, /kecuali kamu mengirim ulang/i);
+    assert.match(CONSENT_DETAIL, /Gambar grup belum diproses/i);
     assert.match(CONSENT_DETAIL, /bisa keliru/i);
     assert.match(CONSENT_DETAIL, /record.*ekspor\/penghapusan data/i);
     assert.match(CONSENT_DETAIL, /potongan konteks, memori, dan riwayat/i);

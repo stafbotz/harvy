@@ -290,6 +290,8 @@ function profile(contextWindow: number): ModelProfile {
       namedToolChoice: true,
       structuredOutput: true,
       temperature: true,
+      promptCaching: false,
+      imageInput: false,
     },
     continuation: {
       preserveReasoning: false,
