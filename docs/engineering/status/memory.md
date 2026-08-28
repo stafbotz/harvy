@@ -81,6 +81,21 @@ learning, storage, atau kontrol data yang bukan policy safety.
   lexical. Update/delete source menginvalidasi projection yang terkait,
   perubahan model tidak mencampur vector, dan tanpa provider FTS, temporal,
   suppression, graph, procedure, serta lessons tetap bekerja.
+- Rute semantic mati pada deployment saat ini. `MEMORY_EMBEDDING_MODEL` tidak
+  diisi, dan provider chat yang dipakai tidak melayani `/embeddings` sama sekali
+  —probe 2026-08-28 menerima HTTP 404, dan katalognya tidak memuat satu pun
+  model embedding. Akibatnya `semanticSearch` selalu mengembalikan array kosong
+  dan RRF memfusikan lima rute, bukan enam. Yang hilang adalah recall parafrasa:
+  fakta yang diucapkan dengan kata berbeda tidak terhubung. Menyalakannya
+  menuntut endpoint embedding terpisah, karena adapter mewarisi `baseUrl` dan
+  key dari provider chat.
+- Anggaran konteks default 48.000 karakter, 40 giliran, 24 memori, 8.000
+  karakter ringkasan, dan 6 interaksi. Penegakan memakai karakter karena
+  deterministik; perkiraan token memakai `src/ai/token-estimate.ts` yang
+  mengkalibrasi rasio per model dari `usage` nyata. Angka lama—16.000 karakter
+  dan 18 giliran—hanyalah 0,37% dari jendela model yang dipakai dan membuat
+  percakapan panjang kehilangan awalnya. Anggaran ini plafon, bukan lantai:
+  percakapan pendek tetap murah dan hanya percakapan panjang membayar penuh.
 - `_long-term` SQLite memisahkan canonical user-model fact, versioned procedure,
   error lesson, candidate, observable evidence reference, durable learning
   event, dan derived embedding. Event didedupe dengan idempotency key, diretry

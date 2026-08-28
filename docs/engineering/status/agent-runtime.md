@@ -41,11 +41,31 @@ agent, scope/authority, atau executor internal.
   mendapat satu recovery tanpa delegasi setelah freshness diperiksa ulang,
   tetap dalam RunBudget yang sama; incomplete/content filter lain tidak
   di-retry.
-- Tool callable composition saat ini read-only: daftar/detail tugas, status
-  sesi, waktu, agenda internal Harvy, terminal virtual in-memory, delegasi
-  paralel, serta specialist opt-in. Metadata discovery dapat membuat
-  shortlist/high-recall ter-page tanpa schema atau authority baru, tetapi belum
-  dirangkai ke planner karena callable subset masih kecil.
+- Tool callable composition memuat baca dan tulis. Baca: daftar/detail tugas,
+  status sesi, waktu, agenda internal Harvy, terminal virtual in-memory,
+  delegasi paralel, serta specialist opt-in. Tulis: `task.manage` untuk buat,
+  selesaikan, dan jadwalkan ulang tugas, serta `reminder.schedule` untuk pasang
+  dan lepas pengingat. Waktu pada tool tulis wajib ISO 8601 beroffset, dan
+  tujuan pengiriman diambil dari `PrivateAgentScope.deliveryChatId` karena
+  WhatsApp memakai kunci akun+pengguna, bukan `userId`.
+- Otorisasi run percakapan memakai policy privat, bukan policy konservatif
+  harness. Create, complete, reschedule, serta set/clear pengingat diizinkan
+  karena katalog menandainya `confirmation: "contextual"`. Penghapusan tugas
+  ditolak dengan alasan yang terbaca model sehingga run tetap berjalan dan
+  Harvy dapat bertanya lebih dulu.
+- Metadata discovery dapat membuat shortlist/high-recall ter-page tanpa schema
+  atau authority baru, tetapi belum dirangkai ke planner karena callable subset
+  masih kecil.
+- Native tool call yang ditolak kode mendapat satu koreksi terbatas sebelum run
+  berhenti, baik untuk bentuk yang salah (`AiToolShapeError`) maupun argumen
+  yang tidak cocok schema. Penghentian pada kelas `invalid_planner_output`,
+  `max_steps`, dan `capability_changed` dijelaskan model lewat
+  `explainAgentStop()`; kelas budget, kuota, dan deadline tetap memakai teks
+  deterministik karena memanggil model lagi menghabiskan sumber daya yang
+  barusan dinyatakan habis.
+- `completeAutoTurn`, `parseAgentAutoDecision`, dan `AGENT_AUTO_PLANNER_PROMPT`
+  sudah ada tetapi belum dipanggil jalur produksi mana pun. Jalur agentic
+  tunggal dengan `tool_choice: "auto"` masih belum dirangkai.
 - Pertanyaan waktu sempit tetap dijawab dari clock deterministik. Ia melewati
   boundary/understanding/triage hanya bila tidak ada episode hangat dalam 30
   menit; episode hangat tetap menjalani pipeline keselamatan dan pemahaman.

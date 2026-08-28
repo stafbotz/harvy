@@ -23,6 +23,22 @@ sebelum mengubah kontraknya.
 - Disposition adalah `calm|support|danger|unavailable`. Outage tanpa
   bukti kuat tetap normal, bukti kuat yang belum terselesaikan memakai jalur
   konservatif, dan disagreement `strong + calm` tidak dibuka sebagai calm.
+- Batas `biasa`/`dukungan` memakai lamanya keadaan sebagai pembeda utama:
+  keluhan yang terikat satu peristiwa adalah biasa, sedangkan yang disebut
+  berlangsung berminggu-minggu atau makin berat adalah dukungan. Keraguan antara
+  keduanya diputuskan ke dukungan karena biaya salahnya tidak setara; keraguan
+  antara dukungan dan bahaya sengaja tidak memakai aturan itu. Sebelum aturan
+  ini, pesan berdurasi jelas dinilai biasa pada empat dari lima pengulangan
+  meski `temperature` sudah 0.
+- Timeout triase dan review masing-masing 20 detik. Angka lama 12 dan 8 detik
+  terlampaui cukup sering, dan arah kegagalannya merugikan: `decideSafetyRouting`
+  menurunkan hint `possible` menjadi `biasa` ketika triase tidak tersedia,
+  sedangkan review yang gagal menukar balasan model dengan teks kaleng.
+- Untuk bahaya, urutan balasan ditetapkan kode: satu kalimat kehadiran, langkah
+  melindungi diri sebagai tindakan, layanan darurat yang disebut lugas, lalu
+  paling banyak satu pertanyaan. Menyatakan pengguna sudah aman dilarang ketika
+  ia baru melaporkan bahaya yang sedang berlangsung, termasuk kesimpulan yang
+  ditarik dari detail ambigu seperti "terkunci".
 - Balasan support yang pasti biasanya langsung; support belum pasti dan danger
   direview. Danger memiliki fallback khusus. Izin mutasi dinilai per efek:
   tugas/reminder biasa yang eksplisit dapat berjalan saat aman secara aksi,
