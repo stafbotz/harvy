@@ -67,6 +67,10 @@ menyentuh jalur ini — `tests/conversation.test.ts` identik dengan `HEAD` dan
 seluruh hunk `src/ai/conversation.ts` yang belum di-commit berada di planner
 agent, jauh setelah blok review artefak.
 
+Diperiksa ulang dengan suite penuh pada 2026-08-28 sesudah mesin tata-kelola
+agent dihapus: 1.977 lulus, 3 gagal dalam 242 suite. Ketiga entri di atas
+adalah satu-satunya yang merah, jadi penghapusan itu tidak menambah regresi.
+
 ## Cara membuktikan asal sebuah kegagalan
 
 Bila menemukan tes merah yang tidak tercatat di sini:

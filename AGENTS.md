@@ -98,6 +98,13 @@ Model hanya melihat capability yang benar-benar terpasang. `web.search` dan
 - `tsconfig.json` mencakup `src/`, `tests/`, **dan** `scripts/`. Skrip ikut
   type-check, tapi tidak ikut `npm test` (globnya hanya `dist/tests/*.test.js`).
 - `incremental` aktif — jangan hapus `dist/.tsbuildinfo`.
+- Kalau menghapus berkas tes, hapus juga hasil kompilasinya di
+  `dist/tests/`. TypeScript incremental tidak membuangnya, sedangkan
+  `npm test` menjalankan glob `dist/tests/*.test.js`, jadi tes yang sumbernya
+  sudah tiada tetap ikut berjalan dan gagal:
+  ```bash
+  for j in dist/tests/*.test.js; do b=$(basename "$j" .js); [ -f "tests/$b.ts" ] || rm -f "$j"; done
+  ```
 - Prompt di `persona.ts` dan `safety.ts` dikunci tes yang mencocokkan frasa
   persis, termasuk pergantian baris. Bila tes prompt gagal, bedakan dulu: kamu
   menghapus **isi** aturannya, atau hanya mengganti **kata**-nya? Yang pertama

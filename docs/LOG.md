@@ -51,6 +51,42 @@ Berkas aktif maksimal 24 KiB atau 12 entri; satu entri idealnya di bawah sekitar
 mengarsipkan pekerjaan yang masih memuat tindak lanjut aktif.
 `npm run context:check` menegakkan batas berkas aktif.
 
+## 2026-08-28 — Mesin tata-kelola agent dihapus
+
+Scope: `AGENTS.md`, `CLAUDE.md`, `.agent/rules/`, `.claude/settings.json`,
+`.githooks/`, `scripts/session-context*`, `scripts/context-*`, tes kontrak,
+`README.md`, `TESTING.md`, `WORKFLOW.md`, `INVARIANTS.md`.
+
+Changed: 1.286 baris skrip, tes, dan pre-commit hook yang tugasnya hanya
+memvalidasi berkas instruksi agent dihapus seluruhnya, bersama hook
+SessionStart dan perintah `context:check`. Dasarnya diukur dari histori: 35
+dari 67 commit menyentuh lapisan ini dan 49% barisnya membatalkan barisnya
+sendiri, sementara `src/` hanya menghapus 6% dari yang ditulis. Dua sebab
+struktural: `CLAUDE.md` sudah memuat `AGENTS.md` lewat `@AGENTS.md` sehingga
+hook menyuntikkan kontrak yang sama untuk kedua kalinya, dan batas 12.288 byte
+yang ditetapkan sendiri memaksa aturan lama dihapus setiap aturan baru
+ditambahkan. `AGENTS.md` 12.026 -> 6410 byte; yang dipertahankan adalah
+pembedaan suite hijau versus bukti perilaku, gerbang berbasis risiko, peta
+arsitektur, jebakan modul, dan batas keselamatan. `INVARIANTS.md` mendapat
+daftar isi 24 seksi.
+
+Menghapus berkas tes ternyata meninggalkan hasil kompilasinya di
+`dist/tests/`. TypeScript incremental tidak membuangnya, sedangkan `npm test`
+memakai glob `dist/tests/*.test.js`, sehingga dua tes yang sumbernya sudah
+tiada tetap berjalan dan gagal. Jebakan ini kini tercatat di `AGENTS.md`
+beserta perintah pembersihnya.
+
+Verified: `npm test` 1.980 tes, 1.977 lulus, 3 gagal dalam 242 suite, 508
+detik. Ketiga kegagalan persis entri yang sudah tercatat di
+`KNOWN-FAILURES.md`, jadi tidak ada regresi. `npm run check` PASS.
+
+Not verified: pemindai credential pada output bootstrap ikut terhapus dan
+belum diganti; perlindungan nyata tetap `.gitignore`. Rencana merapikan ADR
+dan skrip yatim dibatalkan setelah diperiksa: ADR sudah punya field `Status`
+dan indeks, `coba-*.ts` terdokumentasi di `DEVELOPMENT.md`, dan tiga skrip
+eval sisanya menghasilkan evidence yang tersimpan. 14 ADR masih tanpa field
+`Status` dan tidak ditebak isinya.
+
 ## 2026-08-28 — Bentuk balasan untuk bahaya aktif
 
 Scope: `src/ai/safety.ts`.

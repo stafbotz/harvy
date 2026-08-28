@@ -7,6 +7,33 @@ perlu membaca seluruh dokumen.
 Invarian ini dipindahkan dari `AGENTS.md` agar agent coding hanya memuatnya
 saat menyentuh area terkait, alih-alih membawa seluruhnya di setiap sesi.
 
+## Daftar isi
+
+- [Tugas dan mutasi](#tugas-dan-mutasi)
+- [Percakapan dan balasan](#percakapan-dan-balasan)
+- [Bubble dan giliran](#bubble-dan-giliran)
+- [Memori](#memori)
+- [Keselamatan](#keselamatan)
+- [Semantic operation dan transient interaction context](#semantic-operation-dan-transient-interaction-context)
+- [Onboarding dan persetujuan](#onboarding-dan-persetujuan)
+- [Sesi dan check-in](#sesi-dan-check-in)
+- [Catatan tersembunyi](#catatan-tersembunyi)
+- [Ekspor dan penghapusan](#ekspor-dan-penghapusan)
+- [Telemetry](#telemetry)
+- [Economy, entitlement, dan funding](#economy-entitlement-dan-funding)
+- [AI dan model](#ai-dan-model)
+- [Log operasional](#log-operasional)
+- [Agent harness dan capability](#agent-harness-dan-capability)
+- [Active AgentRun, RunMailbox, dan commit](#active-agentrun-runmailbox-dan-commit)
+- [ProjectWorkspace dan archive](#projectworkspace-dan-archive)
+- [Sandbox dan CodingRun](#sandbox-dan-codingrun)
+- [Local git dan GitHub broker](#local-git-dan-github-broker)
+- [Isolasi data](#isolasi-data)
+- [Grup](#grup)
+- [WhatsApp dan Baileys](#whatsapp-dan-baileys)
+- [Riwayat percakapan](#riwayat-percakapan)
+- [Pending store](#pending-store)
+
 ---
 
 ## Tugas dan mutasi
