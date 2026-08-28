@@ -77,6 +77,19 @@ memakai glob `dist/tests/*.test.js`, sehingga dua tes yang sumbernya sudah
 tiada tetap berjalan dan gagal. Jebakan ini kini tercatat di `AGENTS.md`
 beserta perintah pembersihnya.
 
+Eval provider nyata mengungkap cacat kedua di blok yang sama. Sesudah pasangan
+role diperbaiki, langkah review tetap tidak pernah berhasil: request memakai
+plafon keluaran milik giliran utama sementara `AiClient` menuntutnya sama persis
+dengan plafon execution plan, sehingga setiap panggilan berakhir `AiError`.
+Plafon kini bersumber tunggal dari `reviewPlan.maxOutputTokens`. Cacat ini tidak
+terlihat unit test karena client palsu tidak menegakkan validasi itu; kedua tes
+review sekarang menegaskan `maxTokens === execution.maxOutputTokens` supaya
+invariant runtime itu ikut terkunci.
+
+Pemisahan salah-konfigurasi versus provider gagal terbukti berguna justru di
+sini: tanpa event terpisah, cacat kedua tampak identik dengan yang pertama dan
+kesimpulan "sudah beres" dari suite hijau akan keliru.
+
 Verified: `npm test` 1.980 tes, 1.977 lulus, 3 gagal dalam 242 suite, 508
 detik. Ketiga kegagalan persis entri yang sudah tercatat di
 `KNOWN-FAILURES.md`, jadi tidak ada regresi. `npm run check` PASS.
@@ -120,13 +133,32 @@ padahal fiturnya ada, dan untuk kasus WhatsApp menuduh handler economy
 terpanggil padahal assertion yang gagal adalah `agentCalls`. Berkas itu ditulis
 ulang dengan sebab yang terbukti.
 
+Tindak lanjut hari yang sama: akar kenapa defect itu tak terlihat berminggu-minggu
+ikut ditutup. Rencana eksekusi pemeriksa artefak kini dibangun di luar `try`
+provider, sehingga salah konfigurasi kode sendiri dicatat sebagai
+`conversation_code_artifact_review_misconfigured` pada level error dan tidak
+lagi menyamar sebagai `conversation_code_artifact_review_failed` milik provider
+lambat. Satu tes regresi menyuntikkan `ExecutionPolicy` yang menolak stage role
+`critic` lalu menuntut tiga hal sekaligus: pengguna tetap menerima draft,
+provider tidak dipanggil, dan event misconfigured tercatat. Tes itu diverifikasi
+benar-benar gagal ketika pemisahannya dicabut.
+
 Verified: `npm test` 1.980 tes, 1.980 lulus, 0 gagal dalam 242 suite, exit code
 0, 444 detik. `npm run check` PASS diverifikasi lewat exit code.
 
-Not verified: perbaikan `cognitiveRole` membuat langkah review artefak
-benar-benar memanggil model untuk pertama kalinya, tetapi hanya dengan client
-palsu di unit test. Mutunya pada provider nyata belum diukur; `eval:conversation`
-belum dijalankan untuk jalur ini.
+Diukur pada provider nyata 29 Agustus 2026 dengan `probe-chat.ts`: giliran
+berisi kode naik dari 2 menjadi 3 panggilan model dan 9.331 menjadi 13.251
+token, sekitar 42% lebih mahal, tanpa peringatan review gagal.
+`eval:conversation --case=code-request` lulus 1/1; eval default 12 kasus lulus
+11/12.
+
+Not verified: satu kegagalan eval `no-physical-claim` (`intent smalltalk`,
+diharapkan `question`) gagal konsisten pada dua pengulangan terisolasi. Ia
+berada di jalur `understand()` yang tidak disentuh perubahan ini — satu-satunya
+hunk `src/` ada di dalam blok review `reply()` — jadi ini kegagalan kualitas
+yang sudah ada sebelumnya dan belum ditelusuri. Mutu isi hasil review pada
+korpus kode yang lebih luas juga belum diukur; korpus hanya punya satu kasus
+kode.
 
 ## 2026-08-28 — Bentuk balasan untuk bahaya aktif
 
@@ -335,39 +367,6 @@ Not verified: biaya pada percakapan yang benar-benar mengisi plafon baru belum
 diukur; secara analitis batas penuh menambah ~7.600 token per panggilan ke dua
 panggilan. Pemangkasan prompt tidak menunjukkan perbaikan akurasi terukur, hanya
 455 token lebih murah.
-
-## 2026-08-27 — Percakapan live menemukan defect referensi task dan copy buntu
-
-Scope: `src/core/task-reference.ts`, `src/ai/conversation.ts`, adapter
-Telegram/WhatsApp privat, `scripts/evaluasi-percakapan.ts`,
-`scripts/probe-chat.ts`.
-
-Changed: `resolveActiveTaskReference` memilih kandidat tunggal tanpa memeriksa
-sebutan pengguna, sehingga "tandai selesai tugas kimia" menyelesaikan
-satu-satunya tugas aktif meski judulnya fisika, lalu prosa balasan menyebut
-kimia sementara receipt code-owned menyebut fisika. Kandidat tunggal kini wajib
-berkaitan dengan sebutan; rujukan tanpa sebutan tetap boleh. Kecocokan memakai
-akar bersama agar afiks seperti "peninjauan"/"meninjau" tetap dikenali.
-
-Penghentian run agent tidak lagi selalu dibalas string kaleng.
-`explainAgentStop()` memberi model alasan berhenti dan observation agar ia
-menjelaskan batas kemampuannya dengan jujur; hanya `invalid_planner_output`,
-`max_steps`, dan `capability_changed` yang memakainya. Kehabisan budget, kuota,
-dan deadline sengaja tetap deterministik karena memanggil model lagi
-menghabiskan sumber daya yang barusan dinyatakan habis.
-
-Evaluator memperoleh backoff eksponensial untuk 429/408/5xx/abort dan circuit
-yang hanya terbuka setelah tiga kegagalan berturut-turut. Sebelumnya satu blip
-transien memadamkan 54 dari 62 kasus.
-
-Verified: `npm run check` PASS; `npm test` 1.974 lulus, 2 gagal dalam 241 suite;
-`eval:conversation` menjalankan 59/62 kasus, 43 lulus, 8 derau provider.
-Percakapan live menunjukkan penalaran benar, register campuran, recall konteks,
-dan penolakan jujur atas kemampuan yang tidak ada.
-
-Not verified: `explainAgentStop` terbukti lewat unit test, belum pernah terpicu
-oleh penghentian nyata karena planner kini pulih sendiri. Tiga kasus eval masih
-belum berjalan, dan triase `alone-support` salah menilai risiko.
 
 ## 2026-08-28 — Planner tool_choice auto dan tool recall pengguna
 

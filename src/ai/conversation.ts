@@ -1225,98 +1225,124 @@ export class Conversation {
       !runtime.images?.length &&
       hasCompleteFencedCode(reply)
     ) {
+      // Rencana eksekusi dibangun di luar `try` provider. Kesalahan di sini
+      // adalah salah konfigurasi kode kita sendiri, bukan provider yang gagal,
+      // dan keduanya tidak boleh dilaporkan sama. Menyamakannya pernah membuat
+      // langkah review ini tidak pernah berjalan sekali pun sejak ditulis:
+      // ExecutionPolicy menolak pasangan role, `catch` di bawah menelannya
+      // sebagai "review gagal", dan tidak ada sinyal apa pun yang membedakannya
+      // dari provider lambat.
+      let reviewPlan: ExecutionPlan | null = null;
       try {
-        const reviewed = await this.client.complete({
-          model: modelRoute.modelId,
-          temperature: 0.1,
-          ...(request.maxTokens !== undefined
-            ? { maxTokens: request.maxTokens }
-            : {}),
-          execution: this.execution(
-            tier,
-            "critic",
-            "conversation",
-            null,
-            GENERAL_MODEL_DEADLINE_MS,
-            {
-              modelId: modelRoute.modelId,
-              // Stage role `critic` hanya sah dengan cognitive role verifier
-              // atau challenger. Mewariskan cognitiveRole giliran utama
-              // membuat ExecutionPolicy melempar sebelum provider dipanggil,
-              // dan `catch` di bawah menelannya sebagai review yang gagal.
-              cognitiveRole: "verifier",
-              ...(routingAssessment
-                ? {
-                    difficulty: routingAssessment.complexity,
-                    stakes: routingAssessment.factualStakes,
-                    uncertainty: routingAssessment.ambiguity,
-                  }
-                : {}),
-            },
-          ),
-          timeoutMs: GENERAL_MODEL_DEADLINE_MS,
-          maxAttempts: 1,
-          usage: this.usage(
-            runtime.ownerId,
-            tier,
-            "reply-review",
-          ),
-          ...(runtime.signal ? { signal: runtime.signal } : {}),
-          validateResponse: (value) =>
-            hasCompleteFencedCode(value) &&
-            unexpectedReplyScripts(
-                message,
-                value,
-                boundedContext.turns,
-              ).length === 0 &&
-            explicitReplyConstraintViolations(message, value).length === 0,
-          messages: [
-            { role: "system", content: CODE_ARTIFACT_REVIEW_PROMPT },
-            {
-              role: "user",
-              content: [
-                "<code-artifact-review-json>",
-                jsonForPrompt({ userRequest: message, draftReply: reply }),
-                "</code-artifact-review-json>",
-              ].join("\n"),
-            },
-          ],
-        });
-        const reviewedScripts = unexpectedReplyScripts(
-          message,
-          reviewed,
-          boundedContext.turns,
+        reviewPlan = this.execution(
+          tier,
+          "critic",
+          "conversation",
+          null,
+          GENERAL_MODEL_DEADLINE_MS,
+          {
+            modelId: modelRoute.modelId,
+            // Stage role `critic` hanya sah dengan cognitive role verifier
+            // atau challenger. Mewariskan cognitiveRole giliran utama
+            // membuat ExecutionPolicy melempar sebelum provider dipanggil,
+            // dan `catch` di bawah menelannya sebagai review yang gagal.
+            cognitiveRole: "verifier",
+            ...(routingAssessment
+              ? {
+                  difficulty: routingAssessment.complexity,
+                  stakes: routingAssessment.factualStakes,
+                  uncertainty: routingAssessment.ambiguity,
+                }
+              : {}),
+          },
+      );
+      } catch (error) {
+        this.logger.error(
+          "conversation_code_artifact_review_misconfigured",
+          "Rencana eksekusi pemeriksa artefak kode tidak sah; langkah review dilewati.",
+          {
+            errorType: error instanceof Error ? error.name : "unknown",
+            stageRole: "critic",
+            cognitiveRole: "verifier",
+          },
         );
-        const reviewedConstraints = explicitReplyConstraintViolations(
-          message,
-          reviewed,
-        );
-        if (
-          hasCompleteFencedCode(reviewed) &&
-          reviewedScripts.length === 0 &&
-          reviewedConstraints.length === 0
-        ) {
-          reply = reviewed;
-        } else {
+      }
+      if (reviewPlan) {
+        try {
+          const reviewed = await this.client.complete({
+            model: modelRoute.modelId,
+            temperature: 0.1,
+            // Plafon keluaran harus berasal dari rencana review, bukan dari
+            // `request.maxTokens` milik giliran utama. `AiClient` menolak
+            // request yang plafonnya berbeda dari execution plan, dan
+            // ketidakcocokan itulah yang membuat langkah ini tetap gagal
+            // dengan `AiError` bahkan sesudah pasangan role diperbaiki.
+            maxTokens: reviewPlan.maxOutputTokens,
+            execution: reviewPlan,
+            timeoutMs: GENERAL_MODEL_DEADLINE_MS,
+            maxAttempts: 1,
+            usage: this.usage(
+              runtime.ownerId,
+              tier,
+              "reply-review",
+            ),
+            ...(runtime.signal ? { signal: runtime.signal } : {}),
+            validateResponse: (value) =>
+              hasCompleteFencedCode(value) &&
+              unexpectedReplyScripts(
+                  message,
+                  value,
+                  boundedContext.turns,
+                ).length === 0 &&
+              explicitReplyConstraintViolations(message, value).length === 0,
+            messages: [
+              { role: "system", content: CODE_ARTIFACT_REVIEW_PROMPT },
+              {
+                role: "user",
+                content: [
+                  "<code-artifact-review-json>",
+                  jsonForPrompt({ userRequest: message, draftReply: reply }),
+                  "</code-artifact-review-json>",
+                ].join("\n"),
+              },
+            ],
+          });
+          const reviewedScripts = unexpectedReplyScripts(
+            message,
+            reviewed,
+            boundedContext.turns,
+          );
+          const reviewedConstraints = explicitReplyConstraintViolations(
+            message,
+            reviewed,
+          );
+          if (
+            hasCompleteFencedCode(reviewed) &&
+            reviewedScripts.length === 0 &&
+            reviewedConstraints.length === 0
+          ) {
+            reply = reviewed;
+          } else {
+            this.logger.warn(
+              "conversation_code_artifact_review_rejected",
+              "Pemeriksa artefak kode tidak menghasilkan revisi yang dapat dikirim.",
+              {
+                scripts: reviewedScripts,
+                constraints: reviewedConstraints,
+              },
+            );
+          }
+        } catch (error) {
+          // Review meningkatkan assurance tetapi bukan authority. Kegagalannya
+          // tidak boleh menghapus artefak awal yang sudah lolos pagar format.
           this.logger.warn(
-            "conversation_code_artifact_review_rejected",
-            "Pemeriksa artefak kode tidak menghasilkan revisi yang dapat dikirim.",
+            "conversation_code_artifact_review_failed",
+            "Pemeriksaan akhir artefak kode gagal; draft tervalidasi format dipertahankan.",
             {
-              scripts: reviewedScripts,
-              constraints: reviewedConstraints,
+              errorType: error instanceof Error ? error.name : "unknown",
             },
           );
         }
-      } catch (error) {
-        // Review meningkatkan assurance tetapi bukan authority. Kegagalannya
-        // tidak boleh menghapus artefak awal yang sudah lolos pagar format.
-        this.logger.warn(
-          "conversation_code_artifact_review_failed",
-          "Pemeriksaan akhir artefak kode gagal; draft tervalidasi format dipertahankan.",
-          {
-            errorType: error instanceof Error ? error.name : "unknown",
-          },
-        );
       }
     }
     reply = normalizeAccidentalDuplicatePunctuation(reply);

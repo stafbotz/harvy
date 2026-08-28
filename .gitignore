@@ -32,3 +32,8 @@ harvy-????????-????.ndjson
 CLAUDE.local.md
 .claude/settings.local.json
 Harvy-MVP-v0.1.0.zip
+
+# Sesi probe percakapan. `scripts/probe-chat.ts` menulis .probe-chat-session.json
+# secara default dan isinya transkrip percakapan nyata, bukan cache.
+.probe-chat-session.json
+*.probe-chat-session.json

@@ -64,6 +64,13 @@ sed -n '40,100p' docs/path-yang-relevan.md
 
 ADR dibaca hanya bila task menyentuh keputusan tersebut:
 
+Ke-44 ADR memakai field `Status` di kepalanya, kecuali ADR-001 sampai
+ADR-008 dan ADR-019 sampai ADR-024 yang belum pernah diberi field itu.
+Ketiadaannya bukan berarti dicabut; keempat belas ADR itu masih dirujuk
+sebagai berlaku, dan supersesi parsial yang diketahui sudah dicatat pada
+baris tabel di bawah. Mengisi field yang hilang menuntut pemilik keputusan
+menegaskan mana yang masih mengikat, jadi statusnya sengaja tidak ditebak.
+
 | ADR | Area |
 |---|---|
 | [`ADR-001`](decisions/ADR-001-agent-orchestration.md) | satu sumber instruksi; kebijakan writer lama disupersesi ADR-038 |

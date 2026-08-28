@@ -18,6 +18,13 @@ import type { MemoryItem } from "../src/domain/memory.js";
 import type { ActiveSession } from "../src/domain/session.js";
 import type { ConversationProgressEvent } from
   "../src/core/conversation-progress.js";
+import {
+  DEFAULT_EXECUTION_POLICY,
+  ExecutionPolicy,
+  type ExecutionPolicyInput,
+} from "../src/core/execution-policy.js";
+import type { OperationalLogger } from
+  "../src/observability/operational-logger.js";
 import { AgentHarness } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 
@@ -884,6 +891,15 @@ describe("balasan percakapan", () => {
       requests[2]?.messages[0]?.content ?? "",
       /pemeriksa akhir artefak kode[\s\S]*assertion yang executable/iu,
     );
+    // `AiClient` menolak request yang plafon keluarannya berbeda dari execution
+    // plan. Client palsu di tes ini tidak menegakkannya, jadi invariantnya
+    // ditegaskan di sini — tanpa ini, jalur review lulus unit test sambil
+    // selalu gagal `AiError` pada provider sungguhan.
+    assert.equal(
+      requests[2]?.maxTokens,
+      requests[2]?.execution?.maxOutputTokens,
+      "plafon request review wajib sama dengan plafon execution plan",
+    );
   });
 
   it("mereview konsistensi kode dan test sebelum artefak dikirim", async () => {
@@ -942,6 +958,81 @@ describe("balasan percakapan", () => {
     assert.match(
       requests[1]?.messages.at(-1)?.content ?? "",
       /draftReply[\s\S]*String kosong ditolak/iu,
+    );
+    assert.equal(
+      requests[1]?.maxTokens,
+      requests[1]?.execution?.maxOutputTokens,
+      "plafon request review wajib sama dengan plafon execution plan",
+    );
+  });
+
+  // Regresi 2026-08-29. Langkah review artefak tidak pernah berjalan sekali pun
+  // sejak ditulis: ExecutionPolicy menolak rencananya, `catch` provider
+  // menelan error itu sebagai "review gagal", dan tidak ada sinyal yang
+  // membedakannya dari provider lambat. Tes ini mengunci pemisahan tersebut —
+  // salah konfigurasi kode kita sendiri wajib terdengar, dan tidak boleh
+  // menghabiskan panggilan provider.
+  it("melaporkan rencana review artefak yang tidak sah tanpa memanggil provider", async () => {
+    const requests: ChatRequest[] = [];
+    const draft = [
+      "```ts",
+      "export const dua = 1 + 1;",
+      "```",
+    ].join("\n");
+    const events: string[] = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (code: string) => {
+        events.push(`warn:${code}`);
+      },
+      error: (code: string) => {
+        events.push(`error:${code}`);
+      },
+      child: () => logger,
+    } as unknown as OperationalLogger;
+
+    class CriticRejectingPolicy extends ExecutionPolicy {
+      override decide(input: ExecutionPolicyInput) {
+        if (input.role === "critic") {
+          throw new Error("Cognitive role tidak cocok dengan stage role execution.");
+        }
+        return DEFAULT_EXECUTION_POLICY.decide(input);
+      }
+    }
+
+    const conversation = new Conversation(
+      {
+        async complete(request: ChatRequest): Promise<string> {
+          requests.push(request);
+          return draft;
+        },
+      } as unknown as AiClient,
+      ROUTING,
+      "Asia/Jakarta",
+      () => new Date(NOW),
+      logger,
+      undefined,
+      undefined,
+      new CriticRejectingPolicy(),
+    );
+
+    const reply = await conversation.reply(
+      "Tuliskan konstanta TypeScript sederhana.",
+      understanding("request"),
+    );
+
+    // Review adalah assurance, bukan authority: pengguna tetap menerima
+    // artefak yang sudah lolos pagar format.
+    assert.equal(reply, draft);
+    assert.equal(requests.length, 1, "rencana tidak sah tidak boleh memanggil provider");
+    assert.ok(
+      events.includes("error:conversation_code_artifact_review_misconfigured"),
+      `event misconfigured tidak tercatat: ${events.join(", ")}`,
+    );
+    assert.ok(
+      !events.includes("warn:conversation_code_artifact_review_failed"),
+      "salah konfigurasi tidak boleh menyamar sebagai kegagalan provider",
     );
   });
 

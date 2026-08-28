@@ -79,6 +79,17 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 
 ## Batas dan defect aktif
 
+- Giliran yang balasannya memuat blok kode lengkap kini memakai tiga panggilan
+  model, bukan dua: understanding, penyusunan balasan, lalu pemeriksa akhir
+  artefak kode. Langkah ketiga ada di kode sejak lama tetapi tidak pernah
+  benar-benar berjalan sampai 29 Agustus 2026 karena dua cacat berurutan —
+  pasangan stage/cognitive role ditolak `ExecutionPolicy`, lalu plafon keluaran
+  request tidak sama dengan plafon execution plan sehingga `AiClient` menolak.
+  Keduanya tertelan `catch` yang sama dan dilaporkan sebagai "review gagal".
+  Diukur `probe-chat.ts` pada 29 Agustus 2026 dengan permintaan fungsi
+  JavaScript sederhana: 9.331 token sebelum perbaikan, 13.251 token sesudahnya,
+  atau sekitar 42% lebih mahal untuk giliran berisi kode. Angka biaya per
+  giliran yang diukur sebelum tanggal itu tidak mencakup langkah ini.
 - Storage dan operational log hanya aman untuk satu proses; belum PostgreSQL,
   collector terpusat, alerting, immutable audit, atau deployment hardening.
 - Crash masih dapat meninggalkan lock stale, tetapi startup berikutnya hanya
