@@ -1,3 +1,4 @@
+import { agentStopDeservesExplanation } from "../ai/conversation.js";
 import {
   Bot,
   InputFile,
@@ -45,6 +46,7 @@ import type {
   ControlAction,
   Understanding,
 } from "../ai/understand.js";
+import { imageConversationUnderstanding } from "../ai/understand.js";
 import type { AppConfig } from "../config.js";
 import type { CodingRun } from "../domain/coding-run.js";
 import { renderCodingRunAnchor } from "../coding/coding-run-anchor.js";
@@ -77,6 +79,7 @@ import type { PrivateGitHubPublishOffer } from "../core/private-github-applicati
 import {
   adaptiveActions,
   prefersGuidedSmallStep,
+  requestsUnhandledTaskChange,
   replyHasBlockingQuestion,
 } from "../core/action-policy.js";
 import { HISTORY_WINDOW } from "../core/history-policy.js";
@@ -2118,7 +2121,9 @@ export function createBot(
               type: "input_image",
               mediaType,
               data: image,
-              detail: "auto",
+              // The verified GMI/MiniMax wire is reliable with `low` while
+              // live probes misclassified deterministic images with `auto`.
+              detail: "low",
             }],
           },
           ctx.update.update_id,
@@ -2470,6 +2475,8 @@ export function createBot(
       : undefined;
     const readResult = immediateDanger
       ? ({ value: safetyOnlyUnderstanding() } as const)
+      : hasImageInput
+      ? ({ value: imageConversationUnderstanding() } as const)
       : await conversation
         .understand(text, context, {
           ...runtime,
@@ -2507,7 +2514,7 @@ export function createBot(
     // semantic and multilingual. Safety-signalled turns keep the recent-only
     // path and never wait on an embedding/vector provider.
     if (
-      memoryContextCompiler && understanding &&
+      !hasImageInput && memoryContextCompiler && understanding &&
       (understanding.intent !== "smalltalk" ||
         Boolean(understanding.semanticOperation)) &&
       riskHint.level === "none" && !immediateDanger && !urgentBoundary
@@ -3385,12 +3392,18 @@ export function createBot(
             requiresLiveState ||
             requiresAgentPlanning)
         ) {
+          // Cabang ini hanya tercapai ketika route immediate memilih
+          // `conversation`, jadi jalur task deterministik sudah menolak
+          // menangani permintaannya.
+          const unhandledTaskChange = requestsUnhandledTaskChange(
+            understanding.semanticOperation,
+          );
           const globalRoute = selectGlobalRoute({
             intent: agentIntent,
             messageLength: text.length,
             needsStepByStep: understanding.needsStepByStep,
             assessment: understanding.routingAssessment ?? null,
-            specializedFlow: requiresLiveState,
+            specializedFlow: requiresLiveState || unhandledTaskChange,
             guidedInteraction: guidedSmallStep,
             risk: triage.level,
           });
@@ -3405,6 +3418,7 @@ export function createBot(
               understanding,
               requiresLiveState,
               requiresAgentPlanning,
+              unhandledTaskChange,
             )
           ) {
             if (
@@ -3444,6 +3458,7 @@ export function createBot(
                   ...runtime,
                   ownerId,
                   channel: "telegram",
+                  deliveryChatId: String(ctx.chat?.id ?? ownerId),
                   timeZone,
                   style: profile.stylePreference,
                   intent: agentIntent,
@@ -3483,7 +3498,20 @@ export function createBot(
                   acceptAnswersAfterUpdateId: latestTelegramUpdateId,
                 };
               }
-              reply = agentResult.status === "completed"
+              // Penghentian dijelaskan model dengan suara Harvy bila masih
+              // mungkin; teks deterministik di bawah hanya jaring terakhir.
+              const explained = agentResult.status === "stopped" &&
+                agentStopDeservesExplanation(agentResult.reason)
+                ? await conversation.explainAgentStop(text, agentResult, context, {
+                    ...runtime,
+                    ownerId,
+                    timeZone,
+                    style: profile.stylePreference,
+                    intent: agentIntent,
+                  })
+                : null;
+              reply = explained ??
+                (agentResult.status === "completed"
                 ? agentResult.reply
                 : agentResult.status === "needs_input"
                   ? agentResult.prompt
@@ -3503,7 +3531,7 @@ export function createBot(
                         ? "Kapasitas Harvy-funded periode ini sudah terpakai. Gunakan BYOK, tambah compute, atau tunggu kapasitas diperbarui."
                       : agentResult.reason === "cycle"
                         ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
-                        : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
+                        : "Aku belum berhasil menyelesaikan permintaan itu, dan aku tidak mau mengarang hasilnya. Coba sampaikan lagi dengan cara lain, atau sebutkan bagian mana yang paling kamu butuhkan.");
             }
           } else {
             reply = await conversation.reply(
@@ -7371,8 +7399,9 @@ export function createBot(
     understanding: Understanding,
     requiresLiveState: boolean,
     requiresAgentPlanning: boolean,
+    unhandledTaskChange = false,
   ): boolean {
-    return requiresLiveState || requiresAgentPlanning ||
+    return requiresLiveState || requiresAgentPlanning || unhandledTaskChange ||
       requestsAgentTooling(understanding.routingAssessment);
   }
 

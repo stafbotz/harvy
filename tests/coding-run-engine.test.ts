@@ -1329,6 +1329,10 @@ describe("CodingRunEngine Phase I", () => {
       brief(),
     );
     let current = (await fixture.baseCodingRepository.load(run.runId))!;
+    // Pengisian ini lambat (~46 detik) dan memang harus begitu:
+    // `validEventTransition` mewajibkan tepat satu event per save, sehingga
+    // ledger 512 event tidak dapat diisi dalam satu commit tanpa melanggar
+    // kontrak append-only storage.
     while (current.events.length < 512) {
       const nextEvent = {
         id: `event-${current.events.length}`,

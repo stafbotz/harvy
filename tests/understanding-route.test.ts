@@ -177,7 +177,7 @@ describe("routing hasil pemahaman di adapter bot", () => {
       { kind: "memory-control", action: "list" },
     );
 
-    const forgetMessage = "forget Sohit";
+    const forgetMessage = "forget Rani";
     assert.deepEqual(
       immediateUnderstandingRoute(sample({
         intent: "memory",
@@ -187,14 +187,14 @@ describe("routing hasil pemahaman di adapter bot", () => {
           "memory",
           "forget",
           forgetMessage,
-          "Sohit",
+          "Rani",
           "explicit",
         ),
       }), forgetMessage),
       {
         kind: "memory-control",
         action: "forget",
-        target: "Sohit",
+        target: "Rani",
         reference: "none",
       },
     );
@@ -203,8 +203,8 @@ describe("routing hasil pemahaman di adapter bot", () => {
       immediateUnderstandingRoute(sample({
         intent: "memory",
         memoryAction: "forget",
-        semanticOperation: semantic("usage", "show-summary", "forget Sohit"),
-      }), "forget Sohit"),
+        semanticOperation: semantic("usage", "show-summary", "forget Rani"),
+      }), "forget Rani"),
       { kind: "conversation" },
     );
   });

@@ -307,6 +307,34 @@ export function parseUnderstanding(raw: string): Understanding | null {
   };
 }
 
+/**
+ * Media privat selalu masuk lane conversation code-owned; hasil extractor
+ * tidak pernah diberi authority untuk task, memory, control, atau agent run.
+ * Menghindari extractor terpisah menghemat satu model call per gambar. Sinyal
+ * bahaya teks tetap dinaikkan oleh policy lokal, sedangkan isi visual ditangani
+ * oleh guidance safety pada request multimodal.
+ */
+export function imageConversationUnderstanding(): Understanding {
+  return {
+    intent: "request",
+    taskAction: null,
+    memoryAction: null,
+    riskHint: { level: "none", confidence: 1 },
+    safetySensitive: false,
+    needsStepByStep: false,
+    routingAssessment: null,
+    publicFocus: null,
+    task: null,
+    memories: [],
+    memoryRetractions: [],
+    suggestedActions: [],
+    actionGoal: null,
+    controlAction: null,
+    sessionSignal: null,
+    semanticOperation: null,
+  };
+}
+
 const PRIVATE_REASONING_KEYS = new Set([
   "chainofthought",
   "privatereasoning",

@@ -208,6 +208,7 @@ describe("WhatsAppPrivateConversation", () => {
     }) as WhatsAppPrivateReply;
 
     assert.equal(loads, 1);
+    assert.equal(harness.understandCalls, 0);
     assert.equal(
       (runtimeSeen as ConversationRuntime | null)?.images?.length,
       1,
@@ -215,6 +216,10 @@ describe("WhatsAppPrivateConversation", () => {
     assert.equal(
       (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.mediaType,
       "image/png",
+    );
+    assert.equal(
+      (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.detail,
+      "low",
     );
     assert.equal(
       (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.data.byteLength,
@@ -1573,8 +1578,8 @@ describe("WhatsAppPrivateConversation", () => {
 
   it("tidak mempercayai sinyal remember tanpa perintah write lokal", async () => {
     for (const [index, text] of [
-      "jangan ingat kalau Sohit pacarku",
-      "kamu inget gak Sohit itu siapa?",
+      "jangan ingat kalau Rani pacarku",
+      "kamu inget gak Rani itu siapa?",
       "ingetin aku belajar jam 7",
     ].entries()) {
       const harness = createHarness(true, {
@@ -1587,7 +1592,7 @@ describe("WhatsAppPrivateConversation", () => {
           needsStepByStep: false,
           routingAssessment: null,
           task: null,
-          memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+          memories: [{ kind: "personal", content: "Rani adalah pacarku" }],
           suggestedActions: [],
           actionGoal: null,
           controlAction: null,

@@ -12,8 +12,13 @@ ini, bukan menyalin aturannya.
 - Dokumentasi dibaca bertahap hanya untuk pertanyaan konkret yang belum dijawab
   kode. Jangan membaca seluruh `docs/`, `STATUS.md`, atau `LOG.md` sebagai
   orientasi default.
-- Kode dan tes yang benar-benar berjalan adalah bukti keadaan aktual. Jangan
-  mengklaim kemampuan, perbaikan, atau hasil tes yang belum diperiksa.
+- Kode yang benar-benar dijalankan adalah bukti keadaan aktual. `npm test`
+  menstub setiap panggilan model, jadi ia membuktikan pipa dan kontrak, bukan
+  perilaku Harvy. Bukti perilaku hanya datang dari eval atau kanal nyata.
+  Jangan mengklaim kemampuan, perbaikan, atau hasil tes yang belum diperiksa.
+- Suite penuh ≈ 7 menit. Iterasi dengan `npm run test:file -- dist/tests/X.js`
+  (≈8 detik); jalankan `npm test` sekali sebelum selesai. Sebelum menyimpulkan
+  kamu merusak sesuatu, cek `docs/engineering/KNOWN-FAILURES.md`.
 - Jaga keselamatan, privasi, permission, secret, dan data pengguna. Perubahan
   pada batas tersebut wajib membaca kontrak terkait dan gagal tertutup.
 - Dokumentasi dan LOG hanya diperbarui bila fakta, perilaku, kontrak, keputusan
@@ -86,11 +91,21 @@ Dengan tetap tunduk pada instruksi platform, gunakan urutan ini:
 
 1. instruksi eksplisit pengguna dan scope task;
 2. batas keselamatan, privasi, permission, serta perlindungan secret/data;
-3. kode dan tes yang benar-benar berjalan;
-4. status subsystem yang terverifikasi;
-5. ADR dan invariant yang masih berlaku;
-6. dokumentasi product atau roadmap;
-7. histori LOG.
+3. perilaku yang benar-benar dijalankan: eval provider nyata dan pengujian
+   kanal live untuk pertanyaan perilaku;
+4. kode yang dibaca dan unit test yang dijalankan, untuk pertanyaan pipa,
+   kontrak, dan regresi;
+5. status subsystem yang terverifikasi;
+6. ADR dan invariant yang masih berlaku;
+7. dokumentasi product atau roadmap;
+8. histori LOG.
+
+Nomor 3 dan 4 bukan hal yang sama dan tidak saling menggantikan. Seluruh unit
+test Harvy menstub model, jadi suite hijau menjawab "apakah aku merusak
+sesuatu", bukan "apakah Harvy menjadi lebih baik". Untuk klaim perilaku —
+kualitas percakapan, pemilihan tool, pemahaman maksud pengguna — bukti yang sah
+hanya `npm run eval:conversation` terhadap model nyata atau percakapan di kanal
+sungguhan. Jangan pernah menyimpulkan Harvy membaik dari `npm test`.
 
 Jika kode dan docs berbeda, gunakan perilaku kode yang terbukti untuk
 diagnosis, laporkan selisihnya, dan jangan diam-diam mengubah salah satunya.
@@ -126,7 +141,19 @@ Not verified: yang belum diuji.
 Next: hanya bila ada tindak lanjut material.
 ```
 
-Arsipkan whole entry saat LOG melewati batas yang dijelaskan di file itu.
+Batas dan prosedur arsip LOG ada di sini, bukan hanya di dalam `docs/LOG.md`,
+karena kontrak ini melarang membaca berkas itu utuh sebagai orientasi:
+
+- `docs/LOG.md` aktif maksimal **24 KiB atau 12 entri material**. Melewatinya
+  membuat `npm run context:check` gagal.
+- Saat terlampaui, pindahkan **satu entri terlama secara utuh** ke
+  `docs/log/YYYY-MM-DD.md`, lalu tambahkan tautannya pada daftar arsip di
+  kepala `LOG.md`. Jangan memecah entri.
+- Jangan memindahkan entri yang masih memuat pekerjaan pengguna yang belum
+  selesai.
+- Satu entri seharusnya beberapa paragraf pendek. Bila entrimu melewati ±2 KiB,
+  itu tanda isinya seharusnya menjadi ADR, issue, atau evidence — bukan LOG.
+
 Detail panjang berada di issue, PR, ADR, atau evidence, bukan LOG.
 
 ## Kepemilikan, keselamatan, dan “Jangan lakukan”
@@ -151,10 +178,44 @@ Detail panjang berada di issue, PR, ADR, atau evidence, bukan LOG.
 
 ## Gerbang selesai
 
-Untuk perubahan kode: periksa diff, jalankan tes terarah bila ada, lalu
-`npm run check` dan `npm test`. Untuk kontrak/bootstrap agent, jalankan juga
+Untuk perubahan kode: periksa diff, jalankan tes terarah, lalu `npm run check`
+dan `npm test`. Untuk kontrak/bootstrap agent, jalankan juga
 `npm run context:check`. Dokumentasikan hanya perubahan material sesuai aturan
 di atas. Hasil akhir selalu menyebut hasil nyata dan apa yang tidak diuji.
+
+### Biaya perintah dan urutan yang murah
+
+Angka di bawah diukur pada host pengembangan 2 core. Anggap sebagai orde
+besaran, bukan janji.
+
+| Perintah | Biaya | Kapan |
+|---|---|---|
+| `npm run check` | ≈7 detik | sesering mungkin |
+| `npm run test:file -- dist/tests/X.test.js` | ≈8 detik | loop utama saat menulis kode |
+| `npm run test:watch` | kontinu | saat iterasi panjang |
+| `npm test` | ≈7 menit | sekali, sebelum menyatakan selesai |
+| `npm run context:check` | ≈3 detik | setelah menyentuh AGENTS/docs bootstrap |
+| `npm run eval:conversation` | lambat, berbayar | saat mengubah prompt, routing, atau tool |
+
+`tsconfig.json` memakai `incremental`, jadi build kedua dan seterusnya jauh
+lebih murah selama `dist/.tsbuildinfo` tidak dihapus. Menjalankan `npm test`
+berulang kali sebagai loop kerja adalah pemborosan terbesar di repositori ini;
+`test:file` melakukan pekerjaan yang sama untuk satu file 56 kali lebih cepat.
+
+### Kegagalan tes yang sudah ada sebelumnya
+
+Repositori ini sering mempunyai pekerjaan yang belum selesai di working tree,
+sehingga sebagian tes dapat merah sebelum kamu menyentuh apa pun.
+
+Sebelum menyimpulkan perubahanmu merusak sesuatu, baca
+`docs/engineering/KNOWN-FAILURES.md`. Bila kegagalan tidak tercatat di sana,
+buktikan asalnya sebelum melapor: bandingkan dengan baseline, atau petakan hunk
+diff terhadap fungsi yang gagal. Jangan memperbaiki tes milik pekerjaan orang
+lain tanpa diminta.
+
+Bila kamu meninggalkan tes merah, catat di berkas itu: nama tes, sejak kapan,
+sebabnya, dan siapa yang mengerjakannya. Menghapus entri hanya sah setelah tes
+benar-benar hijau.
 
 Untuk review, diskusi, atau diagnosis read-only, tidak diperlukan diff, LOG,
 atau gerbang build palsu; cukup bukti yang diperiksa dan batas pemeriksaan.

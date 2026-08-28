@@ -291,19 +291,19 @@ describe("deriveMemoryMetadata", () => {
   it("merepresentasikan hubungan yang berakhir sebagai correction temporal", () => {
     const previous = deriveMemoryMetadata(
       "personal",
-      "Sohit adalah pacarku",
-      "Sohit adalah pacarku",
+      "Rani adalah pacarku",
+      "Rani adalah pacarku",
     );
     const corrected = deriveMemoryMetadata(
       "personal",
-      "Sohit bukan pacarku lagi",
-      "Sohit bukan pacarku lagi",
+      "Rani bukan pacarku lagi",
+      "Rani bukan pacarku lagi",
     );
 
     assert.equal(previous.predicate, "romantic_partner");
-    assert.equal(previous.value, "Sohit");
+    assert.equal(previous.value, "Rani");
     assert.equal(corrected.predicate, "romantic_partner");
-    assert.equal(corrected.value, "tidak:Sohit");
+    assert.equal(corrected.value, "tidak:Rani");
     assert.equal(corrected.correction, true);
     assert.equal(corrected.graphProjection?.relation, "no_longer_partner_of");
   });

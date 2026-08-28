@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { ApiKeyPool } from "./key-pool.js";
+import {
+  DEFAULT_CHARACTERS_PER_TOKEN,
+  estimateTokens,
+  TokenRatioCalibration,
+} from "./token-estimate.js";
 import type { ResolvedFundingContext } from "../domain/economy.js";
 import type {
   AiUsageContext,
@@ -304,6 +309,29 @@ export class AiResponseError extends AiError {
   }
 }
 
+export type AiToolShapeFailureReason =
+  | "missing_tool_call"
+  | "unknown_tool"
+  | "multiple_tool_calls"
+  | "ignored_tool_choice";
+
+/**
+ * Model memanggil tool dengan bentuk yang tidak dapat dijalankan kode.
+ *
+ * Ini kegagalan bentuk, bukan kegagalan transport atau kebijakan, sehingga satu
+ * percobaan perbaikan dengan koreksi eksplisit masih masuk akal. Type terpisah
+ * mencegah orkestrasi menebaknya dari copy pesan error.
+ */
+export class AiToolShapeError extends AiError {
+  constructor(
+    readonly reason: AiToolShapeFailureReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AiToolShapeError";
+  }
+}
+
 /** Terminal BYOK failure never authorizes a silent Harvy-funded fallback. */
 export class ByokProviderError extends AiError {
   constructor() {
@@ -336,6 +364,13 @@ const ESTIMATED_TOKENS_PER_INPUT_IMAGE = 8_192;
 
 export class AiClient {
   private readonly logger: OperationalLogger;
+  /**
+   * Rasio karakter-per-token per model, ditajamkan dari `usage` nyata.
+   *
+   * Dimiliki instance agar urutan tes tidak saling memengaruhi dan agar
+   * deployment multi-provider tidak mencampur rasio yang tidak sebanding.
+   */
+  private readonly tokenRatios = new TokenRatioCalibration();
   private readonly maxResponseBytes: number;
   private primaryUnavailableUntil = 0;
 
@@ -399,7 +434,8 @@ export class AiClient {
     assertNativeToolRequest(normalizedRequest);
     const result = await this.perform(normalizedRequest);
     if (result.completion.kind !== "tool_calls") {
-      throw new AiError(
+      throw new AiToolShapeError(
+        "missing_tool_call",
         "Model tidak menghasilkan native tool call yang diwajibkan.",
       );
     }
@@ -409,10 +445,16 @@ export class AiClient {
       normalizedRequest.tools.map((tool) => tool.function.name),
     );
     if (calls.some((call) => !availableNames.has(call.function.name))) {
-      throw new AiError("Model memanggil native tool yang tidak tersedia.");
+      throw new AiToolShapeError(
+        "unknown_tool",
+        "Model memanggil native tool yang tidak tersedia.",
+      );
     }
     if (!normalizedRequest.parallelToolCalls && calls.length !== 1) {
-      throw new AiError("Model mengembalikan lebih dari satu native tool call.");
+      throw new AiToolShapeError(
+        "multiple_tool_calls",
+        "Model mengembalikan lebih dari satu native tool call.",
+      );
     }
     const selectedToolName = typeof normalizedRequest.toolChoice === "object"
       ? normalizedRequest.toolChoice.function.name
@@ -421,9 +463,52 @@ export class AiClient {
       selectedToolName !== null &&
       calls.some((call) => call.function.name !== selectedToolName)
     ) {
-      throw new AiError("Model mengabaikan native tool_choice yang ditetapkan.");
+      throw new AiToolShapeError(
+        "ignored_tool_choice",
+        "Model mengabaikan native tool_choice yang ditetapkan.",
+      );
     }
     return assistant;
+  }
+
+  /**
+   * Giliran yang boleh diselesaikan dengan teks biasa maupun tool call.
+   *
+   * `completeToolTurn` mewajibkan tool call, sehingga jawaban percakapan harus
+   * dibungkus function final dan obrolan santai ikut melewati kontrak planner.
+   * Metode ini memakai `tool_choice: "auto"` supaya model melihat seluruh tool
+   * pada setiap giliran lalu memutuskan sendiri: menjawab langsung, atau
+   * memanggil capability. Validasi bentuk tool call tetap sama ketatnya.
+   */
+  async completeAutoTurn(
+    request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+  ): Promise<ChatCompletion> {
+    const normalizedRequest = {
+      ...request,
+      toolChoice: request.toolChoice ?? ("auto" as const),
+      parallelToolCalls: request.parallelToolCalls ?? false,
+    };
+    assertNativeToolRequest(normalizedRequest);
+    const result = await this.perform(normalizedRequest);
+    if (result.completion.kind === "text") return result.completion;
+
+    const calls = result.completion.assistant.tool_calls;
+    const availableNames = new Set(
+      normalizedRequest.tools.map((tool) => tool.function.name),
+    );
+    if (calls.some((call) => !availableNames.has(call.function.name))) {
+      throw new AiToolShapeError(
+        "unknown_tool",
+        "Model memanggil native tool yang tidak tersedia.",
+      );
+    }
+    if (!normalizedRequest.parallelToolCalls && calls.length !== 1) {
+      throw new AiToolShapeError(
+        "multiple_tool_calls",
+        "Model mengembalikan lebih dari satu native tool call.",
+      );
+    }
+    return result.completion;
   }
 
   private async perform(request: ChatRequest): Promise<CompletionResult> {
@@ -783,7 +868,10 @@ export class AiClient {
     const budgetReservation = request.runBudget?.reserveModelCall({
       tier: request.execution!.tier,
       budgetClass: request.execution!.budgetClass,
-      inputTokenEstimate: estimateChatRequestInputTokens(request),
+      inputTokenEstimate: estimateChatRequestInputTokens(
+        request,
+        this.tokenRatios.charactersPerToken(request.model),
+      ),
       maxOutputTokens: request.maxTokens ?? 800,
     });
     const apiKey = provider.keys.take();
@@ -922,6 +1010,15 @@ export class AiClient {
           request,
           completion,
         );
+        if (!tokenUsage.estimated && tokenUsage.inputTokens > 0) {
+          // Menutup loop: perkiraan berikutnya untuk model ini memakai rasio
+          // yang benar-benar diamati, bukan konstanta yang dipatok di kode.
+          this.tokenRatios.observe(
+            request.model,
+            requestWireCharacters(request),
+            tokenUsage.inputTokens,
+          );
+        }
         if (estimatedTerminalUsage) {
           budgetReservation?.settle(tokenUsage, observedProviderCostUsd);
           budgetSettled = true;
@@ -1410,7 +1507,7 @@ function readTokenUsage(
       ? 0
       : safeSerializedLength(message.tool_calls)) +
     rawContinuationCharacters(message);
-  const outputEstimate = Math.ceil(outputCharacters / 4);
+  const outputEstimate = estimateTokens(outputCharacters);
 
   return {
     inputTokens: inputEstimate,
@@ -1445,8 +1542,29 @@ function normalizedFinishReason(value: unknown): string | null {
   }
 }
 
-/** Estimator provider-neutral yang juga dipakai preflight context pressure. */
-export function estimateChatRequestInputTokens(request: ChatRequest): number {
+/**
+ * Estimator provider-neutral yang juga dipakai preflight context pressure.
+ *
+ * `charactersPerToken` boleh diisi rasio terkalibrasi milik model yang dituju.
+ * Tanpa argumen, hasilnya sama persis dengan perilaku lama.
+ */
+export function estimateChatRequestInputTokens(
+  request: ChatRequest,
+  charactersPerToken: number = DEFAULT_CHARACTERS_PER_TOKEN,
+): number {
+  return estimateTokens(requestWireCharacters(request), charactersPerToken) +
+    (request.imageInputs?.length ?? 0) * ESTIMATED_TOKENS_PER_INPUT_IMAGE;
+}
+
+/**
+ * Ukuran wire teks sebuah request.
+ *
+ * Kalibrasi rasio wajib memakai penghitungan yang sama dengan estimator, kalau
+ * tidak rasio yang dipelajari akan mengoreksi kesalahan yang tidak pernah ada.
+ * Gambar sengaja tidak ikut karena biayanya tidak proporsional terhadap
+ * karakter.
+ */
+export function requestWireCharacters(request: ChatRequest): number {
   const messageCharacters = request.messages.reduce(
     (sum, message) => {
       const contentCharacters = typeof message.content === "string"
@@ -1464,11 +1582,8 @@ export function estimateChatRequestInputTokens(request: ChatRequest): number {
     },
     0,
   );
-  const toolCharacters = request.tools
-    ? safeSerializedLength(request.tools)
-    : 0;
-  return Math.ceil((messageCharacters + toolCharacters) / 4) +
-    (request.imageInputs?.length ?? 0) * ESTIMATED_TOKENS_PER_INPUT_IMAGE;
+  return messageCharacters +
+    (request.tools ? safeSerializedLength(request.tools) : 0);
 }
 
 function toolCallsWireCharacters(toolCalls: readonly ChatToolCall[]): number {

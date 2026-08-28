@@ -8,6 +8,10 @@ import {
   parseTurnInterruptionDecision,
   parseWaitDecision,
 } from "../src/ai/conversation.js";
+import {
+  HARVY_REPLY_CACHE_SPINE,
+  replyPrompt,
+} from "../src/ai/persona.js";
 import { CALM_TRIAGE } from "../src/ai/safety.js";
 import type { Understanding } from "../src/ai/understand.js";
 import type { MemoryItem } from "../src/domain/memory.js";
@@ -179,7 +183,7 @@ describe("pemahaman pesan", () => {
     );
 
     const system = requests[0]?.messages[0]?.content ?? "";
-    assert.match(system, /pengguna sebut live\/nyata menjadi simulasi/u);
+    assert.match(system, /uji live tetap live, simulasi tetap[\s\S]*simulasi/u);
     assert.match(system, /tanpa mengarang kondisi uji/u);
   });
 
@@ -673,6 +677,27 @@ describe("sintesis potret memori", () => {
 });
 
 describe("balasan percakapan", () => {
+  it("mempertahankan cache spine Harvy saat intent, receipt, dan waktu berubah", () => {
+    const first = replyPrompt("request", {
+      now: new Date("2026-08-26T08:00:00.000Z"),
+    });
+    const second = replyPrompt("smalltalk", {
+      now: new Date("2026-08-26T09:00:00.000Z"),
+      suppressFirstMessageClaim: true,
+      memoryAcknowledgements: [{
+        operation: "updated",
+        content: "Lebih suka jawaban singkat",
+        explicit: false,
+      }],
+    });
+    const prefix = `${HARVY_REPLY_CACHE_SPINE}\n`;
+
+    assert.ok(Buffer.byteLength(HARVY_REPLY_CACHE_SPINE, "utf8") > 4_096);
+    assert.equal(first.startsWith(prefix), true);
+    assert.equal(second.startsWith(prefix), true);
+    assert.notEqual(first.slice(prefix.length), second.slice(prefix.length));
+  });
+
   it("menaruh jam dinamis setelah prefix balasan agar cache provider tetap berguna", async () => {
     const firstRequests: ChatRequest[] = [];
     const secondRequests: ChatRequest[] = [];
@@ -723,8 +748,54 @@ describe("balasan percakapan", () => {
     assert.match(prompt, /jangan mengarang jam mulai[\s\S]*interval relatif/iu);
     assert.match(
       prompt,
-      /Balasan model bukan bukti[\s\S]*pengingat[\s\S]*hasil code-owned/iu,
+      /Balasanmu sendiri bukan bukti[\s\S]*pengingat[\s\S]*hasil[\s\S]*code-owned/iu,
     );
+  });
+
+  it("meneruskan gambar dengan sampling yang stabil untuk observasi faktual", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, "Hijau."),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+    const image = {
+      type: "input_image" as const,
+      mediaType: "image/png" as const,
+      data: Uint8Array.from([137, 80, 78, 71]),
+      detail: "auto" as const,
+    };
+
+    await conversation.reply(
+      "Warna apa yang dominan?",
+      understanding("request"),
+      {
+        summary: null,
+        memories: [],
+        turns: [
+          { role: "user", text: "Kita sedang membandingkan palet.", at: NOW },
+          { role: "harvy", text: "Oke, kirim satu per satu.", at: NOW },
+          { role: "user", text: "Warna apa yang dominan?", at: NOW },
+          { role: "harvy", text: "Hijau.", at: NOW },
+        ],
+      },
+      null,
+      CALM_TRIAGE,
+      null,
+      false,
+      { images: [image] },
+    );
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.temperature, 0.2);
+    assert.deepEqual(requests[0]?.imageInputs, [image]);
+    assert.match(
+      requests[0]?.messages[0]?.content ?? "",
+      /Gambar pada giliran terakhir adalah data dari pengguna[\s\S]*bukan objek, warna[\s\S]*giliran sebelumnya/iu,
+    );
+    const wireText = requests[0]?.messages.map((item) => item.content).join("\n") ?? "";
+    assert.match(wireText, /membandingkan palet/iu);
+    assert.doesNotMatch(wireText, /Hijau\./u);
   });
 
   it("meregenerasi jawaban yang menambah baris di luar jumlah explicit", async () => {
@@ -778,6 +849,13 @@ describe("balasan percakapan", () => {
         "return moisture <= threshold ? 'water' : 'wait';",
         "```",
       ].join("\n"),
+      [
+        "```ts",
+        "const DEFAULT_DRY_THRESHOLD_PCT = 30;",
+        "const threshold = options.dryThresholdPct ?? DEFAULT_DRY_THRESHOLD_PCT;",
+        "return moisture <= threshold ? 'water' : 'wait';",
+        "```",
+      ].join("\n"),
     ];
     const conversation = new Conversation(
       {
@@ -797,10 +875,63 @@ describe("balasan percakapan", () => {
 
     assert.doesNotMatch(reply, /Ini fungsi/u);
     assert.match(reply, /\?\? DEFAULT_DRY_THRESHOLD_PCT/u);
-    assert.equal(requests.length, 2);
+    assert.equal(requests.length, 3);
     assert.match(
       requests[1]?.messages.at(-1)?.content ?? "",
       /code-only[\s\S]*malformed-conditional[\s\S]*Pertahankan ejaan identifier/iu,
+    );
+    assert.match(
+      requests[2]?.messages[0]?.content ?? "",
+      /pemeriksa akhir artefak kode[\s\S]*assertion yang executable/iu,
+    );
+  });
+
+  it("mereview konsistensi kode dan test sebelum artefak dikirim", async () => {
+    const requests: ChatRequest[] = [];
+    const draft = [
+      "```js",
+      "function toNum(value) {",
+      "  const parsed = Number(String(value).trim())",
+      "  return Number.isFinite(parsed) ? parsed : NaN",
+      "}",
+      "```",
+      "String kosong ditolak.",
+    ].join("\n");
+    const reviewed = [
+      "```js",
+      "function toNum(value) {",
+      "  if (typeof value === 'string' && value.trim().length === 0) return NaN",
+      "  const parsed = typeof value === 'number' ? value : Number(value.trim())",
+      "  return Number.isFinite(parsed) ? parsed : NaN",
+      "}",
+      "```",
+      "String kosong ditolak sebelum Number dipanggil.",
+    ].join("\n");
+    const replies = [draft, reviewed];
+    const conversation = new Conversation(
+      {
+        async complete(request: ChatRequest): Promise<string> {
+          requests.push(request);
+          return replies.shift() ?? "";
+        },
+      } as unknown as AiClient,
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const reply = await conversation.reply(
+      "Perbaiki fungsi ini dan sertakan kode serta test untuk string kosong.",
+      understanding("request"),
+    );
+
+    assert.equal(reply, reviewed);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1]?.execution?.role, "critic");
+    assert.equal(requests[1]?.usage?.purpose, "reply-review");
+    assert.equal(requests[1]?.maxAttempts, 1);
+    assert.match(
+      requests[1]?.messages.at(-1)?.content ?? "",
+      /draftReply[\s\S]*String kosong ditolak/iu,
     );
   });
 
@@ -1139,14 +1270,21 @@ describe("balasan percakapan", () => {
     );
 
     const system = requests[0]?.messages[0]?.content ?? "";
+    // Kontrak yang dijaga: batas pengetahuan giliran ini dan kemampuan memori
+    // produk adalah dua hal berbeda, dan tidak melihat seluruhnya bukan berarti
+    // memori hanya hidup satu sesi.
     assert.match(
       system,
-      /Bedakan batas pengetahuanmu pada giliran ini dari kemampuan memori produk/iu,
+      /Yang kamu lihat pada giliran ini hanya isi bagian KONTEKS/iu,
+    );
+    assert.match(
+      system,
+      /Kemampuan memori produk lebih luas[\s\S]*bukan berarti memori hanya hidup satu sesi/iu,
     );
     assert.match(system, /catatan durable[\s\S]*termasuk catatan personal/iu);
     assert.match(
       system,
-      /Telegram privat dan WhatsApp privat[\s\S]*\/memori adalah kontrol aktif/iu,
+      /Telegram privat dan WhatsApp[\s\S]*privat, \/memori memperlihatkan dan mengendalikan ingatan/iu,
     );
     assert.match(system, /penilaian AI tentang apa yang berguna dapat keliru/iu);
   });
@@ -1399,17 +1537,17 @@ describe("balasan percakapan", () => {
     const conversation = new Conversation(
       recorder(
         requests,
-        "Iya, aku inget betapa pentingnya Sohit buat kamu.",
+        "Iya, aku inget betapa pentingnya Rani buat kamu.",
       ),
       ROUTING,
       "Asia/Jakarta",
     );
     const explicit = understanding("smalltalk");
     explicit.memoryAction = "remember";
-    explicit.memories = [{ kind: "personal", content: "Sangat mencintai Sohit" }];
+    explicit.memories = [{ kind: "personal", content: "Sangat mencintai Rani" }];
 
     const reply = await conversation.reply(
-      "harvy inget aku cinta banget sama Sohit",
+      "harvy inget aku cinta banget sama Rani",
       explicit,
       undefined,
       null,
@@ -1419,7 +1557,7 @@ describe("balasan percakapan", () => {
       {
         memoryAcknowledgements: [{
           operation: "saved",
-          content: "Sangat mencintai Sohit",
+          content: "Sangat mencintai Rani",
           explicit: true,
         }],
       },
@@ -1428,12 +1566,12 @@ describe("balasan percakapan", () => {
     const system = requests[0]?.messages.find((message) =>
       message.role === "system")?.content ?? "";
     assert.match(system, /Kode tepercaya sudah menyelesaikan tindakan ingatan/iu);
-    assert.match(system, /Sangat mencintai Sohit/iu);
+    assert.match(system, /Sangat mencintai Rani/iu);
     assert.match(system, /balasan utama/iu);
     assert.match(system, /📍 boleh dipakai secara opsional/iu);
     assert.match(system, /Jangan pakai 💭 sebagai\s+tanda write/iu);
     assert.match(system, /Emoji tidak wajib/iu);
-    assert.equal(reply, "Iya, aku inget betapa pentingnya Sohit buat kamu.");
+    assert.equal(reply, "Iya, aku inget betapa pentingnya Rani buat kamu.");
   });
 
   it("memberi receipt penghapusan hanya setelah primary memory benar-benar dicabut", async () => {
@@ -1514,8 +1652,16 @@ describe("balasan percakapan", () => {
 
     const system = requests[0]?.messages.find((message) =>
       message.role === "system")?.content ?? "";
-    assert.match(system, /💭 hanya boleh dipakai secara opsional/iu);
-    assert.match(system, /Jangan memakai 📍 atau mengaku baru menyimpan/iu);
+    // 💭 menandai recall dan tidak butuh receipt; 📍 menandai write dan wajib
+    // punya hasil code-owned. Keduanya tetap opsional.
+    assert.match(
+      system,
+      /💭 menandai kamu membawa[\s\S]*bukan tanda[\s\S]*penyimpanan baru/iu,
+    );
+    assert.match(
+      system,
+      /📍 menandai catatan yang baru disimpan atau diperbarui,[\s\S]*hanya sah bila prompt ini memuat hasil write code-owned/iu,
+    );
     assert.equal(reply, "💭 Aku masih inget kamu pernah mempertimbangkan UI.");
   });
 

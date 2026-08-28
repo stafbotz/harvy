@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { deflateSync } from "node:zlib";
+import sharp from "sharp";
 import {
   AiClient,
   AiResponseError,
@@ -7,6 +7,7 @@ import {
   type ChatFunctionTool,
 } from "../src/ai/client.js";
 import { resolveModel } from "../src/ai/model-policy.js";
+import { HARVY_REPLY_CACHE_SPINE } from "../src/ai/persona.js";
 import {
   ModelProfileRegistry,
   type ModelProfile,
@@ -18,6 +19,11 @@ import type {
   ProviderAttemptObserver,
   ProviderAttemptStart,
 } from "../src/domain/usage-ledger.js";
+import {
+  createVisualAcceptanceFixtureForColor,
+  observedVisualAcceptanceColors,
+  VISUAL_ACCEPTANCE_COLORS,
+} from "./live-visual-acceptance-fixture.js";
 
 const TOOL_NAME = "provider_smoke_marker";
 const TOOL_MARKER = "PROVIDER_SMOKE_OK";
@@ -47,6 +53,8 @@ interface SafeStage {
   attempts: SafeAttempt[];
   facts?: Readonly<Record<string, string | number | boolean | null>>;
 }
+
+type ProviderSmokeFocus = "full" | "image";
 
 class AttemptCollector implements ProviderAttemptObserver {
   readonly starts = new Map<string, ProviderAttemptStart>();
@@ -150,6 +158,14 @@ function safeErrorCode(error: unknown): string {
     : "unknown_error";
 }
 
+function providerSmokeFocus(env: NodeJS.ProcessEnv): ProviderSmokeFocus {
+  const value = env.HARVY_PROVIDER_SMOKE_FOCUS?.trim() || "full";
+  if (value === "full" || value === "image") return value;
+  throw Object.assign(new Error("provider_smoke_focus_invalid"), {
+    code: "provider_smoke_focus_invalid",
+  });
+}
+
 async function runStage(
   name: string,
   action: (client: AiClient, collector: AttemptCollector) => Promise<{
@@ -236,11 +252,15 @@ async function structuredOutputStage(
       messages: [
         {
           role: "system",
-          content: "Return one JSON object with exactly one key named marker.",
+          content: [
+            "Return exactly one valid JSON object and nothing else.",
+            "Do not use Markdown fences, prose, or additional keys.",
+            `The exact required output is {\"marker\":\"${STRUCTURED_MARKER}\"}.`,
+          ].join(" "),
         },
         {
           role: "user",
-          content: `Set marker to ${STRUCTURED_MARKER}.`,
+          content: "Emit the exact required JSON object now.",
         },
       ],
       temperature: 0,
@@ -267,10 +287,13 @@ async function automaticPromptCacheStage(
   return runStage("automatic_prompt_cache", async (client, collector) => {
     const runNonce = randomUUID();
     const stablePrefix = [
-      `Unique smoke run ${runNonce}.`,
+      HARVY_REPLY_CACHE_SPINE,
+      "",
+      `<provider-cache-probe>${runNonce}</provider-cache-probe>`,
       ...Array.from(
-      { length: 180 },
-      (_, index) => `Stable policy sentence ${index + 1}: preserve exact semantics.`,
+        { length: 96 },
+        (_, index) =>
+          `Run-local stable suffix ${index + 1}: preserve exact semantics.`,
       ),
     ].join("\n");
     const request = {
@@ -283,7 +306,10 @@ async function automaticPromptCacheStage(
         },
       ],
       temperature: 0,
-      maxTokens: boundedOutput(profile, 32),
+      // MiniMax dapat memakai sebagian budget untuk penalaran internal bahkan
+      // pada jawaban marker pendek; batas 32 membuat probe cache sesekali
+      // terpotong sebelum marker keluar dan mengaburkan bukti cache.
+      maxTokens: boundedOutput(profile, 128),
       timeoutMs: 60_000,
       maxAttempts: 1,
       validateResponse: (value: string) => value.trim() === COMPLETION_MARKER,
@@ -305,6 +331,10 @@ async function automaticPromptCacheStage(
         secondCacheReadTokens: secondRead,
         firstCacheWriteTokens: first?.cacheWriteTokens ?? 0,
         secondCacheWriteTokens: second?.cacheWriteTokens ?? 0,
+        harvyCacheSpineBytes: Buffer.byteLength(
+          HARVY_REPLY_CACHE_SPINE,
+          "utf8",
+        ),
       },
     };
   }, config, profile);
@@ -319,109 +349,81 @@ async function imageInputStage(
     return notExercised("image_input", "profile_capability_disabled");
   }
   return runStage("image_input", async (client) => {
-    const image = solidPng(32, 32, 255, 0, 0);
-    const isRed = (value: string): boolean => {
-      try {
-        const parsed = JSON.parse(value) as unknown;
-        return parsed !== null && typeof parsed === "object" &&
-          !Array.isArray(parsed) && Object.keys(parsed).length === 1 &&
-          (parsed as Record<string, unknown>).dominant_color === "red";
-      } catch {
-        return false;
-      }
+    const cases = (await Promise.all(
+      VISUAL_ACCEPTANCE_COLORS.map(async (expected) => {
+        const png = createVisualAcceptanceFixtureForColor(expected).data;
+        return [
+          { expected, data: png, mediaType: "image/png" as const },
+          {
+            expected,
+            data: await sharp(png).jpeg({ quality: 85 }).toBuffer(),
+            mediaType: "image/jpeg" as const,
+          },
+        ];
+      }),
+    )).flat();
+    const probeNonce = randomUUID();
+    const observedColor = (value: string): string => {
+      const colors = observedVisualAcceptanceColors(value);
+      if (colors.length === 1) return colors[0]!;
+      if (colors.length > 1) return "ambiguous";
+      return /(?:^|[^\p{L}])other(?:$|[^\p{L}])/iu.test(value)
+        ? "other"
+        : "unclassified";
     };
-    const text = await client.complete({
-      model,
-      messages: [
-        {
-          role: "system",
-          content: [
-            "Inspect the image and return one JSON object with exactly one key",
-            "named dominant_color. Its value must be red, green, or other.",
-          ].join(" "),
-        },
-        {
-          role: "user",
-          content: "What is the dominant visible color of the attached image?",
-        },
-      ],
-      imageInputs: [{
-        type: "input_image",
-        mediaType: "image/png",
-        data: image,
-        detail: "low",
-      }],
-      temperature: 0,
-      maxTokens: boundedOutput(profile, 64),
-      timeoutMs: 60_000,
-      maxAttempts: 1,
-      json: true,
-      validateResponse: isRed,
-      usage: stageRequestMetadata(),
-    });
-    if (!isRed(text)) throw new Error("image_contract_mismatch");
+    for (const [index, fixture] of cases.entries()) {
+      const text = await client.complete({
+        model,
+        messages: [
+          {
+            role: "system",
+            content: [
+              "Inspect the current image and answer with exactly one lowercase word:",
+              "red, green, blue, or other. Do not describe your reasoning.",
+            ].join(" "),
+          },
+          {
+            role: "user",
+            content: [
+              "What is the dominant visible color of the attached image?",
+              `Neutral probe id: ${probeNonce}-${index + 1}.`,
+            ].join(" "),
+          },
+        ],
+        imageInputs: [{
+          type: "input_image",
+          mediaType: fixture.mediaType,
+          data: fixture.data,
+          // This is the exact detail mode used by Telegram and WhatsApp.
+          // MiniMax-M3 on the verified GMI wire misclassified deterministic
+          // fixtures with `auto` and `high`; `low` is the live-proven mode.
+          detail: "low",
+        }],
+        temperature: 0,
+        maxTokens: boundedOutput(profile, 64),
+        timeoutMs: 60_000,
+        maxAttempts: 1,
+        usage: stageRequestMetadata(),
+      });
+      const observed = observedColor(text);
+      if (observed !== fixture.expected) {
+        throw Object.assign(new Error("image_contract_mismatch"), {
+          code: `image_expected_${fixture.expected}_observed_${observed}`,
+        });
+      }
+    }
     return {
       code: "visual_content_observed",
-      facts: { imageBytes: image.byteLength },
+      facts: {
+        imageCases: cases.length,
+        imageFormats: "png,jpeg",
+      },
     };
   }, config, profile);
 }
 
 function notExercised(stage: string, code: string): SafeStage {
   return { stage, status: "not_exercised", code, durationMs: 0, attempts: [] };
-}
-
-function solidPng(
-  width: number,
-  height: number,
-  red: number,
-  green: number,
-  blue: number,
-): Uint8Array {
-  const stride = 1 + width * 3;
-  const raw = Buffer.alloc(stride * height);
-  for (let y = 0; y < height; y += 1) {
-    const row = y * stride;
-    raw[row] = 0;
-    for (let x = 0; x < width; x += 1) {
-      const pixel = row + 1 + x * 3;
-      raw[pixel] = red;
-      raw[pixel + 1] = green;
-      raw[pixel + 2] = blue;
-    }
-  }
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8;
-  header[9] = 2;
-  return Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    pngChunk("IHDR", header),
-    pngChunk("IDAT", deflateSync(raw)),
-    pngChunk("IEND", Buffer.alloc(0)),
-  ]);
-}
-
-function pngChunk(type: string, data: Uint8Array): Buffer {
-  const typeBytes = Buffer.from(type, "ascii");
-  const payload = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(payload.byteLength, 0);
-  const checksum = Buffer.alloc(4);
-  checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, payload])), 0);
-  return Buffer.concat([length, typeBytes, payload, checksum]);
-}
-
-function crc32(data: Uint8Array): number {
-  let crc = 0xffff_ffff;
-  for (const byte of data) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb8_8320 : 0);
-    }
-  }
-  return (crc ^ 0xffff_ffff) >>> 0;
 }
 
 async function toolAndContinuation(
@@ -784,6 +786,7 @@ function probeProfileFor(
 
 async function main(): Promise<void> {
   loadEnvironment();
+  const focus = providerSmokeFocus(process.env);
   const config = loadAiConfig();
   const model = resolveModel("ambitious", config);
   const configuredProfile = config.modelProfiles.require(config.providerId, model);
@@ -797,15 +800,19 @@ async function main(): Promise<void> {
     .digest("hex");
 
   const stages: SafeStage[] = [];
-  stages.push(await basicCompletionStage(config, profile, model));
-  stages.push(await structuredOutputStage(config, profile, model));
-  const continuation = await toolAndContinuation(config, profile, model);
-  stages.push(...continuation.stages);
-  stages.push(await automaticPromptCacheStage(config, profile, model));
-  stages.push(await imageInputStage(config, profile, model));
-  stages.push(await outputCeilingStage(config, profile, model));
-  stages.push(await contextPressureStage(config, profile, model));
-  stages.push(await timeoutAndRetryStage(config, profile, model));
+  if (focus === "image") {
+    stages.push(await imageInputStage(config, profile, model));
+  } else {
+    stages.push(await basicCompletionStage(config, profile, model));
+    stages.push(await structuredOutputStage(config, profile, model));
+    const continuation = await toolAndContinuation(config, profile, model);
+    stages.push(...continuation.stages);
+    stages.push(await automaticPromptCacheStage(config, profile, model));
+    stages.push(await imageInputStage(config, profile, model));
+    stages.push(await outputCeilingStage(config, profile, model));
+    stages.push(await contextPressureStage(config, profile, model));
+    stages.push(await timeoutAndRetryStage(config, profile, model));
+  }
   const failures = stages.filter((stage) => stage.status === "failed");
   console.log(JSON.stringify({
     protocol: "harvy-provider-live-smoke/1",
@@ -814,8 +821,10 @@ async function main(): Promise<void> {
     mode: config.mode,
     provider: config.providerId,
     model,
+    focus,
     phase,
-    promotionEligible: phase === "discovery" && failures.length === 0,
+    promotionEligible:
+      phase === "discovery" && focus === "full" && failures.length === 0,
     profileDigest,
     profile: {
       verification: profile.verification,

@@ -12,6 +12,23 @@ describe("resolusi referensi task natural", () => {
     );
   });
 
+  it("menolak sebutan yang tidak menunjuk satu-satunya task aktif", () => {
+    // Ditemukan pada percakapan nyata: "tandai selesai tugas kimia" menyelesaikan
+    // satu-satunya tugas aktif meski judulnya fisika, lalu balasan menyebut
+    // "kimia" sementara receipt code-owned menyebut fisika.
+    const fisika = task("fisika", "Ulangan fisika bab getaran");
+    assert.equal(
+      resolveActiveTaskReference([fisika], "tugas kimia yang minggu lalu"),
+      null,
+    );
+    // Rujukan tanpa sebutan dan sebutan yang benar tetap boleh.
+    assert.equal(resolveActiveTaskReference([fisika], null)?.id, "fisika");
+    assert.equal(
+      resolveActiveTaskReference([fisika], "ulangan fisika")?.id,
+      "fisika",
+    );
+  });
+
   it("memilih kecocokan unik dan gagal tertutup saat ambigu", () => {
     const report = task("report", "Kirim laporan audit");
     const slides = task("slides", "Rapikan slide presentasi");

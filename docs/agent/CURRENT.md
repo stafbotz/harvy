@@ -1,6 +1,6 @@
 # Current Context
 
-Refreshed: 2026-08-27
+Refreshed: 2026-08-28
 Baseline: d4a56ef
 Context-Version: 1
 
@@ -8,28 +8,26 @@ Context-Version: 1
 
 - Perubahan material yang dirangkum di sini dimulai di atas commit dasar
   `d4a56ef` pada `main`; status commit dan push aktual tetap dibaca dari Git.
-- `npm run check` PASS; tes integrasi coding/GitHub/Console terarah PASS 95/95;
-  `npm test` PASS 1.948/1.948 dalam 236 suite; `git diff --check` PASS selain
-  warning line-ending Windows.
+- `npm run check` PASS; `npm test` 1.974 lulus dengan 2 gagal yang tercatat di
+  `docs/engineering/KNOWN-FAILURES.md`; `git diff --check` PASS selain warning
+  line-ending Windows.
 - Smoke Edge nyata PASS pada desktop/mobile: login, navigasi tiga langkah setup,
   isi/simpan/verifikasi Compute+GitHub, non-reflection secret, dan layout. Ini
   memakai probe/storage sementara dan bukan bukti remote live.
 
 ## Recent material changes
 
-- Testing memakai GMI/MiniMax sebagai provider tunggal tanpa fallback. Cache
-  otomatis hanya dicatat content-free; input gambar privat bersifat transient.
-  Routing memisahkan authority dari assessment model, auto-memory privat consent
-  v10 tidak meminta izin per item, dan `/memori` hanya menampilkan primary memory
-  yang dapat dikendalikan pengguna.
-- Project dapat dimulai kosong, mempunyai ProjectGoal durable serta skill
-  deklaratif evidence-bound, dan memakai intent natural yang tetap melewati
-  authority code-owned. CodingRun menjalankan challenger+verifier read-only
-  sebelum satu integration writer dan baru mencatat evidence sesudah commit.
-- Console setup memisahkan Kanal, Komputer kerja, dan GitHub. Repository private
-  kosong memakai konfirmasi bootstrap exact, WAL/idempotency/reconciliation,
-  satu README code-owned, lalu provisioning; branch/push/draft PR tetap approval
-  terpisah. Race klik verifikasi WhatsApp sesudah status terminal juga ditutup.
+- Percakapan privat kini punya tool tulis (`task.manage`, `reminder.schedule`)
+  dengan policy otorisasi kontekstual; penghapusan tugas ditolak dengan alasan
+  terbaca model. Native tool call salah bentuk mendapat satu koreksi, dan
+  penghentian run dijelaskan model untuk kelas invalid_planner_output/max_steps.
+- `HARVY_IDENTITY` menyatakan dua register: santai saat mengobrol, rapi saat
+  bekerja, boleh berpindah dalam satu balasan. `resolveActiveTaskReference`
+  tidak lagi memilih kandidat tunggal tanpa memeriksa sebutan pengguna.
+- Anggaran konteks naik ke 48.000 karakter, 40 giliran, 24 memori. Biaya token
+  terukur: satu giliran 11.000–15.000 token, `understandingPrompt` ~8.200 di
+  antaranya. `response_format` tidak dihormati provider; rute memori semantik
+  mati karena tidak ada model embedding dan GMI tidak melayani `/embeddings`.
 
 ## Active cross-subsystem blockers
 

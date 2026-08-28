@@ -13,9 +13,9 @@ describe("authority explicit remember", () => {
   it("mengikat semantic evidence lintas bahasa ke candidate", () => {
     const cases = [
       [
-        "harvy inget aku cintaaa banget sama sohit",
-        "aku cintaaa banget sama sohit",
-        "Sangat mencintai Sohit",
+        "harvy inget aku cintaaa banget sama rani",
+        "aku cintaaa banget sama rani",
+        "Sangat mencintai Rani",
       ],
       [
         "Remember that my preferred study time is morning",
@@ -51,16 +51,16 @@ describe("authority explicit remember", () => {
   });
 
   it("mengikat consent hanya ke span yang diminta diingat", () => {
-    const message = "inget ya Sohit pacarku, tadi aku habis dari rumah sakit";
+    const message = "inget ya Rani pacarku, tadi aku habis dari rumah sakit";
     const authority = explicitMemoryRememberAuthority(
       message,
       [
-        { content: "Sohit adalah pacarku" },
+        { content: "Rani adalah pacarku" },
         { content: "Baru pulang dari rumah sakit" },
       ],
-      remember(message, "Sohit pacarku"),
+      remember(message, "Rani pacarku"),
     );
-    assert.equal(authority?.requestedText, "Sohit pacarku");
+    assert.equal(authority?.requestedText, "Rani pacarku");
     assert.deepEqual(authority?.candidateIndexes, [0]);
   });
 
@@ -82,11 +82,11 @@ describe("authority explicit remember", () => {
   });
 
   it("menolak candidate yang memperluas fakta di luar span authority", () => {
-    const message = "remember Sohit is my partner";
+    const message = "remember Rani is my partner";
     const authority = explicitMemoryRememberAuthority(
       message,
-      [{ content: "Sohit is my partner and is being treated in hospital" }],
-      remember(message, "Sohit is my partner"),
+      [{ content: "Rani is my partner and is being treated in hospital" }],
+      remember(message, "Rani is my partner"),
     );
     assert.deepEqual(authority?.candidateIndexes, []);
   });
@@ -94,16 +94,16 @@ describe("authority explicit remember", () => {
   it("menolak implicit statement, retrieval, negasi, dan reminder task", () => {
     const cases: Array<[string, SemanticOperation]> = [
       [
-        "I should remember that Sohit is my partner",
-        { ...remember("I should remember that Sohit is my partner", "Sohit is my partner"), explicitness: "implicit" },
+        "I should remember that Rani is my partner",
+        { ...remember("I should remember that Rani is my partner", "Rani is my partner"), explicitness: "implicit" },
       ],
       [
-        "Do you remember Sohit?",
-        { ...remember("Do you remember Sohit?", "Sohit"), operation: "recall" },
+        "Do you remember Rani?",
+        { ...remember("Do you remember Rani?", "Rani"), operation: "recall" },
       ],
       [
-        "Don't remember Sohit",
-        { ...remember("Don't remember Sohit", "Sohit"), operation: "forget" },
+        "Don't remember Rani",
+        { ...remember("Don't remember Rani", "Rani"), operation: "forget" },
       ],
       [
         "Remind me to study at seven",
@@ -114,7 +114,7 @@ describe("authority explicit remember", () => {
       assert.equal(
         explicitMemoryRememberAuthority(
           message,
-          [{ content: "Sohit is my partner" }],
+          [{ content: "Rani is my partner" }],
           semantic,
         ),
         null,

@@ -27,6 +27,13 @@ import {
   type WhatsAppSurfaceEvent,
   type WhatsAppSurfaceSummary,
 } from "../src/operations/whatsapp-surface-evidence.js";
+import {
+  createVisualAcceptanceFixtureForColor,
+  matchesVisualAcceptanceResponse,
+  observedVisualAcceptanceColors,
+  VISUAL_ACCEPTANCE_COLORS,
+  type VisualAcceptanceColor,
+} from "./live-visual-acceptance-fixture.js";
 
 const CONFIRMATION = "RUN_NONCRITICAL_WHATSAPP_PRIVATE";
 const DEDICATED_ACCOUNT = "DEDICATED_TEST_ACCOUNT";
@@ -61,6 +68,8 @@ interface FailureEvidence {
   maxTextCharacters: number;
   responseKinds: string[];
   surfaceTopology: WhatsAppSurfaceSummary;
+  expectedVisualColor?: VisualAcceptanceColor;
+  observedVisualColors?: VisualAcceptanceColor[];
 }
 
 function loadEnvironment(): void {
@@ -399,6 +408,89 @@ async function main(): Promise<void> {
         return digestBurst(recalled.messages);
       },
     );
+
+    await stage(stages, "multimodal_image_through_private_channel", async () => {
+      const stageStart = messages.length;
+      const evidence: string[] = [];
+      for (
+        const [index, expectedColor] of VISUAL_ACCEPTANCE_COLORS.entries()
+      ) {
+        const fixture = createVisualAcceptanceFixtureForColor(expectedColor);
+        const fromSequence = messages.length;
+        await sendAcceptanceImage(
+          socket,
+          config,
+          fixture.data,
+          fixture.prompt,
+          `multimodal-image-${index + 1}`,
+        );
+        try {
+          await waitForHarvy(
+            messages,
+            waiters,
+            fromSequence,
+            (item) =>
+              !isRunAnchorText(item.text) &&
+              !isRenderedConversationProgress(item.text) &&
+              (Boolean(item.text.trim()) || item.hasDocument),
+            Math.max(config.timeoutMs, 180_000),
+          );
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message ===
+              "WHATSAPP_PRIVATE_ACCEPTANCE_EXPECTED_RESPONSE_TIMEOUT"
+          ) {
+            throw acceptanceFailure(
+              "WHATSAPP_PRIVATE_ACCEPTANCE_MULTIMODAL_RESPONSE_MISSING",
+              {
+                ...responseFailureEvidence(
+                  messages.filter((message) =>
+                    message.sequence >= fromSequence
+                  ),
+                ),
+                expectedVisualColor: fixture.expectedColor,
+                observedVisualColors: [],
+              },
+            );
+          }
+          throw error;
+        }
+        await waitForBurstIdle(messages, waiters);
+        const response = messages.filter((message) =>
+          message.sequence >= fromSequence
+        );
+        const answer = response
+          .filter((message) =>
+            !isRunAnchorText(message.text) &&
+            !isRenderedConversationProgress(message.text)
+          )
+          .map((message) => message.text)
+          .filter(Boolean)
+          .join("\n");
+        if (
+          !matchesVisualAcceptanceResponse(answer, fixture.expectedColor)
+        ) {
+          throw acceptanceFailure(
+            "WHATSAPP_PRIVATE_ACCEPTANCE_MULTIMODAL_ANSWER_MISMATCH",
+            {
+              ...responseFailureEvidence(response),
+              expectedVisualColor: fixture.expectedColor,
+              observedVisualColors: observedVisualAcceptanceColors(answer),
+            },
+          );
+        }
+        evidence.push(
+          digestBurst(response),
+          sha256(fixture.data.toString("base64")),
+        );
+      }
+      return stageResult(
+        messages,
+        stageStart,
+        sha256(evidence.join("\0")),
+      );
+    });
 
     await stage(stages, "durable_planning_runtime", async () => {
       const fromSequence = messages.length;
@@ -835,7 +927,7 @@ function assertPrivateOnboarding(intro: CapturedBurst): void {
   for (const expected of [
     /aku Harvy/iu,
     /AI agent/iu,
-    /Pesanmu bakal diproses oleh AI/iu,
+    /Pesan atau gambar yang kamu kirim bakal diproses oleh AI/iu,
     /bisa otomatis mengingatnya/iu,
     /bakal bilang setelah benar-benar menyimpan atau memperbaruinya/iu,
     /melihat, mengoreksi, atau menghapusnya/iu,
@@ -1065,6 +1157,31 @@ async function sendAcceptanceMessage(
     const sent = await socket.sendMessage(config.harvyDestination, { text }, {
       messageId,
     });
+    if (sent?.key.id) {
+      config.transportEvidence.trackedMessageIds.add(sent.key.id);
+    }
+    config.transportEvidence.serverAccepted += 1;
+  } catch (error) {
+    config.transportEvidence.sendRejected += 1;
+    throw error;
+  }
+}
+
+async function sendAcceptanceImage(
+  socket: WASocket,
+  config: AcceptanceConfig,
+  image: Buffer,
+  caption: string,
+  stageName: string,
+): Promise<void> {
+  const messageId = stanzaId(config.runLabel, stageName);
+  config.transportEvidence.trackedMessageIds.add(messageId);
+  try {
+    const sent = await socket.sendMessage(
+      config.harvyDestination,
+      { image, caption, mimetype: "image/png" },
+      { messageId },
+    );
     if (sent?.key.id) {
       config.transportEvidence.trackedMessageIds.add(sent.key.id);
     }

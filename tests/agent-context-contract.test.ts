@@ -99,7 +99,13 @@ describe("kontrak konteks coding agent", () => {
     assert.match(agents, /sekitar 15%/u);
     assert.match(agents, /maksimal tiga entri LOG/u);
     assert.match(agents, /git status/u);
-    assert.match(agents, /kode dan tes yang benar-benar berjalan/u);
+    assert.match(agents, /Kode yang benar-benar dijalankan adalah bukti keadaan aktual/u);
+    // Kontrak yang dijaga: unit test Harvy menstub model, jadi suite hijau
+    // adalah bukti pipa dan bukan bukti perilaku. Menghapus pembedaan ini
+    // pernah membuat suite hijau dibaca sebagai "Harvy membaik".
+    assert.match(agents, /menstub setiap panggilan model/u);
+    assert.match(agents, /Bukti perilaku hanya datang dari eval atau kanal nyata/u);
+    assert.match(agents, /KNOWN-FAILURES\.md/u);
     assert.doesNotMatch(agents, /~15 entri terbaru|seluruh `docs\/` sebagai orientasi/u);
   });
 

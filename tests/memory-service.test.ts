@@ -153,13 +153,13 @@ describe("MemoryService", () => {
     const saved = await service.remember({
       ownerId: "student",
       kind: "personal",
-      content: "Sohit adalah pacarku",
+      content: "Rani adalah pacarku",
       sensitiveConsent: true,
       sensitivity: "personal",
       sourceSequences: [12],
       subject: "user",
       predicate: "romantic_partner",
-      value: "Sohit",
+      value: "Rani",
     });
 
     assert.ok(saved);

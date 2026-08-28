@@ -2,6 +2,7 @@ import type {
   ConversationIntent,
   RoutingAssessment,
 } from "../ai/model-policy.js";
+import type { SemanticOperation } from "../domain/semantic-operation.js";
 import type { RiskLevel } from "./safety-policy.js";
 
 /**
@@ -101,6 +102,36 @@ export function prefersGuidedSmallStep(
     assessment.factualStakes !== "high" &&
     assessment.toolNeed === "none" &&
     !assessment.transformationMechanical;
+}
+
+/**
+ * Permintaan mengubah tugas yang tidak akan dikerjakan jalur deterministik.
+ *
+ * `understand()` membuang `taskAction` beserta payload-nya begitu intent,
+ * explicitness, atau confidence-nya tidak persis, dan `immediateUnderstandingRoute`
+ * lalu memilih `conversation`. Akibatnya kalimat seperti "besok ada ulangan
+ * fisika, ingetin ya" bisa berakhir tanpa tindakan apa pun dan tanpa
+ * pemberitahuan apa pun kepada pengguna.
+ *
+ * Sinyal ini hanya dipakai pemanggil yang sudah berada di cabang `conversation`,
+ * jadi tidak pernah menduplikasi write deterministik. Ia juga tidak memberi
+ * authority menulis: harness, policy otorisasi, dan validator executor tetap
+ * memutuskan. Yang diberikan hanya kesempatan bagi model untuk memakai tool
+ * lalu melaporkan hasil terbukti, atau bertanya bila memang kurang jelas.
+ */
+export function requestsUnhandledTaskChange(
+  operation: SemanticOperation | null | undefined,
+): boolean {
+  if (!operation || operation.domain !== "task") return false;
+  if (operation.subject !== "self") return false;
+  // Ambang yang sama dengan sinyal routing lain. Di bawah ini label semantic
+  // lebih sering derau daripada permintaan.
+  if (operation.confidence < 0.55) return false;
+  // `implicit` berarti model menebak dari suasana, bukan dari permintaan.
+  if (operation.explicitness === "implicit") return false;
+  return operation.operation === "save" ||
+    operation.operation === "update" ||
+    operation.operation === "complete";
 }
 
 /** Pagar terakhir: tombol tidak boleh bersaing dengan pertanyaan bebas. */

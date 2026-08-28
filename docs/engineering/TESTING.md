@@ -28,6 +28,40 @@ npm test
 `npm test` membangun TypeScript dan menjalankan seluruh `dist/tests/*.test.js`.
 Perintah dianggap lulus hanya jika exit code `0` dan tidak ada test gagal.
 
+### Apa yang dibuktikan gerbang ini, dan apa yang tidak
+
+Seluruh unit test menstub panggilan model: klien AI diganti string kaleng, dan
+`globalThis.fetch` ditimpa. Tidak ada satu pun unit test yang memanggil model
+sungguhan. Karena itu suite ini membuktikan **pipa dan kontrak** — isolasi
+scope, batas izin yang gagal tertutup, parsing, matematika waktu, idempotency,
+serta larangan mengklaim tindakan tanpa receipt — dan sama sekali **tidak**
+membuktikan bahwa Harvy memahami maksud pengguna, memilih tool yang tepat, atau
+terdengar wajar.
+
+Suite hijau menjawab "apakah aku merusak sesuatu", bukan "apakah Harvy menjadi
+lebih baik". Untuk pertanyaan kedua, bukti yang sah hanya corpus model nyata di
+bawah atau percakapan di kanal sungguhan.
+
+### Urutan yang murah
+
+Menjalankan suite penuh sebagai loop kerja adalah pemborosan terbesar di
+repositori ini. Pada host 2 core, `npm test` ≈ 7 menit sementara satu berkas
+tes ≈ 8 detik:
+
+```bash
+npm run check
+npm run test:file -- dist/tests/nama-berkas.test.js
+npm run test:watch
+```
+
+Pakai `test:file` selama menulis kode, lalu `npm test` sekali sebelum
+menyatakan selesai. `tsconfig.json` memakai `incremental`, jadi build kedua dan
+seterusnya murah selama `dist/.tsbuildinfo` tidak dihapus.
+
+Tes yang sudah merah sebelum perubahanmu tercatat di
+[`KNOWN-FAILURES.md`](KNOWN-FAILURES.md); baca berkas itu sebelum menyimpulkan
+kamu menyebabkan regresi.
+
 Perubahan coding trust-domain juga wajib menjalankan:
 
 ```bash

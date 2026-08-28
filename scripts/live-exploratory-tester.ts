@@ -12,6 +12,7 @@ import makeWASocket, {
 } from "baileys";
 import { Bot } from "grammy";
 import { Api, Logger, TelegramClient } from "teleproto";
+import { CustomFile } from "teleproto/client/uploads.js";
 import { StringSession } from "teleproto/sessions/index.js";
 import {
   assertLiveExplorationGate,
@@ -61,12 +62,17 @@ import { whatsAppCredentialJids } from
   "../src/whatsapp/auth-credential.js";
 import { parseWhatsAppSurfaceEvent } from
   "../src/operations/whatsapp-surface-evidence.js";
+import { createVisualAcceptanceFixtureForColor } from
+  "./live-visual-acceptance-fixture.js";
 
 const RUNTIME_READY_TIMEOUT_MS = 120_000;
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 75_000;
 const TELEGRAM_POLL_MS = 500;
 const WHATSAPP_OBSERVATION_QUIET_MS = 750;
 const WHATSAPP_OBSERVATION_FLUSH_MAX_MS = 5_000;
+const SCRIPTED_COMMANDS_ENV = "HARVY_LIVE_EXPLORATION_COMMANDS_JSONL";
+const MAX_SCRIPTED_COMMANDS = 32;
+const MAX_SCRIPTED_COMMAND_BYTES = 256 * 1024;
 
 interface ExplorerSurfaceEvent {
   operation: "create" | "edit" | "delete" | "pin" | "unpin";
@@ -78,6 +84,7 @@ interface ExplorerSurfaceEvent {
 
 interface ExplorerDriver {
   send(text: string): Promise<void>;
+  sendImage?(image: Buffer, caption: string): Promise<void>;
   reply(surface: string, text: string): Promise<void>;
   click(surface: string, label: string): Promise<void>;
   flushObservation(): Promise<{ timedOut: boolean }>;
@@ -171,7 +178,15 @@ interface ExplorationMetrics {
 
 type ExplorerTransportCommand = Extract<
   LiveExplorationCommand,
-  { type: "send" | "reply" | "click" | "burst" | "interrupt" }
+  {
+    type:
+      | "send"
+      | "image"
+      | "reply"
+      | "click"
+      | "burst"
+      | "interrupt";
+  }
 >;
 
 export interface ExplorerSentRecord {
@@ -237,7 +252,8 @@ export interface ExplorerTransportExecutionOptions {
   command: ExplorerTransportCommand;
   commandSequence: number;
   runId: string;
-  driver: Pick<ExplorerDriver, "send" | "reply" | "click">;
+  driver: Pick<ExplorerDriver, "send" | "reply" | "click"> &
+    Partial<Pick<ExplorerDriver, "sendImage">>;
   evidence: Pick<
     LiveExplorationEvidenceWriter,
     "recordBoundary" | "recordTurn"
@@ -266,9 +282,14 @@ export async function executeExplorerTransportCommand(
   } else if (activeTurn !== null) {
     throw blocked("LIVE_EXPLORATION_TURN_ACTIVE_SETTLE_OR_INTERRUPT_REQUIRED");
   }
+  const visualFixture = command.type === "image"
+    ? createVisualAcceptanceFixtureForColor(command.color)
+    : null;
   const texts = command.type === "send" || command.type === "reply" ||
       command.type === "interrupt"
     ? [command.text]
+    : command.type === "image"
+    ? [visualFixture!.prompt]
     : command.type === "click"
     ? [command.label]
     : [...command.messages];
@@ -294,7 +315,15 @@ export async function executeExplorerTransportCommand(
     await options.evidence.recordTurn(value);
   };
   const sendAt = async (index: number): Promise<void> => {
-    if (command.type === "reply") {
+    if (command.type === "image") {
+      if (!options.driver.sendImage || !visualFixture) {
+        throw blocked("LIVE_EXPLORATION_IMAGE_UNAVAILABLE");
+      }
+      await options.driver.sendImage(
+        visualFixture.data,
+        visualFixture.prompt,
+      );
+    } else if (command.type === "reply") {
       await options.driver.reply(command.surface, command.text);
     } else if (command.type === "click") {
       await options.driver.click(command.surface, command.label);
@@ -440,6 +469,7 @@ async function main(): Promise<void> {
   loadRepositoryEnvironment(repositoryRoot);
   assertLiveExplorationGate(process.env);
   const options = parseLiveExplorationOptions(process.argv.slice(2));
+  const scriptedCommands = takeScriptedCommands(process.env);
   const paths = liveAcceptancePaths(repositoryRoot);
   const lock = await acquireLocalRuntimeLock(paths.setupLockFile, "evaluation");
   try {
@@ -448,6 +478,7 @@ async function main(): Promise<void> {
       options.channel,
       options.journeyId,
       options.runMode,
+      scriptedCommands,
     );
   } finally {
     await lock.release();
@@ -459,6 +490,7 @@ async function runExplorer(
   channel: LiveExplorationChannel,
   journeyId: string,
   runMode: LiveExplorationRunMode,
+  scriptedCommands: string | null,
 ): Promise<void> {
   const entry = resolve(repositoryRoot, "dist", "src", "app.js");
   if (!(await lstat(entry).catch(() => null))?.isFile()) {
@@ -655,14 +687,20 @@ async function runExplorer(
   let deleteJourney = false;
   let stopped = false;
   let commandSequence = 0;
-  const reader = createInterface({
-    input: process.stdin,
-    crlfDelay: Infinity,
-    terminal: false,
-  });
-  const closeInput = (): void => reader.close();
-  process.once("SIGINT", closeInput);
-  process.once("SIGTERM", closeInput);
+  const reader = scriptedCommands === null
+    ? createInterface({
+      input: process.stdin,
+      crlfDelay: Infinity,
+      terminal: false,
+    })
+    : null;
+  const commandLines: AsyncIterable<string> | Iterable<string> = reader ??
+    scriptedCommands!.split("\n");
+  const closeInput = (): void => reader?.close();
+  if (reader) {
+    process.once("SIGINT", closeInput);
+    process.once("SIGTERM", closeInput);
+  }
 
   try {
     attribution.markReady();
@@ -680,15 +718,19 @@ async function runExplorer(
       resumed: journey.resumed,
       runMode,
       commands: [
-        "send", "reply", "click", "burst", "interrupt", "settle", "wait",
+        "send", "image", "reply", "click", "burst", "interrupt", "settle", "wait",
         "restart", "mark", "assess", "status", "stop",
       ],
       coverage: liveExplorationCoverageSnapshot(metrics.coverage),
       transcriptPersistence: "none",
       evidencePersistence: "content-free",
+      commandSource: scriptedCommands === null ? "stdin" : "ephemeral-jsonl",
+      scriptedCommandCount: scriptedCommands === null
+        ? 0
+        : scriptedCommands.split("\n").filter(Boolean).length,
     });
 
-    for await (const line of reader) {
+    for await (const line of commandLines) {
       if (!line.trim()) continue;
       commandSequence += 1;
       if (fatalSurfaceError) {
@@ -714,9 +756,11 @@ async function runExplorer(
       }
     }
   } finally {
-    process.off("SIGINT", closeInput);
-    process.off("SIGTERM", closeInput);
-    reader.close();
+    if (reader) {
+      process.off("SIGINT", closeInput);
+      process.off("SIGTERM", closeInput);
+      reader.close();
+    }
     let shutdownError: unknown = null;
     const rememberShutdownError = (error: unknown): void => {
       shutdownError ??= error;
@@ -879,17 +923,26 @@ async function runExplorer(
       return "continue";
     }
     if (command.type === "wait") {
-      requireIdleTurn();
+      // Scripted live exploration must be able to wait for a slow real model
+      // without closing attribution first. Closing before the final bubble
+      // made late responses look like background output and allowed the next
+      // user turn to race an unfinished Harvy turn.
+      const activeTurn = attribution.current().turn;
       await delay(command.ms);
       await surfaceTail;
-      if (command.ms >= LIVE_EXPLORATION_PAUSE_THRESHOLD_MS) {
+      if (
+        activeTurn === null &&
+        command.ms >= LIVE_EXPLORATION_PAUSE_THRESHOLD_MS
+      ) {
         await recordCoverage("derived", "wait-threshold", ["pause"]);
       }
       emit({
         type: "wait_completed",
         commandSequence: sequence,
         waitedMs: command.ms,
+        activeTurn,
         pauseThresholdMet:
+          activeTurn === null &&
           command.ms >= LIVE_EXPLORATION_PAUSE_THRESHOLD_MS,
       });
       return "continue";
@@ -984,6 +1037,30 @@ async function runExplorer(
     }));
     for (const marker of additions) metrics.coverage.add(marker);
   }
+}
+
+/**
+ * Fallback non-interaktif untuk host Windows yang tidak dapat mempertahankan
+ * stdin PTY. Nilai dihapus sebelum runtime Harvy dibuat, tidak diteruskan ke
+ * child process, dan tidak pernah masuk evidence/transcript.
+ */
+export function takeScriptedCommands(env: NodeJS.ProcessEnv): string | null {
+  const raw = env[SCRIPTED_COMMANDS_ENV];
+  delete env[SCRIPTED_COMMANDS_ENV];
+  if (raw === undefined) return null;
+  if (
+    Buffer.byteLength(raw, "utf8") > MAX_SCRIPTED_COMMAND_BYTES ||
+    raw.includes("\0")
+  ) {
+    throw blocked("LIVE_EXPLORATION_SCRIPTED_COMMANDS_INVALID");
+  }
+  const lines = raw.split(/\r?\n/u).filter((line) => line.trim());
+  if (lines.length < 1 || lines.length > MAX_SCRIPTED_COMMANDS) {
+    throw blocked("LIVE_EXPLORATION_SCRIPTED_COMMANDS_INVALID");
+  }
+  // Parser authority tetap satu: setiap baris menjalani kontrak JSON tertutup
+  // yang sama ketika loop membacanya.
+  return `${lines.join("\n")}\n`;
 }
 
 async function startTelegram(
@@ -1124,6 +1201,18 @@ async function createTelegramDriver(
   return {
     async send(text) {
       await client.sendMessage(botPeer, { message: text });
+    },
+    async sendImage(image, caption) {
+      await client.sendFile(botPeer, {
+        file: new CustomFile(
+          "harvy-exploration-visual.png",
+          image.byteLength,
+          "",
+          image,
+        ),
+        caption,
+        forceDocument: false,
+      });
     },
     async reply(surface, text) {
       const technical = aliases.technicalIdFor(surface);
@@ -1325,6 +1414,28 @@ function createWhatsAppDriver(
       connection.assertOpen();
       try {
         await sendWhatsApp(socket, destination, text, messageScope);
+      } catch (error) {
+        const reason = whatsAppDisconnectReason(error);
+        if (reason !== null) {
+          onConnection({
+            connection: "close",
+            lastDisconnect: { error },
+          });
+          connection.assertOpen();
+        }
+        throw error;
+      }
+    },
+    async sendImage(image, caption) {
+      connection.assertOpen();
+      try {
+        await sendWhatsAppImage(
+          socket,
+          destination,
+          image,
+          caption,
+          messageScope,
+        );
       } catch (error) {
         const reason = whatsAppDisconnectReason(error);
         if (reason !== null) {
@@ -1646,6 +1757,27 @@ async function sendWhatsApp(
   }
 }
 
+async function sendWhatsAppImage(
+  socket: WASocket,
+  destination: string,
+  image: Buffer,
+  caption: string,
+  messageScope: string,
+): Promise<void> {
+  const messageId = liveExplorationWhatsAppMessageId(
+    messageScope,
+    "tester",
+  );
+  const sent = await socket.sendMessage(
+    destination,
+    { image, caption, mimetype: "image/png" },
+    { messageId },
+  );
+  if (sent?.key.id !== messageId) {
+    throw blocked("LIVE_EXPLORATION_WHATSAPP_MESSAGE_ID_NOT_PRESERVED");
+  }
+}
+
 function waitForWhatsAppOpen(
   socket: WASocket,
   timeoutMs: number,
@@ -1786,7 +1918,7 @@ function percentile(values: readonly number[], ratio: number): number | null {
 function emitSent(
   commandSequence: number,
   turn: number,
-  kind: "send" | "reply" | "click" | "burst" | "interrupt",
+  kind: "send" | "image" | "reply" | "click" | "burst" | "interrupt",
   messageCount: number,
   partial = false,
 ): void {

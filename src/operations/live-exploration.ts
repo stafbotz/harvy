@@ -41,6 +41,7 @@ export type LiveExplorationChannel = "telegram" | "whatsapp";
 export type LiveExplorationObservationPhase = "startup" | "idle" | "turn";
 export type LiveExplorationWhatsAppRole = "harvy" | "tester";
 export type LiveExplorationRunMode = "full" | "focused";
+export type LiveExplorationVisualColor = "red" | "green" | "blue";
 
 export const LIVE_EXPLORATION_COVERAGE_MARKERS = [
   "real-task",
@@ -125,6 +126,7 @@ export interface LiveExplorationAssessment {
 
 export type LiveExplorationCommand =
   | { type: "send"; text: string }
+  | { type: "image"; color: LiveExplorationVisualColor }
   | { type: "reply"; surface: string; text: string }
   | { type: "click"; surface: string; label: string }
   | { type: "burst"; messages: string[]; gapMs: number }
@@ -150,7 +152,7 @@ export interface LiveExplorationOptions {
 export interface LiveExplorationTurnEvidence {
   runId: string;
   turn: number;
-  kind: "send" | "reply" | "burst" | "click" | "interrupt";
+  kind: "send" | "image" | "reply" | "burst" | "click" | "interrupt";
   texts: readonly string[];
   replySurface?: string;
 }
@@ -637,6 +639,14 @@ export function parseLiveExplorationCommand(
   if (type === "send") {
     exactKeys(record, ["text", "type"]);
     return { type, text: messageText(record["text"]) };
+  }
+  if (type === "image") {
+    exactKeys(record, ["color", "type"]);
+    const color = record["color"];
+    if (color !== "red" && color !== "green" && color !== "blue") {
+      throw blocked("LIVE_EXPLORATION_IMAGE_COLOR_INVALID");
+    }
+    return { type, color };
   }
   if (type === "reply") {
     exactKeys(record, ["surface", "text", "type"]);
@@ -1163,7 +1173,8 @@ function validateEvidenceRecord(
     if (
       record["kind"] !== "send" && record["kind"] !== "reply" &&
       record["kind"] !== "burst" && record["kind"] !== "click" &&
-      (version !== 3 || record["kind"] !== "interrupt")
+      (version !== 3 ||
+        (record["kind"] !== "interrupt" && record["kind"] !== "image"))
     ) {
       throw blocked("LIVE_EXPLORATION_EVIDENCE_INVALID");
     }

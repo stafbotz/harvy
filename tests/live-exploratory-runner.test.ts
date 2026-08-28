@@ -6,6 +6,7 @@ import {
   explorerTransportRejection,
   isExplorerEvidenceCommitError,
   startObservedWhatsAppRuntime,
+  takeScriptedCommands,
   WhatsAppObserverConnectionGuard,
   type ExplorerSentRecord,
 } from "../scripts/live-exploratory-tester.js";
@@ -15,6 +16,66 @@ import {
 } from "../src/operations/live-exploration.js";
 
 describe("live exploratory runner transport", () => {
+  it("mengonsumsi command JSONL sementara sebelum runtime child dibuat", () => {
+    const env: NodeJS.ProcessEnv = {
+      HARVY_LIVE_EXPLORATION_COMMANDS_JSONL:
+        '{"type":"send","text":"halo"}\n{"type":"settle"}',
+    };
+    assert.equal(
+      takeScriptedCommands(env),
+      '{"type":"send","text":"halo"}\n{"type":"settle"}\n',
+    );
+    assert.equal(env.HARVY_LIVE_EXPLORATION_COMMANDS_JSONL, undefined);
+    assert.throws(
+      () => takeScriptedCommands({
+        HARVY_LIVE_EXPLORATION_COMMANDS_JSONL: "\n\n",
+      }),
+      /LIVE_EXPLORATION_SCRIPTED_COMMANDS_INVALID/u,
+    );
+  });
+
+  it("mengirim fixture gambar bawaan tanpa path dan merekam caption saja", async () => {
+    const attribution = new LiveTurnAttribution();
+    attribution.markReady();
+    const turns: Array<{
+      turn: number;
+      startedAt: number;
+      firstResponseMs: number | null;
+      responseEvents: number;
+    }> = [];
+    const evidence: LiveExplorationTurnEvidence[] = [];
+    let signature = "";
+
+    await executeExplorerTransportCommand({
+      command: { type: "image", color: "blue" },
+      commandSequence: 1,
+      runId: "run-visual",
+      driver: {
+        async send() {},
+        async sendImage(image, caption) {
+          signature = `${image.subarray(1, 4).toString("ascii")}:${caption}`;
+        },
+        async reply() {},
+        async click() {},
+      },
+      evidence: {
+        async recordBoundary() {},
+        async recordTurn(value) {
+          evidence.push(value);
+        },
+      },
+      attribution,
+      turns,
+      now: () => 25,
+    });
+
+    assert.match(signature, /^PNG:/u);
+    assert.doesNotMatch(signature, /\bblue\b/iu);
+    assert.equal(evidence[0]?.kind, "image");
+    assert.equal(evidence[0]?.texts.length, 1);
+    assert.equal(turns.length, 1);
+  });
+
   it("tidak membuat turn/evidence dan menutup attribution saat send ditolak", async () => {
     const attribution = new LiveTurnAttribution();
     attribution.markReady();

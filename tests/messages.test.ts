@@ -105,7 +105,7 @@ describe("catatan memori pada balasan", () => {
   it("mengenali bahasa save/update tanpa menyamakan recall dengan write", () => {
     assert.equal(
       replyAcknowledgesMemoryWrite(
-        "Aku bakal inget kok kalau kamu cinta banget sama Sohit.",
+        "Aku bakal inget kok kalau kamu cinta banget sama Rani.",
       ),
       true,
     );

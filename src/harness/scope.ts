@@ -22,6 +22,13 @@ export interface PrivateAgentScope {
   /** Kunci percakapan dan memori hanya berlaku pada kanal ini. */
   conversationKey: string;
   memoryKey: string;
+  /**
+   * Tujuan pengiriman pengingat pada kanal ini. Telegram memakai chat id,
+   * WhatsApp memakai kunci akun+pengguna, jadi nilainya tidak selalu sama
+   * dengan `userId`. Tidak ikut ke `scopeKey` sehingga checkpoint lama tetap
+   * sah; adapter yang tidak mengisinya jatuh ke `userId` seperti sebelumnya.
+   */
+  deliveryChatId?: string;
 }
 
 export interface GroupAgentScope {
@@ -65,6 +72,7 @@ const MAX_PLATFORM_ID_CHARACTERS = 512;
 export function privateAgentScope(
   channel: AgentChannel,
   userId: string,
+  deliveryChatId?: string,
 ): PrivateAgentScope {
   const safeUserId = platformId(userId, "userId");
   const encodedUser = encodeURIComponent(safeUserId);
@@ -75,6 +83,7 @@ export function privateAgentScope(
     userId: safeUserId,
     conversationKey: `${base}:conversation`,
     memoryKey: `${base}:memory`,
+    ...(deliveryChatId ? { deliveryChatId } : {}),
   };
 }
 

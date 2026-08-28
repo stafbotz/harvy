@@ -96,7 +96,6 @@ describe("provider adapter", () => {
     assert.deepEqual(wire[3], {
       role: "user",
       content: [
-        { type: "text", text: "apa isi gambar ini?" },
         {
           type: "image_url",
           image_url: {
@@ -104,6 +103,7 @@ describe("provider adapter", () => {
             detail: "low",
           },
         },
+        { type: "text", text: "apa isi gambar ini?" },
       ],
     });
     assert.throws(

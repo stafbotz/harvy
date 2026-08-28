@@ -1,4 +1,14 @@
-import type { ConversationIntent } from "../src/ai/model-policy.js";
+import type {
+  ConversationIntent,
+  RoutingToolNeed,
+  WorkComplexity,
+} from "../src/ai/model-policy.js";
+import type { PublicProgressFocusKind } from "../src/core/conversation-progress.js";
+import type {
+  SemanticDomain,
+  SemanticExplicitness,
+  SemanticOperationName,
+} from "../src/domain/semantic-operation.js";
 import type { StylePreference } from "../src/domain/profile.js";
 import type { ActiveSession } from "../src/domain/session.js";
 import type { SessionSignal } from "../src/domain/session.js";
@@ -32,6 +42,39 @@ export interface ConversationEvalCase {
   };
   requiredTopicGroups?: readonly (readonly string[])[];
   minTopicGroups?: number;
+  /**
+   * Ekstraksi understanding yang sebelumnya tidak pernah diuji korpus.
+   *
+   * Mayoritas aturan `understandingPrompt` membahas `semanticOperation` dan
+   * `routingAssessment`, tetapi tidak satu pun tercakup di sini sampai
+   * 2026-08-28. Akibatnya prompt itu tidak dapat direstrukturisasi dengan aman:
+   * regresi pada domain semantic atau pada `toolNeed`—yang menentukan apakah
+   * Harvy mendapat tool sama sekali—akan lolos tanpa terlihat.
+   *
+   * `null` berarti field itu memang harus kosong pada kasus tersebut.
+   */
+  expectedSemanticDomain?: SemanticDomain | null;
+  expectedSemanticOperation?: SemanticOperationName;
+  expectedSemanticExplicitness?: SemanticExplicitness;
+  expectedToolNeed?: RoutingToolNeed | readonly RoutingToolNeed[];
+  expectedComplexity?: WorkComplexity | readonly WorkComplexity[];
+  /**
+   * `publicFocus` adalah satu-satunya bagian understanding yang benar-benar
+   * terlihat pengguna pada status sementara, sehingga kebocoran di sini
+   * langsung terlihat orang. `null` berarti fokus memang harus kosong.
+   */
+  expectedPublicFocusKind?: PublicProgressFocusKind | null;
+  /** Term yang wajib muncul pada `subject`; menjaga fokus tetap konkret. */
+  publicFocusSubjectTerms?: readonly string[];
+  /** Jumlah retraction memori yang diharapkan dari turn ini. */
+  expectedRetractionCount?: number;
+  /**
+   * Durability dan sourceEvidence kandidat memori. `sourceEvidence` wajib span
+   * persis dari pesan, jadi tes memeriksa bahwa nilainya benar-benar substring
+   * pesan—bukan parafrasa model.
+   */
+  expectedMemoryDurability?: "durable" | "bounded" | "transient";
+  requireMemoryEvidenceSpan?: boolean;
 }
 
 export interface TurnBoundaryEvalCase {
@@ -287,6 +330,23 @@ export const CONVERSATION_EVAL_CASES: readonly ConversationEvalCase[] = [
   { id: "empty-reminder", message: "buat pengingat dong", expectedIntent: ["request", "task", "question"], expectedRisk: "biasa", expectedRoute: "conversation", forbidTaskMutation: true, requiredTopicGroups: [["apa", "soal apa"], ["kapan", "jam", "waktu"]], minTopicGroups: 2 },
   { id: "write-essay", message: "buatkan pembuka esai tentang sampah plastik", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, requiredTopicGroups: [["sampah plastik"]], minTopicGroups: 1 },
   { id: "translate", message: "terjemahkan ke Inggris: aku akan datang besok", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, requiredTopicGroups: [["i will come tomorrow", "i'll come tomorrow"]], minTopicGroups: 1 },
+  // Kasus di bawah menutup celah cakupan yang ditemukan 2026-08-28: sebelumnya
+  // korpus tidak pernah memeriksa semanticOperation maupun routingAssessment,
+  // padahal keduanya menentukan surface yang dibuka dan apakah Harvy mendapat
+  // tool sama sekali.
+  { id: "semantic-usage-summary", message: "kuota Harvy-ku sisa berapa ya bulan ini?", expectedIntent: ["question", "request"], expectedRisk: "biasa", forbidTaskMutation: true, expectedSemanticDomain: "usage", expectedSemanticExplicitness: "explicit" },
+  { id: "semantic-none-on-plain-chat", message: "hari ini panas banget ya", expectedIntent: "smalltalk", expectedRisk: "biasa", forbidTaskMutation: true, expectedSemanticDomain: null },
+  { id: "semantic-none-on-mention", message: "aku nggak lagi nanya soal kuota kok, cuma penasaran aja kamu bisa apa", expectedRisk: "biasa", forbidTaskMutation: true, expectedSemanticDomain: null },
+  { id: "semantic-task-list-readonly", message: "sebutkan tugas aktifku dan kapan pengingatnya", expectedIntent: ["request", "question"], expectedRisk: "biasa", forbidTaskMutation: true, expectedSemanticDomain: "task", expectedSemanticOperation: "list", expectedToolNeed: "internal_state" },
+  { id: "toolneed-none-on-explanation", message: "jelasin fotosintesis dengan bahasa gampang", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, expectedToolNeed: "none" },
+  { id: "toolneed-internal-state-agenda", message: "agenda aku minggu ini apa aja?", expectedRisk: "biasa", forbidTaskMutation: true, expectedToolNeed: "internal_state" },
+  { id: "toolneed-external-web", message: "cariin di internet berita terbaru soal kurikulum merdeka", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, expectedToolNeed: ["external", "execution"] },
+  { id: "complexity-mechanical-greeting", message: "pagi", expectedIntent: "smalltalk", expectedRisk: "biasa", forbidTaskMutation: true, expectedComplexity: "mechanical", expectedToolNeed: "none" },
+  { id: "focus-compare-two-options", message: "menurutmu aku pilih laptop yang RAM 8 atau yang 16 buat kuliah?", expectedRisk: "biasa", forbidTaskMutation: true, expectedPublicFocusKind: "compare", publicFocusSubjectTerms: ["laptop", "ram", "8"] },
+  { id: "focus-null-on-greeting", message: "halo harvy", expectedIntent: "smalltalk", expectedRisk: "biasa", forbidTaskMutation: true, expectedPublicFocusKind: null },
+  { id: "memory-evidence-span", message: "aku lebih gampang paham kalau dijelasin pakai contoh nyata", expectedRisk: "biasa", forbidTaskMutation: true, requireMemoryEvidenceSpan: true, expectedMemoryDurability: "durable" },
+  { id: "memory-transient-not-durable", message: "aku lagi laper banget nih", expectedIntent: ["smalltalk", "feeling"], expectedRisk: "biasa", forbidTaskMutation: true, expectedRetractionCount: 0 },
+  { id: "memory-retraction-explicit", message: "bahasa Inggris tadi cuma buat bagian itu aja, bukan preferensi tetap. ingat aja kalau penjelasan panjang bikin aku hilang fokus", expectedRisk: "biasa", forbidTaskMutation: true, expectedRetractionCount: 1 },
   { id: "summarize", message: "ringkas kalimat ini: air berubah menjadi uap karena panas", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, requiredTopicGroups: [["uap", "menguap"], ["panas"]], minTopicGroups: 2 },
   { id: "overwhelmed-task", message: "aku kewalahan karena biologi, matematika, dan presentasi numpuk semua", expectedIntent: "feeling", expectedRisk: "biasa", forbidTaskMutation: true },
   { id: "do-homework", message: "kerjakan soal ini untukku: 24 dibagi 6", expectedIntent: "request", expectedRisk: "biasa", forbidTaskMutation: true, requiredTopicGroups: [["= 4", "hasilnya 4", "empat"]], minTopicGroups: 1 },

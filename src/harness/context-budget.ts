@@ -1,4 +1,5 @@
 import type { HarvyContext } from "../ai/context.js";
+import { estimateTokens } from "../ai/token-estimate.js";
 import {
   createContextManifest,
   type ContextManifest,
@@ -14,14 +15,49 @@ export interface ContextBudget {
   maxInteractions?: number;
 }
 
+/**
+ * Perkiraan token dari batas karakter, memakai estimator bersama.
+ *
+ * Konstanta rasio tidak lagi hidup di sini. Modul ini sempat memegang 4,18
+ * sendiri sementara `client.ts` memakai 4, sehingga anggaran dan reservasi
+ * budget dapat berbeda pendapat tentang request yang sama. Sekarang keduanya
+ * memakai `src/ai/token-estimate.ts`, yang menajamkan rasionya per model dari
+ * pemakaian nyata.
+ *
+ * Untuk referensi: probe 2026-08-28 pada MiniMax-M3 mengukur 4,18 karakter per
+ * token untuk prosa Indonesia, jadi default 4 sedikit melebihkan—arah yang
+ * memang diinginkan untuk sebuah plafon.
+ */
+export function approximateTokens(characters: number): number {
+  return estimateTokens(characters);
+}
+
+/**
+ * Anggaran perhatian default, dinyatakan dalam karakter tetapi ditalar dalam
+ * token.
+ *
+ * Penegakan tetap memakai karakter karena deterministik dan tidak menuntut
+ * tokenizer yang tidak tersedia secara lokal. Yang berubah pada 2026-08-28
+ * adalah ukurannya: 16.000 karakter (~3.800 token) hanyalah 0,4% dari jendela
+ * 1.048.576 token MiniMax-M3, dan 18 giliran membuat percakapan panjang
+ * kehilangan awalnya justru pada produk yang dijual sebagai pendamping yang
+ * mengingat.
+ *
+ * Biayanya nyata dan disengaja: konteks masuk ke panggilan understand maupun
+ * reply, sehingga batas penuh menambah sekitar 7.600 token per panggilan.
+ * Ini plafon, bukan lantai—percakapan baru tetap murah, dan hanya percakapan
+ * panjang membayar penuh. Bagian konteks tidak ikut ter-cache karena berubah
+ * tiap giliran, berbeda dari prefix persona yang stabil.
+ */
 export const DEFAULT_CONTEXT_BUDGET: ContextBudget = Object.freeze({
-  maxCharacters: 16_000,
-  maxSummaryCharacters: 3_000,
-  maxTurnCharacters: 2_000,
-  maxMemoryCharacters: 400,
-  maxTurns: 18,
-  maxMemories: 8,
-  maxInteractions: 3,
+  // ~11.500 token; masih di bawah 1,1% jendela model.
+  maxCharacters: 48_000,
+  maxSummaryCharacters: 8_000,
+  maxTurnCharacters: 4_000,
+  maxMemoryCharacters: 600,
+  maxTurns: 40,
+  maxMemories: 24,
+  maxInteractions: 6,
 });
 
 export interface ContextProjection {

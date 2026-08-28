@@ -330,7 +330,7 @@ describe("pembacaan balasan model", () => {
     const understanding = parseUnderstanding(JSON.stringify({
       intent: "memory",
       memoryAction: "remember",
-      memories: [{ kind: "personal", content: "Sangat mencintai Sohit" }],
+      memories: [{ kind: "personal", content: "Sangat mencintai Rani" }],
     }));
 
     assert.equal(understanding?.intent, "smalltalk");
@@ -342,12 +342,12 @@ describe("pembacaan balasan model", () => {
     const understanding = parseUnderstanding(JSON.stringify({
       intent: "memory",
       memoryAction: "forget",
-      memoryTarget: "Sohit",
+      memoryTarget: "Rani",
       memories: [],
     }));
 
     assert.equal(understanding?.memoryAction, "forget");
-    assert.equal(understanding?.memoryTarget, "Sohit");
+    assert.equal(understanding?.memoryTarget, "Rani");
   });
 
   it("menolak intent di luar yang dikenal", () => {

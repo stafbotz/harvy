@@ -10,10 +10,26 @@ import {
 } from "../scripts/eval-corpus.js";
 
 describe("corpus evaluasi percakapan", () => {
-  it("memuat 44 skenario sintetis lintas jalur utama", () => {
-    assert.equal(CONVERSATION_EVAL_CASES.length, 44);
+  it("memuat 57 skenario sintetis lintas jalur utama", () => {
+    assert.equal(CONVERSATION_EVAL_CASES.length, 57);
     const ids = new Set(CONVERSATION_EVAL_CASES.map((testCase) => testCase.id));
     for (const required of [
+      // Cakupan semantic dan routing ditambahkan 2026-08-28. Tanpa daftar ini,
+      // satu-satunya assertion untuk semanticOperation dan toolNeed dapat
+      // hilang tanpa satu tes pun berubah merah.
+      "semantic-usage-summary",
+      "semantic-none-on-plain-chat",
+      "semantic-none-on-mention",
+      "semantic-task-list-readonly",
+      "toolneed-none-on-explanation",
+      "toolneed-internal-state-agenda",
+      "toolneed-external-web",
+      "complexity-mechanical-greeting",
+      "focus-compare-two-options",
+      "focus-null-on-greeting",
+      "memory-evidence-span",
+      "memory-transient-not-durable",
+      "memory-retraction-explicit",
       "priority-no-write",
       "listen-choice",
       "self-harm-danger",

@@ -81,7 +81,30 @@ const conversation = new Conversation(
   config.defaultTimezone,
 );
 
-const providerCircuit: { reason: string | null } = { reason: null };
+/**
+ * Circuit hanya boleh terbuka ketika provider benar-benar tidak sehat.
+ *
+ * Satu `AbortError` transien pernah memadamkan 54 dari 62 kasus dalam satu run
+ * penuh, dan kasus yang memicunya lulus dalam 14 detik saat diulang sendirian.
+ * Itu persis kerugian yang sudah diakui komentar `shouldOpenProviderCircuit`:
+ * membatalkan seluruh corpus menyembunyikan lebih banyak bukti daripada yang
+ * dilindunginya. Kegagalan berturut-turut tetap membuka circuit karena itulah
+ * sinyal nyata bahwa panggilan berikutnya akan sia-sia.
+ */
+const PROVIDER_FAILURE_STREAK_LIMIT = 3;
+// Dideklarasikan sebelum `mapConcurrent` di bawah: top-level await memanggil
+// `withProviderBackoff`, jadi const yang ditaruh setelahnya akan kena TDZ.
+const PROVIDER_RETRY_LIMIT = integerArgument("--provider-retries=", 4, 0, 8);
+const PROVIDER_BACKOFF_BASE_MS = integerArgument(
+  "--backoff-base-ms=",
+  4_000,
+  250,
+  60_000,
+);
+const providerCircuit: {
+  reason: string | null;
+  consecutiveFailures: number;
+} = { reason: null, consecutiveFailures: 0 };
 const results = await mapConcurrent(
   selected,
   concurrency,
@@ -164,17 +187,20 @@ async function evaluateBoundary(testCase: TurnBoundaryEvalCase) {
     return skippedEvaluation(testCase.id, "turn-boundary", providerCircuit.reason);
   }
   try {
-    const assessment = await conversation.assessTurnBoundary(
-      testCase.currentBatch,
-      "evaluation-boundary",
-      {
-        turns: (testCase.history ?? []).map((turn) => ({
-          ...turn,
-          at: "2026-08-22T00:00:00.000Z",
-        })),
-      },
-      testCase.signals,
+    const assessment = await withProviderBackoff(() =>
+      conversation.assessTurnBoundary(
+        testCase.currentBatch,
+        "evaluation-boundary",
+        {
+          turns: (testCase.history ?? []).map((turn) => ({
+            ...turn,
+            at: "2026-08-22T00:00:00.000Z",
+          })),
+        },
+        testCase.signals,
+      )
     );
+    noteProviderProgress();
     return {
       id: testCase.id,
       kind: "turn-boundary" as const,
@@ -205,11 +231,14 @@ async function evaluateInterruption(testCase: TurnInterruptionEvalCase) {
     return skippedEvaluation(testCase.id, "turn-interruption", providerCircuit.reason);
   }
   try {
-    const relation = await conversation.classifyTurnInterruption(
-      testCase.activeMessage,
-      testCase.incomingMessage,
-      "evaluation-interruption",
+    const relation = await withProviderBackoff(() =>
+      conversation.classifyTurnInterruption(
+        testCase.activeMessage,
+        testCase.incomingMessage,
+        "evaluation-interruption",
+      )
     );
+    noteProviderProgress();
     return {
       id: testCase.id,
       kind: "turn-interruption" as const,
@@ -344,6 +373,112 @@ async function evaluate(testCase: ConversationEvalCase) {
   }
   if (testCase.forbidTaskMutation !== false && route.kind === "save-task") {
     failures.push("tugas dapat berubah tanpa izin eksplisit");
+  }
+
+  // Ekstraksi yang sebelumnya tidak pernah diuji. Mayoritas aturan
+  // understandingPrompt membahas field-field ini, jadi tanpa assertion di sini
+  // prompt itu tidak dapat direstrukturisasi tanpa terbang buta.
+  const semantic = understanding.semanticOperation ?? null;
+  if (testCase.expectedSemanticDomain !== undefined) {
+    const actual = semantic?.domain ?? null;
+    if (actual !== testCase.expectedSemanticDomain) {
+      failures.push(
+        `semantic domain ${actual ?? "null"}, diharapkan ${testCase.expectedSemanticDomain ?? "null"}`,
+      );
+    }
+  }
+  if (
+    testCase.expectedSemanticOperation !== undefined &&
+    semantic?.operation !== testCase.expectedSemanticOperation
+  ) {
+    failures.push(
+      `semantic operation ${semantic?.operation ?? "null"}, diharapkan ${testCase.expectedSemanticOperation}`,
+    );
+  }
+  if (
+    testCase.expectedSemanticExplicitness !== undefined &&
+    semantic?.explicitness !== testCase.expectedSemanticExplicitness
+  ) {
+    failures.push(
+      `semantic explicitness ${semantic?.explicitness ?? "null"}, diharapkan ${testCase.expectedSemanticExplicitness}`,
+    );
+  }
+  const assessment = understanding.routingAssessment ?? null;
+  if (testCase.expectedToolNeed !== undefined) {
+    const allowed = typeof testCase.expectedToolNeed === "string"
+      ? [testCase.expectedToolNeed]
+      : testCase.expectedToolNeed;
+    if (!assessment || !allowed.includes(assessment.toolNeed)) {
+      failures.push(
+        `toolNeed ${assessment?.toolNeed ?? "null"}, diharapkan ${allowed.join("|")}`,
+      );
+    }
+  }
+  if (testCase.expectedComplexity !== undefined) {
+    const allowed = typeof testCase.expectedComplexity === "string"
+      ? [testCase.expectedComplexity]
+      : testCase.expectedComplexity;
+    if (!assessment || !allowed.includes(assessment.complexity)) {
+      failures.push(
+        `complexity ${assessment?.complexity ?? "null"}, diharapkan ${allowed.join("|")}`,
+      );
+    }
+  }
+
+  const focus = understanding.publicFocus ?? null;
+  if (testCase.expectedPublicFocusKind !== undefined) {
+    const actual = focus?.kind ?? null;
+    if (actual !== testCase.expectedPublicFocusKind) {
+      failures.push(
+        `publicFocus kind ${actual ?? "null"}, diharapkan ${testCase.expectedPublicFocusKind ?? "null"}`,
+      );
+    }
+  }
+  if (testCase.publicFocusSubjectTerms) {
+    const subject = (focus?.subject ?? "").toLocaleLowerCase("id-ID");
+    const matched = testCase.publicFocusSubjectTerms.some((term) =>
+      subject.includes(term.toLocaleLowerCase("id-ID"))
+    );
+    if (!matched) {
+      failures.push(
+        `publicFocus subject tidak memuat ${testCase.publicFocusSubjectTerms.join("|")}`,
+      );
+    }
+  }
+  if (
+    testCase.expectedRetractionCount !== undefined &&
+    (understanding.memoryRetractions?.length ?? 0) !==
+      testCase.expectedRetractionCount
+  ) {
+    failures.push(
+      `retraction ${understanding.memoryRetractions?.length ?? 0}, diharapkan ${testCase.expectedRetractionCount}`,
+    );
+  }
+  if (
+    testCase.expectedMemoryDurability !== undefined &&
+    !understanding.memories.some((candidate) =>
+      candidate.durability === testCase.expectedMemoryDurability
+    )
+  ) {
+    failures.push(
+      `tidak ada candidate durability ${testCase.expectedMemoryDurability}`,
+    );
+  }
+  if (testCase.requireMemoryEvidenceSpan) {
+    // sourceEvidence wajib span persis, bukan parafrasa. Membandingkannya
+    // dengan pesan asli adalah satu-satunya cara membuktikannya.
+    const normalized = testCase.message.toLocaleLowerCase("id-ID");
+    const offenders = understanding.memories.filter((candidate) => {
+      const span = candidate.sourceEvidence?.toLocaleLowerCase("id-ID") ?? "";
+      return span.length === 0 || !normalized.includes(span);
+    });
+    if (understanding.memories.length === 0) {
+      failures.push("tidak ada candidate memori untuk diperiksa sourceEvidence");
+    } else if (offenders.length > 0) {
+      failures.push(
+        `${offenders.length} sourceEvidence bukan span persis dari pesan`,
+      );
+    }
   }
   if (
     testCase.session &&
@@ -501,7 +636,9 @@ async function evaluateSafely(testCase: ConversationEvalCase) {
     return skippedEvaluation(testCase.id, "conversation", providerCircuit.reason);
   }
   try {
-    return await evaluate(testCase);
+    const evaluated = await withProviderBackoff(() => evaluate(testCase));
+    noteProviderProgress();
+    return evaluated;
   } catch (error) {
     const failure = captureEvaluationError(error);
     return {
@@ -538,9 +675,52 @@ function captureEvaluationError(error: unknown): {
   const safe = safeEvaluationError(error);
   const source = isProviderFailure(error) ? "provider" : "execution";
   if (source === "provider" && shouldOpenProviderCircuit(error)) {
-    providerCircuit.reason ??= safe;
+    providerCircuit.consecutiveFailures += 1;
+    if (providerCircuit.consecutiveFailures >= PROVIDER_FAILURE_STREAK_LIMIT) {
+      providerCircuit.reason ??=
+        `${safe} (${providerCircuit.consecutiveFailures} kegagalan berturut-turut)`;
+    }
   }
   return { safe, source };
+}
+
+/** Satu kasus yang selesai membuktikan provider masih sehat. */
+function noteProviderProgress(): void {
+  providerCircuit.consecutiveFailures = 0;
+}
+
+/**
+ * Backoff untuk throttling dan timeout provider.
+ *
+ * `AiClient` hanya mencoba ulang sebanyak jumlah API key yang tersedia, jadi
+ * deployment satu key tidak pernah mencoba ulang 429 sama sekali. Untuk corpus
+ * yang menembakkan puluhan request berurutan, throttling adalah keadaan normal
+ * dan bukan bukti kualitas apa pun; tanpa backoff, hasil eval lebih banyak
+ * mengukur rate limit daripada mengukur Harvy.
+ *
+ * Hanya kegagalan transport yang dicoba ulang. Kesalahan bentuk respons
+ * (`AiResponseError`) tetap diteruskan agar cacat model tidak tersembunyi.
+ */
+function shouldBackoff(error: unknown): boolean {
+  if (error instanceof AiResponseError) return false;
+  if (error instanceof AiError && error.status !== undefined) {
+    return error.status === 408 || error.status === 429 || error.status >= 500;
+  }
+  return error instanceof Error && error.name === "AbortError";
+}
+
+async function withProviderBackoff<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      if (attempt >= PROVIDER_RETRY_LIMIT || !shouldBackoff(error)) throw error;
+      // Jitter mencegah beberapa worker menabrak jendela reset yang sama.
+      const waitMs = PROVIDER_BACKOFF_BASE_MS * 2 ** attempt +
+        Math.floor(Math.random() * 500);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
 }
 
 /**

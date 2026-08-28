@@ -46,6 +46,7 @@ histori; jangan gunakan sebagai status terbaru.
 | Deploy sandbox/local-git/GitHub broker/WhatsApp acceptance | [`../deploy/sandbox/README.md`](../deploy/sandbox/README.md), [`../deploy/local-git/README.md`](../deploy/local-git/README.md), [`../deploy/github-broker/README.md`](../deploy/github-broker/README.md), [`../deploy/whatsapp/README.md`](../deploy/whatsapp/README.md) |
 | Pairing tester dan acceptance Telegram/WhatsApp privat lokal | [`operations/LIVE_ACCEPTANCE.md`](operations/LIVE_ACCEPTANCE.md) |
 | Strategi tes, bukti otomatis/manual | [`engineering/TESTING.md`](engineering/TESTING.md) |
+| Tes yang sudah merah sebelum perubahanmu | [`engineering/KNOWN-FAILURES.md`](engineering/KNOWN-FAILURES.md) |
 | Branch, handoff, materialitas docs, hook | [`operations/WORKFLOW.md`](operations/WORKFLOW.md) |
 | Console localhost dan operasi pilot | [`operations/HARVY_CONSOLE.md`](operations/HARVY_CONSOLE.md) |
 | Paket/cohort pilot | [`product/PILOT_BETA_DAN_PAKET.md`](product/PILOT_BETA_DAN_PAKET.md) |

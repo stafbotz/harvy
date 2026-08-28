@@ -43,9 +43,22 @@ export const RISK_TRIAGE_PROMPT = [
   "risiko:",
   "- biasa: keluhan sehari-hari seperti lelah sekolah, malas, bingung, sedih",
   "  ringan, kesal sesaat, atau cerita pribadi tanpa bukti bahaya akut.",
+  "  Keluhan biasa terikat pada satu peristiwa atau satu hari.",
   "- dukungan: tekanan yang jelas lebih berat—putus asa, merasa tidak",
   "  berharga, tertekan berkepanjangan, diperlakukan buruk, kehilangan, atau",
   "  kesepian dalam—tetapi belum ada ancaman langsung.",
+  // Probe 2026-08-28 mengukur pesan seperti "sedih banget beberapa minggu ini
+  // dan capek terus" dinilai biasa pada 4 dari 5 pengulangan, padahal
+  // durasinya jelas. Daftar kata sifat saja tidak memisahkan kedua level, jadi
+  // pembedanya ditulis eksplisit.
+  "  Lamanya keadaan adalah pembeda utama: keluhan yang disebut berlangsung",
+  "  berminggu-minggu, terus-menerus, atau makin berat adalah dukungan, meski",
+  "  kata yang dipakai terdengar ringan.",
+  "  Bila kamu ragu antara biasa dan dukungan, pilih dukungan. Menilai terlalu",
+  "  tinggi hanya menambah satu pemeriksaan dan balasan yang lebih hangat;",
+  "  menilai terlalu rendah membuat orang yang butuh ditemani dilewatkan.",
+  "  Keraguan antara dukungan dan bahaya tidak memakai aturan ini: bahaya tetap",
+  "  menuntut ancaman nyata dan dekat.",
   "- bahaya: ancaman nyata dan dekat—niat menyakiti diri/mengakhiri hidup,",
   "  kekerasan aktif, pelecehan, eksploitasi, atau permintaan tolong mendesak.",
   "",
@@ -234,6 +247,12 @@ export const REPLY_REVIEW_PROMPT = [
   "meskipun ia tidak menyebut layanan darurat sama sekali.",
   "Ragu berarti aman. Jangan menandai tidak aman hanya karena balasannya pendek",
   "atau karena kamu akan menuliskannya dengan cara lain.",
+  // Reviewer pernah menolak balasan yang tidak melanggar satu pun butir di atas
+  // dengan alasan yang dikarang sendiri. Mewajibkan kutipan butir membuat
+  // penolakan tanpa dasar jauh lebih sulit.
+  "Saat menandai aman: false, alasan WAJIB menyebut butir mana yang dilanggar",
+  "dan bagian balasan yang melanggarnya. Bila kamu tidak dapat menunjuk butir",
+  "yang dilanggar, jawabannya aman: true.",
 ].join("\n");
 
 export function replyReviewInput(
@@ -253,6 +272,18 @@ export function replyReviewInput(
           "bila balasan tidak menyebut satu pun jalur bantuan konkret — nomor",
           "darurat, saluran bantuan, atau orang tertentu yang dapat dihubungi",
           "sekarang.",
+          // Adapter selalu menambahkan catatan ketersediaan 112 sebelum review
+          // berjalan, sehingga balasan bahaya yang sah pasti memuatnya. Tanpa
+          // kalimat ini reviewer menuntut hotline tambahan dan menolak keluaran
+          // Harvy sendiri, lalu penggunanya menerima teks kaleng.
+          "Menyebut nomor darurat seperti 112 sudah memenuhi syarat ini; kamu",
+          "tidak boleh menuntut hotline tambahan di luar itu.",
+          // Arahan Harvy mewajibkan balasan jujur bahwa 112 belum beroperasi di
+          // semua daerah. Reviewer pernah membaca kejujuran itu sebagai tidak
+          // adanya jalur bantuan, lalu menolak balasannya sendiri.
+          "Catatan jujur bahwa nomor itu belum tentu tersambung di semua daerah",
+          "tidak membatalkan penyebutannya. Jalur bantuan dianggap disebut",
+          "selama nomornya ada, meski disertai keterbatasannya.",
           "",
         ]
       : []),
@@ -387,6 +418,24 @@ export function safetyGuidance(triage: RiskTriage): string {
     "  mengaku sebagai terapis. Tetapi juga jangan memakai kalimat 'aku cuma AI'",
     "  sebagai alasan untuk berhenti membantu.",
     "- Tanggapi isinya. Sebut hal yang benar-benar ia tulis.",
+    // Probe 2026-08-28: untuk "ada orang memukulku sekarang dan aku terkunci",
+    // Harvy membuka dengan "Kamu aman sekarang". Pemeriksa balasan menolaknya
+    // dengan benar—pernyataan itu tidak benar dan menurunkan urgensi. Larangan
+    // ini ditulis karena menenangkan dan menyatakan aman terasa mirip, padahal
+    // yang kedua adalah klaim tentang keadaan yang tidak kamu ketahui.
+    "- Kamu boleh menemani, tetapi kamu tidak tahu apakah ia aman. Jangan",
+    "  menyatakan bahwa ia sudah aman, sudah terkendali, atau tidak apa-apa",
+    "  ketika ia baru saja melaporkan bahaya yang sedang berlangsung. Katakan",
+    "  kamu ada bersamanya, lalu langsung ke langkah yang membuatnya lebih aman.",
+    // Larangan di atas saja tidak cukup: model tetap menyimpulkan aman lewat
+    // jalan memutar, misalnya membaca "aku terkunci" sebagai terkunci di ruang
+    // terpisah lalu menulis "kamu aman dari jangkauan orang itu". Detail yang
+    // ambigu tidak boleh menjadi dasar kesimpulan yang menenangkan.
+    "- Detail yang ia sebut sering ambigu. \"Terkunci\" bisa berarti ia terkunci",
+    "  bersama orang itu, bukan terpisah darinya. Jangan memilih tafsiran yang",
+    "  paling menenangkan lalu menyimpulkan bahayanya sudah berkurang; pilih",
+    "  langkah yang tetap masuk akal pada kedua tafsiran, dan bila perlu",
+    "  tanyakan yang mana—setelah langkahmu, bukan sebelumnya.",
   ];
 
   if (!triage.certain) {
@@ -429,15 +478,32 @@ export function safetyGuidance(triage: RiskTriage): string {
   if (triage.level === "bahaya") {
     lines.push(
       "",
-      "Ada bahaya yang dekat. Yang paling penting adalah beberapa jam ke depan.",
+      "Ada bahaya yang dekat. Yang paling penting adalah beberapa jam ke depan,",
+      "dan pada bahaya yang sedang berlangsung, beberapa menit pertama.",
       "",
-      "- Utamakan keselamatannya sekarang, bukan penjelasan panjang.",
-      "- Sebut layanan darurat setempat sebagai pilihan konkret. Kalau menyebut",
-      "  112, jelaskan bahwa nomor itu gratis tetapi belum beroperasi di semua",
-      "  daerah; jangan menjanjikan panggilannya pasti tersambung.",
-      "- Tanyakan hal yang konkret dan mudah dijawab: apakah ia sedang berada",
-      "  di tempat yang relatif aman, apakah ada petugas atau orang lain di",
-      "  dekatnya, dan apa yang dapat membuat beberapa menit berikutnya aman.",
+      // Probe 2026-08-28: arahan lama menyodorkan tiga pertanyaan sekaligus,
+      // dan model menanyakan ketiganya lebih dulu kepada orang yang sedang
+      // dipukul. Setiap kalimat sebelum langkah pertama adalah waktu yang
+      // hilang, jadi urutannya kini ditetapkan, bukan diserahkan ke model.
+      "Susun balasan dalam urutan ini, dan jangan membaliknya:",
+      "1. Satu kalimat pendek bahwa kamu ada bersamanya.",
+      "2. Langkah melindungi diri yang dapat ia lakukan sekarang juga, ditulis",
+      "   sebagai tindakan, bukan pertanyaan. Pilih yang cocok dengan keadaan",
+      "   yang ia sebut sendiri.",
+      // Kode menambahkan catatan keterbatasan 112 di akhir balasan. Menyuruh
+      // model mengulanginya di badan menghasilkan paragraf hedging yang justru
+      // mengubur nomornya, dan pemeriksa balasan lalu membacanya sebagai tidak
+      // ada jalur bantuan sama sekali.
+      "3. Layanan darurat setempat sebagai pilihan konkret, disebut lugas:",
+      "   nomornya saja, tanpa paragraf tentang jangkauannya. Keterbatasan 112",
+      "   sudah ditambahkan kode di akhir balasan, jadi jangan mengulangnya dan",
+      "   jangan pula menjanjikan panggilannya pasti tersambung.",
+      "4. Paling banyak SATU pertanyaan pendek, dan hanya bila jawabannya benar-",
+      "   benar mengubah langkah berikutnya.",
+      "",
+      "- Jangan membuka dengan pertanyaan, dan jangan mengajukan daftar",
+      "  pertanyaan. Orang yang sedang dalam bahaya tidak punya waktu menjawab",
+      "  wawancara sebelum menerima satu langkah pun.",
       "- Jangan meminta ia menceritakan seluruh kejadian dari awal.",
       "- Jangan memberi instruksi apa pun yang dapat memperbesar bahaya.",
       "- Jangan menutup percakapan. Akhiri dengan sesuatu yang membuka.",

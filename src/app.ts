@@ -139,6 +139,7 @@ import {
   type LocalRuntimeLock,
 } from "./core/local-runtime-lock.js";
 import { createInternalAgentExecutors } from "./agent/internal-executors.js";
+import { createWriteAgentExecutors } from "./agent/write-executors.js";
 import { VirtualTerminalExecutor } from "./agent/virtual-terminal.js";
 import { ParallelDelegationExecutor } from "./agent/parallel-delegation.js";
 
@@ -297,8 +298,10 @@ const specialistExecutor = createConfiguredSpecialistExecutor(
   config.ai,
   config.ai.specialistDelegationEnabled,
 );
+const writeExecutors = createWriteAgentExecutors({ tasks });
 const agentExecutors = [
   ...internalExecutors,
+  ...writeExecutors,
   new VirtualTerminalExecutor(),
   ...(specialistExecutor
     ? [specialistExecutor]

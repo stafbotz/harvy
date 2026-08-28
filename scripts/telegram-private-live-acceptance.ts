@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
-import { lstat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { lstat, readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { Bot } from "grammy";
 import { Api, Logger, TelegramClient } from "teleproto";
+import { CustomFile } from "teleproto/client/uploads.js";
 import { StringSession } from "teleproto/sessions/index.js";
 import {
   classifyTelegramPrivateStartSurface,
@@ -28,6 +29,13 @@ import {
   liveAcceptancePlanningPrompt,
   type LivePlanQuality,
 } from "../src/operations/live-acceptance-quality.js";
+import {
+  createVisualAcceptanceFixtureForColor,
+  matchesVisualAcceptanceResponse,
+  observedVisualAcceptanceColors,
+  VISUAL_ACCEPTANCE_COLORS,
+  type VisualAcceptanceColor,
+} from "./live-visual-acceptance-fixture.js";
 
 const CONFIRMATION = "RUN_NONCRITICAL_TELEGRAM_PRIVATE";
 const DEDICATED_ACCOUNT = "DEDICATED_TEST_ACCOUNT";
@@ -50,6 +58,8 @@ interface TelegramFailureEvidence {
   maxTextCharacters: number;
   responseKinds: string[];
   createdBubbles: number;
+  expectedVisualColor?: VisualAcceptanceColor;
+  observedVisualColors?: VisualAcceptanceColor[];
 }
 
 interface TelegramSurfaceEvidence {
@@ -74,9 +84,17 @@ interface TelegramBurst {
 interface AcceptanceContext {
   client: TelegramClient;
   botPeer: string;
+  runtimeRoot: string;
   timeoutMs: number;
   runLabel: string;
 }
+
+type AcceptanceFocus =
+  | "full"
+  | "memory"
+  | "restart"
+  | "session"
+  | "multimodal";
 
 async function main(): Promise<void> {
   const repositoryRoot = process.cwd();
@@ -176,6 +194,7 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
     context = {
       client,
       botPeer: `@${botIdentity.username}`,
+      runtimeRoot: root,
       timeoutMs,
       runLabel: runLabel(process.env),
     };
@@ -309,11 +328,14 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
         );
       }
 
-      if (focus === "full") {
-        continueStages = await recordStage(
-          stages,
-          "natural_task_and_reminder",
-          async () => {
+      if (
+        focus === "full" || focus === "session" || focus === "multimodal"
+      ) {
+        if (focus === "full") {
+          continueStages = await recordStage(
+            stages,
+            "natural_task_and_reminder",
+            async () => {
             const proposal = await sendAndWait(
               activeContext,
               `Tolong catat sebagai tugas acceptance ${activeContext.runLabel}, tenggat besok jam 10 pagi.`,
@@ -372,10 +394,11 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
               messageDigest(scheduled),
               messageDigest(delivered),
             ].join("\0"));
-          },
-        );
+            },
+          );
+        }
 
-        if (continueStages) {
+        if ((focus === "full" || focus === "session") && continueStages) {
           continueStages = await recordStage(
             stages,
             "timezone_session_and_checkin",
@@ -384,6 +407,10 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
                 activeContext,
                 "/bantuan",
                 (message) => hasButton(message, /^Atur waktu$/u),
+              );
+              reportStageCheckpoint(
+                "timezone_session_and_checkin",
+                "time-controls-opened",
               );
               const timezone = await clickAndWaitForIncoming(
                 activeContext,
@@ -403,6 +430,10 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
                   "TELEGRAM_PRIVATE_ACCEPTANCE_TIMEZONE_NOT_CONFIRMED",
                 );
               }
+              reportStageCheckpoint(
+                "timezone_session_and_checkin",
+                "timezone-saved",
+              );
 
               const offered = await sendAndWait(
                 activeContext,
@@ -422,6 +453,10 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
                   "TELEGRAM_PRIVATE_ACCEPTANCE_SESSION_CONTROLS_MISSING",
                 );
               }
+              reportStageCheckpoint(
+                "timezone_session_and_checkin",
+                "focus-session-started",
+              );
               let checkInPrompt = await clickAndWaitForIncoming(
                 activeContext,
                 session,
@@ -438,6 +473,11 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
                   (message) => isCheckInTimePrompt(message.message),
                 );
               }
+              reportStageCheckpoint(
+                "timezone_session_and_checkin",
+                "checkin-time-requested",
+              );
+              const schedulingStartedAt = Date.now();
               const scheduled = await sendAndWaitAfter(
                 activeContext,
                 checkInPrompt,
@@ -447,16 +487,48 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
                     message.message,
                   ),
               );
-              const delivered = await waitForIncoming(
-                activeContext,
-                numericId(scheduled),
-                (message) =>
-                  hasButton(message, /^Selesai$/u) &&
-                  hasButton(message, /^Masih jalan$/u) &&
-                  hasButton(message, /^Aku tersangkut$/u) &&
-                  hasButton(message, /^Ubah rencana$/u) &&
-                  hasButton(message, /^Berhenti$/u),
-                Math.max(activeContext.timeoutMs, 180_000),
+              await assertIsolatedCheckInScheduleWindow(
+                activeContext.runtimeRoot,
+                schedulingStartedAt,
+              );
+              reportStageCheckpoint(
+                "timezone_session_and_checkin",
+                "checkin-scheduled-within-window",
+              );
+              let delivered: Api.Message;
+              try {
+                delivered = await waitForIncoming(
+                  activeContext,
+                  numericId(scheduled),
+                  (message) =>
+                    hasButton(message, /^Selesai$/u) &&
+                    hasButton(message, /^Masih jalan$/u) &&
+                    hasButton(message, /^Aku tersangkut$/u) &&
+                    hasButton(message, /^Ubah rencana$/u) &&
+                    hasButton(message, /^Berhenti$/u),
+                  Math.max(activeContext.timeoutMs, 180_000),
+                );
+              } catch (error) {
+                if (
+                  error instanceof Error &&
+                  error.message ===
+                    "TELEGRAM_PRIVATE_ACCEPTANCE_EXPECTED_RESPONSE_TIMEOUT"
+                ) {
+                  throw acceptanceFailure(
+                    "TELEGRAM_PRIVATE_ACCEPTANCE_CHECKIN_NOT_DELIVERED",
+                    responseFailureEvidence(
+                      await incomingMessagesAfter(
+                        activeContext,
+                        numericId(scheduled),
+                      ),
+                    ),
+                  );
+                }
+                throw error;
+              }
+              reportStageCheckpoint(
+                "timezone_session_and_checkin",
+                "checkin-delivered-with-controls",
               );
               const stopped = await clickAndWaitForMutation(
                 activeContext,
@@ -472,9 +544,108 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
             },
           );
         }
+
+        if ((focus === "full" || focus === "multimodal") && continueStages) {
+          continueStages = await recordStage(
+            stages,
+            "multimodal_image_through_private_channel",
+            async () => {
+              const evidence: string[] = [];
+              for (
+                const [index, expectedColor] of
+                  VISUAL_ACCEPTANCE_COLORS.entries()
+              ) {
+                const fixture = createVisualAcceptanceFixtureForColor(
+                  expectedColor,
+                );
+                const sent = await activeContext.client.sendFile(
+                  activeContext.botPeer,
+                  {
+                    file: new CustomFile(
+                      `harvy-live-visual-${index + 1}.png`,
+                      fixture.data.byteLength,
+                      "",
+                      fixture.data,
+                    ),
+                    caption: fixture.prompt,
+                    forceDocument: false,
+                  },
+                );
+                const sentMessageId = numericId(sent);
+                try {
+                  await waitForIncoming(
+                    activeContext,
+                    sentMessageId,
+                    (message) =>
+                      !isRunAnchorText(message.message) &&
+                      !isRenderedConversationProgress(message.message) &&
+                      (Boolean(message.message.trim()) ||
+                        Boolean(message.buttons?.flat().length) ||
+                        Boolean(message.media)),
+                    Math.max(activeContext.timeoutMs, 180_000),
+                  );
+                } catch (error) {
+                  if (
+                    error instanceof Error &&
+                    error.message ===
+                      "TELEGRAM_PRIVATE_ACCEPTANCE_EXPECTED_RESPONSE_TIMEOUT"
+                  ) {
+                    throw acceptanceFailure(
+                      "TELEGRAM_PRIVATE_ACCEPTANCE_MULTIMODAL_RESPONSE_MISSING",
+                      {
+                        ...responseFailureEvidence(
+                          await incomingMessagesAfter(
+                            activeContext,
+                            sentMessageId,
+                          ),
+                        ),
+                        expectedVisualColor: fixture.expectedColor,
+                        observedVisualColors: [],
+                      },
+                    );
+                  }
+                  throw error;
+                }
+                const response = await waitForIncomingIdle(
+                  activeContext,
+                  sentMessageId,
+                );
+                const answer = response
+                  .filter((message) =>
+                    !isRunAnchorText(message.message) &&
+                    !isRenderedConversationProgress(message.message)
+                  )
+                  .map((message) => message.message)
+                  .filter(Boolean)
+                  .join("\n");
+                if (
+                  !matchesVisualAcceptanceResponse(
+                    answer,
+                    fixture.expectedColor,
+                  )
+                ) {
+                  throw acceptanceFailure(
+                    "TELEGRAM_PRIVATE_ACCEPTANCE_MULTIMODAL_ANSWER_MISMATCH",
+                    {
+                      ...responseFailureEvidence(response),
+                      expectedVisualColor: fixture.expectedColor,
+                      observedVisualColors:
+                        observedVisualAcceptanceColors(answer),
+                    },
+                  );
+                }
+                evidence.push(
+                  digestTelegramBurst(response),
+                  sha256(fixture.data.toString("base64")),
+                );
+              }
+              return sha256(evidence.join("\0"));
+            },
+          );
+        }
       }
 
-      if (focus !== "restart" && continueStages) {
+      if ((focus === "full" || focus === "memory") && continueStages) {
         continueStages = await recordStage(
           stages,
           "implicit_memory_after_onboarding_without_item_consent",
@@ -656,7 +827,7 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
     await removeIsolatedRuntimeRoot(root);
   }
 
-  const expectedStageCount = focus === "full" ? 8 : 3;
+  const expectedStageCount = focus === "full" ? 9 : 3;
   const restartProven = focus !== "restart" ||
     (acceptanceFaultInjected === 1 && restartScheduled >= 1 &&
       readyAttempts.has(1) && readyAttempts.has(2));
@@ -758,7 +929,7 @@ function assertTelegramOnboarding(intro: TelegramBurst): void {
   for (const expected of [
     /aku Harvy/iu,
     /AI agent/iu,
-    /Pesanmu bakal diproses oleh AI/iu,
+    /Pesan atau gambar yang kamu kirim bakal diproses oleh AI/iu,
     /bisa otomatis mengingatnya/iu,
     /bakal bilang setelah benar-benar menyimpan atau memperbaruinya/iu,
     /melihat, mengoreksi, atau menghapusnya/iu,
@@ -1179,6 +1350,45 @@ function responseFailureEvidence(
   };
 }
 
+async function assertIsolatedCheckInScheduleWindow(
+  runtimeRoot: string,
+  schedulingStartedAt: number,
+): Promise<void> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(
+      await readFile(join(runtimeRoot, "data", "sessions.json"), "utf8"),
+    ) as unknown;
+  } catch {
+    throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_CHECKIN_STATE_UNREADABLE");
+  }
+  if (
+    parsed === null || typeof parsed !== "object" ||
+    !Array.isArray((parsed as { sessions?: unknown }).sessions)
+  ) {
+    throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_CHECKIN_STATE_INVALID");
+  }
+  const candidates = (parsed as { sessions: unknown[] }).sessions.filter(
+    (session): session is { checkIn: { at: string; sentAt: unknown } } => {
+      if (session === null || typeof session !== "object") return false;
+      const checkIn = (session as { checkIn?: unknown }).checkIn;
+      return checkIn !== null && typeof checkIn === "object" &&
+        typeof (checkIn as { at?: unknown }).at === "string" &&
+        (checkIn as { sentAt?: unknown }).sentAt === null;
+    },
+  );
+  if (candidates.length !== 1) {
+    throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_CHECKIN_STATE_MISSING");
+  }
+  const scheduledAt = Date.parse(candidates[0]!.checkIn.at);
+  const delayMs = scheduledAt - schedulingStartedAt;
+  if (!Number.isFinite(scheduledAt) || delayMs < 25_000 || delayMs > 120_000) {
+    throw blocked(
+      "TELEGRAM_PRIVATE_ACCEPTANCE_CHECKIN_SCHEDULE_OUTSIDE_EXPECTED_WINDOW",
+    );
+  }
+}
+
 function reportStageProgress(
   stage: string,
   status: "started" | "passed" | "failed",
@@ -1214,11 +1424,14 @@ function acceptanceGate(env: NodeJS.ProcessEnv): void {
 
 function acceptanceFocus(
   env: NodeJS.ProcessEnv,
-): "full" | "memory" | "restart" {
+): AcceptanceFocus {
   const value = process.argv.includes("--restart")
     ? "restart"
     : env.HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS?.trim() || "full";
-  if (value === "full" || value === "memory" || value === "restart") {
+  if (
+    value === "full" || value === "memory" || value === "restart" ||
+    value === "session" || value === "multimodal"
+  ) {
     return value;
   }
   throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS_INVALID");

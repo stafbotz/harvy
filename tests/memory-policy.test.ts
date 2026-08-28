@@ -33,7 +33,7 @@ describe("kebijakan memori", () => {
   });
 
   it("memisahkan data personal berizin dari credential yang tetap terlarang", () => {
-    assert.equal(containsForbiddenMemorySecret("Sangat mencintai Sohit"), false);
+    assert.equal(containsForbiddenMemorySecret("Sangat mencintai Rani"), false);
     for (const content of [
       "Password email adalah CONTOH_SANDI_123",
       "OTP-ku 123456",

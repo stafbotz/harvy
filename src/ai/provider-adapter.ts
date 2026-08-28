@@ -91,8 +91,11 @@ function serializeMultimodalContent(
     throw new Error("Profile provider tidak mengizinkan input gambar.");
   }
   return [
-    { type: "text", text },
     ...images.map(serializeImagePart),
+    // GMI/MiniMax-M3 hanya mengikat media secara andal ketika image part
+    // mendahului pertanyaan. Urutan ini tetap sah pada wire OpenAI-compatible
+    // dan membuat teks terakhir merujuk jelas pada media yang baru dilihat.
+    { type: "text", text },
   ];
 }
 

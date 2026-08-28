@@ -100,6 +100,10 @@ describe("live exploratory tester contract", () => {
       { type: "send", text: "Mulai dari mana?" },
     );
     assert.deepEqual(
+      parseLiveExplorationCommand('{"type":"image","color":"blue"}'),
+      { type: "image", color: "blue" },
+    );
+    assert.deepEqual(
       parseLiveExplorationCommand(
         '{"type":"reply","surface":"surface-2","text":"Bukan itu maksudku."}',
       ),
@@ -201,6 +205,8 @@ describe("live exploratory tester contract", () => {
   it("menolak field, isi, dan operasi destruktif yang tidak tertutup", () => {
     for (const input of [
       '{"type":"send","text":"halo","expected":"jawaban tertentu"}',
+      '{"type":"image","color":"yellow"}',
+      '{"type":"image","color":"red","path":"secret.png"}',
       '{"type":"interrupt","text":"koreksi","expected":"hasil"}',
       '{"type":"burst","messages":["sendiri"],"gapMs":0}',
       '{"type":"wait","ms":300001}',
@@ -417,7 +423,7 @@ describe("live exploratory tester contract", () => {
       await writer.recordTurn({
         runId,
         turn: 1,
-        kind: "send",
+        kind: "image",
         texts: ["kalimat rahasia penguji"],
       });
       await writer.recordSurface({
@@ -501,6 +507,7 @@ describe("live exploratory tester contract", () => {
       assert.equal(records.length, 7);
       assert.equal(records.every((record) => record["version"] === 3), true);
       assert.equal(records[1]?.["type"], "turn");
+      assert.equal(records[1]?.["kind"], "image");
       assert.equal(records[2]?.["latencyMs"], 123);
       assert.equal(records[2]?.["phase"], "turn");
       assert.equal(records[2]?.["turn"], 1);

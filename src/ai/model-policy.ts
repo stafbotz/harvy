@@ -229,6 +229,11 @@ export function requestsAgentTooling(
   // jawaban model biasa. Memberi Agent Runtime authority hanya dari label ini
   // pernah mengirim 17+28 ke terminal/planner generik dan berakhir tanpa
   // jawaban. Execution/external tetap membutuhkan runtime tool sungguhan.
+  // `internal_state` tetap dikecualikan. Label itu sering muncul pada
+  // pertanyaan penilaian yang tidak menunjuk state apa pun, dan memberinya
+  // authority tool mengirim pertanyaan opini ke planner yang tidak punya apa-apa
+  // untuk dipanggil. Permintaan menulis task/reminder masuk lewat sinyal
+  // code-owned di adapter, bukan lewat label ini.
   return assessment.toolNeed === "execution" ||
     assessment.toolNeed === "external";
 }

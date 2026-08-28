@@ -68,6 +68,7 @@ describe("alur adapter Telegram", () => {
   it("meneruskan foto privat secara transient tanpa menyimpan byte ke history", async () => {
     const originalFetch = globalThis.fetch;
     let runtimeSeen: ConversationRuntime | null = null;
+    let understandCalls = 0;
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x01, 0xff, 0xd9]);
     globalThis.fetch = (async () => new Response(jpeg, {
       status: 200,
@@ -75,7 +76,10 @@ describe("alur adapter Telegram", () => {
     })) as typeof fetch;
     const harness = basicHarness(
       {
-        understand: async () => understanding({ intent: "question" }),
+        understand: async () => {
+          understandCalls += 1;
+          return understanding({ intent: "question" });
+        },
         triageRisk: async () => CALM_TRIAGE,
         reply: async (
           _message: string,
@@ -106,6 +110,11 @@ describe("alur adapter Telegram", () => {
       (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.mediaType,
       "image/jpeg",
     );
+    assert.equal(
+      (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.detail,
+      "low",
+    );
+    assert.equal(understandCalls, 0);
     assert.equal(
       (runtimeSeen as ConversationRuntime | null)?.images?.[0]?.data.byteLength,
       jpeg.byteLength,
@@ -657,7 +666,7 @@ describe("alur adapter Telegram", () => {
   });
 
   it("melupakan topik natural melalui cascade MemoryService, bukan edit atau delete mentah", async () => {
-    const sohit = memoryItem("memory-sohit", "Sohit adalah pacarku");
+    const rani = memoryItem("memory-rani", "Rani adalah pacarku");
     const school = memoryItem("memory-school", "Sekarang kelas 12");
     const forgotten: string[] = [];
     const harness = basicHarness(
@@ -666,12 +675,12 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           intent: "memory",
           memoryAction: "forget",
-          memoryTarget: "Sohit",
+          memoryTarget: "Rani",
           semanticOperation: semanticOperation(
             "memory",
             "forget",
-            "lupain semua yang kamu tahu soal Sohit",
-            "Sohit",
+            "lupain semua yang kamu tahu soal Rani",
+            "Rani",
           ),
         }),
         triageRisk: async () => CALM_TRIAGE,
@@ -679,11 +688,11 @@ describe("alur adapter Telegram", () => {
       {} as TaskService,
       {
         memories: {
-          list: async () => [sohit, school],
-          relevantTo: async () => [sohit],
+          list: async () => [rani, school],
+          relevantTo: async () => [rani],
           forget: async (_ownerId: string, id: string) => {
             forgotten.push(id);
-            return id === sohit.id ? sohit : null;
+            return id === rani.id ? rani : null;
           },
           markUsed: async () => undefined,
         } as unknown as MemoryService,
@@ -691,12 +700,12 @@ describe("alur adapter Telegram", () => {
     );
 
     await harness.bot.handleUpdate(
-      messageUpdate("lupain semua yang kamu tahu soal Sohit"),
+      messageUpdate("lupain semua yang kamu tahu soal Rani"),
     );
     await harness.bot.drainPending();
 
-    assert.deepEqual(forgotten, [sohit.id]);
-    assert.match(harness.sent.at(-1) ?? "", /soal Sohit.*sudah aku lupakan/iu);
+    assert.deepEqual(forgotten, [rani.id]);
+    assert.match(harness.sent.at(-1) ?? "", /soal Rani.*sudah aku lupakan/iu);
   });
 
   it("tetap meminta konfirmasi untuk permintaan natural menghapus semua ingatan", async () => {
@@ -750,20 +759,20 @@ describe("alur adapter Telegram", () => {
         classifyTurnBoundary: async () => "complete",
         understand: async () => understanding({
           memoryAction: "remember",
-          memories: [{ kind: "personal", content: "Sangat mencintai Sohit" }],
+          memories: [{ kind: "personal", content: "Sangat mencintai Rani" }],
           semanticOperation: semanticOperation(
             "memory",
             "remember",
-            "harvy inget aku cintaaa banget sama sohit",
-            "aku cintaaa banget sama sohit",
+            "harvy inget aku cintaaa banget sama rani",
+            "aku cintaaa banget sama rani",
           ),
         }),
         triageRisk: async () => CALM_TRIAGE,
         reply: async () =>
-          "Aku bakal inget kok kalau kamu cinta banget sama Sohit.",
+          "Aku bakal inget kok kalau kamu cinta banget sama Rani.",
         memoryPortrait: async (context: HarvyContext) => {
-          assert.equal(context.memories[0]?.content, "Sangat mencintai Sohit");
-          return "Kamu sangat mencintai Sohit.";
+          assert.equal(context.memories[0]?.content, "Sangat mencintai Rani");
+          return "Kamu sangat mencintai Rani.";
         },
       } as unknown as Conversation,
       {} as TaskService,
@@ -784,7 +793,7 @@ describe("alur adapter Telegram", () => {
     );
 
     await harness.bot.handleUpdate(
-      messageUpdate("harvy inget aku cintaaa banget sama sohit", 1),
+      messageUpdate("harvy inget aku cintaaa banget sama rani", 1),
     );
     await harness.bot.drainPending();
 
@@ -804,7 +813,7 @@ describe("alur adapter Telegram", () => {
 
     await harness.bot.handleUpdate(commandUpdate("/memori", 2));
     await harness.bot.drainPending();
-    assert.match(harness.sent.at(-1) ?? "", /Kamu sangat mencintai Sohit/iu);
+    assert.match(harness.sent.at(-1) ?? "", /Kamu sangat mencintai Rani/iu);
   });
 
   it("membiarkan acknowledgement kontekstual memakai 📍 tanpa note kedua", async () => {
@@ -1288,16 +1297,16 @@ describe("alur adapter Telegram", () => {
           memoryAction: "remember",
           memories: [{
             kind: "personal",
-            content: "Sohit adalah pacarku",
-            sourceEvidence: "Sohit pacarku",
+            content: "Rani adalah pacarku",
+            sourceEvidence: "Rani pacarku",
             sourceSubject: "self",
             durability: "durable",
           }],
           semanticOperation: semanticOperation(
             "memory",
             "remember",
-            "inget ya Sohit pacarku",
-            "Sohit pacarku",
+            "inget ya Rani pacarku",
+            "Rani pacarku",
           ),
         }),
         triageRisk: async () => CALM_TRIAGE,
@@ -1318,17 +1327,17 @@ describe("alur adapter Telegram", () => {
       },
     );
 
-    await harness.bot.handleUpdate(messageUpdate("inget ya Sohit pacarku"));
+    await harness.bot.handleUpdate(messageUpdate("inget ya Rani pacarku"));
     await harness.bot.drainPending();
 
     assert.equal(inputs.length, 1);
     assert.equal(inputs[0]?.sensitiveConsent, true);
     assert.equal(inputs[0]?.predicate, "romantic_partner");
-    assert.equal(inputs[0]?.value, "Sohit");
+    assert.equal(inputs[0]?.value, "Rani");
     assert.equal(inputs[0]?.graphProjection?.relation, "partner_of");
     assert.equal(findCallbacks(harness.telegramCalls, "memsave:").length, 0);
     assert.match(harness.sent.at(-1) ?? "", /yang ini aku ingat untuk ke depan.*📍/iu);
-    assert.doesNotMatch(harness.sent.at(-1) ?? "", /(?:💭|Sohit adalah pacarku)/iu);
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /(?:💭|Rani adalah pacarku)/iu);
   });
 
   it("menyimpan personal memory otomatis setelah consent onboarding", async () => {
@@ -1339,8 +1348,8 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           memories: [{
             kind: "personal",
-            content: "Sohit adalah pacarku",
-            sourceEvidence: "Sohit pacarku",
+            content: "Rani adalah pacarku",
+            sourceEvidence: "Rani pacarku",
             sourceSubject: "self",
             durability: "durable",
           }],
@@ -1363,7 +1372,7 @@ describe("alur adapter Telegram", () => {
       },
     );
 
-    await harness.bot.handleUpdate(messageUpdate("Sohit pacarku"));
+    await harness.bot.handleUpdate(messageUpdate("Rani pacarku"));
     await harness.bot.drainPending();
 
     assert.equal(inputs.length, 1);
@@ -1425,8 +1434,8 @@ describe("alur adapter Telegram", () => {
 
   it("tidak mempercayai sinyal remember model tanpa perintah write lokal", async () => {
     for (const text of [
-      "jangan ingat kalau Sohit pacarku",
-      "kamu inget gak Sohit itu siapa?",
+      "jangan ingat kalau Rani pacarku",
+      "kamu inget gak Rani itu siapa?",
       "ingetin aku belajar jam 7",
     ]) {
       let saves = 0;
@@ -1435,7 +1444,7 @@ describe("alur adapter Telegram", () => {
           classifyTurnBoundary: async () => "complete",
           understand: async () => understanding({
             memoryAction: "remember",
-            memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+            memories: [{ kind: "personal", content: "Rani adalah pacarku" }],
           }),
           triageRisk: async () => CALM_TRIAGE,
           reply: async () => "Aku bakal simpan yang itu.",
@@ -1478,7 +1487,7 @@ describe("alur adapter Telegram", () => {
         understand: async () => understanding({
           memoryAction: "remember",
           memories: [
-            { kind: "personal", content: "Sohit adalah pacarku" },
+            { kind: "personal", content: "Rani adalah pacarku" },
             {
               kind: "personal",
               content: "Baru pulang dari rumah sakit",
@@ -1490,8 +1499,8 @@ describe("alur adapter Telegram", () => {
           semanticOperation: semanticOperation(
             "memory",
             "remember",
-            "inget ya Sohit pacarku, btw tadi aku habis dari rumah sakit",
-            "Sohit pacarku",
+            "inget ya Rani pacarku, btw tadi aku habis dari rumah sakit",
+            "Rani pacarku",
           ),
         }),
         triageRisk: async () => CALM_TRIAGE,
@@ -1514,13 +1523,13 @@ describe("alur adapter Telegram", () => {
 
     await harness.bot.handleUpdate(
       messageUpdate(
-        "inget ya Sohit pacarku, btw tadi aku habis dari rumah sakit",
+        "inget ya Rani pacarku, btw tadi aku habis dari rumah sakit",
       ),
     );
     await harness.bot.drainPending();
 
     assert.deepEqual(inputs.map((input) => input.content), [
-      "Sohit adalah pacarku",
+      "Rani adalah pacarku",
       "tadi aku habis dari rumah sakit",
     ]);
     assert.equal(inputs[0]?.sensitiveConsent, true);
@@ -1581,7 +1590,7 @@ describe("alur adapter Telegram", () => {
   });
 
   it("mengakui duplicate explicit request tanpa menulis atau meminta izin lagi", async () => {
-    const existing = memoryItem("known-love", "Sangat mencintai Sohit");
+    const existing = memoryItem("known-love", "Sangat mencintai Rani");
     existing.kind = "personal";
     let attempts = 0;
     const harness = basicHarness(
@@ -1593,8 +1602,8 @@ describe("alur adapter Telegram", () => {
           semanticOperation: semanticOperation(
             "memory",
             "remember",
-            "inget ya aku cinta banget sama Sohit",
-            "aku cinta banget sama Sohit",
+            "inget ya aku cinta banget sama Rani",
+            "aku cinta banget sama Rani",
           ),
         }),
         triageRisk: async () => CALM_TRIAGE,
@@ -1615,14 +1624,14 @@ describe("alur adapter Telegram", () => {
     );
 
     await harness.bot.handleUpdate(
-      messageUpdate("inget ya aku cinta banget sama Sohit"),
+      messageUpdate("inget ya aku cinta banget sama Rani"),
     );
     await harness.bot.drainPending();
 
     assert.equal(attempts, 1);
     assert.equal(findCallbacks(harness.telegramCalls, "memsave:").length, 0);
     assert.match(harness.sent.at(-1) ?? "", /yang itu masih aku ingat/iu);
-    assert.doesNotMatch(harness.sent.at(-1) ?? "", /(?:📍|💭|Sangat mencintai Sohit)/iu);
+    assert.doesNotMatch(harness.sent.at(-1) ?? "", /(?:📍|💭|Sangat mencintai Rani)/iu);
   });
 
   it("tidak mengaku ingat bila primary write explicit gagal", async () => {
@@ -1631,16 +1640,16 @@ describe("alur adapter Telegram", () => {
         classifyTurnBoundary: async () => "complete",
         understand: async () => understanding({
           memoryAction: "remember",
-          memories: [{ kind: "personal", content: "Sohit adalah pacarku" }],
+          memories: [{ kind: "personal", content: "Rani adalah pacarku" }],
           semanticOperation: semanticOperation(
             "memory",
             "remember",
-            "ingat ya Sohit pacarku",
-            "Sohit pacarku",
+            "ingat ya Rani pacarku",
+            "Rani pacarku",
           ),
         }),
         triageRisk: async () => CALM_TRIAGE,
-        reply: async () => "Aku bakal inget kalau Sohit pacarmu.",
+        reply: async () => "Aku bakal inget kalau Rani pacarmu.",
       } as unknown as Conversation,
       {} as TaskService,
       {
@@ -1653,7 +1662,7 @@ describe("alur adapter Telegram", () => {
       },
     );
 
-    await harness.bot.handleUpdate(messageUpdate("ingat ya Sohit pacarku"));
+    await harness.bot.handleUpdate(messageUpdate("ingat ya Rani pacarku"));
     await harness.bot.drainPending();
 
     assert.match(harness.sent.at(-1) ?? "", /belum bisa menyimpan/iu);

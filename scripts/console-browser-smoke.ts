@@ -1431,14 +1431,20 @@ async function auditLiveConsole(client: CdpClient): Promise<{
     telegram: string;
     whatsapp: string;
     globalErrorHidden: boolean;
+    globalErrorText: string;
     browserErrors: string[];
   }>(client, `(() => ({
     telegram:document.getElementById("telegram-route-status").textContent,
     whatsapp:document.getElementById("whatsapp-route-status").textContent,
     globalErrorHidden:document.getElementById("global-error").classList.contains("hidden"),
+    globalErrorText:document.getElementById("global-error-text").textContent,
     browserErrors:window.__harvyBrowserErrors||[],
   }))()`);
-  assert.equal(checked.globalErrorHidden, true);
+  assert.equal(
+    checked.globalErrorHidden,
+    true,
+    `Console connection refresh exposed a global error: ${checked.globalErrorText}`,
+  );
   assert.deepEqual(checked.browserErrors, []);
   assert.deepEqual(client.runtimeFailures, []);
 
@@ -1455,7 +1461,7 @@ async function auditLiveConsole(client: CdpClient): Promise<{
     client,
     `(() => ({
       overflow:document.documentElement.scrollWidth>window.innerWidth+1,
-      environments:document.querySelectorAll(".environment-card").length,
+      environments:document.querySelectorAll("#tab-channels .environment-card").length,
       activeEnvironments:document.querySelectorAll(".channel-environment-view.active").length,
       setupSidebarHidden:getComputedStyle(document.querySelector(".sidebar")).display==="none",
     }))()`,

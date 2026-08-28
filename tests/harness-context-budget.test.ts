@@ -193,17 +193,28 @@ describe("context budget harness", () => {
   });
 
   it("menyisihkan satu slot agar retrieval relevan tidak dikalahkan profile", () => {
+    // Budget ditulis eksplisit supaya invariant ini diuji apa adanya dan tidak
+    // ikut berubah ketika DEFAULT_CONTEXT_BUDGET dinaikkan.
+    const slots = 8;
     const compiled = compileHarvyContext({
       summary: null,
       turns: [],
-      memories: Array.from({ length: 8 }, (_, index) =>
+      memories: Array.from({ length: slots }, (_, index) =>
         memory(`profile tidak relevan ${index}`)),
       retrieved: [retrieved("episode lama yang relevan", "semantic")],
+    }, {
+      maxCharacters: 16_000,
+      maxSummaryCharacters: 3_000,
+      maxTurnCharacters: 2_000,
+      maxMemoryCharacters: 400,
+      maxTurns: 0,
+      maxMemories: slots,
     });
 
-    assert.equal(compiled.context.memories.length, 7);
+    // Satu slot menjadi milik retrieval, sisanya baru diisi profile.
+    assert.equal(compiled.context.memories.length, slots - 1);
     assert.equal(compiled.context.retrieved?.[0]?.text, "episode lama yang relevan");
-    assert.equal(compiled.manifest.includedMemoryCount, 8);
+    assert.equal(compiled.manifest.includedMemoryCount, slots);
   });
 
   it("mencatat hasil context pressure sebagai scalar bebas isi", () => {

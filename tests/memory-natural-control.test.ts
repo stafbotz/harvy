@@ -12,7 +12,7 @@ import type { SemanticOperation } from "../src/domain/semantic-operation.js";
 describe("kontrol memori semantic", () => {
   const items = [
     memory("school", "Sekarang kelas 12 di SMAN 3", "2026-08-01T00:00:00.000Z"),
-    memory("sohit", "Sohit adalah pacarku", "2026-08-02T00:00:00.000Z"),
+    memory("rani", "Rani adalah pacarku", "2026-08-02T00:00:00.000Z"),
     memory("study", "Lebih nyaman belajar pagi", "2026-08-03T00:00:00.000Z"),
   ];
 
@@ -28,24 +28,24 @@ describe("kontrol memori semantic", () => {
         message,
       );
     }
-    const message = "Please forget Sohit";
+    const message = "Please forget Rani";
     assert.equal(
       hasExplicitMemoryForgetRequest(message, {
-        ...forget(message, "Sohit"),
+        ...forget(message, "Rani"),
         explicitness: "implicit",
       }),
       false,
     );
     assert.equal(
-      hasExplicitMemoryForgetRequest(message, forget("different evidence", "Sohit")),
+      hasExplicitMemoryForgetRequest(message, forget("different evidence", "Rani")),
       false,
     );
   });
 
   it("memilih semantic target tanpa meminta ID memory", () => {
     assert.deepEqual(
-      memoriesMatchingNaturalTarget(items, "Sohit").map((item) => item.id),
-      ["sohit"],
+      memoriesMatchingNaturalTarget(items, "Rani").map((item) => item.id),
+      ["rani"],
     );
     assert.deepEqual(
       memoriesMatchingNaturalTarget(items, "sekolahku").map((item) => item.id),
@@ -112,7 +112,7 @@ describe("kontrol memori semantic", () => {
       true,
     );
     assert.equal(
-      isExplicitForgetAllMemories("Lali Sohit", forget("Lali Sohit", "Sohit")),
+      isExplicitForgetAllMemories("Lali Rani", forget("Lali Rani", "Rani")),
       false,
     );
   });

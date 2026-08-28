@@ -1,3 +1,4 @@
+import { agentStopDeservesExplanation } from "../ai/conversation.js";
 import { randomUUID } from "node:crypto";
 import { EMPTY_CONTEXT, type HarvyContext } from "../ai/context.js";
 import { ByokProviderError } from "../ai/client.js";
@@ -12,6 +13,7 @@ import type {
   ExtractedTask,
   Understanding,
 } from "../ai/understand.js";
+import { imageConversationUnderstanding } from "../ai/understand.js";
 import {
   safetyOnlyUnderstanding,
   safeFallbackReply,
@@ -26,6 +28,7 @@ import { canUseDirectTimeFastPath } from "../agent/time-fast-path.js";
 import { liveStateRequirement } from "../ai/agent.js";
 import {
   prefersGuidedSmallStep,
+  requestsUnhandledTaskChange,
 } from "../core/action-policy.js";
 import {
   allowsDeterministicSurface,
@@ -241,7 +244,7 @@ export interface WhatsAppPrivateConversationDependencies {
   > & Partial<Pick<
     Conversation,
     "assessTurnBoundary" | "classifyTurnInterruption" |
-      "agent" | "presentOperation" |
+      "agent" | "explainAgentStop" | "presentOperation" |
       "presentScheduledCheckIn" | "interpretProjectIntent"
   >>;
   history: Pick<
@@ -2880,7 +2883,9 @@ export class WhatsAppPrivateConversation {
             type: "input_image",
             mediaType: message.image.mediaType,
             data: message.image.data,
-            detail: "auto",
+            // Keep both private channels on the same live-verified vision
+            // contract; GMI/MiniMax is not reliable with `auto` here.
+            detail: "low",
           },
         ],
       };
@@ -2946,6 +2951,8 @@ export class WhatsAppPrivateConversation {
 
     let understanding = immediateDanger || urgentBoundary
       ? safetyOnlyUnderstanding()
+      : hasImageInput
+      ? imageConversationUnderstanding()
       : await this.dependencies.conversation.understand(text, context, {
           ...runtime,
           ownerId,
@@ -2966,7 +2973,7 @@ export class WhatsAppPrivateConversation {
       hasExplicitSupportTriageSignal(text),
     );
     if (
-      this.dependencies.memoryContextCompiler && understanding &&
+      !hasImageInput && this.dependencies.memoryContextCompiler && understanding &&
       (understanding.intent !== "smalltalk" ||
         Boolean(understanding.semanticOperation)) &&
       riskHint.level === "none" && !immediateDanger && !urgentBoundary
@@ -3539,12 +3546,18 @@ export class WhatsAppPrivateConversation {
           requiresAgentPlanning
         ? "request"
         : "question";
+      // Cabang ini hanya tercapai ketika route immediate memilih
+      // `conversation`, jadi jalur task deterministik sudah menolak menangani
+      // permintaannya. Parity dengan Telegram dijaga di sini.
+      const unhandledTaskChange = requestsUnhandledTaskChange(
+        understanding.semanticOperation,
+      );
       const globalRoute = selectGlobalRoute({
         intent: agentIntent,
         messageLength: text.length,
         needsStepByStep: understanding.needsStepByStep,
         assessment: understanding.routingAssessment ?? null,
-        specializedFlow: requiresLiveState,
+        specializedFlow: requiresLiveState || unhandledTaskChange,
         guidedInteraction: guidedSmallStep,
         risk: assessment.level,
       });
@@ -3556,7 +3569,7 @@ export class WhatsAppPrivateConversation {
       const hasAgentAuthority =
         (understanding.intent === "question" ||
           understanding.intent === "request") &&
-        (requiresLiveState || requiresAgentPlanning ||
+        (requiresLiveState || requiresAgentPlanning || unhandledTaskChange ||
           requestsAgentTooling(understanding.routingAssessment));
       const useAgent = !hasImageInput && hasAgentAuthority &&
         (!engagedSession || requiresAgentPlanning) &&
@@ -3604,6 +3617,10 @@ export class WhatsAppPrivateConversation {
             ...runtime,
             ownerId,
             channel: "whatsapp",
+            deliveryChatId: whatsappPrivateChatId(
+              message.accountId,
+              message.userId,
+            ),
             timeZone,
             style: profile.stylePreference,
             intent: agentIntent,
@@ -3614,7 +3631,24 @@ export class WhatsAppPrivateConversation {
             ],
           },
         );
-        reply = agentResultMessage(result);
+        // Parity dengan Telegram: penghentian dijelaskan model lebih dulu.
+        const explained = result.status === "stopped" &&
+          agentStopDeservesExplanation(result.reason)
+          ? await this.dependencies.conversation.explainAgentStop?.call(
+            this.dependencies.conversation,
+            text,
+            result,
+            context,
+            {
+              ...runtime,
+              ownerId,
+              timeZone,
+              style: profile.stylePreference,
+              intent: agentIntent,
+            },
+          )
+          : null;
+        reply = explained ?? agentResultMessage(result);
       } else {
         reply = await this.dependencies.conversation.reply(
           text,
@@ -4667,7 +4701,7 @@ function agentResultMessage(
   if (result.reason === "usage_allowance_exhausted") {
     return "Kapasitas Harvy-funded periode ini sudah terpakai. Gunakan BYOK, tambah compute, atau tunggu kapasitas diperbarui.";
   }
-  return "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
+  return "Aku belum berhasil menyelesaikan permintaan itu, dan aku tidak mau mengarang hasilnya. Coba sampaikan lagi dengan cara lain, atau sebutkan bagian mana yang paling kamu butuhkan.";
 }
 
 function memoryKnowledgeFields(item: ExtractedMemory): Pick<
