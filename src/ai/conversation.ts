@@ -1240,7 +1240,11 @@ export class Conversation {
             GENERAL_MODEL_DEADLINE_MS,
             {
               modelId: modelRoute.modelId,
-              cognitiveRole,
+              // Stage role `critic` hanya sah dengan cognitive role verifier
+              // atau challenger. Mewariskan cognitiveRole giliran utama
+              // membuat ExecutionPolicy melempar sebelum provider dipanggil,
+              // dan `catch` di bawah menelannya sebagai review yang gagal.
+              cognitiveRole: "verifier",
               ...(routingAssessment
                 ? {
                     difficulty: routingAssessment.complexity,

@@ -662,6 +662,7 @@ describe("WhatsAppPrivateConversation", () => {
       "Menurutmu, apakah pengujian live ini cukup membuktikan Harvy siap dipakai sehari-hari? Nilai bukti dan celah yang masih berisiko.";
     let usageRead = 0;
     let agentCalls = 0;
+    let replyCalls = 0;
     const harness = createHarness(true, {
       understand: async () => ({
         ...modelPlanningUnderstanding(),
@@ -692,12 +693,24 @@ describe("WhatsAppPrivateConversation", () => {
         usageRead += 1;
         return "Penggunaan Harvy yang tidak diminta";
       },
+      // `internal_state` kini membuat tool terlihat oleh planner, tetapi
+      // kontrak `tool_choice: "auto"` tidak mewajibkannya memanggil apa pun.
+      // Pertanyaan penilaian seperti ini dijawab teks biasa. Yang dijaga tes
+      // ini adalah surface usage deterministik tidak dibajak — sama seperti
+      // kembarannya di `tests/create-bot-flow.test.ts`.
       agent: async () => {
         agentCalls += 1;
-        throw new Error("internal_state model tanpa preflight bukan authority tool");
+        return {
+          status: "completed",
+          reply: "Penilaian kesiapan produk berdasarkan bukti live.",
+          checkpoint: {} as never,
+          trace: [],
+        };
       },
-      reply: async () =>
-        "Penilaian kesiapan produk berdasarkan bukti live.",
+      reply: async () => {
+        replyCalls += 1;
+        return "Penilaian kesiapan produk berdasarkan bukti live.";
+      },
     });
 
     const result = await harness.service.handle(
@@ -705,7 +718,7 @@ describe("WhatsAppPrivateConversation", () => {
     );
 
     assert.equal(usageRead, 0);
-    assert.equal(agentCalls, 0);
+    assert.equal(agentCalls + replyCalls, 1, "tepat satu jalur menjawab");
     assert.match(privateReplyText(result), /Penilaian kesiapan produk/u);
     assert.doesNotMatch(privateReplyText(result), /Penggunaan Harvy/u);
   });

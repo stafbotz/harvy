@@ -922,11 +922,21 @@ describe("balasan percakapan", () => {
     const reply = await conversation.reply(
       "Perbaiki fungsi ini dan sertakan kode serta test untuk string kosong.",
       understanding("request"),
+      undefined,
+      null,
+      CALM_TRIAGE,
+      null,
+      false,
+      { ownerId: "student", channel: "telegram" },
     );
 
     assert.equal(reply, reviewed);
     assert.equal(requests.length, 2);
     assert.equal(requests[1]?.execution?.role, "critic");
+    // Panggilan review adalah panggilan model berbayar, jadi ia wajib terikat
+    // pemilik. `usage()` sengaja mengembalikan undefined tanpa ownerId, maka
+    // atribusi hanya dapat diuji bila runtime membawa pemiliknya.
+    assert.equal(requests[1]?.usage?.ownerId, "student");
     assert.equal(requests[1]?.usage?.purpose, "reply-review");
     assert.equal(requests[1]?.maxAttempts, 1);
     assert.match(

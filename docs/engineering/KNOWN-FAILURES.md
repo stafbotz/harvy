@@ -19,57 +19,61 @@ perubahanmu — buktikan asalnya sebelum melapor.
 
 ## Aktif
 
-Dua entri percakapan di bawah ini semula dicatat sebagai kegagalan working tree pada
-2026-08-27. Commit `4454f65` (2026-08-28) memasukkan `src/ai/conversation.ts`
-dan `tests/conversation.test.ts` beserta langkah review artefak yang belum
-selesai, jadi keduanya sekarang merah di `HEAD`, bukan lagi hanya di working
-tree seseorang. Kalimat "hijau pada `HEAD`" dan "belum ada di `HEAD`" pada versi
-lama entri ini sudah tidak berlaku.
+Tidak ada kegagalan yang diketahui. Suite penuh pada 2026-08-29 hijau: 1.980
+tes, 1.980 lulus, 0 gagal dalam 242 suite, exit code 0.
 
-### `meregenerasi code-only yang membawa prosa atau conditional expression rumpang`
+Ketiga entri yang sebelumnya tercatat di sini sudah diperbaiki pada tanggal yang
+sama. Sebabnya dicatat di bawah karena dua di antaranya sempat salah
+didiagnosis, dan diagnosis yang salah itulah yang membuat ketiganya bertahan
+merah berhari-hari.
 
-- Berkas: `tests/conversation.test.ts`
-- Sejak: 2026-08-27 di working tree; merah di `HEAD` sejak commit `4454f65`
-  pada 2026-08-28.
-- Gejala: mengharapkan 3 permintaan model, menerima 2.
-- Sebab: langkah review artefak kode pada `reply()` belum selesai
-  (`src/ai/conversation.ts`, blok pemeriksaan akhir artefak sekitar baris 1229).
-- Pemilik: penulis lanjutan langkah review artefak `reply()`.
+### Sudah diperbaiki: dua tes review artefak kode
 
-### `mereview konsistensi kode dan test sebelum artefak dikirim`
+`meregenerasi code-only yang membawa prosa atau conditional expression rumpang`
+dan `mereview konsistensi kode dan test sebelum artefak dikirim`, keduanya di
+`tests/conversation.test.ts`.
 
-- Berkas: `tests/conversation.test.ts`
-- Sejak: 2026-08-27 di working tree; merah di `HEAD` sejak commit `4454f65`
-  pada 2026-08-28.
-- Gejala: artefak hasil review tidak sama dengan yang diharapkan; draft
-  dikembalikan tanpa perbaikan konsistensi.
-- Sebab: sama dengan entri di atas — langkah review artefak belum selesai.
-- Pemilik: penulis lanjutan langkah review artefak `reply()`.
+Catatan lama menyebut sebabnya "langkah review artefak `reply()` belum
+selesai". Itu keliru — langkahnya sudah lengkap. Yang salah adalah satu
+argumen: blok review memanggil `this.execution(...)` dengan stage role `critic`
+sambil mewariskan `cognitiveRole` giliran utama, padahal `validateCognitiveRole`
+di `src/core/execution-policy.ts` hanya mengizinkan `critic` berpasangan dengan
+`verifier` atau `challenger`. `ExecutionPolicy` melempar sebelum provider
+dipanggil, dan `catch` di sekeliling blok itu menelannya sebagai "review
+gagal" lalu diam-diam mempertahankan draft. Gejalanya terlihat seperti fitur
+yang belum ditulis. Perbaikannya satu baris: `cognitiveRole: "verifier"`.
 
-### `tidak membiarkan usage explicit membajak penilaian produk nonmekanis`
+Tes kedua masih merah setelah itu karena setupnya sendiri kurang: ia memeriksa
+atribusi billing (`usage.purpose`) tanpa pernah memberi `ownerId` ke `reply()`,
+sedangkan `usage()` memang sengaja mengembalikan `undefined` tanpa pemilik.
+Runtime `{ ownerId: "student", channel: "telegram" }` ditambahkan mengikuti
+konvensi tes lain di berkas yang sama.
 
-- Berkas: `tests/whatsapp-private-conversation.test.ts`
-- Ditemukan: 2026-08-28 pada working tree bersih di `HEAD` `03dcc29`; commit
-  pengenal regresi belum dibuktikan.
-- Gejala: mengharapkan handler usage tidak dipanggil, menerima satu panggilan.
-- Sebab: semantic operation `usage/show-details` dari model masih mencapai
-  handler economy ketika pesan pengguna sebenarnya meminta penilaian kesiapan
-  produk; akar routing tepatnya belum didiagnosis.
-- Pemilik: tindak lanjut routing WhatsApp privat.
+### Sudah diperbaiki: `tidak membiarkan usage explicit membajak penilaian produk nonmekanis`
 
-Diperiksa ulang langsung dengan
-`node --test dist/tests/whatsapp-private-conversation.test.js`: 53/54 lulus dan
-kasus ini tetap merah.
+`tests/whatsapp-private-conversation.test.ts`.
 
-Diperiksa ulang 2026-08-28 dengan `node --test dist/tests/conversation.test.js`:
-keduanya masih merah. Pekerjaan agent yang belum di-commit hari itu tidak
-menyentuh jalur ini — `tests/conversation.test.ts` identik dengan `HEAD` dan
-seluruh hunk `src/ai/conversation.ts` yang belum di-commit berada di planner
-agent, jauh setelah blok review artefak.
+Catatan lama menyebut "semantic operation `usage/show-details` masih mencapai
+handler economy". Itu juga keliru. Handler economy tidak pernah terpanggil —
+`allowsDeterministicSurface` menolak assessment nonmekanis, persis seperti
+seharusnya. Assertion yang gagal adalah `agentCalls`, bukan `usageRead`.
 
-Diperiksa ulang dengan suite penuh pada 2026-08-28 sesudah mesin tata-kelola
-agent dihapus: 1.977 lulus, 3 gagal dalam 242 suite. Ketiga entri di atas
-adalah satu-satunya yang merah, jadi penghapusan itu tidak menambah regresi.
+Sebab sebenarnya: tes ini mengunci aturan bahwa `toolNeed: "internal_state"`
+bukan authority Agent Runtime. Aturan itu sengaja diubah bersama kontrak
+planner `tool_choice: "auto"`, dengan alasan terukur yang ditulis panjang di
+`requestsAgentTooling` (`src/ai/model-policy.ts`). Tes kembarannya di
+`tests/create-bot-flow.test.ts` sudah diperbarui saat itu; versi WhatsApp
+tertinggal. Kini keduanya menegaskan invariant yang sama dan lebih kuat:
+`agentCalls + replyCalls === 1` — tepat satu jalur menjawab — sementara
+`usageRead === 0` tetap menjaga maksud asli tes.
+
+### Pelajaran
+
+Sebab pada berkas ini adalah hipotesis sampai dibuktikan. Dua dari tiga entri di
+atas salah sebab, dan keduanya menuduh "fitur belum selesai" padahal fiturnya
+ada. Ketika sebuah `catch` menelan error tanpa mencetak pesannya, gejala di
+permukaan tidak dapat dipakai menyimpulkan akar masalah; cetak dulu error yang
+tertelan.
 
 ## Cara membuktikan asal sebuah kegagalan
 

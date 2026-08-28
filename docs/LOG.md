@@ -21,6 +21,7 @@ material lama berada di:
 - [`log/2026-08-25-eksplorasi.md`](log/2026-08-25-eksplorasi.md)
 - [`log/2026-08-25-console-credential.md`](log/2026-08-25-console-credential.md)
 - [`log/2026-08-26.md`](log/2026-08-26.md)
+- [`log/2026-08-27.md`](log/2026-08-27.md)
 - [`log/2026-08-07.md`](log/2026-08-07.md)
 - [`log/2026-08-02-sampai-2026-08-06.md`](log/2026-08-02-sampai-2026-08-06.md)
 - [`log/2026-07-25-sampai-2026-08-02.md`](log/2026-07-25-sampai-2026-08-02.md)
@@ -86,6 +87,46 @@ dan skrip yatim dibatalkan setelah diperiksa: ADR sudah punya field `Status`
 dan indeks, `coba-*.ts` terdokumentasi di `DEVELOPMENT.md`, dan tiga skrip
 eval sisanya menghasilkan evidence yang tersimpan. 14 ADR masih tanpa field
 `Status` dan tidak ditebak isinya.
+
+## 2026-08-29 — Tiga tes merah selesai; suite penuh hijau
+
+Scope: `src/ai/conversation.ts`, `tests/conversation.test.ts`,
+`tests/whatsapp-private-conversation.test.ts`,
+`docs/engineering/KNOWN-FAILURES.md`.
+
+Changed: satu defect produk nyata diperbaiki. Blok review artefak kode pada
+`reply()` memanggil `this.execution(...)` dengan stage role `critic` sambil
+mewariskan `cognitiveRole` giliran utama, padahal `validateCognitiveRole`
+hanya mengizinkan `critic` berpasangan dengan `verifier` atau `challenger`.
+`ExecutionPolicy` melempar sebelum provider dipanggil dan `catch` di
+sekelilingnya menelannya sebagai "review gagal", sehingga langkah itu tidak
+pernah berjalan sekalipun sejak ditulis. Perbaikannya `cognitiveRole:
+"verifier"`.
+
+Dua penyesuaian tes menyertainya. `mereview konsistensi kode dan test`
+memeriksa atribusi billing tanpa pernah memberi `ownerId`, sedangkan `usage()`
+sengaja mengembalikan `undefined` tanpa pemilik; runtime pemilik ditambahkan
+mengikuti konvensi tes lain di berkas yang sama. `tidak membiarkan usage
+explicit membajak penilaian produk nonmekanis` masih mengunci aturan bahwa
+`toolNeed: "internal_state"` bukan authority Agent Runtime — aturan yang
+sengaja diganti bersama kontrak `tool_choice: "auto"`. Kembarannya di
+`tests/create-bot-flow.test.ts` sudah dipindahkan saat itu; versi WhatsApp
+tertinggal. Keduanya kini menegaskan `agentCalls + replyCalls === 1` sementara
+`usageRead === 0` menjaga maksud asli tes.
+
+Dua dari tiga diagnosis lama di `KNOWN-FAILURES.md` ternyata salah dan itulah
+yang membuat ketiganya bertahan merah: keduanya menuduh "fitur belum selesai"
+padahal fiturnya ada, dan untuk kasus WhatsApp menuduh handler economy
+terpanggil padahal assertion yang gagal adalah `agentCalls`. Berkas itu ditulis
+ulang dengan sebab yang terbukti.
+
+Verified: `npm test` 1.980 tes, 1.980 lulus, 0 gagal dalam 242 suite, exit code
+0, 444 detik. `npm run check` PASS diverifikasi lewat exit code.
+
+Not verified: perbaikan `cognitiveRole` membuat langkah review artefak
+benar-benar memanggil model untuk pertama kalinya, tetapi hanya dengan client
+palsu di unit test. Mutunya pada provider nyata belum diukur; `eval:conversation`
+belum dijalankan untuk jalur ini.
 
 ## 2026-08-28 — Bentuk balasan untuk bahaya aktif
 
@@ -327,69 +368,6 @@ dan penolakan jujur atas kemampuan yang tidak ada.
 Not verified: `explainAgentStop` terbukti lewat unit test, belum pernah terpicu
 oleh penghentian nyata karena planner kini pulih sendiri. Tiga kasus eval masih
 belum berjalan, dan triase `alone-support` salah menilai risiko.
-
-## 2026-08-27 — Tool tulis privat, bentuk tool call, dan register suara
-
-Scope: `src/agent/write-executors.ts`, `src/ai/conversation.ts`,
-`src/ai/client.ts`, `src/ai/persona.ts`, `src/core/action-policy.ts`,
-`src/harness/scope.ts`, adapter Telegram/WhatsApp privat, `src/app.ts`.
-
-Changed: percakapan privat hanya punya lima capability read-only, sehingga
-`task.manage` dan `reminder.schedule` terdaftar `installed` tanpa executor dan
-tidak pernah callable. Keduanya kini punya executor tulis, dengan waktu wajib
-ISO 8601 beroffset dan tujuan pengiriman dari `PrivateAgentScope.deliveryChatId`
-yang baru. Policy otorisasi percakapan privat menggantikan policy konservatif
-harness: create/complete/reschedule dan set/clear pengingat diizinkan, sedangkan
-penghapusan ditolak dengan alasan terbaca model agar run tetap berjalan.
-Permintaan ubah task yang ditolak jalur deterministik dikenali
-`requestsUnhandledTaskChange()`; `requestsAgentTooling` sengaja tidak diperluas
-ke `internal_state`. Native tool call yang salah bentuk atau salah argumen kini
-mendapat satu koreksi terbatas alih-alih mengakhiri run (`AiToolShapeError`).
-
-`HARVY_IDENTITY` menyatakan dua register secara eksplisit—santai saat mengobrol,
-rapi saat bekerja, boleh berpindah dalam satu balasan—yang sebelumnya tidak ada
-sama sekali. Larangan pada prompt balasan turun 36 → 20 tanpa menghilangkan
-invariant safety, privasi, memori, atau kejujuran tindakan. Ukuran prompt tidak
-dipangkas: `HARVY_REPLY_CACHE_SPINE` harus tetap di atas 4.096 byte demi prompt
-caching provider.
-
-Verified: `npm run check` PASS; `npm test` 1.970 lulus, 2 gagal dalam 240 suite;
-`tests/write-executors.test.ts` 12/12 dan `tests/agent-tool-repair.test.ts` 3/3
-PASS; `npm run context:check` PASS; `git diff --check` bersih.
-
-Not verified: dua kegagalan tersisa sudah ada sebelum perubahan ini dan tercatat
-di `docs/engineering/KNOWN-FAILURES.md`. Tool tulis belum diuji dari kanal
-nyata, dan register belum diukur dengan `npm run eval:conversation`.
-
-Next: uji live privat untuk write dan pengiriman pengingat; tinjau ulang
-`memory.scoped` yang sengaja belum diberi executor.
-
-## 2026-08-27 — Coding berorientasi goal dan bootstrap GitHub exact
-
-Scope: ProjectWorkspace/CodingRun, project intent, GitHub App Broker, Console
-setup coding, verifikasi session WhatsApp, tes, invariant, ADR, dan status.
-
-Changed: project kini dapat dimulai kosong dan mempunyai ProjectGoal durable,
-acceptance criteria, milestone, blocker, evidence, serta skill deklaratif
-versioned tanpa authority baru. CodingRun mengikat brief/evidence ke goal dan
-menjalankan challenger+verifier read-only sebelum satu integration writer.
-Console setup menambah langkah Komputer kerja dan GitHub dengan secret
-non-reflective serta aktivasi berbasis health/receipt. Repository private kosong
-berhenti pada `bootstrap_required`; konfirmasi exact membuat satu README
-code-owned melalui WAL/idempotency/reconciliation sebelum provisioning. Race UI
-verifikasi WhatsApp ditutup dengan melepas operation fence sebelum status
-terminal dapat terlihat.
-
-Verified: tes integrasi terarah PASS 95/95; smoke Edge nyata PASS pada desktop
-dan mobile termasuk isi/simpan/verifikasi form Compute+GitHub tanpa refleksi
-secret; `npm run check` PASS; `npm test` PASS 1.948/1.948 dalam 236 suite; dan
-`npm run context:check` PASS; `git diff --check` PASS dengan warning line-ending
-Windows.
-
-Not verified: sandbox hostile-code pada Linux non-root nyata; GitHub App,
-bootstrap repository kosong, branch, push, dan draft PR pada remote nonkritis;
-serta coding end-to-end dari akun Telegram/WhatsApp nyata. Test GitHub memakai
-broker/API palsu dan Git object lokal, bukan bukti efek remote.
 
 ## 2026-08-28 — Planner tool_choice auto dan tool recall pengguna
 
