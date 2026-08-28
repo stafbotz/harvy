@@ -92,8 +92,13 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 - Hanya satu key tersedia saat smoke, sehingga rotasi/retry lintas key tidak
   dapat dijalankan. Kebijakan privacy/retention dan SLA GMI tetap belum
   diverifikasi oleh kode.
-- Token selection masih character/count-based; belum ada tokenizer atau
-  adaptive calibration per route/model.
+- Reservasi RunBudget memakai rasio karakter-per-token yang dikalibrasi per
+  model dari `usage` provider nyata (`TokenRatioCalibration`, dipakai
+  `AiClient` saat `reserveModelCall`). Kalibrasi itu in-memory per instance
+  `AiClient` dan butuh lima observasi, jadi restart mengembalikannya ke default
+  4 karakter per token. Selection konteks, pemadatan, dan context-pressure tetap
+  memakai default itu tanpa kalibrasi; belum ada tokenizer maupun kalibrasi per
+  route.
 - Turn summary belum menjadi dashboard agregat lintas owner. TTFR/final p50/p95
   tersedia pada service/repository, tetapi alert/SLO exporter dan pengukuran
   live lintas Telegram/WhatsApp belum dikalibrasi.
@@ -103,7 +108,8 @@ Angka gerbang penuh terbaru dicatat di `docs/LOG.md`.
 
 ## Bukti dan pointer
 
-- Kode: `src/ai/client.ts`, `src/ai/key-pool.ts`, `src/config.ts`,
+- Kode: `src/ai/client.ts`, `src/ai/key-pool.ts`, `src/ai/token-estimate.ts`,
+  `src/config.ts`,
   `src/transport/bounded-response-body.ts`, `src/core/secret-store.ts`,
   `src/core/local-runtime-lock.ts`,
   `src/core/telemetry-service.ts`, `src/core/coding-runtime-composition.ts`,

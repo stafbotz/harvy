@@ -2,14 +2,23 @@
 
 Refreshed: 25 Agustus 2026 pada reminder relatif berdetik, commit-first task
 receipt Telegram, dan focused live rerun. Delivery normal terbukti live; exact
-crash window tetap belum diuji.
+crash window tetap belum diuji. Jalur tool tulis ditambahkan 28 Agustus 2026
+dengan bukti unit test saja.
 
 ## Keadaan saat ini
 
-- Task hanya dibuat langsung dari `SemanticOperation` save yang explicit,
+- Jalur pertama pembuatan task adalah `SemanticOperation` save yang explicit,
   mempunyai evidence raw-turn dan isi konkret; task tersirat memakai
   confirmation token owner-scoped dan sekali pakai. Explicitness tidak lagi
   ditentukan oleh daftar verba Indonesia.
+- Sejak 28 Agustus 2026 ada jalur kedua. Planner percakapan privat dapat
+  memanggil tool tulis `task.manage` (create, complete, reschedule) dan
+  `reminder.schedule` (set, clear); hasilnya berupa observation, bukan klaim di
+  teks balasan. Owner dan chat tujuan diambil dari `PrivateAgentScope`, waktu
+  wajib ISO 8601 beroffset, dan `remove` ditolak policy otorisasi privat
+  walaupun executor mendukungnya sehingga Harvy bertanya lebih dulu. Jalur ini
+  baru dibuktikan unit test; belum ada bukti kanal nyata. Kontrak lengkapnya di
+  [`agent-runtime.md`](agent-runtime.md).
 - Prioritas deterministik tersedia. Reminder memvalidasi waktu lampau dan jam
   tenang; worker menunggu owner tidak sedang mengetik/diproses.
 - Satu sesi persisten per pengguna tersedia sebagai konteks lunak. Continue,
@@ -83,8 +92,9 @@ crash window tetap belum diuji.
 ## Bukti dan pointer
 
 - Kode: `src/core/task-service.ts`, `src/core/session-service.ts`,
-  `src/reminders/`, `src/core/time-policy.ts`.
+  `src/reminders/`, `src/core/time-policy.ts`, dan
+  `src/agent/write-executors.ts` untuk jalur tool.
 - Tes: `tests/task-service.test.ts`, `tests/session-service.test.ts`,
   `tests/reminder-worker.test.ts`, `tests/checkin-worker.test.ts`,
-  `tests/time-policy.test.ts`.
+  `tests/time-policy.test.ts`, `tests/write-executors.test.ts`.
 - Keputusan: ADR-002, ADR-008, ADR-017, ADR-044.

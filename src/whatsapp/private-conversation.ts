@@ -1,4 +1,8 @@
 import { agentStopDeservesExplanation } from "../ai/conversation.js";
+import {
+  agentApprovalStopMessage,
+  agentStopMessage,
+} from "../bot/agent-stop-copy.js";
 import { randomUUID } from "node:crypto";
 import { EMPTY_CONTEXT, type HarvyContext } from "../ai/context.js";
 import { ByokProviderError } from "../ai/client.js";
@@ -127,6 +131,7 @@ import {
 } from "../core/telemetry-service.js";
 import type { UserUsageSummaryService } from "../core/user-usage-summary-service.js";
 import {
+  initialProgressEvent,
   interruptionProgressEvent,
   publicFocusProgressEvent,
   TransientConversationProgress,
@@ -2949,6 +2954,11 @@ export class WhatsAppPrivateConversation {
       };
     }
 
+    // Paritas dengan Telegram: status menyala sebelum panggilan compiler,
+    // bukan sesudahnya. Cabang lokal dan lane keselamatan tetap sunyi.
+    if (!immediateDanger && !urgentBoundary && !hasImageInput) {
+      runtime.progress?.report(initialProgressEvent());
+    }
     let understanding = immediateDanger || urgentBoundary
       ? safetyOnlyUnderstanding()
       : hasImageInput
@@ -4677,31 +4687,8 @@ function agentResultMessage(
 ): string {
   if (result.status === "completed") return result.reply;
   if (result.status === "needs_input") return result.prompt;
-  if (result.status === "needs_approval") {
-    return "Aku menghentikan run ini karena agent baca-saja meminta izin untuk perubahan yang tidak tersedia.";
-  }
-  if (result.reason === "deadline") {
-    return "Aku belum menyelesaikan run ini sebelum batas waktunya. Aku tidak akan mengarang hasilnya.";
-  }
-  if (result.reason.startsWith("budget_")) {
-    return "Aku menghentikan run saat batas kerja kumulatifnya tercapai. Aku tidak akan mengarang atau meneruskan hasil setengah jadi.";
-  }
-  if (result.reason === "cycle") {
-    return "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya.";
-  }
-  if (result.reason === "usage_anti_abuse") {
-    return "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan.";
-  }
-  if (result.reason === "usage_wallet_disabled") {
-    return "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Aktifkan funding atau gunakan provider sendiri untuk melanjutkan.";
-  }
-  if (result.reason === "usage_byok_unavailable") {
-    return "Provider milikmu belum cocok untuk pekerjaan ini. Pilih provider lain atau gunakan compute Harvy secara eksplisit.";
-  }
-  if (result.reason === "usage_allowance_exhausted") {
-    return "Kapasitas Harvy-funded periode ini sudah terpakai. Gunakan BYOK, tambah compute, atau tunggu kapasitas diperbarui.";
-  }
-  return "Aku belum berhasil menyelesaikan permintaan itu, dan aku tidak mau mengarang hasilnya. Coba sampaikan lagi dengan cara lain, atau sebutkan bagian mana yang paling kamu butuhkan.";
+  if (result.status === "needs_approval") return agentApprovalStopMessage();
+  return agentStopMessage(result.reason);
 }
 
 function memoryKnowledgeFields(item: ExtractedMemory): Pick<

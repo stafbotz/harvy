@@ -9,6 +9,7 @@ import {
   type ChatToolCall,
 } from "../src/ai/client.js";
 import { Conversation } from "../src/ai/conversation.js";
+import { agentClientDouble } from "./agent-client-fixture.js";
 
 const PRODUCTION_ROUTING = {
   mode: "production" as const,
@@ -31,7 +32,7 @@ describe("perbaikan bentuk native tool call", () => {
   it("memberi koreksi konkret saat model menjawab teks biasa, lalu meneruskan run", async () => {
     const requests: ChatRequest[] = [];
     let call = 0;
-    const client = {
+    const client = agentClientDouble({
       async completeToolTurn(
         request: ChatRequest & { tools: readonly ChatFunctionTool[] },
       ): Promise<ChatAssistantToolMessage> {
@@ -47,7 +48,7 @@ describe("perbaikan bentuk native tool call", () => {
           toolCall("harvy_final_v1", { reply: "Sudah kucatat ulanganmu." }),
         ]);
       },
-    } as unknown as AiClient;
+    });
 
     const result = await conversation(client).agent(
       "Ingetin aku ulangan fisika besok",
@@ -66,7 +67,7 @@ describe("perbaikan bentuk native tool call", () => {
   it("mengoreksi argumen yang tidak cocok schema tanpa mengakhiri run", async () => {
     const requests: ChatRequest[] = [];
     let call = 0;
-    const client = {
+    const client = agentClientDouble({
       async completeToolTurn(
         request: ChatRequest & { tools: readonly ChatFunctionTool[] },
       ): Promise<ChatAssistantToolMessage> {
@@ -81,7 +82,7 @@ describe("perbaikan bentuk native tool call", () => {
             : toolCall("harvy_final_v1", { reply: "Ulanganmu sudah kucatat." }),
         ]);
       },
-    } as unknown as AiClient;
+    });
 
     const result = await conversation(client).agent(
       "Catat PR matematika buat Jumat",
@@ -100,12 +101,12 @@ describe("perbaikan bentuk native tool call", () => {
 
   it("berhenti setelah satu koreksi dan tidak mengulang tanpa batas", async () => {
     let call = 0;
-    const client = {
+    const client = agentClientDouble({
       async completeToolTurn(): Promise<ChatAssistantToolMessage> {
         call += 1;
         return assistant([toolCall("harvy_final_v1", { jawaban: "tetap salah" })]);
       },
-    } as unknown as AiClient;
+    });
 
     const result = await conversation(client).agent(
       "Catat PR matematika buat Jumat",

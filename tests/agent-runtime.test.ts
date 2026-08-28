@@ -11,7 +11,9 @@ import {
 } from "../src/agent/time-fast-path.js";
 import {
   agentNativeTools,
+  agentPlannerPrompt,
   liveStateRequirement,
+  parseAgentAutoDecision,
   parseAgentNativeDecision,
 } from "../src/ai/agent.js";
 import { selectAgentMode } from "../src/ai/model-policy.js";
@@ -219,6 +221,78 @@ describe("agent routing dan planner contract", () => {
       ], [], contract),
       null,
     );
+  });
+
+  it("kontrak auto menerima teks sebagai final dan tetap menolak yang kosong", () => {
+    const callable = [{
+      id: "task.list_active",
+      version: "1",
+      effect: "read" as const,
+      description: "Baca tugas aktif.",
+      nativeTool: {
+        name: "harvy_task_list_active_v1",
+        description: "Baca tugas aktif.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+    }];
+
+    assert.deepEqual(
+      parseAgentAutoDecision(
+        { kind: "text", content: "  Aku di sini.  " },
+        callable,
+      ),
+      { kind: "final", reply: "Aku di sini." },
+    );
+    assert.equal(
+      parseAgentAutoDecision({ kind: "text", content: "   " }, callable),
+      null,
+    );
+
+    const calls = [nativeCall("harvy_task_list_active_v1", {})];
+    assert.deepEqual(
+      parseAgentAutoDecision({
+        kind: "tool_calls",
+        toolCalls: calls,
+        assistant: { role: "assistant", content: null, tool_calls: calls },
+      }, callable),
+      {
+        kind: "action",
+        capabilityId: "task.list_active",
+        capabilityVersion: "1",
+        input: {},
+      },
+    );
+
+    // Kontrak bentuk terstruktur tidak dapat dipenuhi teks bebas; kode harus
+    // dapat memvalidasi jumlah langkah dan fieldnya.
+    const contract = deriveReplyStructureContract(
+      "Susun mendalam tepat dua langkah. Pada setiap langkah, tulis: Tindakan dan Kriteria lulus.",
+    );
+    assert.ok(contract);
+    assert.equal(
+      parseAgentAutoDecision(
+        { kind: "text", content: "1. Langkah pertama" },
+        callable,
+        contract,
+      ),
+      null,
+    );
+  });
+
+  it("prompt planner auto mengizinkan jawaban teks tanpa memanggil function", () => {
+    const auto = agentPlannerPrompt([], null, "auto");
+    assert.match(auto, /Seluruh tool di bawah tersedia pada setiap giliran/u);
+    assert.match(
+      auto,
+      /jawab langsung dengan teks biasa tanpa memanggil function apa pun/u,
+    );
+    const required = agentPlannerPrompt([], null, "required");
+    assert.match(required, /Pilih tepat satu langkah melalui satu native function call/u);
+    assert.doesNotMatch(required, /tanpa memanggil function apa pun/u);
   });
 
   it("fast path waktu hanya menangkap pertanyaan yang berdiri sendiri", () => {

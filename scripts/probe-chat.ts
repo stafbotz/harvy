@@ -45,6 +45,11 @@ import { immediateUnderstandingRoute } from "../src/bot/understanding-route.js";
 import { resolveActiveTaskReference } from "../src/core/task-reference.js";
 import { createInternalAgentExecutors } from "../src/agent/internal-executors.js";
 import { createWriteAgentExecutors } from "../src/agent/write-executors.js";
+import {
+  createMemoryAgentExecutors,
+  type AgentMemoryStore,
+} from "../src/agent/memory-executors.js";
+import { searchConversationEpisodes } from "../src/core/history-search.js";
 import { VirtualTerminalExecutor } from "../src/agent/virtual-terminal.js";
 import { AgentHarness } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
@@ -53,7 +58,11 @@ import { SessionService } from "../src/core/session-service.js";
 import { TaskService } from "../src/core/task-service.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
-import type { ConversationTurn } from "../src/domain/history.js";
+import type {
+  ConversationEpisode,
+  ConversationTurn,
+} from "../src/domain/history.js";
+import type { MemoryItem, NewMemory } from "../src/domain/memory.js";
 import type { ProfileRepository, UserProfile } from "../src/domain/profile.js";
 import type {
   ActiveSession,
@@ -69,6 +78,45 @@ const BACKOFF_BASE_MS = 4_000;
 interface SessionState {
   turns: ConversationTurn[];
   tasks: StudentTask[];
+  /** Catatan durable yang ditulis Harvy lewat `memory.remember`. */
+  notes: MemoryItem[];
+  /** Episode terkompaksi; kosong sampai probe dijalankan cukup panjang. */
+  episodes: ConversationEpisode[];
+}
+
+/**
+ * Penyimpan catatan lokal untuk probe.
+ *
+ * `MemoryService` sungguhan menulis Markdown per pengguna, dan probe tidak
+ * boleh menyentuh folder memori nyata. Batas yang penting tetap diuji di sini:
+ * duplikat ditolak, dan penolakan dikembalikan sebagai `null` persis seperti
+ * service aslinya.
+ */
+function probeMemoryStore(state: SessionState): AgentMemoryStore {
+  return {
+    async remember(input: NewMemory): Promise<MemoryItem | null> {
+      const content = input.content.trim();
+      if (!content) return null;
+      const duplicate = state.notes.some(
+        (note) => note.content.toLowerCase() === content.toLowerCase(),
+      );
+      if (duplicate) return null;
+      const note: MemoryItem = {
+        id: `probe-${state.notes.length + 1}`,
+        ownerId: input.ownerId,
+        kind: input.kind,
+        content,
+        createdAt: new Date().toISOString(),
+        lastUsedAt: null,
+        expiresAt: null,
+      };
+      state.notes.push(note);
+      return note;
+    },
+    async list(): Promise<MemoryItem[]> {
+      return [...state.notes];
+    },
+  };
 }
 
 /**
@@ -144,6 +192,9 @@ async function main(text: string, statePath: string): Promise<void> {
   const repository = new MemoryTaskRepository(state.tasks);
   const tasks = new TaskService(repository);
   const profiles = new ProfileService(new MemoryProfileRepository());
+  // Tool catatan gagal tertutup tanpa consent onboarding. Probe memakai profil
+  // sintetis, jadi persetujuannya dibuat eksplisit di sini.
+  await profiles.acceptConsent(OWNER);
   const sessions = new SessionService(
     new MemorySessionRepository(),
     NO_DUE_CHECK_INS,
@@ -158,6 +209,7 @@ async function main(text: string, statePath: string): Promise<void> {
     new AgentHarness(
       createHarvyCapabilityCatalog({
         internalToolsInstalled: true,
+        recallToolsInstalled: true,
         virtualTerminalInstalled: true,
         parallelDelegationInstalled: false,
         specialistDelegationInstalled: false,
@@ -171,6 +223,14 @@ async function main(text: string, statePath: string): Promise<void> {
         defaultTimeZone: config.defaultTimezone,
       }),
       ...createWriteAgentExecutors({ tasks }),
+      ...createMemoryAgentExecutors({
+        history: () => ({
+          search: async (_ownerId, query, options) =>
+            searchConversationEpisodes(state.episodes, query, options ?? {}),
+        }),
+        memories: probeMemoryStore(state),
+        profiles,
+      }),
       new VirtualTerminalExecutor(),
     ],
   );
@@ -378,8 +438,14 @@ async function main(text: string, statePath: string): Promise<void> {
 }
 
 function loadState(path: string): SessionState {
-  if (!existsSync(path)) return { turns: [], tasks: [] };
-  return JSON.parse(readFileSync(path, "utf8")) as SessionState;
+  if (!existsSync(path)) return { turns: [], tasks: [], notes: [], episodes: [] };
+  const stored = JSON.parse(readFileSync(path, "utf8")) as Partial<SessionState>;
+  return {
+    turns: stored.turns ?? [],
+    tasks: stored.tasks ?? [],
+    notes: stored.notes ?? [],
+    episodes: stored.episodes ?? [],
+  };
 }
 
 function argument(prefix: string): string | null {

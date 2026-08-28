@@ -19,25 +19,38 @@ perubahanmu — buktikan asalnya sebelum melapor.
 
 ## Aktif
 
+Kedua entri di bawah ini semula dicatat sebagai kegagalan working tree pada
+2026-08-27. Commit `4454f65` (2026-08-28) memasukkan `src/ai/conversation.ts`
+dan `tests/conversation.test.ts` beserta langkah review artefak yang belum
+selesai, jadi keduanya sekarang merah di `HEAD`, bukan lagi hanya di working
+tree seseorang. Kalimat "hijau pada `HEAD`" dan "belum ada di `HEAD`" pada versi
+lama entri ini sudah tidak berlaku.
+
 ### `meregenerasi code-only yang membawa prosa atau conditional expression rumpang`
 
 - Berkas: `tests/conversation.test.ts`
-- Sejak: 2026-08-27, hadir di working tree sebelum pekerjaan tool/persona hari
-  itu dimulai.
+- Sejak: 2026-08-27 di working tree; merah di `HEAD` sejak commit `4454f65`
+  pada 2026-08-28.
 - Gejala: mengharapkan 3 permintaan model, menerima 2.
-- Sebab: pekerjaan `reply()` yang belum selesai di working tree, yaitu langkah
-  review artefak kode yang baru ditambahkan (`src/ai/conversation.ts`, sekitar
-  blok pemeriksaan akhir artefak). Tes ini hijau pada `HEAD`.
-- Pemilik: penulis perubahan `reply()` yang belum di-commit.
+- Sebab: langkah review artefak kode pada `reply()` belum selesai
+  (`src/ai/conversation.ts`, blok pemeriksaan akhir artefak sekitar baris 1229).
+- Pemilik: penulis lanjutan langkah review artefak `reply()`.
 
 ### `mereview konsistensi kode dan test sebelum artefak dikirim`
 
 - Berkas: `tests/conversation.test.ts`
-- Sejak: 2026-08-27, tes baru yang belum ada di `HEAD`.
+- Sejak: 2026-08-27 di working tree; merah di `HEAD` sejak commit `4454f65`
+  pada 2026-08-28.
 - Gejala: artefak hasil review tidak sama dengan yang diharapkan; draft
   dikembalikan tanpa perbaikan konsistensi.
 - Sebab: sama dengan entri di atas — langkah review artefak belum selesai.
-- Pemilik: penulis perubahan `reply()` yang belum di-commit.
+- Pemilik: penulis lanjutan langkah review artefak `reply()`.
+
+Diperiksa ulang 2026-08-28 dengan `node --test dist/tests/conversation.test.js`:
+keduanya masih merah. Pekerjaan agent yang belum di-commit hari itu tidak
+menyentuh jalur ini — `tests/conversation.test.ts` identik dengan `HEAD` dan
+seluruh hunk `src/ai/conversation.ts` yang belum di-commit berada di planner
+agent, jauh setelah blok review artefak.
 
 ## Cara membuktikan asal sebuah kegagalan
 

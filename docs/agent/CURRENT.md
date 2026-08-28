@@ -21,6 +21,13 @@ Context-Version: 1
   dengan policy otorisasi kontekstual; penghapusan tugas ditolak dengan alasan
   terbaca model. Native tool call salah bentuk mendapat satu koreksi, dan
   penghentian run dijelaskan model untuk kelas invalid_planner_output/max_steps.
+- Planner memakai `tool_choice: "auto"` sebagai kontrak default; obrolan biasa
+  dijawab teks tanpa dibungkus function, sedangkan kelas state-live dan kontrak
+  bentuk terstruktur tetap wajib memanggil tool. Tiga capability recall
+  ditambahkan: `history.search`, `memory.list`, dan `memory.remember`, privat
+  saja dan memeriksa ulang consent. Keduanya baru dibuktikan unit test; belum
+  ada eval provider atau kanal live, dan pencarian web tetap tidak ada.
+  Gerbang masuk Agent Runtime sengaja tidak dilebarkan pada sesi ini.
 - `HARVY_IDENTITY` menyatakan dua register: santai saat mengobrol, rapi saat
   bekerja, boleh berpindah dalam satu balasan. `resolveActiveTaskReference`
   tidak lagi memilih kandidat tunggal tanpa memeriksa sebutan pengguna.

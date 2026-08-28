@@ -22,6 +22,10 @@ import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { RunBudgetAccount } from "../src/core/run-budget.js";
 import { ModelProfileRegistry } from "../src/ai/model-profile.js";
 import type { WorkBrief } from "../src/domain/agent-handoff.js";
+import {
+  agentClientDouble,
+  agentTextClientDouble,
+} from "./agent-client-fixture.js";
 
 const PRODUCTION_ROUTING = {
   mode: "production" as const,
@@ -71,7 +75,9 @@ describe("Conversation agent runtime", () => {
       type: "function",
       function: { name: "harvy_settings_time_get_v1" },
     });
-    assert.equal(requests[1]?.toolChoice, "required");
+    // Langkah tanpa kewajiban state-live memakai kontrak auto: seluruh tool
+    // terlihat, dan model boleh menjawab teks biasa tanpa membungkusnya function.
+    assert.equal(requests[1]?.toolChoice, "auto");
     assert.equal(requests.every((request) => request.parallelToolCalls === false), true);
     assert.deepEqual(
       requests[0]?.tools?.map((tool) => tool.function.name),
@@ -242,7 +248,7 @@ describe("Conversation agent runtime", () => {
     );
 
     assert.equal(result.status, "completed");
-    assert.equal(requests[1]?.toolChoice, "required");
+    assert.equal(requests[1]?.toolChoice, "auto");
     assert.equal(requests[1]?.messages.at(-1)?.role, "tool");
   });
 
@@ -317,8 +323,8 @@ describe("Conversation agent runtime", () => {
       type: "function",
       function: { name: "harvy_session_status_v1" },
     });
-    assert.equal(requests[1]?.toolChoice, "required");
-    assert.equal(requests[2]?.toolChoice, "required");
+    assert.equal(requests[1]?.toolChoice, "auto");
+    assert.equal(requests[2]?.toolChoice, "auto");
   });
 
   it("resume baru membawa pasangan prompt dan jawaban tanpa transcript provider lama", async () => {
@@ -1124,7 +1130,7 @@ describe("Conversation agent runtime", () => {
   it("memperbaiki final terstruktur yang tidak memenuhi field sebelum dikirim", async () => {
     const requests: ChatRequest[] = [];
     let call = 0;
-    const client = {
+    const client = agentClientDouble({
       async completeToolTurn(
         request: ChatRequest & { tools: readonly ChatFunctionTool[] },
       ): Promise<ChatAssistantToolMessage> {
@@ -1165,7 +1171,7 @@ describe("Conversation agent runtime", () => {
         assert.equal(request.validateToolCalls?.(calls), call === 2);
         return { role: "assistant", content: null, tool_calls: calls };
       },
-    } as unknown as AiClient;
+    });
     const conversation = new Conversation(
       client,
       PRODUCTION_ROUTING,
@@ -1203,7 +1209,7 @@ describe("Conversation agent runtime", () => {
   it("memulihkan truncation sekali dari state padat dengan role recovery tertutup", async () => {
     const requests: ChatRequest[] = [];
     let call = 0;
-    const client = {
+    const client = agentClientDouble({
       async completeToolTurn(
         request: ChatRequest & { tools: readonly ChatFunctionTool[] },
       ): Promise<ChatAssistantToolMessage> {
@@ -1236,7 +1242,7 @@ describe("Conversation agent runtime", () => {
         assert.equal(request.validateToolCalls?.(calls), true);
         return { role: "assistant", content: null, tool_calls: calls };
       },
-    } as unknown as AiClient;
+    });
     const conversation = new Conversation(
       client,
       PRODUCTION_ROUTING,
@@ -1325,7 +1331,7 @@ describe("Conversation agent runtime", () => {
   it("tidak memulai recovery bila revision menjadi stale selama attempt pertama", async () => {
     const requests: ChatRequest[] = [];
     let providerCalled = false;
-    const client = {
+    const client = agentClientDouble({
       async completeToolTurn(
         request: ChatRequest & { tools: readonly ChatFunctionTool[] },
       ): Promise<ChatAssistantToolMessage> {
@@ -1349,7 +1355,7 @@ describe("Conversation agent runtime", () => {
           "provider output truncated",
         );
       },
-    } as unknown as AiClient;
+    });
     const conversation = new Conversation(
       client,
       PRODUCTION_ROUTING,
@@ -1426,7 +1432,7 @@ describe("Conversation agent runtime", () => {
 
   it("tidak mencoba recovery untuk content filter atau incomplete response", async () => {
     const requests: ChatRequest[] = [];
-    const client = {
+    const client = agentClientDouble({
       async completeToolTurn(
         request: ChatRequest & { tools: readonly ChatFunctionTool[] },
       ): Promise<ChatAssistantToolMessage> {
@@ -1437,7 +1443,7 @@ describe("Conversation agent runtime", () => {
           "provider rejected response",
         );
       },
-    } as unknown as AiClient;
+    });
     const conversation = new Conversation(
       client,
       PRODUCTION_ROUTING,
@@ -1463,7 +1469,7 @@ describe("Conversation agent runtime", () => {
     const requests: ChatRequest[] = [];
     let call = 0;
     const reasoningCanary = `OPAQUE_PROVIDER_REASONING_${"r".repeat(60_000)}`;
-    const client = {
+    const client = agentClientDouble({
       async completeToolTurn(
         request: ChatRequest & { tools: readonly ChatFunctionTool[] },
       ): Promise<ChatAssistantToolMessage> {
@@ -1494,7 +1500,7 @@ describe("Conversation agent runtime", () => {
             : {}),
         };
       },
-    } as unknown as AiClient;
+    });
     const routing: RoutingConfig = {
       ...PRODUCTION_ROUTING,
       providerId: "openrouter",
@@ -1564,6 +1570,107 @@ describe("Conversation agent runtime", () => {
       /cek waktu lalu jawab/u,
     );
   });
+
+  it("menutup giliran auto dengan teks biasa tanpa membungkusnya function", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      agentTextClientDouble(async (request) => {
+        requests.push(request);
+        return { kind: "text", content: "Aku di sini. Mau cerita dulu?" };
+      }),
+      PRODUCTION_ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-08-04T05:00:00.000Z"),
+      undefined,
+      new AgentHarness(createHarvyCapabilityCatalog({
+        internalToolsInstalled: true,
+      })),
+      [executor("settings.time.get", { kind: "settings.time.get.result" })],
+    );
+
+    const result = await conversation.agent(
+      "halo, aku lagi bosan",
+      "tools",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(result.status, "completed");
+    if (result.status === "completed") {
+      assert.equal(result.reply, "Aku di sini. Mau cerita dulu?");
+    }
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.toolChoice, "auto");
+    // Tool tetap terpasang pada giliran yang dijawab teks: model melihat apa
+    // yang dimilikinya lalu memutuskan tidak memakainya, bukan tidak tahu.
+    assert.deepEqual(
+      requests[0]?.tools?.map((tool) => tool.function.name),
+      [
+        "harvy_final_v1",
+        "harvy_need_input_v1",
+        "harvy_settings_time_get_v1",
+      ],
+    );
+    assert.match(
+      requests[0]?.messages[0]?.content ?? "",
+      /jawab langsung dengan teks biasa tanpa memanggil function apa pun/u,
+    );
+    assert.equal(requests[0]?.validateResponse?.("  "), false);
+    assert.equal(requests[0]?.validateResponse?.("ada"), true);
+  });
+
+  it("tetap memakai tool pada giliran auto ketika state pengguna diperlukan", async () => {
+    const requests: ChatRequest[] = [];
+    let call = 0;
+    const conversation = new Conversation(
+      agentTextClientDouble(async (request) => {
+        requests.push(request);
+        call += 1;
+        if (call > 1) {
+          return { kind: "text", content: "Tugasmu tinggal satu: Biologi." };
+        }
+        const calls = [nativeDecisionCall({
+          kind: "action",
+          capabilityId: "task.list_active",
+          capabilityVersion: "1",
+          input: { limit: 5 },
+        }, call)];
+        assert.equal(request.validateToolCalls?.(calls), true);
+        return {
+          kind: "tool_calls",
+          toolCalls: calls,
+          assistant: { role: "assistant", content: null, tool_calls: calls },
+        };
+      }),
+      PRODUCTION_ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-08-04T05:00:00.000Z"),
+      undefined,
+      new AgentHarness(createHarvyCapabilityCatalog({
+        internalToolsInstalled: true,
+      })),
+      [executor("task.list_active", {
+        kind: "task.list_active.result",
+        tasks: [{ id: "t1", title: "Biologi" }],
+      })],
+    );
+
+    const result = await conversation.agent(
+      "bantu aku menyusun rencana belajar minggu ini",
+      "tools",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(result.status, "completed");
+    if (result.status === "completed") {
+      assert.match(result.reply, /Biologi/u);
+    }
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0]?.toolChoice, "auto");
+    assert.equal(requests[1]?.toolChoice, "auto");
+    assert.equal(requests[1]?.messages.at(-1)?.role, "tool");
+  });
 });
 
 describe("model agent worker envelope", () => {
@@ -1603,7 +1710,7 @@ describe("model agent worker envelope", () => {
   it("fan-out provider hanya menerima envelope subpekerjaan tanpa context root", async () => {
     const requests: ChatRequest[] = [];
     let plannerCalls = 0;
-    const client = {
+    const client = agentClientDouble({
       complete: async (request: ChatRequest) => {
         requests.push(request);
         return "hasil worker";
@@ -1628,7 +1735,7 @@ describe("model agent worker envelope", () => {
           : { kind: "final", reply: "Sintesis selesai." })];
         return { role: "assistant" as const, content: null, tool_calls: calls };
       },
-    } as unknown as AiClient;
+    });
     const conversation = new Conversation(
       client,
       PRODUCTION_ROUTING,
@@ -1740,7 +1847,7 @@ function fixture(
   routing: RoutingConfig = PRODUCTION_ROUTING,
 ): Conversation {
   let index = 0;
-  const client = {
+  const client = agentClientDouble({
     async completeToolTurn(
       request: ChatRequest & { tools: readonly ChatFunctionTool[] },
     ): Promise<ChatAssistantToolMessage> {
@@ -1767,7 +1874,7 @@ function fixture(
           : {}),
       };
     },
-  } as unknown as AiClient;
+  });
   return new Conversation(
     client,
     routing,

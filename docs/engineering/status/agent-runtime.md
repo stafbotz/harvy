@@ -1,8 +1,13 @@
 # Status — Agent Runtime
 
 Refreshed: 24 Agustus 2026 pada provider smoke, routing evaluation, dan live
-restart AgentRun privat. Bukti gerbang terbaru dicatat di
-`docs/LOG.md`.
+restart AgentRun privat. Kontrak tool tulis, koreksi bentuk tool call, dan
+penjelasan penghentian ditambahkan 28 Agustus 2026 dengan bukti unit test
+saja — tidak ada provider smoke atau kanal nyata untuk ketiganya. Kontrak
+planner `tool_choice: "auto"` dan tool recall (`history.search`, `memory.list`,
+`memory.remember`) ditambahkan 28 Agustus 2026, juga dengan bukti unit test
+saja: belum ada eval provider nyata maupun kanal live untuk keduanya. Bukti
+gerbang terbaru dicatat di `docs/LOG.md`.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
 
@@ -14,8 +19,10 @@ agent, scope/authority, atau executor internal.
   final conversation prompt. `Conversation.reply` biasa hanya menerima human
   context relevan yang bounded; callable tool schema tetap berada pada planner
   agent ketika composition benar-benar memasang dan mengotorisasinya.
-- Planner memakai native tool calling tertutup. Plain text, function asing,
-  multi-call, argumen rusak, dan control output kosong ditolak sebelum kernel.
+- Planner memakai native tool calling tertutup. Function asing, multi-call,
+  argumen rusak, dan control output kosong ditolak sebelum kernel. Plain text
+  ditolak hanya pada giliran berkontrak wajib; pada giliran `auto` ia adalah
+  jawaban final yang sah selama tidak kosong.
 - Seluruh call conversation/group/worker production membawa execution plan
   code-owned berisi stage role, cognitive role bila berlaku, work class,
   requested/effective effort, verbosity, deadline, output ceiling, dan izin
@@ -48,6 +55,17 @@ agent, scope/authority, atau executor internal.
   dan lepas pengingat. Waktu pada tool tulis wajib ISO 8601 beroffset, dan
   tujuan pengiriman diambil dari `PrivateAgentScope.deliveryChatId` karena
   WhatsApp memakai kunci akun+pengguna, bukan `userId`.
+- Tiga tool recall menutup celah "tidak bisa mencari dan tidak bisa mencatat":
+  `history.search` mencari episode percakapan pengguna sendiri lewat
+  `HistoryService.search` dan menandai hasilnya `externalSearch: false`,
+  `memory.list` membaca catatan durable, dan `memory.remember` menulisnya.
+  Ketiganya privat-saja dan memeriksa ulang consent onboarding lewat
+  `ProfileService.needsOnboarding`; status yang tidak terbaca menghasilkan
+  observation `unknown` tanpa membaca atau menulis apa pun. Schema
+  `memory.remember` hanya memuat `profile|preference|routine|context`, tidak
+  pernah mengisi `sensitiveConsent`, dan penolakan `MemoryService` dibedakan
+  antara `already_known` dan gagal simpan supaya balasannya jujur. Ini bukan
+  pencarian web: tidak ada konektor jaringan yang dipasang.
 - Otorisasi run percakapan memakai policy privat, bukan policy konservatif
   harness. Create, complete, reschedule, serta set/clear pengingat diizinkan
   karena katalog menandainya `confirmation: "contextual"`. Penghapusan tugas
@@ -63,9 +81,19 @@ agent, scope/authority, atau executor internal.
   `explainAgentStop()`; kelas budget, kuota, dan deadline tetap memakai teks
   deterministik karena memanggil model lagi menghabiskan sumber daya yang
   barusan dinyatakan habis.
-- `completeAutoTurn`, `parseAgentAutoDecision`, dan `AGENT_AUTO_PLANNER_PROMPT`
-  sudah ada tetapi belum dipanggil jalur produksi mana pun. Jalur agentic
-  tunggal dengan `tool_choice: "auto"` masih belum dirangkai.
+- Planner memakai `tool_choice: "auto"` sebagai kontrak default lewat
+  `completeAutoTurn`, `parseAgentAutoDecision`, dan `AGENT_AUTO_PLANNER_PROMPT`.
+  Seluruh tool terlihat pada setiap giliran dan model memutuskan sendiri; teks
+  biasa non-kosong langsung menjadi final tanpa dibungkus `harvy_final_v1`.
+  Dua hal tetap memakai kontrak wajib: kelas state-live memakai named
+  tool_choice, dan kontrak bentuk jawaban terstruktur memakai `required` agar
+  jumlah langkah serta fieldnya dapat divalidasi kode. Teks kosong ditolak
+  `validateResponse` di klien, dan keputusan action tetap wajib berasal dari
+  tool call karena continuation memerlukan assistant turn provider.
+  Kontrak ini juga menjadi syarat gerbang: `requestsAgentTooling` menerima label
+  `internal_state` justru karena tool kini hanya terlihat dan tidak wajib
+  dipanggil. Bila kontrak default dikembalikan ke `required`, pengecualian label
+  itu harus dipulihkan bersamanya.
 - Pertanyaan waktu sempit tetap dijawab dari clock deterministik. Ia melewati
   boundary/understanding/triage hanya bila tidak ada episode hangat dalam 30
   menit; episode hangat tetap menjalani pipeline keselamatan dan pemahaman.
@@ -222,12 +250,16 @@ agent, scope/authority, atau executor internal.
   `src/harness/observation-compaction.ts`, `src/ai/agent.ts`,
   `src/ai/agent-context-pressure.ts`, `src/ai/model-policy.ts`,
   `src/ai/specialist.ts`, `src/ai/specialist-runtime.ts`,
-  `src/agent/specialist-delegation.ts`,
+  `src/agent/specialist-delegation.ts`, `src/agent/internal-executors.ts`,
+  `src/agent/write-executors.ts`, `src/agent/memory-executors.ts`,
   `src/domain/agent-handoff.ts`, `src/core/resource-request-policy.ts`,
   `src/harness/capability-discovery.ts`, `src/core/run-budget.ts`,
   `src/core/agent-run-service.ts`, `src/core/run-mailbox-policy.ts`,
   `src/bot/run-anchor.ts`, dan `src/storage/file-agent-run-repository.ts`.
 - Tes: `tests/agent-runtime.test.ts`, `tests/agent-harness.test.ts`,
+  `tests/agent-conversation.test.ts`, `tests/memory-executors.test.ts`,
+  `tests/write-executors.test.ts`, `tests/agent-tool-repair.test.ts`,
+  `tests/agent-stop-explanation.test.ts`,
   `tests/create-bot-flow.test.ts`, `tests/harness-context-budget.test.ts`,
   `tests/harness-scope-capabilities.test.ts`, `tests/model-profile.test.ts`,
   `tests/model-policy.test.ts`, `tests/capability-discovery.test.ts`,

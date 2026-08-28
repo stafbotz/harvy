@@ -284,11 +284,16 @@ import {
   type OperationalLogger,
 } from "../observability/operational-logger.js";
 import {
+  initialProgressEvent,
   interruptionProgressEvent,
   publicFocusProgressEvent,
   TransientConversationProgress,
   type ConversationProgressReporter,
 } from "../core/conversation-progress.js";
+import {
+  agentApprovalStopMessage,
+  agentStopMessage,
+} from "./agent-stop-copy.js";
 
 /** Jarak bawaan antara pengingat dan tenggat. */
 const REMINDER_LEAD_MS = 60 * 60 * 1000;
@@ -2231,7 +2236,13 @@ export function createBot(
     return new TransientConversationProgress<SentMessageRef>(
       {
         show: async (text) => {
-          const sent = await bot.api.sendMessage(chatId, text);
+          // Status sementara ini dihapus lagi sebelum jawabannya dikirim, jadi
+          // ia tidak boleh berbunyi. Tanpa `disable_notification`, tiap giliran
+          // yang lebih lambat dari grace period mengirim getar dan preview ke
+          // layar kunci untuk pesan yang beberapa detik kemudian hilang.
+          const sent = await bot.api.sendMessage(chatId, text, {
+            disable_notification: true,
+          });
           return { chatId: sent.chat.id, messageId: sent.message_id };
         },
         update: async (reference, text) => {
@@ -2473,6 +2484,13 @@ export function createBot(
     const earlyRisk = immediateDanger || urgentBoundary
       ? requestRiskTriage()
       : undefined;
+    // Hanya cabang compiler yang benar-benar memanggil model; dua cabang lain
+    // menjawab dari state lokal dan selesai sebelum grace period habis. Lane
+    // keselamatan lokal sengaja tetap sunyi supaya jawaban safety tidak
+    // didahului basa-basi status.
+    if (!immediateDanger && !urgentBoundary && !hasImageInput) {
+      runtime.progress?.report(initialProgressEvent());
+    }
     const readResult = immediateDanger
       ? ({ value: safetyOnlyUnderstanding() } as const)
       : hasImageInput
@@ -3516,22 +3534,8 @@ export function createBot(
                 : agentResult.status === "needs_input"
                   ? agentResult.prompt
                   : agentResult.status === "needs_approval"
-                    ? "Aku menghentikan run ini karena agent baca-saja meminta izin untuk perubahan yang tidak tersedia."
-                    : agentResult.reason === "deadline"
-                      ? "Aku belum menyelesaikan run ini sebelum batas waktunya. Aku tidak akan mengarang hasilnya."
-                      : agentResult.reason.startsWith("budget_")
-                        ? "Aku menghentikan run saat batas kerja kumulatifnya tercapai. Aku tidak akan mengarang atau meneruskan hasil setengah jadi."
-                      : agentResult.reason === "usage_anti_abuse"
-                        ? "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan."
-                      : agentResult.reason === "usage_wallet_disabled"
-                        ? "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Aktifkan funding atau gunakan provider sendiri untuk melanjutkan."
-                      : agentResult.reason === "usage_byok_unavailable"
-                        ? "Provider milikmu belum cocok untuk pekerjaan ini. Pilih provider lain atau gunakan compute Harvy secara eksplisit."
-                      : agentResult.reason === "usage_allowance_exhausted"
-                        ? "Kapasitas Harvy-funded periode ini sudah terpakai. Gunakan BYOK, tambah compute, atau tunggu kapasitas diperbarui."
-                      : agentResult.reason === "cycle"
-                        ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
-                        : "Aku belum berhasil menyelesaikan permintaan itu, dan aku tidak mau mengarang hasilnya. Coba sampaikan lagi dengan cara lain, atau sebutkan bagian mana yang paling kamu butuhkan.");
+                    ? agentApprovalStopMessage()
+                    : agentStopMessage(agentResult.reason));
             }
           } else {
             reply = await conversation.reply(
@@ -5108,24 +5112,10 @@ export function createBot(
       nextPending = { ...waiting, checkpoint: result.checkpoint };
     } else if (result.status === "needs_approval") {
       debitDeliveredReply = false;
-      response = "Aku menghentikan run ini karena agent baca-saja meminta izin untuk perubahan yang tidak tersedia.";
+      response = agentApprovalStopMessage();
     } else {
       debitDeliveredReply = false;
-      response = result.reason === "deadline"
-        ? "Waktu run sebelumnya sudah habis, jadi aku tidak melanjutkannya seolah hasilnya masih segar. Coba minta lagi kalau kamu masih perlu."
-        : result.reason.startsWith("budget_")
-          ? "Batas kerja kumulatif run sebelumnya sudah tercapai, jadi aku tidak melanjutkan hasil setengah jadi. Coba minta lagi kalau kamu masih perlu."
-        : result.reason === "usage_anti_abuse"
-          ? "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan."
-        : result.reason === "usage_wallet_disabled"
-          ? "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Aktifkan funding atau gunakan provider sendiri untuk melanjutkan."
-        : result.reason === "usage_byok_unavailable"
-          ? "Provider milikmu belum cocok untuk pekerjaan ini. Pilih provider lain atau gunakan compute Harvy secara eksplisit."
-        : result.reason === "usage_allowance_exhausted"
-          ? "Kapasitas Harvy-funded periode ini sudah terpakai. Gunakan BYOK, tambah compute, atau tunggu kapasitas diperbarui."
-        : result.reason === "cycle"
-          ? "Aku menghentikan run karena planner mengulang langkah yang sama. Coba ulangi pertanyaannya; aku tidak akan mengarang hasilnya."
-          : "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.";
+      response = agentStopMessage(result.reason, "resumed");
     }
     response = normalizeTelegramText(response);
     if (!debitDeliveredReply) {

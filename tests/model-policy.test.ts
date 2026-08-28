@@ -229,7 +229,7 @@ describe("kebijakan pemilihan model", () => {
     })), false);
     assert.equal(requestsAgentTooling(assessment({
       toolNeed: "internal_state",
-    })), false);
+    })), true, "state pengguna hanya dapat dibaca lewat tool, bukan ditebak");
     assert.equal(requestsAgentTooling(assessment({
       toolNeed: "calculation",
     })), false, "label calculation tanpa calculator callable bukan authority agent");

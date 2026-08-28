@@ -21,9 +21,11 @@ import {
   type AiClient,
   type AiToolShapeFailureReason,
   type ChatAssistantToolMessage,
+  type ChatCompletion,
   type ChatInputImagePart,
   type ChatMessage,
   type ChatRequest,
+  type ChatToolCall,
   type ChatToolChoice,
 } from "./client.js";
 import { currentUsageAttribution } from "./usage-attribution.js";
@@ -51,6 +53,7 @@ import {
   agentPlannerInput,
   agentPlannerPrompt,
   liveStateRequirement,
+  parseAgentAutoDecision,
   parseAgentNativeDecision,
   STRUCTURED_STEPS_TOOL_NAME,
   type AgentMode,
@@ -408,7 +411,12 @@ interface AgentNativeThread {
 
 interface RequestedAgentDecision {
   decision: AgentPlannerDecision;
-  assistant: ChatAssistantToolMessage;
+  /**
+   * `null` ketika model menjawab dengan teks biasa pada giliran
+   * `tool_choice: "auto"`. Hanya keputusan action yang memerlukan assistant
+   * turn provider untuk continuation, dan action selalu berupa tool call.
+   */
+  assistant: ChatAssistantToolMessage | null;
 }
 
 const DELEGATION_CAPABILITY_IDS = new Set([
@@ -1548,6 +1556,13 @@ export class Conversation {
       // yang hasilnya dibuktikan observation, bukan diklaim di teks balasan.
       "task.manage",
       "reminder.schedule",
+      // Pendamping belajar yang tidak dapat mencari apa pun dan tidak dapat
+      // menyimpan catatan dibatasi rancangan, bukan modelnya. Ketiga tool ini
+      // hanya menyentuh data pengguna itu sendiri: riwayatnya dan catatan
+      // Harvy tentangnya.
+      "history.search",
+      "memory.list",
+      "memory.remember",
       ...(mode === "orchestrate"
         ? [delegationCapability]
         : []),
@@ -1807,12 +1822,12 @@ export class Conversation {
     if (mustReadLiveState && !requiredCapability?.nativeTool) {
       throw new Error("Capability state-live yang diperlukan tidak callable.");
     }
-    const forcedToolChoice: ChatToolChoice | undefined = requiredCapability
+    const forcedToolChoice: ChatToolChoice | null = requiredCapability
       ? {
           type: "function",
           function: { name: requiredCapability.nativeTool!.name },
         }
-      : undefined;
+      : null;
     // Legacy parallel delegation membawa instruksi bebas ke worker, sehingga
     // fase itu tetap context-free. Specialist menerima WorkBrief terstruktur
     // yang disanitasi executor; orkestratornya boleh melihat konteks relevan.
@@ -1924,6 +1939,9 @@ export class Conversation {
       }
     }
     if (decision.kind === "action") {
+      if (!planned.assistant) {
+        throw new Error("Keputusan action tanpa native tool call provider.");
+      }
       nativeThread.pending = {
         step: input.step,
         capabilityId: decision.capabilityId,
@@ -1946,7 +1964,7 @@ export class Conversation {
     nativeThread: AgentNativeThread,
     runBudget: RunBudgetAccount,
     role: Extract<ModelRole, "planner" | "synthesizer">,
-    toolChoice: ChatToolChoice = "required",
+    forcedToolChoice: ChatToolChoice | null = null,
   ): Promise<RequestedAgentDecision> {
     const cognitiveRole = mode === "orchestrate"
       ? "orchestrator"
@@ -1955,6 +1973,21 @@ export class Conversation {
     const tier = modelRoute.tier;
     const profile = resolveModelRouteProfile(modelRoute, this.routing);
     const replyContract = deriveReplyStructureContract(plannerInput.request);
+    /**
+     * Kontrak default agent adalah `tool_choice: "auto"`: seluruh tool terlihat
+     * setiap giliran dan model yang memutuskan memakainya. Sebelumnya setiap
+     * langkah wajib berupa function call, sehingga obrolan biasa harus dibungkus
+     * `harvy_final_v1` dan pertanyaan yang tidak menunjuk state apa pun tetap
+     * membebani planner dengan kewajiban memanggil sesuatu.
+     *
+     * Dua hal tetap memakai kontrak wajib. Kelas state-live memakai named
+     * tool_choice supaya jawabannya tidak pernah ditebak dari memori, dan
+     * kontrak bentuk jawaban terstruktur memerlukan function agar jumlah langkah
+     * serta fieldnya dapat divalidasi kode.
+     */
+    const toolChoice: ChatToolChoice = forcedToolChoice ??
+      (replyContract ? "required" : "auto");
+    const autoToolSelection = toolChoice === "auto";
     const execution = this.execution(
       tier,
       role,
@@ -2025,6 +2058,11 @@ export class Conversation {
             effectivePlannerInput.callableCapabilities,
             replyContract,
           ) !== null,
+        // Pada giliran auto, jawaban teks kosong bukan keputusan; tolak di
+        // klien agar attempt berikutnya masih berada dalam RunBudget yang sama.
+        ...(autoToolSelection
+          ? { validateResponse: (content: string) => content.trim().length > 0 }
+          : {}),
         usage: this.usage(runtime.ownerId, tier, "agent"),
         messages: [
           {
@@ -2034,6 +2072,7 @@ export class Conversation {
               agentPlannerPrompt(
                 effectivePlannerInput.callableCapabilities,
                 replyContract,
+                autoToolSelection ? "auto" : "required",
               ),
               ...(recovery
                 ? [
@@ -2099,16 +2138,27 @@ export class Conversation {
       }
       return prepared.request;
     };
-    const completePrepared = (request: ChatRequest) => {
+    const completePrepared = async (
+      request: ChatRequest,
+    ): Promise<ChatCompletion> => {
       if (!request.tools) {
         throw new Error("Agent request kehilangan native tool schema.");
       }
-      return this.client.completeToolTurn(portableNamedToolRequest({
+      const portable = portableNamedToolRequest({
         ...request,
         tools: request.tools,
-      }, profile));
+      }, profile);
+      if (portable.toolChoice === "auto") {
+        return this.client.completeAutoTurn(portable);
+      }
+      const assistant = await this.client.completeToolTurn(portable);
+      return {
+        kind: "tool_calls",
+        toolCalls: assistant.tool_calls,
+        assistant,
+      };
     };
-    const repairStructuredFinal = async (): Promise<ChatAssistantToolMessage> => {
+    const repairStructuredFinal = async (): Promise<ChatCompletion> => {
       if (!replyContract) {
         throw new Error("Kontrak struktur final tidak tersedia untuk repair.");
       }
@@ -2170,7 +2220,7 @@ export class Conversation {
      */
     const repairToolShape = async (
       correction: string,
-    ): Promise<ChatAssistantToolMessage> => {
+    ): Promise<ChatCompletion> => {
       const base = prepare(execution, false);
       return completePrepared({
         ...base,
@@ -2181,62 +2231,60 @@ export class Conversation {
         ),
       });
     };
+    const toolCallsOf = (completion: ChatCompletion): readonly ChatToolCall[] =>
+      completion.kind === "tool_calls" ? completion.assistant.tool_calls : [];
     const finishAgentDecision = async (
-      candidate: ChatAssistantToolMessage,
+      candidate: ChatCompletion,
       allowRepair: boolean,
-    ): Promise<{
-      decision: AgentPlannerDecision;
-      assistant: ChatAssistantToolMessage;
-    }> => {
-      let assistantTurn = candidate;
-      let decision = parseAgentNativeDecision(
-        assistantTurn.tool_calls,
+    ): Promise<RequestedAgentDecision> => {
+      let turn = candidate;
+      let decision = parseAgentAutoDecision(
+        turn,
         plannerInput.callableCapabilities,
         replyContract,
       );
       if (
         !decision && replyContract &&
-        assistantTurn.tool_calls.some((call) =>
+        toolCallsOf(turn).some((call) =>
           call.function.name === STRUCTURED_STEPS_TOOL_NAME
         )
       ) {
         await assertRecoveryFresh(runtime, signal);
-        assistantTurn = await repairStructuredFinal();
-        decision = parseAgentNativeDecision(
-          assistantTurn.tool_calls,
-          [],
-          replyContract,
-        );
+        turn = await repairStructuredFinal();
+        decision = parseAgentAutoDecision(turn, [], replyContract);
       }
       // Argumen yang tidak cocok schema tidak melempar di client, jadi kasus ini
       // dulu berakhir sebagai "keputusan tidak sah" tanpa model pernah tahu
       // field mana yang ditolak.
       if (!decision && allowRepair) {
-        const rejected = assistantTurn.tool_calls[0]?.function.name ?? null;
+        const rejected = toolCallsOf(turn)[0]?.function.name ?? null;
         this.logger.warn(
           "agent_tool_arguments_repair",
           "Argumen native tool call ditolak kode; satu perbaikan dicoba.",
           { reason: rejected ?? "unknown" },
         );
         await assertRecoveryFresh(runtime, signal);
-        assistantTurn = await repairToolShape(
+        turn = await repairToolShape(
           `Panggilan function sebelumnya${rejected ? ` (${rejected})` : ""} ditolak kode karena argumennya tidak cocok schema, jadi tidak dijalankan maupun dikirim kepada pengguna. Panggil tepat satu function dari daftar yang tersedia dan isi persis field yang diwajibkan schema-nya, tanpa field tambahan.`,
         );
-        decision = parseAgentNativeDecision(
-          assistantTurn.tool_calls,
+        decision = parseAgentAutoDecision(
+          turn,
           plannerInput.callableCapabilities,
           replyContract,
         );
       }
-      if (!decision || !assistantTurn.tool_calls[0]) {
+      if (!decision) {
         throw new Error("Planner agent mengembalikan keputusan tidak sah.");
       }
-      return { decision, assistant: assistantTurn };
+      return {
+        decision,
+        assistant: turn.kind === "tool_calls" ? turn.assistant : null,
+      };
     };
 
-    let assistant: ChatAssistantToolMessage;
+    let planned: ChatCompletion;
     try {
-      assistant = await completePrepared(prepare(execution, false));
+      planned = await completePrepared(prepare(execution, false));
     } catch (error) {
       if (error instanceof AiToolShapeError) {
         this.logger.warn(
@@ -2245,10 +2293,12 @@ export class Conversation {
           { reason: error.reason },
         );
         await assertRecoveryFresh(runtime, signal);
-        assistant = await repairToolShape(
-          `Panggilan function sebelumnya ditolak kode dan tidak dijalankan maupun dikirim kepada pengguna (${toolShapeCorrection(error.reason)}). Panggil tepat satu function dari daftar yang tersedia, pakai persis nama field pada schema-nya, tanpa field tambahan, dan tanpa teks biasa di luar function call.`,
+        return finishAgentDecision(
+          await repairToolShape(
+            `Panggilan function sebelumnya ditolak kode dan tidak dijalankan maupun dikirim kepada pengguna (${toolShapeCorrection(error.reason)}). Panggil tepat satu function dari daftar yang tersedia, pakai persis nama field pada schema-nya, tanpa field tambahan, dan tanpa teks biasa di luar function call.`,
+          ),
+          false,
         );
-        return finishAgentDecision(assistant, false);
       }
       if (!isTruncatedAiResponse(error)) throw error;
       await assertRecoveryFresh(runtime, signal);
@@ -2277,10 +2327,12 @@ export class Conversation {
           escalationReason: "output_truncated",
         },
       );
-      assistant = await completePrepared(prepare(recoveryExecution, true));
-      return finishAgentDecision(assistant, false);
+      return finishAgentDecision(
+        await completePrepared(prepare(recoveryExecution, true)),
+        false,
+      );
     }
-    return finishAgentDecision(assistant, true);
+    return finishAgentDecision(planned, true);
   }
 
   /**
@@ -2503,6 +2555,14 @@ export function privateConversationAuthorizationPolicy(): AgentAuthorizationPoli
       return op === "set" || op === "clear"
         ? { decision: "allow" }
         : { decision: "approval" };
+    }
+    // Catatan biasa sudah lama disimpan tanpa prompt per item di bawah authority
+    // consent onboarding; menaikkannya menjadi approval di sini hanya akan
+    // menghentikan run untuk hal yang jalur lain lakukan diam-diam. Batas yang
+    // sebenarnya tetap dijaga executor dan `MemoryService`: jenis sensitif tidak
+    // ada di schema, credential ditolak, dan consent diperiksa ulang.
+    if (capability.id === "memory.remember") {
+      return { decision: "allow" };
     }
     return { decision: "approval" };
   };

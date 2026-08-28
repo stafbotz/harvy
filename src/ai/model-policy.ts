@@ -217,8 +217,7 @@ export function requiresPlannedExecution(
  *
  * Nilai ini tetap advisory dan tidak pernah cukup untuk mutasi state. Adapter
  * masih wajib membuktikan intent, scope, permission, serta authority operasi.
- * `internal_state` sengaja tidak diterima dari model saja: jalur itu harus
- * dibuktikan oleh preflight state-live code-owned pada adapter.
+ * Yang diputuskan di sini hanya apakah planner boleh *melihat* tool.
  */
 export function requestsAgentTooling(
   assessment: RoutingAssessment | null | undefined,
@@ -229,13 +228,26 @@ export function requestsAgentTooling(
   // jawaban model biasa. Memberi Agent Runtime authority hanya dari label ini
   // pernah mengirim 17+28 ke terminal/planner generik dan berakhir tanpa
   // jawaban. Execution/external tetap membutuhkan runtime tool sungguhan.
-  // `internal_state` tetap dikecualikan. Label itu sering muncul pada
-  // pertanyaan penilaian yang tidak menunjuk state apa pun, dan memberinya
-  // authority tool mengirim pertanyaan opini ke planner yang tidak punya apa-apa
-  // untuk dipanggil. Permintaan menulis task/reminder masuk lewat sinyal
-  // code-owned di adapter, bukan lewat label ini.
+  //
+  // `internal_state` dahulu dikecualikan karena label itu juga muncul pada
+  // pertanyaan penilaian yang tidak menunjuk state apa pun, dan di bawah
+  // kontrak `tool_choice: "required"` planner *wajib* memanggil sesuatu—
+  // sehingga pertanyaan opini berakhir tanpa jawaban. Pengecualian itu
+  // menyelesaikan masalah presisi dengan memotong recall: satu-satunya jalur
+  // tersisa menuju tool adalah regex state-live di `liveStateRequirement`, dan
+  // pertanyaan yang tidak cocok regex dijawab tanpa pernah membaca data
+  // pengguna. Probe 2026-08-28 mengukurnya: "aku ngerasa numpuk banget, ada
+  // yang mendesak nggak?" mendapat `internal_state` pada confidence 0,70–0,78
+  // di 3 dari 3 run, tidak pernah memperoleh tool, dan dijawab dengan meminta
+  // pengguna menyebutkan tugasnya—padahal ada tugas jatuh tempo besok.
+  //
+  // Label ini diterima kembali karena kontrak planner default kini
+  // `tool_choice: "auto"`: tool hanya terlihat, tidak wajib dipanggil, dan
+  // pertanyaan opini dijawab teks biasa. Bila kontrak itu kembali menjadi
+  // `required`, pengecualian ini harus dipulihkan bersamanya.
   return assessment.toolNeed === "execution" ||
-    assessment.toolNeed === "external";
+    assessment.toolNeed === "external" ||
+    assessment.toolNeed === "internal_state";
 }
 
 /**

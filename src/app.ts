@@ -140,6 +140,7 @@ import {
 } from "./core/local-runtime-lock.js";
 import { createInternalAgentExecutors } from "./agent/internal-executors.js";
 import { createWriteAgentExecutors } from "./agent/write-executors.js";
+import { createMemoryAgentExecutors } from "./agent/memory-executors.js";
 import { VirtualTerminalExecutor } from "./agent/virtual-terminal.js";
 import { ParallelDelegationExecutor } from "./agent/parallel-delegation.js";
 
@@ -287,52 +288,6 @@ const longTermMemory = new LongTermMemoryService(
   undefined,
   logger.child("core.long-term-memory"),
 );
-const internalExecutors = createInternalAgentExecutors({
-  tasks,
-  profiles,
-  sessions,
-  defaultTimeZone: config.defaultTimezone,
-});
-const specialistExecutor = createConfiguredSpecialistExecutor(
-  aiClient,
-  config.ai,
-  config.ai.specialistDelegationEnabled,
-);
-const writeExecutors = createWriteAgentExecutors({ tasks });
-const agentExecutors = [
-  ...internalExecutors,
-  ...writeExecutors,
-  new VirtualTerminalExecutor(),
-  ...(specialistExecutor
-    ? [specialistExecutor]
-    : [
-        new ParallelDelegationExecutor(
-          createModelAgentWorker(aiClient, config.ai),
-        ),
-      ]),
-];
-// Satu registry tepercaya dipakai semua kanal. Capability hanya tersedia bila
-// executor dan dependency yang cocok benar-benar dipasang.
-const agentHarness = new AgentHarness(
-  createHarvyCapabilityCatalog({
-    internalToolsInstalled: true,
-    virtualTerminalInstalled: true,
-    parallelDelegationInstalled: specialistExecutor === null,
-    specialistDelegationInstalled: specialistExecutor !== null,
-  }),
-  undefined,
-  longTermMemory,
-);
-const conversation = new Conversation(
-  aiClient,
-  config.ai,
-  config.defaultTimezone,
-  () => new Date(),
-  logger.child("ai.conversation"),
-  agentHarness,
-  agentExecutors,
-);
-
 // Memori berupa berkas Markdown, satu folder per pengguna. Berkas JSON lama
 // hanya dibaca sekali sebagai bahan impor, lalu tidak pernah ditulis lagi.
 const memoryEmbedding = config.ai.memoryEmbeddingModel
@@ -359,6 +314,61 @@ const memories = new MemoryService(
   memoryKnowledge,
   logger.child("core.memory"),
   longTermMemory,
+);
+
+const internalExecutors = createInternalAgentExecutors({
+  tasks,
+  profiles,
+  sessions,
+  defaultTimeZone: config.defaultTimezone,
+});
+const specialistExecutor = createConfiguredSpecialistExecutor(
+  aiClient,
+  config.ai,
+  config.ai.specialistDelegationEnabled,
+);
+const writeExecutors = createWriteAgentExecutors({ tasks });
+// `history` baru ada setelah `conversation` karena peringkasnya memanggil
+// model, jadi executor memegang penyelesai, bukan instance-nya.
+const memoryExecutors = createMemoryAgentExecutors({
+  history: () => history,
+  memories,
+  profiles,
+});
+const agentExecutors = [
+  ...internalExecutors,
+  ...writeExecutors,
+  ...memoryExecutors,
+  new VirtualTerminalExecutor(),
+  ...(specialistExecutor
+    ? [specialistExecutor]
+    : [
+        new ParallelDelegationExecutor(
+          createModelAgentWorker(aiClient, config.ai),
+        ),
+      ]),
+];
+// Satu registry tepercaya dipakai semua kanal. Capability hanya tersedia bila
+// executor dan dependency yang cocok benar-benar dipasang.
+const agentHarness = new AgentHarness(
+  createHarvyCapabilityCatalog({
+    internalToolsInstalled: true,
+    recallToolsInstalled: true,
+    virtualTerminalInstalled: true,
+    parallelDelegationInstalled: specialistExecutor === null,
+    specialistDelegationInstalled: specialistExecutor !== null,
+  }),
+  undefined,
+  longTermMemory,
+);
+const conversation = new Conversation(
+  aiClient,
+  config.ai,
+  config.defaultTimezone,
+  () => new Date(),
+  logger.child("ai.conversation"),
+  agentHarness,
+  agentExecutors,
 );
 
 // Peringkasnya memanggil model, tetapi `HistoryService` sendiri tidak tahu

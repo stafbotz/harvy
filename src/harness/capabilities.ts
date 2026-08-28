@@ -55,6 +55,8 @@ export interface HarvyCapabilityCatalogOptions {
   activeSurfaces?: readonly AgentSurface[];
   /** Tool baca state Harvy yang benar-benar mempunyai executor agent. */
   internalToolsInstalled?: boolean;
+  /** Pencarian riwayat sendiri dan catatan durable milik pengguna. */
+  recallToolsInstalled?: boolean;
   /** Terminal virtual sementara; tidak pernah berarti shell host. */
   virtualTerminalInstalled?: boolean;
   /** Fan-out read-only berbatas ke worker model cheap/efficient. */
@@ -213,6 +215,12 @@ export function createHarvyCapabilityCatalog(
         installed: configured.internalToolsInstalled === true,
       };
     }
+    if (RECALL_TOOL_IDS.has(definition.id)) {
+      return {
+        ...definition,
+        installed: configured.recallToolsInstalled === true,
+      };
+    }
     if (definition.id === "terminal.run") {
       return {
         ...definition,
@@ -275,6 +283,12 @@ const INTERNAL_TOOL_IDS = new Set([
   "session.status",
   "settings.time.get",
   "calendar.agenda",
+]);
+
+const RECALL_TOOL_IDS = new Set([
+  "history.search",
+  "memory.list",
+  "memory.remember",
 ]);
 
 const CODING_WORKSPACE_IDS = new Set([
@@ -447,6 +461,48 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     channels: ["telegram", "whatsapp"],
     installed: false,
     unavailableReason: "Executor agenda internal belum dipasang.",
+  },
+  {
+    id: "history.search",
+    version: "1",
+    title: "Cari percakapan lama",
+    description:
+      "mencari percakapan lama pengguna sendiri di ruang privat ini berdasarkan kata kunci; bukan pencarian web atau aplikasi luar",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram", "whatsapp"],
+    installed: false,
+    unavailableReason: "Executor pencarian riwayat belum dipasang.",
+  },
+  {
+    id: "memory.list",
+    version: "1",
+    title: "Baca catatan tersimpan",
+    description:
+      "membaca catatan durable yang Harvy simpan tentang pengguna pada ruang privat ini",
+    effect: "read",
+    confirmation: "none",
+    idempotency: "read-only",
+    spaces: ["private"],
+    channels: ["telegram", "whatsapp"],
+    installed: false,
+    unavailableReason: "Executor baca catatan belum dipasang.",
+  },
+  {
+    id: "memory.remember",
+    version: "1",
+    title: "Simpan catatan",
+    description:
+      "menyimpan satu catatan durable tentang pengguna; jenis sensitif dan credential tidak dapat disimpan lewat jalur ini",
+    effect: "write",
+    confirmation: "contextual",
+    idempotency: "keyed",
+    spaces: ["private"],
+    channels: ["telegram", "whatsapp"],
+    installed: false,
+    unavailableReason: "Executor tulis catatan belum dipasang.",
   },
   {
     id: "terminal.run",

@@ -63,7 +63,7 @@ export function runUpdateAcknowledgement(
     case "scope_expansion":
       return "Oke, tambahan scope-nya masuk. Aku menyesuaikan pekerjaan yang masih aktif.";
     case "answer_to_run":
-      return "Sip, jawabanmu sudah terikat ke pertanyaan pekerjaan tadi. Aku lanjutkan dari checkpoint-nya.";
+      return "Sip, jawabanmu sudah terikat ke pertanyaan pekerjaan tadi. Aku lanjutkan dari titik itu.";
     case "run_constraint":
       return "Oke, batasan barunya masuk. Aku akan memakainya sebelum hasil dikirim.";
   }
@@ -76,7 +76,7 @@ export function runCancellationAcknowledgement(committedEffects: number): string
 }
 
 export function runMailboxCapacityNotice(): string {
-  return "Perubahan ini belum masuk karena terlalu banyak update run yang belum diproses. Tunggu status pekerjaan bergerak, lalu kirim lagi perubahan ini.";
+  return "Perubahan ini belum masuk karena terlalu banyak perubahan yang belum sempat kuproses. Tunggu status pekerjaan bergerak, lalu kirim lagi perubahan ini.";
 }
 
 export function runFailureCopy(run: ActiveAgentRun): string {
@@ -85,7 +85,7 @@ export function runFailureCopy(run: ActiveAgentRun): string {
   }
   switch (run.lastError?.code) {
     case "input_expired":
-      return "Pekerjaan berhenti karena pertanyaan yang dibutuhkan tidak terjawab sebelum checkpoint kedaluwarsa.";
+      return "Pekerjaan berhenti karena pertanyaan yang kubutuhkan tidak terjawab sebelum waktunya habis. Kirim lagi permintaannya kalau masih kamu perlukan.";
     case "usage_anti_abuse":
       return "Pekerjaan belum selesai karena batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan.";
     case "usage_wallet_disabled":

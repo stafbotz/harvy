@@ -17,6 +17,7 @@ material lama berada di:
 - [`log/2026-08-21.md`](log/2026-08-21.md)
 - [`log/2026-08-22.md`](log/2026-08-22.md)
 - [`log/2026-08-24.md`](log/2026-08-24.md)
+- [`log/2026-08-25-testing-gmi.md`](log/2026-08-25-testing-gmi.md)
 - [`log/2026-08-25-eksplorasi.md`](log/2026-08-25-eksplorasi.md)
 - [`log/2026-08-25-console-credential.md`](log/2026-08-25-console-credential.md)
 - [`log/2026-08-07.md`](log/2026-08-07.md)
@@ -388,40 +389,41 @@ private coding/GitHub live, dan kalibrasi bahasa luas juga belum selesai.
 Next: pasangkan ulang session akun WhatsApp tester lalu ulangi journey adaptif
 yang sama tanpa expected transcript.
 
-## 2026-08-25 — Testing beralih ke GMI tanpa provider fallback
+## 2026-08-28 — Planner tool_choice auto dan tool recall pengguna
 
-Scope: konfigurasi AI, migrasi environment lokal, evaluator/probe, disclosure
-privasi, model profile, dan dokumentasi operasi.
+Scope: `src/ai/conversation.ts`, `src/ai/agent.ts`,
+`src/agent/memory-executors.ts`, `src/harness/capabilities.ts`, `src/app.ts`.
 
-Changed: Google AI Studio dan AlwaysCodex dicabut dari composition testing;
-runtime, probe, dan evaluator kini selalu memakai satu provider aktif tanpa
-flag fallback. Mode testing memakai endpoint OpenAI-compatible GMI Serving,
-`GMI_API_KEY`, dan target `MiniMaxAI/MiniMax-M3`. Migrasi lokal atomik menghapus
-enam entri provider lama tanpa memindahkan atau mencetak secret, serta kini
-menulis ulang atau membuang komentar konfigurasi legacy agar `.env` tidak
-menampilkan setup yang sudah dicabut. Profile live Google dihapus; sesudah
-smoke exact lulus, profile code-owned MiniMax hanya terbuka untuk endpoint resmi
-GMI dan model exact, sedangkan gateway/model lain tetap compatibility.
-Dokumentasi/status aktif,
-label fixture generik, dan provider-wire binding juga diselaraskan ke GMI;
-penyebutan lama hanya dipertahankan pada migrasi, denylist, ledger historis,
-serta histori keputusan yang ditandai superseded.
-Perubahan penyedia, cache otomatis, dan input gambar transient menaikkan consent
-privat ke v10 dan notice grup ke v11 dengan disclosure satu layanan AI utama
-tanpa pengiriman ulang ke provider cadangan.
+Changed: `completeAutoTurn`, `parseAgentAutoDecision`, dan
+`AGENT_AUTO_PLANNER_PROMPT` berhenti menjadi kode mati. Planner memakai
+`tool_choice: "auto"` sebagai kontrak default, sehingga seluruh tool terlihat
+tiap giliran dan obrolan biasa dijawab teks tanpa dibungkus `harvy_final_v1`.
+Kontrak wajib dipertahankan persis di dua tempat yang memerlukannya: named
+tool_choice untuk kelas state-live, dan `required` untuk bentuk jawaban
+terstruktur. Teks kosong ditolak `validateResponse`; keputusan action tetap
+harus berasal dari tool call karena continuation memerlukan assistant turn.
 
-Verified: migrasi `.env` menghapus keenam entri lama dan meninggalkan slot GMI
-kosong; suite terarah PASS 134/134, tes WhatsApp privat PASS 47/47,
-suite cleanup provider PASS 89/89, `npm run check` PASS, dan `npm test` PASS
-1.864/1.864 dalam 227 suite. Dua
-artefak build Google yang stale dihapus sebelum run penuh terakhir sehingga
-hasil hanya berasal dari source aktif. Setelah key tersedia lokal,
-`npm run acceptance:provider` lulus terhadap endpoint/model exact untuk basic,
-structured JSON, native tool+continuation, terminal/truncation, context reject,
-timeout, automatic cache reuse, dan input gambar.
+Tiga capability baru menutup celah "tidak bisa mencari, tidak bisa mencatat":
+`history.search`, `memory.list`, dan `memory.remember`. Ketiganya privat-saja
+dan memeriksa ulang consent onboarding; jenis `personal` tidak ada di schema dan
+`sensitiveConsent` tidak pernah diisi tool. Penolakan `MemoryService` dibedakan
+antara `already_known` dan gagal simpan agar Harvy tidak mengaku mengingat
+sesuatu yang tidak tersimpan.
 
-Not verified: rotasi/retry lintas key karena hanya satu key tersedia, SLA dan
-retensi provider, serta input gambar melalui kanal Telegram/WhatsApp nyata.
+Verified: `npm run check` PASS; `memory-executors` 10/10, `agent-conversation`
+28/28 termasuk dua kasus auto baru, `agent-runtime` 21/21, serta
+`agent-tool-repair` dan `capability-discovery` PASS.
 
-Next: ukur latency/kualitas lewat dogfood kanal dan ulangi smoke rotation hanya
-bila key uji kedua tersedia.
+Not verified: perilaku model nyata. Tidak ada `eval:conversation`, probe
+provider, atau kanal live untuk kontrak auto maupun ketiga tool recall.
+Pencarian web tetap tidak ada; tidak ada konektor jaringan yang dipasang.
+
+Decision: pelebaran gerbang masuk Agent Runtime tidak dikerjakan di sini.
+Percobaan menerima label `internal_state` sebagai authority tool dikembalikan
+karena saat itu tidak ada bukti terukur dan `tests/create-bot-flow.test.ts`
+mengunci aturan sebaliknya. Penulis lain melebarkannya di working tree yang sama
+atas dasar probe 2026-08-28; pelebaran itu bergantung pada kontrak auto di sini,
+jadi bila default kembali ke `required` pengecualian label harus ikut pulih.
+
+Next: ukur dengan `npm run eval:conversation` dan `probe-chat.ts` apakah kontrak
+auto menaikkan pemilihan tool yang tepat.

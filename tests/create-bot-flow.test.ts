@@ -4308,7 +4308,7 @@ describe("alur adapter Telegram", () => {
     assert.equal(discarded, 1);
     assert.equal(await runs.loadWaitingInput("telegram", "123"), null);
     assert.ok(harness.sent.some((text) =>
-      text.includes("Batas kerja kumulatif run sebelumnya") &&
+      text.includes("Batas kerja kumulatifnya tercapai") &&
       text.includes("hasil setengah jadi")
     ));
   });
@@ -5057,7 +5057,8 @@ describe("alur adapter Telegram", () => {
     assert.equal(abortObserved, true);
     assert.equal(
       harness.sent.some((text) =>
-        /Run agent berhenti|lagi gangguan|coba beberapa saat lagi/iu.test(text)
+        /belum berhasil menyelesaikan permintaan|lagi gangguan|coba beberapa saat lagi/iu
+          .test(text)
       ),
       false,
     );
@@ -5449,9 +5450,16 @@ describe("alur adapter Telegram", () => {
         }),
       }),
       triageRisk: async () => CALM_TRIAGE,
+      // `internal_state` kini membuat tool terlihat oleh planner, tetapi
+      // kontrak `tool_choice: "auto"` tidak mewajibkannya memanggil apa pun.
+      // Pertanyaan penilaian seperti ini dijawab teks biasa, dan yang tetap
+      // dijaga tes ini adalah surface usage deterministik tidak dibajak.
       agent: async () => {
         agentCalls += 1;
-        throw new Error("internal_state model tanpa preflight bukan authority tool");
+        return {
+          status: "completed",
+          reply: "Penilaian kesiapan produk berdasarkan bukti live.",
+        };
       },
       reply: async () => {
         replyCalls += 1;
@@ -5470,9 +5478,8 @@ describe("alur adapter Telegram", () => {
     await harness.bot.handleUpdate(messageUpdate(text, 1));
     await harness.bot.drainPending();
 
-    assert.equal(summaryCalls, 0);
-    assert.equal(agentCalls, 0);
-    assert.equal(replyCalls, 1);
+    assert.equal(summaryCalls, 0, "penilaian nonmekanis tidak membuka dashboard usage");
+    assert.equal(agentCalls + replyCalls, 1, "tepat satu jalur menjawab");
     assert.match(harness.sent.at(-1) ?? "", /Penilaian kesiapan produk/u);
     assert.doesNotMatch(harness.sent.join("\n"), /Penggunaan Harvy/u);
   });

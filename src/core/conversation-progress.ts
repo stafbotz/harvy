@@ -17,6 +17,7 @@ export type ConversationProgressPhase =
 
 export type ConversationProgressDetail =
   | "general"
+  | "initial"
   | "latest-information"
   | "personal-fit"
   | "consistency"
@@ -207,6 +208,22 @@ export class TransientConversationProgress<Reference>
   }
 }
 
+/**
+ * Status untuk jendela sebelum pemahaman pesan selesai.
+ *
+ * Sampai 28 Agustus 2026 laporan progress paling awal terjadi *sesudah*
+ * `understand()`, triase, dan retrieval memori. Padahal di situlah giliran
+ * membayar panggilan model termahalnya, sehingga surface status baru menyala
+ * ketika Harvy hampir siap menjawab dan pengguna menunggu dengan layar kosong
+ * pada bagian yang justru paling lama.
+ *
+ * Event ini sepenuhnya code-owned: tidak ada `publicFocus`, jadi tidak ada
+ * bagian keluaran model yang tampil sebelum triase final menilai giliran ini.
+ */
+export function initialProgressEvent(): ConversationProgressEvent {
+  return progressEvent("thinking", "initial");
+}
+
 export function executionProgressEvent(
   execution: ExecutionPlan,
   publicFocus?: SafePublicProgressFocus | null,
@@ -355,6 +372,11 @@ const FALLBACK_NOTES: Partial<Record<
       "Aku urutin dulu hal yang paling berpengaruh.",
       "Aku pertimbangkan dulu biar jawabannya nggak asal cepat.",
     ],
+    // Dipakai sebelum pemahaman pesan selesai, jadi belum ada apa pun yang
+    // boleh diklaim tentang isinya. Satu kalimat netral yang benar untuk
+    // giliran apa pun—termasuk yang ternyata masuk lane keselamatan—lebih
+    // aman daripada nada "menimbang" pada pesan yang belum dibaca.
+    initial: ["Aku baca dulu pesanmu."],
     "personal-fit": [
       "Aku lihat dulu mana yang paling cocok buat keadaanmu.",
       "Aku bedakan dulu hal yang kelihatan bagus dan yang benar-benar pas buatmu.",

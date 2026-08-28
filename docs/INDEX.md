@@ -9,6 +9,7 @@ pertanyaan konkret diketahui. Jangan memuat seluruh `docs/`.
 | Kebutuhan | Sumber |
 |---|---|
 | Risiko/blocker lintas subsystem | [`agent/CURRENT.md`](agent/CURRENT.md) |
+| Sisa pekerjaan yang sudah berbentuk konkret | [`agent/SCRATCHPAD.md`](agent/SCRATCHPAD.md) |
 | Ringkasan capability per area | [`engineering/STATUS.md`](engineering/STATUS.md) |
 | Perubahan material terbaru | [`LOG.md`](LOG.md), cari maksimal 3 entri relevan |
 | Cara kerja agent/Git | [`../AGENTS.md`](../AGENTS.md), lalu [`operations/WORKFLOW.md`](operations/WORKFLOW.md) bila perlu |
