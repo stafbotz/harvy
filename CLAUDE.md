@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-File ini hanya adaptor tipis. Seluruh kontrak ada di `AGENTS.md`; SessionStart
-hanya menambahkan snapshot kecil dari sumber yang sama.
+Seluruh panduan ada di `AGENTS.md` — perintah, gerbang verifikasi, peta
+arsitektur, dan batas keselamatan. Berkas ini hanya menunjuk ke sana.
 
 @AGENTS.md

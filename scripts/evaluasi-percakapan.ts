@@ -53,9 +53,23 @@ import {
 const all = process.argv.includes("--all");
 const conversationOnly = process.argv.includes("--conversation-only");
 const compactOutput = process.argv.includes("--compact");
-const requested = Number(
-  process.argv.find((argument) => argument.startsWith("--limit="))
-    ?.slice("--limit=".length) ?? "12",
+const explicitLimit = process.argv.some((argument) =>
+  argument.startsWith("--limit="),
+);
+const explicitCases = process.argv.some((argument) =>
+  argument.startsWith("--case="),
+);
+if (all && (explicitLimit || explicitCases)) {
+  throw new Error("--all tidak dapat digabung dengan --limit atau --case.");
+}
+if (explicitLimit && explicitCases) {
+  throw new Error("--limit tidak dapat digabung dengan --case.");
+}
+const requested = integerArgument(
+  "--limit=",
+  12,
+  1,
+  CONVERSATION_EVAL_CASES.length,
 );
 const requestedCaseIds = new Set(
   (process.argv.find((argument) => argument.startsWith("--case="))
@@ -70,15 +84,39 @@ const selected = requestedCaseIds.size > 0
     ? CONVERSATION_EVAL_CASES
     : CONVERSATION_EVAL_CASES.slice(
         0,
-        Number.isFinite(requested) ? requested : 12,
+        requested,
       );
 const concurrency = integerArgument("--concurrency=", 1, 1, 8);
 const intervalMs = integerArgument("--interval-ms=", 0, 0, 60_000);
+const selectedBoundaryCases = conversationOnly
+  ? []
+  : requestedCaseIds.size > 0
+    ? TURN_BOUNDARY_EVAL_CASES.filter((testCase) =>
+        requestedCaseIds.has(testCase.id)
+      )
+    : TURN_BOUNDARY_EVAL_CASES;
+const selectedInterruptionCases = conversationOnly
+  ? []
+  : requestedCaseIds.size > 0
+    ? TURN_INTERRUPTION_EVAL_CASES.filter((testCase) =>
+        requestedCaseIds.has(testCase.id)
+      )
+    : TURN_INTERRUPTION_EVAL_CASES;
+const selectedCaseCount =
+  selected.length + selectedBoundaryCases.length + selectedInterruptionCases.length;
+if (requestedCaseIds.size > 0 && selectedCaseCount !== requestedCaseIds.size) {
+  throw new Error("Satu atau lebih --case tidak ditemukan dalam corpus aktif.");
+}
+const evaluationStartedAt = Date.now();
+let completedCaseCount = 0;
 const config = loadConfig();
 const conversation = new Conversation(
   await createInstrumentedAiClient(config, "evaluation"),
   config.ai,
   config.defaultTimezone,
+);
+process.stderr.write(
+  `[eval] mulai ${selectedCaseCount} kasus; concurrency=${concurrency}; mode=${config.ai.mode}\n`,
 );
 
 /**
@@ -108,37 +146,22 @@ const providerCircuit: {
 const results = await mapConcurrent(
   selected,
   concurrency,
-  evaluateSafely,
+  (testCase) => withProgress(testCase.id, () => evaluateSafely(testCase)),
   intervalMs,
 );
 const boundaryResults = await mapConcurrent(
-  conversationOnly
-    ? []
-    : requestedCaseIds.size > 0
-      ? TURN_BOUNDARY_EVAL_CASES.filter((testCase) =>
-          requestedCaseIds.has(testCase.id)
-        )
-      : TURN_BOUNDARY_EVAL_CASES,
+  selectedBoundaryCases,
   concurrency,
-  evaluateBoundary,
+  (testCase) => withProgress(testCase.id, () => evaluateBoundary(testCase)),
   intervalMs,
 );
 const interruptionResults = await mapConcurrent(
-  conversationOnly
-    ? []
-    : requestedCaseIds.size > 0
-      ? TURN_INTERRUPTION_EVAL_CASES.filter((testCase) =>
-          requestedCaseIds.has(testCase.id)
-        )
-      : TURN_INTERRUPTION_EVAL_CASES,
+  selectedInterruptionCases,
   concurrency,
-  evaluateInterruption,
+  (testCase) => withProgress(testCase.id, () => evaluateInterruption(testCase)),
   intervalMs,
 );
 const allResults = [...results, ...boundaryResults, ...interruptionResults];
-if (requestedCaseIds.size > 0 && allResults.length !== requestedCaseIds.size) {
-  throw new Error("Satu atau lebih --case tidak ditemukan dalam corpus aktif.");
-}
 const failed = allResults.filter((result) => result.failures.length > 0);
 const failureSources = allResults.map(resultFailureSource);
 const qualityFailures = failureSources.filter((source) => source === "quality").length;
@@ -154,6 +177,7 @@ console.log(
       modelScope: "primary-only",
       concurrency,
       intervalMs,
+      durationMs: Date.now() - evaluationStartedAt,
       cases: allResults.length,
       conversationCases: results.length,
       orchestrationCases: boundaryResults.length + interruptionResults.length,
@@ -805,6 +829,22 @@ function integerArgument(
     throw new Error(`Argumen ${prefix}<angka> tidak sah.`);
   }
   return parsed;
+}
+
+async function withProgress<T>(
+  id: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const caseStartedAt = Date.now();
+  try {
+    return await operation();
+  } finally {
+    completedCaseCount += 1;
+    process.stderr.write(
+      `[eval] ${completedCaseCount}/${selectedCaseCount} ${id}; ` +
+        `case=${Date.now() - caseStartedAt}ms; total=${Date.now() - evaluationStartedAt}ms\n`,
+    );
+  }
 }
 
 async function mapConcurrent<T, R>(

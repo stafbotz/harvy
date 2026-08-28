@@ -521,12 +521,7 @@ Kontrak kerja untuk Codex, Claude Code, Antigravity, dan manusia ada di
 [AGENTS.md](AGENTS.md). Baca kontrak itu sebelum mengubah kode, tes,
 konfigurasi, atau dokumentasi.
 
-Sekali per clone, aktifkan hook repository:
-
-~~~bash
-git config core.hooksPath .githooks
-~~~
-
-Hook memvalidasi pointer dan batas konteks agent ketika file bootstrap/status
-terkait berubah. Hook tidak mewajibkan entri LOG untuk setiap commit; aturan
-materialitas dokumentasi tetap mengikuti [AGENTS.md](AGENTS.md).
+Panduan itu memuat perintah, gerbang verifikasi, peta arsitektur, dan batas
+keselamatan. Tidak ada hook repository atau validator kontrak; verifikasi
+dilakukan lewat `npm run check`, `npm run test:file`, dan `npm test` sesuai
+risiko perubahan.

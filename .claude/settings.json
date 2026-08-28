@@ -1,15 +1,1 @@
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/scripts/session-context.mjs"]
-          }
-        ]
-      }
-    ]
-  }
-}
+{}

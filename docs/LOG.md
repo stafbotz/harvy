@@ -20,6 +20,7 @@ material lama berada di:
 - [`log/2026-08-25-testing-gmi.md`](log/2026-08-25-testing-gmi.md)
 - [`log/2026-08-25-eksplorasi.md`](log/2026-08-25-eksplorasi.md)
 - [`log/2026-08-25-console-credential.md`](log/2026-08-25-console-credential.md)
+- [`log/2026-08-26.md`](log/2026-08-26.md)
 - [`log/2026-08-07.md`](log/2026-08-07.md)
 - [`log/2026-08-02-sampai-2026-08-06.md`](log/2026-08-02-sampai-2026-08-06.md)
 - [`log/2026-07-25-sampai-2026-08-02.md`](log/2026-07-25-sampai-2026-08-02.md)
@@ -44,11 +45,11 @@ Not verified: yang belum diuji.
 Next: hanya bila ada tindak lanjut material.
 ```
 
-Batas ukuran, aturan arsip, dan batas panjang per entri berada di `AGENTS.md`
-bagian "Kapan dokumentasi berubah". Aturannya ditaruh di sana karena kontrak
-agent melarang membaca berkas ini utuh sebagai orientasi, sehingga aturan yang
-hanya hidup di sini tidak akan pernah ditemukan tepat waktu.
-`npm run context:check` menegakkan batas tersebut.
+Berkas aktif maksimal 24 KiB atau 12 entri; satu entri idealnya di bawah sekitar
+2 KiB. Bila batas terlampaui, pindahkan satu entri terlama secara utuh ke
+`docs/log/YYYY-MM-DD.md` dan tautkan di atas. Jangan memecah entri atau
+mengarsipkan pekerjaan yang masih memuat tindak lanjut aktif.
+`npm run context:check` menegakkan batas berkas aktif.
 
 ## 2026-08-28 — Bentuk balasan untuk bahaya aktif
 
@@ -353,41 +354,6 @@ Not verified: sandbox hostile-code pada Linux non-root nyata; GitHub App,
 bootstrap repository kosong, branch, push, dan draft PR pada remote nonkritis;
 serta coding end-to-end dari akun Telegram/WhatsApp nyata. Test GitHub memakai
 broker/API palsu dan Git object lokal, bukan bukti efek remote.
-
-## 2026-08-26 — Adaptive live mempersempit routing dan potret memori
-
-Scope: percakapan privat Telegram/WhatsApp, model routing, AgentRun admission,
-auto-memory, `/memori`, kualitas keluaran, live exploratory tester, deadline
-Agent Harness, tes, dan kontrak subsystem.
-
-Changed: planning durable kini memerlukan current intent request, assessment
-tepercaya, execution medium/heavy, serta tool execution/external; analysis tanpa
-tool dan internal-state model tidak lagi membuka AgentRun. Kandidat hypothetical,
-current work, dan negated remember ditolak. Balasan tanpa receipt tidak boleh
-mengklaim storage/delete, dan `/memori` hanya memakai primary source yang dapat
-dikendalikan pengguna—history/episode-only tetap konteks percakapan, bukan
-memori. Prosa yang menyisipkan writing system tak diminta diregenerasi sekali
-lalu dibersihkan sempit. Tie deadline invocation dan RunBudget kini tetap
-diatribusikan ke invocation walau dua pembacaan clock berlomba.
-
-Verified: akun Telegram tester benar-benar menjalankan perjalanan adaptif; pesan
-berikutnya dipilih setelah membaca respons Harvy. Focused rerun menuntaskan
-tugas nyata, topic shift, explicit usage, context return, correction, dan
-`/memori` empty tanpa wrong AgentRun atau usage tak diminta. Assessment
-content-free final: usefulness 5, naturalness 4, initiative 4,
-non-repetition 5, UI clarity 5, context coherence 5, correction handling 5.
-Suite perubahan privat PASS 263/263, Agent Harness PASS 28/28 termasuk clock
-race deterministik, `npm run check` PASS, `npm test` PASS 1.896/1.896 dalam 231
-suite, `npm run context:check` PASS dengan warning freshness nonfatal, dan
-`git diff --check` PASS dengan warning line-ending Windows.
-
-Not verified: current build WhatsApp tidak mencapai satu pesan karena session
-akun tester ditolak transport dengan connection closed 401; akun Harvy/runtime
-tidak disentuh oleh run gagal itu. Dogfood tujuh hari, image melalui kanal,
-private coding/GitHub live, dan kalibrasi bahasa luas juga belum selesai.
-
-Next: pasangkan ulang session akun WhatsApp tester lalu ulangi journey adaptif
-yang sama tanpa expected transcript.
 
 ## 2026-08-28 — Planner tool_choice auto dan tool recall pengguna
 

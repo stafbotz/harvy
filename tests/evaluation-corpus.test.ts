@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 import type { Understanding } from "../src/ai/understand.js";
 import { immediateUnderstandingRoute } from "../src/bot/understanding-route.js";
 import { sessionAppliesToMessage } from "../src/core/session-policy.js";
@@ -8,6 +12,9 @@ import {
   TURN_BOUNDARY_EVAL_CASES,
   TURN_INTERRUPTION_EVAL_CASES,
 } from "../scripts/eval-corpus.js";
+
+const execFileAsync = promisify(execFile);
+const repositoryRoot = process.cwd();
 
 describe("corpus evaluasi percakapan", () => {
   it("memuat 57 skenario sintetis lintas jalur utama", () => {
@@ -125,6 +132,45 @@ describe("corpus evaluasi percakapan", () => {
         ),
       ),
       new Set(["addition", "correction", "redirect", "independent"]),
+    );
+  });
+
+  it("memisahkan eval bounded dari corpus penuh", async () => {
+    const packageJson = JSON.parse(
+      await readFile(resolve(repositoryRoot, "package.json"), "utf8"),
+    ) as {
+      scripts?: {
+        "eval:conversation"?: string;
+        "eval:conversation:full"?: string;
+      };
+    };
+
+    assert.equal(
+      packageJson.scripts?.["eval:conversation"],
+      "tsx scripts/evaluasi-percakapan.ts --conversation-only --compact",
+    );
+    assert.equal(
+      packageJson.scripts?.["eval:conversation:full"],
+      "tsx scripts/evaluasi-percakapan.ts --all --compact",
+    );
+  });
+
+  it("menolak selector eval ambigu sebelum memanggil provider", async () => {
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          resolve(repositoryRoot, "scripts/evaluasi-percakapan.ts"),
+          "--all",
+          "--limit=1",
+          "--conversation-only",
+          "--compact",
+        ],
+        { cwd: repositoryRoot },
+      ),
+      /--all tidak dapat digabung dengan --limit atau --case/u,
     );
   });
 });

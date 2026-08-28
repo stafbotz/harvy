@@ -19,7 +19,7 @@ perubahanmu — buktikan asalnya sebelum melapor.
 
 ## Aktif
 
-Kedua entri di bawah ini semula dicatat sebagai kegagalan working tree pada
+Dua entri percakapan di bawah ini semula dicatat sebagai kegagalan working tree pada
 2026-08-27. Commit `4454f65` (2026-08-28) memasukkan `src/ai/conversation.ts`
 dan `tests/conversation.test.ts` beserta langkah review artefak yang belum
 selesai, jadi keduanya sekarang merah di `HEAD`, bukan lagi hanya di working
@@ -45,6 +45,21 @@ lama entri ini sudah tidak berlaku.
   dikembalikan tanpa perbaikan konsistensi.
 - Sebab: sama dengan entri di atas — langkah review artefak belum selesai.
 - Pemilik: penulis lanjutan langkah review artefak `reply()`.
+
+### `tidak membiarkan usage explicit membajak penilaian produk nonmekanis`
+
+- Berkas: `tests/whatsapp-private-conversation.test.ts`
+- Ditemukan: 2026-08-28 pada working tree bersih di `HEAD` `03dcc29`; commit
+  pengenal regresi belum dibuktikan.
+- Gejala: mengharapkan handler usage tidak dipanggil, menerima satu panggilan.
+- Sebab: semantic operation `usage/show-details` dari model masih mencapai
+  handler economy ketika pesan pengguna sebenarnya meminta penilaian kesiapan
+  produk; akar routing tepatnya belum didiagnosis.
+- Pemilik: tindak lanjut routing WhatsApp privat.
+
+Diperiksa ulang langsung dengan
+`node --test dist/tests/whatsapp-private-conversation.test.js`: 53/54 lulus dan
+kasus ini tetap merah.
 
 Diperiksa ulang 2026-08-28 dengan `node --test dist/tests/conversation.test.js`:
 keduanya masih merah. Pekerjaan agent yang belum di-commit hari itu tidak

@@ -5,7 +5,7 @@ verifikasi, dan perubahan dokumentasi; ia bukan daftar bacaan bootstrap.
 
 ## Mulai dari pekerjaan, bukan dokumentasi
 
-Klasifikasikan task menurut `AGENTS.md`, lalu untuk coding/diagnosis:
+Ikuti kontrak code-first di `AGENTS.md`, lalu untuk coding/diagnosis:
 
 1. periksa permintaan, `git status`, diff, dan file yang disebut;
 2. cari kode, tes, konfigurasi, error, dan call path terkait;
@@ -44,20 +44,24 @@ kemampuan tanpa bukti kode/tes atau status subsystem terverifikasi.
 
 ## Verifikasi proporsional
 
-Perubahan kode harus memiliki bukti paling dekat dengan risikonya:
+Perubahan harus memiliki bukti paling dekat dengan risikonya:
 
 - bug fix: reproduksi atau tes regresi bila dapat diotomatisasi;
 - perubahan perilaku: tes yang membuktikan kontrak baru;
 - refactor: tes existing yang membuktikan perilaku tetap;
-- bootstrap agent: `npm run context:check` dan tes kontrak;
 - docs-only: link, command, ukuran, atau verifier yang relevan.
 
-Untuk kode produk, gerbang default tetap:
+Loop default untuk perubahan lokal:
 
 ```bash
+npm run test:file -- tests/<berkas>.test.ts
 npm run check
-npm test
 ```
+
+Perubahan lintas subsystem menjalankan seluruh tes terkait. Tambahkan
+`npm test` sekali pada checkpoint akhir hanya untuk perubahan safety, privacy,
+permission, storage, deletion, concurrency, atau release. Jangan memakai suite
+penuh sebagai baseline dan final rutin.
 
 Tes hijau tidak membuktikan Telegram, WhatsApp, provider, tombol, reminder,
 atau deployment nyata bekerja. Laporan akhir menyebut command dan hasil yang
@@ -89,25 +93,6 @@ Pilih tujuan yang paling kecil:
 LOG bukan jurnal sesi. Ikuti format dan ambang arsip yang tertulis di file
 aktif. Jangan menyalin raw logs, prompt, identifier pengguna nyata, credential,
 atau kutipan pengguna ke LOG/STATUS/CURRENT.
-
-## Hook dan batas enforcement
-
-Aktifkan sekali per clone:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-Hook hanya menjalankan verifier ketika kontrak/bootstrap/status, CURRENT, atau
-LOG aktif ikut staged. Ia memvalidasi snapshot index—termasuk deletion/rename—
-tanpa memaksa dokumentasi untuk perubahan kecil atau menebak materialitas dari
-path. Verifier menjaga pointer lintas-agent, ukuran snapshot/output/LOG, dan
-larangan bootstrap besar.
-
-Batasnya disengaja: hook dapat dilewati dengan `--no-verify` dan hanya menilai
-struktur snapshot staged, bukan makna diff. Ia tidak dapat menentukan apakah
-perilaku atau keputusan benar-benar berubah. Materialitas, budget 15%,
-relevansi bacaan, serta kebenaran semantik tetap diperiksa penulis dan reviewer.
 
 ## Kapan berhenti dan bertanya
 

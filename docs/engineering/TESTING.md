@@ -16,17 +16,32 @@ sebenarnya belum tersambung jauh lebih berbahaya lagi.
 - Secret hanya berada di `.env` lokal. Gunakan `.env.example` sebagai daftar
   nama konfigurasi.
 
-## Gerbang otomatis
+## Gerbang otomatis berbasis risiko
 
-Jalankan dari root repositori:
+Loop perubahan lokal memakai bukti paling dekat dengan file yang berubah:
 
 ```bash
+npm run test:file -- tests/nama-berkas.test.ts
 npm run check
-npm test
 ```
 
-`npm test` membangun TypeScript dan menjalankan seluruh `dist/tests/*.test.js`.
-Perintah dianggap lulus hanya jika exit code `0` dan tidak ada test gagal.
+`test:file` menjalankan TypeScript langsung melalui `tsx`; ia tidak membangun
+seluruh repositori. `npm run check` membuktikan type-check seluruh proyek.
+
+Gunakan gerbang berikut:
+
+| Risiko | Gerbang |
+|---|---|
+| Perubahan lokal satu subsystem | tes berkas terkait + `npm run check` |
+| Lintas subsystem | semua tes terkait + `npm run check` |
+| Safety/privacy/permission/storage/deletion/concurrency | tes terkait + `npm run check` + `npm test` |
+| Release checkpoint | `npm run check` + `npm test` |
+
+`npm test` membangun TypeScript dan menjalankan seluruh
+`dist/tests/*.test.js`. Suite penuh dijalankan paling banyak sekali pada akhir
+satu rangkaian perubahan berisiko tinggi; ia bukan baseline dan final rutin
+untuk setiap patch. Perintah dianggap lulus hanya jika exit code `0` dan tidak
+ada test gagal.
 
 ### Apa yang dibuktikan gerbang ini, dan apa yang tidak
 
@@ -42,30 +57,27 @@ Suite hijau menjawab "apakah aku merusak sesuatu", bukan "apakah Harvy menjadi
 lebih baik". Untuk pertanyaan kedua, bukti yang sah hanya corpus model nyata di
 bawah atau percakapan di kanal sungguhan.
 
-### Urutan yang murah
+### Iterasi dan baseline merah
 
-Menjalankan suite penuh sebagai loop kerja adalah pemborosan terbesar di
-repositori ini. Pada host 2 core, `npm test` ≈ 7 menit sementara satu berkas
-tes ≈ 8 detik:
+Pada host 2 core tanggal 28 Agustus 2026, satu test kecil berjalan sekitar 1,4
+detik melalui `test:file`; wrapper lama yang membangun seluruh proyek memakan
+10,6 detik. Suite penuh memakan 6 menit 31 detik. Karena itu jangan memakai
+suite penuh sebagai loop debugging.
 
 ```bash
-npm run check
-npm run test:file -- dist/tests/nama-berkas.test.js
+npm run test:file -- tests/nama-berkas.test.ts
 npm run test:watch
 ```
 
-Pakai `test:file` selama menulis kode, lalu `npm test` sekali sebelum
-menyatakan selesai. `tsconfig.json` memakai `incremental`, jadi build kedua dan
-seterusnya murah selama `dist/.tsbuildinfo` tidak dihapus.
-
 Tes yang sudah merah sebelum perubahanmu tercatat di
 [`KNOWN-FAILURES.md`](KNOWN-FAILURES.md); baca berkas itu sebelum menyimpulkan
-kamu menyebabkan regresi.
+kamu menyebabkan regresi. Ulang berkas yang gagal, bukan seluruh suite. Jangan
+menghapus `dist/.tsbuildinfo` karena TypeScript memakai incremental build.
 
-Perubahan coding trust-domain juga wajib menjalankan:
+Acceptance eksternal dijalankan hanya ketika perubahan menyentuh boundary itu
+dan operator memberi izin serta prerequisite yang sesuai:
 
 ```bash
-npm run context:check
 git diff --check
 npm run acceptance:sandbox
 npm run acceptance:github
@@ -73,7 +85,7 @@ npm run acceptance:provider
 npm run acceptance:whatsapp
 ```
 
-Empat acceptance terakhir bukan unit test dan sengaja mempunyai gerbang
+Acceptance tersebut bukan bagian gerbang rutin dan sengaja mempunyai gerbang
 operator/infrastruktur. Sandbox memerlukan host Linux non-root dengan rootless
 Podman, cgroup v2, image+seccomp exact, lalu seluruh hostile-code scenario.
 GitHub memerlukan GitHub App dan repository uji nonkritis serta confirmation
@@ -84,22 +96,30 @@ Exit nonzero karena prerequisite/scope parsial harus dicatat `NOT RUN` atau
 `INCOMPLETE`, bukan diubah menjadi PASS. Receipt/screenshot sintetis tidak
 menggantikan state Linux/GitHub/WhatsApp/provider yang diamati.
 
-Baseline working tree fondasi ProjectWorkspace/Coding Phase G–J pada 13 Agustus
-2026 adalah **1.101 test lulus dalam 136 suite**, diverifikasi dengan `npm test`
-(build TypeScript ikut di dalamnya). Angka ini tidak mencakup provider
-embedding, runner isolation, GitHub App, atau kanal live.
-
 Corpus model nyata dijalankan terpisah karena memakai jaringan:
 
 ```bash
-npm run eval:conversation
+npm run eval:conversation -- --case=id-kasus
+npm run eval:conversation -- --limit=12
+npm run eval:conversation:full
 npm run eval:group
 npm run eval:group:full
 npm run eval:group:direct
 ```
 
-Runner percakapan pribadi memakai 42 skenario sintetis. `eval:group` adalah
-smoke 10 kasus per topik (150), `eval:group:full` menjalankan seluruh 600
+`eval:conversation` hanya menjalankan kasus percakapan, default 12, dan
+menyembunyikan isi balasan pada output ringkas. `--case=` adalah loop utama
+ketika prompt/routing/tool berubah. `eval:conversation:full` menjalankan seluruh
+corpus percakapan dan orchestration; selector ambigu seperti `--all --limit=...`
+ditolak sebelum provider dipanggil. Progress per kasus ditulis ke stderr.
+
+Run nyata 57 kasus percakapan dengan concurrency 1 pada 28 Agustus 2026 memakan
+17 menit 44 detik. Concurrency tidak dinaikkan secara default karena throttling
+dapat membuat evaluator mengukur rate limit, bukan Harvy. Corpus penuh hanya
+untuk release checkpoint atau permintaan eksplisit.
+
+`eval:group` adalah smoke 10 kasus per topik (150), `eval:group:full`
+menjalankan seluruh 600
 snapshot ambient, dan `eval:group:direct` menjalankan 60 episode balasan sesudah
 routing direct. Angka 600 berasal dari 150 skenario semantik × empat variasi
 permukaan, bukan 600 percakapan independen. Tidak ada runner yang memakai data
@@ -1171,7 +1191,8 @@ Handoff wajib menyertakan:
 ```text
 Automated:
 - npm run check — PASS
-- npm test — PASS (jumlah test)
+- npm run test:file -- tests/<berkas>.test.ts — PASS (jumlah test)
+- npm test — PASS/FAIL/NOT RUN (alasan; hanya bila gerbang risiko memerlukannya)
 
 Manual:
 - <skenario> — PASS/FAIL/NOT RUN — <hasil>
