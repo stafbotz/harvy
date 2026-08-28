@@ -1,8 +1,7 @@
 # Harvy Agent Entry Point
 
-`AGENTS.md` adalah kontrak utama untuk Codex, Claude Code, Antigravity, dan
-manusia yang bekerja di repositori Harvy. Adaptor alat harus menunjuk ke file
-ini, bukan menyalin aturannya.
+Kontrak utama untuk agent dan manusia di repositori Harvy. Adaptor alat harus
+menunjuk ke berkas ini, bukan menyalin aturannya.
 
 ## Kontrak ringkas
 
@@ -33,15 +32,15 @@ ini, bukan menyalin aturannya.
 
 | Kelas | Konteks minimum | Tambahan bila pertanyaan konkret menuntutnya |
 |---|---|---|
-| `coding` | Level 0, kode/tes/config terkait | status subsystem; invariant/ADR yang mengikat kontrak |
-| `bug investigation` | Level 0, error, diff, kode, tes regresi | maksimal 3 entri LOG relevan; status/known defect subsystem |
-| `review` | Level 0, diff, kode, tes | invariant, status, atau ADR yang langsung diuji; jangan edit |
-| `architecture` | Level 0–1 dan aliran kode nyata | `ARCHITECTURE.md`, `INVARIANTS.md`, ADR terkait |
-| `product behavior` | kode/tes perilaku saat ini | status subsystem, bagian relevan `PROJECT.md`; Constitution bila hak/safety tersentuh |
-| `privacy/safety` | kode/tes/policy terkait | bagian relevan `CONSTITUTION.md`, `INVARIANTS.md`, status safety, ADR terkait |
-| `documentation` | dokumen target dan bukti kode/tes | INDEX/WORKFLOW/ADR hanya bila kontrak navigasi atau keputusan berubah |
-| `research` | pertanyaan dan sumber lokal terkait | sumber eksternal bila diminta atau sumber lokal tidak cukup; pisahkan riset dari status aktual |
-| `release/operations` | git state, config, command, diff | `DEVELOPMENT.md`, `TESTING.md`, `WORKFLOW.md`, status platform/console |
+| `coding` | Level 0, kode/tes/config terkait | status subsystem; invariant/ADR yang mengikat |
+| `bug investigation` | Level 0, error, diff, kode, tes regresi | maks 3 entri LOG; known defect subsystem |
+| `review` | Level 0, diff, kode, tes | invariant/status/ADR yang diuji; jangan edit |
+| `architecture` | Level 0–1 dan aliran kode nyata | `ARCHITECTURE.md`, `INVARIANTS.md`, ADR |
+| `product behavior` | kode/tes perilaku saat ini | status subsystem, `PROJECT.md`; Constitution bila hak/safety tersentuh |
+| `privacy/safety` | kode/tes/policy terkait | `CONSTITUTION.md`, `INVARIANTS.md`, status safety |
+| `documentation` | dokumen target dan bukti kode/tes | INDEX/WORKFLOW/ADR bila kontrak navigasi berubah |
+| `research` | pertanyaan dan sumber lokal | sumber eksternal bila diminta; pisahkan riset dari status |
+| `release/operations` | git state, config, command, diff | `DEVELOPMENT.md`, `TESTING.md`, `WORKFLOW.md` |
 
 Daftar ini adalah izin memilih konteks, bukan daftar bacaan wajib.
 
@@ -55,18 +54,15 @@ Daftar ini adalah izin memilih konteks, bukan daftar bacaan wajib.
 - **Level 3:** arsitektur, invariant, product, constitution, testing, atau ADR
   hanya ketika task benar-benar menyentuh kontraknya.
 
-Sebelum implementasi, bacaan dokumentasi idealnya tidak melebihi sekitar 15%
-konteks kerja. Ini pedoman, bukan angka yang harus dihitung. Berhenti membaca
-setelah kontrak, invariant, dan acceptance criteria yang relevan ditemukan;
-lanjutkan ke kode. Jangan membuka dokumen hanya karena tercantum di routing dan
-jangan membaca dua sumber yang menjelaskan hal sama bila sumber ringkas cukup.
-
+Sebelum implementasi, bacaan dokumentasi idealnya di bawah sekitar 15% konteks
+kerja; ini pedoman, bukan angka yang dihitung. Berhenti membaca setelah
+kontrak, invariant, dan acceptance criteria yang relevan ditemukan. Jangan membuka dokumen hanya karena
+tercantum di routing, dan jangan membaca dua sumber yang menjelaskan hal sama.
 Untuk dokumen besar, cari dulu lalu baca rentang kecil:
 
 ```bash
-rg -n "namaSubsystem|namaFungsi|error|^## " src tests docs/engineering/status docs/LOG.md docs/log
+rg -n "namaSubsystem|namaFungsi|error|^## " src tests docs/engineering/status docs/LOG.md
 sed -n '120,180p' path/to/file.md
-# PowerShell ekuivalen: (Get-Content path/to/file.md)[119..179]
 ```
 
 Jangan membaca `LOG.md`, `STATUS.md`, `TESTING.md`, `INVARIANTS.md`,
@@ -75,15 +71,12 @@ keseluruhan dokumen itu.
 
 ## Alur default coding dan diagnosis
 
-1. Baca kontrak ini dan pahami permintaan pengguna.
-2. Periksa `git status`, diff, struktur repo, dan file yang disebut.
-3. Cari kode serta tes yang relevan; reproduksi atau bentuk hipotesis dari
-   bukti, bukan dari dokumentasi.
-4. Buka konteks Level 2/3 hanya untuk pertanyaan yang masih belum terjawab.
-5. Implementasikan perubahan terkecil yang menyelesaikan akar masalah.
-6. Jalankan verifikasi yang proporsional, lalu gerbang repo untuk perubahan
-   kode.
-7. Perbarui dokumentasi hanya jika keadaan proyek berubah secara material.
+1. Periksa `git status`, diff, dan file yang disebut pengguna.
+2. Cari kode serta tes yang relevan; bentuk hipotesis dari bukti, bukan dari
+   dokumentasi.
+3. Buka konteks Level 2/3 hanya untuk pertanyaan yang masih belum terjawab.
+4. Implementasikan perubahan terkecil yang menyelesaikan akar masalah.
+5. Jalankan verifikasi proporsional, lalu gerbang repo.
 
 ## Urutan otoritas dan kejujuran
 
@@ -128,45 +121,41 @@ hanya mengunci perilaku terdokumentasi, diskusi tanpa keputusan, atau
 investigasi yang tidak mengubah fakta. Menyentuh kode saja bukan alasan
 memperbarui docs.
 
-`docs/LOG.md` hanya untuk perubahan material, keputusan durable, insiden, hasil
-live test, migrasi, atau perubahan status kemampuan. Entri harus ringkas:
+"Sumber yang relevan" berarti permukaan berikut, bukan hanya LOG. Sesi
+2026-08-28 memperbarui LOG, CURRENT, kontrak ini, dan TESTING lalu berhenti,
+sehingga `status/agent-runtime.md` tetap menyatakan tool callable "read-only"
+padahal executor tulis sudah ada. Dokumen yang menyatakan kebalikan dari kode
+lebih berbahaya daripada dokumen yang tidak ada.
 
-```md
-## YYYY-MM-DD — Judul singkat
+| Yang berubah | Perbarui juga |
+|---|---|
+| kemampuan ada/tidak ada | `status/<subsystem>.md` dan barisnya di `engineering/STATUS.md` |
+| perilaku pengguna atau known defect | status subsystem; `engineering/KNOWN-FAILURES.md` bila meninggalkan tes merah |
+| command atau prosedur verifikasi | `engineering/TESTING.md` dan gerbang di kontrak ini |
+| navigasi atau dokumen baru | `docs/INDEX.md` |
+| apa pun di atas | satu entri `docs/LOG.md`, dan `docs/agent/CURRENT.md` bila basi |
 
-Scope: file atau subsystem utama.
-Changed: perubahan perilaku atau kontrak.
-Verified: perintah dan hasil penting.
-Not verified: yang belum diuji.
-Next: hanya bila ada tindak lanjut material.
-```
+Sebelum menyatakan selesai, cari klaim yang kini keliru, bukan hanya menambah
+klaim baru: `rg -n "read-only|belum ada|tidak dapat" docs/engineering/status`.
 
-Batas dan prosedur arsip LOG ada di sini, bukan hanya di dalam `docs/LOG.md`,
-karena kontrak ini melarang membaca berkas itu utuh sebagai orientasi:
-
-- `docs/LOG.md` aktif maksimal **24 KiB atau 12 entri material**. Melewatinya
-  membuat `npm run context:check` gagal.
-- Saat terlampaui, pindahkan **satu entri terlama secara utuh** ke
-  `docs/log/YYYY-MM-DD.md`, lalu tambahkan tautannya pada daftar arsip di
-  kepala `LOG.md`. Jangan memecah entri.
-- Jangan memindahkan entri yang masih memuat pekerjaan pengguna yang belum
-  selesai.
-- Satu entri seharusnya beberapa paragraf pendek. Bila entrimu melewati ±2 KiB,
-  itu tanda isinya seharusnya menjadi ADR, issue, atau evidence — bukan LOG.
-
-Detail panjang berada di issue, PR, ADR, atau evidence, bukan LOG.
+Aturan LOG ada di sini, bukan hanya di dalam berkasnya, karena kontrak ini
+melarang membacanya utuh sebagai orientasi. Satu entri memakai judul
+`## YYYY-MM-DD — Judul singkat` lalu baris Scope, Changed, Verified, Not
+verified, dan Next bila ada tindak lanjut; isinya beberapa paragraf pendek, dan
+melewati ±2 KiB berarti seharusnya menjadi ADR atau evidence. Berkas aktif
+maksimal 24 KiB atau 12 entri; saat terlampaui, pindahkan satu entri terlama
+secara utuh ke `docs/log/YYYY-MM-DD.md` dan tautkan di kepala `LOG.md`. Jangan
+memecah entri atau memindahkan yang masih memuat pekerjaan belum selesai.
 
 ## Kepemilikan, keselamatan, dan “Jangan lakukan”
 
 - Pengguna menguasai tujuan, scope, dan penerimaan akhir.
-- Pilih kerja berurutan, paralel dalam working tree yang sama, atau terisolasi
-  berdasarkan scope, overlap file, shared output, dan risiko integrasi.
-  Worktree/clone bersifat opsional, bukan syarat bagi penulis kedua.
-- Hak edit Reviewer, QA, atau subagent mengikuti task yang diberikan, bukan
-  label perannya. Review atau diskusi eksplisit tetap read-only kecuali
-  pengguna juga meminta implementasi.
-- Periksa git state dan diff yang relevan sebelum menulis. Pertahankan perubahan
-  pengguna atau pekerjaan lain yang sudah ada dan koordinasikan setiap overlap.
+- Pilih kerja berurutan, paralel, atau terisolasi berdasarkan scope, overlap
+  file, shared output, dan risiko. Worktree opsional, bukan syarat.
+- Hak edit mengikuti task yang diberikan, bukan label peran. Review atau
+  diskusi eksplisit tetap read-only kecuali pengguna meminta implementasi.
+- Periksa git state dan diff sebelum menulis. Pertahankan pekerjaan yang sudah
+  ada dan koordinasikan setiap overlap.
 - Jangan menaruh `.env`, token, API key, credential, identifier pengguna nyata,
   atau kutipan data pengguna nyata di Git, docs, log, output bootstrap, atau
   laporan.
@@ -183,53 +172,63 @@ dan `npm test`. Untuk kontrak/bootstrap agent, jalankan juga
 `npm run context:check`. Dokumentasikan hanya perubahan material sesuai aturan
 di atas. Hasil akhir selalu menyebut hasil nyata dan apa yang tidak diuji.
 
-### Biaya perintah dan urutan yang murah
-
-Angka di bawah diukur pada host pengembangan 2 core. Anggap sebagai orde
-besaran, bukan janji.
+Biaya perintah pada host 2 core, sebagai orde besaran:
 
 | Perintah | Biaya | Kapan |
 |---|---|---|
 | `npm run check` | ≈7 detik | sesering mungkin |
 | `npm run test:file -- dist/tests/X.test.js` | ≈8 detik | loop utama saat menulis kode |
-| `npm run test:watch` | kontinu | saat iterasi panjang |
 | `npm test` | ≈7 menit | sekali, sebelum menyatakan selesai |
 | `npm run context:check` | ≈3 detik | setelah menyentuh AGENTS/docs bootstrap |
 | `npm run eval:conversation` | lambat, berbayar | saat mengubah prompt, routing, atau tool |
 
-`tsconfig.json` memakai `incremental`, jadi build kedua dan seterusnya jauh
-lebih murah selama `dist/.tsbuildinfo` tidak dihapus. Menjalankan `npm test`
-berulang kali sebagai loop kerja adalah pemborosan terbesar di repositori ini;
-`test:file` melakukan pekerjaan yang sama untuk satu file 56 kali lebih cepat.
+Menjalankan `npm test` berulang sebagai loop kerja adalah pemborosan terbesar
+di repositori ini; `test:file` melakukan pekerjaan yang sama 56 kali lebih
+cepat. `tsconfig.json` memakai `incremental`, jadi jangan menghapus
+`dist/.tsbuildinfo`.
 
 ### Kegagalan tes yang sudah ada sebelumnya
 
-Repositori ini sering mempunyai pekerjaan yang belum selesai di working tree,
-sehingga sebagian tes dapat merah sebelum kamu menyentuh apa pun.
+Working tree repositori ini sering membawa pekerjaan yang belum selesai, jadi
+sebagian tes dapat merah sebelum kamu menyentuh apa pun. Baca
+`docs/engineering/KNOWN-FAILURES.md` sebelum menyimpulkan kamu menyebabkan
+regresi; bila kegagalan tidak tercatat di sana, buktikan asalnya lebih dulu.
+Bila kamu meninggalkan tes merah, catat di berkas itu.
 
-Sebelum menyimpulkan perubahanmu merusak sesuatu, baca
-`docs/engineering/KNOWN-FAILURES.md`. Bila kegagalan tidak tercatat di sana,
-buktikan asalnya sebelum melapor: bandingkan dengan baseline, atau petakan hunk
-diff terhadap fungsi yang gagal. Jangan memperbaiki tes milik pekerjaan orang
-lain tanpa diminta.
+### Bekerja pada prompt model
 
-Bila kamu meninggalkan tes merah, catat di berkas itu: nama tes, sejak kapan,
-sebabnya, dan siapa yang mengerjakannya. Menghapus entri hanya sah setelah tes
-benar-benar hijau.
+Prompt Harvy adalah kode yang dikunci tes: puluhan assertion mencocokkan frasa
+persis di `persona.ts` dan `safety.ts`, dan pergantian baris ikut memutus
+pencocokan. Ketika tes prompt gagal, pisahkan dulu apakah kamu menghapus **isi**
+aturannya atau hanya mengganti **kata**-nya. Yang pertama dikembalikan; yang
+kedua diselaraskan ke frasa yang dijaga tes. Melonggarkan assertion menghapus
+aturan yang lahir dari bug nyata.
 
-Untuk review, diskusi, atau diagnosis read-only, tidak diperlukan diff, LOG,
-atau gerbang build palsu; cukup bukti yang diperiksa dan batas pemeriksaan.
+Aturan yang dikelompokkan per field keluaran lebih dipatuhi model daripada
+aturan yang tersebar. Menambah aturan bukan cara menaikkan akurasi; ukur dulu.
 
-Quick ref:
+### Mengukur perilaku model
+
+`npm test` tidak menjawab pertanyaan perilaku. Yang bisa:
 
 ```bash
-npm ci
-npm run check
-npm test
-npm run build
-npm run dev
-npm start
+npm run eval:conversation -- --conversation-only --limit=22 --compact
+npx tsx scripts/probe-chat.ts --message="..." --session=/tmp/sesi.json
 ```
 
-Detail navigasi ada di `docs/INDEX.md`; detail serah-terima dan operasi Git ada
-di `docs/operations/WORKFLOW.md`.
+Probe lain di `scripts/probe-*` mengukur kestabilan triase dan review safety.
+
+`probe-chat.ts` menjalankan keputusan yang sama dengan adapter privat lalu
+mencetak alasannya—intent, risk, route, pemakaian agent, dan biaya token nyata.
+
+Ambil baseline sebelum mengubah prompt. Varians antar-run besar, jadi selisih
+beberapa kasus bukan sinyal—ulangi kasus yang berubah secara terisolasi sebelum
+mengklaim perbaikan. `--case=` hanya membaca argumen pertama; pisahkan dengan
+koma.
+
+Untuk review atau diagnosis read-only, cukup bukti yang diperiksa dan batas
+pemeriksaannya; tidak perlu diff, LOG, atau gerbang build palsu.
+
+Perintah lain: `npm ci`, `npm run build`, `npm run dev`, `npm start`. Detail
+navigasi ada di `docs/INDEX.md`; serah-terima dan operasi Git di
+`docs/operations/WORKFLOW.md`.
