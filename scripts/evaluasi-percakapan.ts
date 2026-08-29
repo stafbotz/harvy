@@ -38,6 +38,8 @@ import {
   immediateUnderstandingRoute,
   taskToOffer,
 } from "../src/bot/understanding-route.js";
+import { createContext, runInNewContext } from "node:vm";
+import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 import type { ConversationTurn } from "../src/domain/history.js";
@@ -597,6 +599,10 @@ async function evaluate(testCase: ConversationEvalCase) {
   ) {
     failures.push("mengaku mempunyai lokasi fisik");
   }
+  if (testCase.codeCheck) {
+    const verdict = runCodeCheck(delivered, testCase.codeCheck);
+    if (verdict) failures.push(verdict);
+  }
   for (const phrase of testCase.forbiddenReply ?? []) {
     if (delivered.toLocaleLowerCase("id-ID").includes(phrase.toLocaleLowerCase("id-ID"))) {
       failures.push(`memuat frasa terlarang: ${phrase}`);
@@ -753,6 +759,44 @@ async function withProviderBackoff<T>(run: () => Promise<T>): Promise<T> {
  * banyak bukti daripada yang dilindungi. Circuit hanya untuk kegagalan yang
  * menandakan pemanggilan berikutnya akan terus membebani provider dengan sia-sia.
  */
+/**
+ * Menjalankan kode yang benar-benar dikirim Harvy.
+ *
+ * Mencocokkan kata kunci pada balasan hanya membuktikan model menulis sesuatu
+ * yang terlihat seperti kode. Langkah review artefak memang dirancang untuk
+ * menangkap edge case, input kosong, dan tipe salah, jadi satu-satunya
+ * pengukuran yang jujur adalah menjalankannya.
+ *
+ * Sandbox `node:vm` tanpa `require`, tanpa `process`, dan dengan batas waktu.
+ * Kode di sini berasal dari model, jadi ia diperlakukan sebagai masukan tidak
+ * tepercaya seperti keluaran model mana pun.
+ */
+function runCodeCheck(
+  delivered: string,
+  check: NonNullable<ConversationEvalCase["codeCheck"]>,
+): string | null {
+  const blocks = [...delivered.matchAll(/```(?:js|javascript|ts|typescript)?\n([\s\S]*?)```/gu)]
+    .map((match) => match[1] ?? "");
+  if (blocks.length === 0) return "balasan tidak memuat blok kode";
+
+  const source = blocks.join("\n\n");
+  const sandbox = createContext({ assert, console: { log() {}, error() {} } });
+  try {
+    runInNewContext(source, sandbox, { timeout: 2_000 });
+  } catch (error) {
+    return `kode gagal dievaluasi: ${safeEvaluationError(error)}`;
+  }
+  if (typeof (sandbox as Record<string, unknown>)[check.symbol] !== "function") {
+    return `kode tidak mendefinisikan fungsi ${check.symbol}`;
+  }
+  try {
+    runInNewContext(check.assertions, sandbox, { timeout: 2_000 });
+  } catch (error) {
+    return `perilaku kode salah: ${safeEvaluationError(error)}`;
+  }
+  return null;
+}
+
 function shouldOpenProviderCircuit(error: unknown): boolean {
   if (error instanceof AiResponseError) return false;
   if (error instanceof AiError && error.status !== undefined) {

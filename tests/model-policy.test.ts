@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   allowsDeterministicSurface,
+  intentAllowsAgentRuntime,
   requiresPlannedExecution,
   requestsAgentTooling,
   resolveModel,
@@ -237,6 +238,26 @@ describe("kebijakan pemilihan model", () => {
       toolNeed: "external",
       confidence: 0.2,
     })), false);
+  });
+
+  it("membuka Agent Runtime bagi bentuk intent yang menunjuk data pengguna", () => {
+    // Tiga tool recall pernah tidak dapat dijangkau oleh kalimat paling khas
+    // bagi mereka: "cari di riwayat percakapan kita" diberi label `history`,
+    // dan gerbang intent menolaknya sebelum kebutuhan tool dinilai. Harvy
+    // menjawab bahwa ia tidak punya riwayat padahal episodenya tersimpan.
+    assert.equal(intentAllowsAgentRuntime("history"), true);
+    assert.equal(intentAllowsAgentRuntime("memory"), true);
+    assert.equal(intentAllowsAgentRuntime("question"), true);
+    assert.equal(intentAllowsAgentRuntime("request"), true);
+  });
+
+  it("tidak menaikkan bentuk intent yang sudah punya jalurnya sendiri", () => {
+    // Membuka keempatnya menukar balasan murah dengan loop planner tanpa
+    // cacat yang terbukti. `task` dan `control` sudah ditangani route
+    // deterministik; `feeling` dan `smalltalk` memang bukan pekerjaan tool.
+    for (const intent of ["task", "feeling", "smalltalk", "control"] as const) {
+      assert.equal(intentAllowsAgentRuntime(intent), false, intent);
+    }
   });
 
   it("membatasi surface deterministik pada permintaan mekanis tepercaya", () => {

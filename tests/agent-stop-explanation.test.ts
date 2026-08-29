@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AiClient, ChatRequest } from "../src/ai/client.js";
-import { Conversation } from "../src/ai/conversation.js";
+import {
+  Conversation,
+  agentStopDeservesExplanation,
+} from "../src/ai/conversation.js";
+import { agentStopMessage } from "../src/bot/agent-stop-copy.js";
 import type { AgentRunResult } from "../src/harness/agent-harness.js";
 
 const ROUTING = {
@@ -114,6 +118,32 @@ function stopped(
     trace: [],
   };
 }
+
+describe("penghentian karena provider tidak dapat dihubungi", () => {
+  // Kelas ini tidak boleh memanggil model lagi: yang barusan gagal justru
+  // panggilan model. Memintanya menjelaskan dirinya sendiri berarti mencoba
+  // hal yang sama dan menunda balasan pengguna tanpa peluang berhasil.
+  it("tidak meminta model menjelaskan dirinya sendiri", () => {
+    assert.equal(agentStopDeservesExplanation("provider_unavailable"), false);
+  });
+
+  it("mengatakan penyebabnya di luar kalimat pengguna dan menyebut satu langkah", () => {
+    const message = agentStopMessage("provider_unavailable");
+
+    assert.match(message, /layanan modelnya/iu);
+    assert.match(message, /coba lagi/iu);
+    // Aturan berkas copy: tidak ada kosakata internal yang tidak dapat
+    // dipakai pengguna untuk berbuat apa pun.
+    assert.doesNotMatch(message, /planner|checkpoint|run agent|429|520/iu);
+  });
+
+  it("tidak berubah menjadi teks kaleng default", () => {
+    assert.notEqual(
+      agentStopMessage("provider_unavailable"),
+      agentStopMessage("max_steps"),
+    );
+  });
+});
 
 function recorder(requests: ChatRequest[], reply: string): AiClient {
   return {

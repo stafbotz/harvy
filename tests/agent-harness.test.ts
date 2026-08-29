@@ -8,6 +8,7 @@ import {
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { privateAgentScope } from "../src/harness/scope.js";
 import { UsageLimitError } from "../src/core/telemetry-service.js";
+import { AiError } from "../src/ai/client.js";
 
 const FIXED_NOW = () => new Date("2026-07-31T10:00:00.000Z");
 
@@ -965,6 +966,110 @@ describe("agent harness", () => {
     if (result.status === "stopped") {
       assert.equal(result.reason, "budget_deadline");
     }
+  });
+
+  // Kelas transport provider dahulu jatuh ke `invalid_planner_output`, alasan
+  // cadangan untuk error yang tidak dikenali. Gejalanya menyesatkan dua arah:
+  // pengguna diberi tahu Harvy tidak berhasil menyusun jawaban, dan pembaca
+  // trace mencari cacat parser yang tidak ada. Ia juga satu-satunya kelas yang
+  // layak diulang, sehingga menyamarkannya menghapus keputusan itu dari
+  // pemanggil.
+  for (const status of [408, 429, 500, 520, 503]) {
+    it(`menamai kegagalan provider ${status} sebagai provider_unavailable`, async () => {
+      const result = await harness().run({
+        scope: privateAgentScope("telegram", "1"),
+        request: "tes kegagalan provider",
+        planner: async () => {
+          throw new AiError("Model menolak permintaan.", status);
+        },
+        now: FIXED_NOW,
+      });
+
+      assert.equal(result.status, "stopped");
+      if (result.status === "stopped") {
+        assert.equal(result.reason, "provider_unavailable");
+      }
+    });
+  }
+
+  // Penolakan 4xx lain berasal dari request yang kita susun sendiri. Itu cacat
+  // kode yang harus tetap terlihat, bukan gangguan yang berlalu sendiri, jadi
+  // ia sengaja tidak ikut dinamai gangguan provider.
+  for (const status of [400, 401, 403, 404]) {
+    it(`tidak menyamarkan penolakan ${status} sebagai gangguan provider`, async () => {
+      const result = await harness().run({
+        scope: privateAgentScope("telegram", "1"),
+        request: "tes penolakan request",
+        planner: async () => {
+          throw new AiError("Model menolak permintaan.", status);
+        },
+        now: FIXED_NOW,
+      });
+
+      assert.equal(result.status, "stopped");
+      if (result.status === "stopped") {
+        assert.equal(result.reason, "invalid_planner_output");
+      }
+    });
+  }
+
+  it("tetap memakai invalid_planner_output untuk error yang bukan transport", async () => {
+    const result = await harness().run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "tes error biasa",
+      planner: async () => {
+        throw new Error("parser gagal");
+      },
+      now: FIXED_NOW,
+    });
+
+    assert.equal(result.status, "stopped");
+    if (result.status === "stopped") {
+      assert.equal(result.reason, "invalid_planner_output");
+    }
+  });
+
+  // Executor delegasi memanggil model sendiri, jadi gangguan provider dapat
+  // muncul di dalam eksekusi. Sebelum alasan ini ada, kasus itu tercatat
+  // sebagai observation error dan run boleh mencari jalan lain. Resiliensi itu
+  // harus bertahan: menghentikan seluruh run karena satu tool gagal adalah
+  // regresi, bukan perbaikan.
+  it("meneruskan run ketika gangguan provider terjadi di dalam executor", async () => {
+    let plans = 0;
+    // Capability baca-saja tanpa konfirmasi: yang diuji di sini kegagalan
+    // eksekusi, bukan alur approval.
+    const failing: AgentCapabilityExecutor = {
+      capabilityId: "task.list_active",
+      capabilityVersion: "1",
+      validate: (input) => ({ ok: true, value: input }),
+      execute: async () => {
+        throw new AiError("Model menolak permintaan.", 520);
+      },
+    };
+    const planner: AgentPlanner = async () => {
+      plans += 1;
+      return plans === 1
+        ? {
+            kind: "action",
+            capabilityId: "task.list_active",
+            capabilityVersion: "1",
+            input: {},
+          }
+        : { kind: "final", reply: "Aku lanjut tanpa hasil itu." };
+    };
+
+    const result = await new AgentHarness(
+      createHarvyCapabilityCatalog({ internalToolsInstalled: true }),
+    ).run({
+      scope: privateAgentScope("telegram", "1"),
+      request: "tes executor gagal",
+      planner,
+      executors: [failing],
+      now: FIXED_NOW,
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(plans, 2);
   });
 });
 

@@ -261,6 +261,7 @@ export type AgentRunResult =
         | "max_steps"
         | "cycle"
         | "invalid_planner_output"
+        | "provider_unavailable"
         | "capability_changed"
         | "stale"
         | "invalid_checkpoint"
@@ -809,7 +810,9 @@ async function handleAction(
       now,
       runBudget,
     );
-    if (reason !== "invalid_planner_output") {
+    if (
+      reason !== "invalid_planner_output" && reason !== "provider_unavailable"
+    ) {
       return stopped(reason, checkpoint, trace);
     }
     appendObservation(checkpoint, limits, {
@@ -965,7 +968,9 @@ async function executeAction(
       now,
       runBudget,
     );
-    if (reason !== "invalid_planner_output") {
+    if (
+      reason !== "invalid_planner_output" && reason !== "provider_unavailable"
+    ) {
       return stopped(reason, checkpoint, trace);
     }
     result = { status: "error", summary: "Executor gagal tanpa hasil terverifikasi." };
@@ -1730,6 +1735,7 @@ function abortReason(
   | "deadline"
   | "stale"
   | "invalid_planner_output"
+  | "provider_unavailable"
   | AgentUsageLimitReason
   | RunBudgetExhaustionReason {
   if (signal?.aborted) return "cancelled";
@@ -1757,7 +1763,39 @@ function abortReason(
   if (runBudget.isTimeExhausted()) {
     return budgetOwnsDeadline ? "budget_deadline" : "deadline";
   }
+  const providerFailure = providerUnavailableReason(error);
+  if (providerFailure) return providerFailure;
   return "invalid_planner_output";
+}
+
+/**
+ * Provider tidak dapat dihubungi, bukan planner yang salah bentuk.
+ *
+ * Sampai 29 Agustus 2026 keduanya jatuh ke `invalid_planner_output`, karena itu
+ * alasan cadangan untuk error apa pun yang tidak dikenali. Akibatnya satu 429
+ * atau 520 dari provider terbaca sebagai "model menghasilkan bentuk salah":
+ * pengguna mendapat teks tentang Harvy yang tidak berhasil, operator mencari
+ * bug parser yang tidak ada, dan tidak ada pemanggil yang dapat memutuskan
+ * untuk mencoba lagi—padahal kelas inilah satu-satunya yang layak diulang.
+ *
+ * Sengaja hanya kelas transport yang memang sementara: 408, 429, dan 5xx.
+ * Penolakan 4xx lain berasal dari request yang kita susun sendiri, dan itu
+ * cacat kode yang harus tetap terlihat, bukan gangguan yang berlalu sendiri.
+ *
+ * Bentuknya diperiksa struktural, sama seperti `usageLimitReason`, supaya
+ * harness tetap tidak mengenal modul provider mana pun.
+ */
+function providerUnavailableReason(
+  error: unknown,
+): "provider_unavailable" | null {
+  if (!error || typeof error !== "object" || Array.isArray(error)) return null;
+  const record = error as Record<string, unknown>;
+  if (record["name"] !== "AiError") return null;
+  const status = record["status"];
+  if (typeof status !== "number") return null;
+  return status === 408 || status === 429 || status >= 500
+    ? "provider_unavailable"
+    : null;
 }
 
 function usageLimitReason(error: unknown): AgentUsageLimitReason | null {

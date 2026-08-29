@@ -33,14 +33,27 @@ const WRITABLE_NOTE_KINDS: readonly MemoryKind[] = [
 
 const HISTORY_SEARCH_NATIVE_TOOL = {
   name: "harvy_history_search_v1",
+  // Peringkat leksikal berarti episode bertema lain ikut muncul hanya karena
+  // berbagi satu kata. Probe 2026-08-29: query soal ujian biologi
+  // mengembalikan juga episode jam tidur, dan model menjawab bahwa hal yang
+  // belum jelas soal ujian itu adalah jam tidur yang berantakan—dua percakapan
+  // berbeda dijahit menjadi satu ingatan yang tidak pernah terjadi.
   description:
-    "Cari percakapan lama pemilik scope ini berdasarkan kata kunci. Sumbernya hanya riwayat Harvy sendiri, bukan web atau aplikasi lain.",
+    "Cari percakapan lama pemilik scope ini berdasarkan kata kunci. Sumbernya hanya riwayat Harvy sendiri, bukan web atau aplikasi lain. Hasilnya diurutkan berdasarkan kecocokan kata, jadi episode yang tidak berkaitan bisa ikut muncul: pakai episodeId untuk memisahkannya dan jangan menggabungkan klaim dari beberapa episode menjadi satu ingatan.",
   inputSchema: objectSchema({
     query: {
       type: "string",
       minLength: 2,
       maxLength: MAX_QUERY_CHARACTERS,
-      description: "Kata kunci pencarian dalam bahasa pengguna.",
+      // Pencariannya leksikal atas teks klaim episode, bukan semantik. Probe
+      // 2026-08-29 memperlihatkan akibatnya: query "ujian biologi" saja
+      // mengembalikan topik, fakta, dan penanda waktu, tetapi bukan klaim
+      // `unresolved` yang justru ditanyakan—dan model menjawab dari yang ada
+      // sambil terdengar seperti mengingat. Menyertakan kata pengguna sendiri
+      // mengubah hasilnya: dengan "belum jelas" di dalam query, klaim itu ikut
+      // terambil.
+      description:
+        "Kata kunci pencarian dalam bahasa pengguna. Sertakan kata yang dipakai pengguna untuk menyebut hal yang dicarinya, bukan hanya topiknya.",
     },
     limit: {
       type: "integer",

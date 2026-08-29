@@ -9,16 +9,27 @@
  *
  * State disimpan di berkas sesi supaya beberapa giliran dapat dirangkai. Semua
  * data bersifat lokal dan sintetis; tidak ada data pengguna nyata.
+ *
+ * Keputusan route di sini wajib mengikuti `src/bot/create-bot.ts`, bukan
+ * sebaliknya. Adapter adalah authority; probe yang menyimpang darinya
+ * melaporkan angka yang salah, bukan angka yang kasar. Yang sengaja tidak
+ * ditiru hanyalah state sesi berjalan (`engagedSession`), karena probe satu
+ * giliran memang tidak punya sesi.
+ *
+ * `--riwayat-sintetis` mengisi episode dari korpus `synthetic-recall.ts`.
+ * Tanpa itu `history.search` selalu mengembalikan nol di probe, karena
+ * compaction tidak pernah berjalan pada sesi sependek ini.
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { Conversation } from "../src/ai/conversation.js";
-import { AiError, AiResponseError } from "../src/ai/client.js";
 import {
   resolveRiskAssessment,
   safetyOnlyUnderstanding,
   withEmergencyAvailability,
 } from "../src/ai/safety.js";
 import {
+  allowsDeterministicSurface,
+  intentAllowsAgentRuntime,
   requestsAgentTooling,
   requiresPlannedExecution,
   selectGlobalRoute,
@@ -39,17 +50,22 @@ import {
 } from "../src/core/safety-policy.js";
 import {
   adaptiveActionLabel,
+  formatTask,
   normalizeTelegramText,
 } from "../src/bot/messages.js";
 import { immediateUnderstandingRoute } from "../src/bot/understanding-route.js";
+import { liveStateRequirement } from "../src/ai/agent.js";
+import { isModelIdentityQuestion } from "../src/ai/identity.js";
+import { isDirectTimeQuestion } from "../src/agent/time-fast-path.js";
 import { resolveActiveTaskReference } from "../src/core/task-reference.js";
 import { createInternalAgentExecutors } from "../src/agent/internal-executors.js";
 import { createWriteAgentExecutors } from "../src/agent/write-executors.js";
+import { createMemoryAgentExecutors } from "../src/agent/memory-executors.js";
 import {
-  createMemoryAgentExecutors,
-  type AgentMemoryStore,
-} from "../src/agent/memory-executors.js";
-import { searchConversationEpisodes } from "../src/core/history-search.js";
+  createSyntheticHistorySearch,
+  createSyntheticMemoryStore,
+  SYNTHETIC_EPISODES,
+} from "./synthetic-recall.js";
 import { VirtualTerminalExecutor } from "../src/agent/virtual-terminal.js";
 import { AgentHarness } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
@@ -58,11 +74,12 @@ import { SessionService } from "../src/core/session-service.js";
 import { TaskService } from "../src/core/task-service.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
+import { retryAgentRun, retryOnTransient } from "./probe-retry.js";
 import type {
   ConversationEpisode,
   ConversationTurn,
 } from "../src/domain/history.js";
-import type { MemoryItem, NewMemory } from "../src/domain/memory.js";
+import type { MemoryItem } from "../src/domain/memory.js";
 import type { ProfileRepository, UserProfile } from "../src/domain/profile.js";
 import type {
   ActiveSession,
@@ -73,7 +90,6 @@ import type { StudentTask, TaskRepository } from "../src/domain/task.js";
 
 const OWNER = "probe-chat";
 const RETRY_LIMIT = 5;
-const BACKOFF_BASE_MS = 4_000;
 
 interface SessionState {
   turns: ConversationTurn[];
@@ -82,41 +98,6 @@ interface SessionState {
   notes: MemoryItem[];
   /** Episode terkompaksi; kosong sampai probe dijalankan cukup panjang. */
   episodes: ConversationEpisode[];
-}
-
-/**
- * Penyimpan catatan lokal untuk probe.
- *
- * `MemoryService` sungguhan menulis Markdown per pengguna, dan probe tidak
- * boleh menyentuh folder memori nyata. Batas yang penting tetap diuji di sini:
- * duplikat ditolak, dan penolakan dikembalikan sebagai `null` persis seperti
- * service aslinya.
- */
-function probeMemoryStore(state: SessionState): AgentMemoryStore {
-  return {
-    async remember(input: NewMemory): Promise<MemoryItem | null> {
-      const content = input.content.trim();
-      if (!content) return null;
-      const duplicate = state.notes.some(
-        (note) => note.content.toLowerCase() === content.toLowerCase(),
-      );
-      if (duplicate) return null;
-      const note: MemoryItem = {
-        id: `probe-${state.notes.length + 1}`,
-        ownerId: input.ownerId,
-        kind: input.kind,
-        content,
-        createdAt: new Date().toISOString(),
-        lastUsedAt: null,
-        expiresAt: null,
-      };
-      state.notes.push(note);
-      return note;
-    },
-    async list(): Promise<MemoryItem[]> {
-      return [...state.notes];
-    },
-  };
 }
 
 /**
@@ -179,13 +160,25 @@ function reportTokenCost(): void {
 
 const sessionPath = argument("--session=") ?? ".probe-chat-session.json";
 const message = argument("--message=");
+const seedEpisodes = process.argv.includes("--riwayat-sintetis");
 if (!message) {
-  console.error("Pakai: tsx scripts/probe-chat.ts --message=\"...\" [--session=berkas.json]");
+  console.error(
+    'Pakai: tsx scripts/probe-chat.ts --message="..." [--session=berkas.json] [--riwayat-sintetis]',
+  );
   process.exit(2);
 }
 
 async function main(text: string, statePath: string): Promise<void> {
   const state = loadState(statePath);
+  // `history.search` membaca episode terkompaksi. Probe tidak pernah
+  // menjalankan compaction, jadi tanpa benih ini pencariannya selalu nol dan
+  // tool tersebut tampak tidak berguna padahal belum pernah diberi kesempatan.
+  if (seedEpisodes && state.episodes.length === 0) {
+    state.episodes = [...SYNTHETIC_EPISODES];
+    console.error(
+      `riwayat : ${state.episodes.length} episode sintetis dimuat (bukan data pengguna)`,
+    );
+  }
   const config = loadConfig();
   const client = await createInstrumentedAiClient(config, "evaluation");
 
@@ -224,11 +217,8 @@ async function main(text: string, statePath: string): Promise<void> {
       }),
       ...createWriteAgentExecutors({ tasks }),
       ...createMemoryAgentExecutors({
-        history: () => ({
-          search: async (_ownerId, query, options) =>
-            searchConversationEpisodes(state.episodes, query, options ?? {}),
-        }),
-        memories: probeMemoryStore(state),
+        history: () => createSyntheticHistorySearch(state.episodes),
+        memories: createSyntheticMemoryStore(state.notes),
         profiles,
       }),
       new VirtualTerminalExecutor(),
@@ -264,8 +254,26 @@ async function main(text: string, statePath: string): Promise<void> {
   if (!understanding) understanding = safetyOnlyUnderstanding();
 
   const permissions = safetyEffectPermissions(triage.routing, immediateDanger);
-  const proposed = immediateUnderstandingRoute(understanding, text);
-  const route = permissions.generalState ? proposed : ({ kind: "conversation" } as const);
+  // Pagar lokal state-live, dihitung sebelum route persis seperti adapter.
+  // Ia memengaruhi tiga hal sekaligus: demosi route, `specializedFlow`, dan
+  // keputusan memakai Agent Runtime. Probe yang melewatkannya melaporkan jalur
+  // tanpa tool untuk frasa pembacaan task.
+  const requiresLiveState = liveStateRequirement(text) !== null;
+  const proposedRoute = immediateUnderstandingRoute(understanding, text);
+  // Izin per-kind. `permissions.generalState` saja terlalu longgar: adapter
+  // menuntut permukaan deterministik untuk `show-tasks` dan izin yang berbeda
+  // untuk mutasi task maupun kontrol eksplisit.
+  const proposedRouteAllowed = proposedRoute.kind === "show-tasks"
+    ? permissions.generalState &&
+      allowsDeterministicSurface(understanding.routingAssessment)
+    : proposedRoute.kind === "save-task" ||
+        proposedRoute.kind === "update-task" ||
+        proposedRoute.kind === "complete-task"
+      ? permissions.ordinaryTask
+      : proposedRoute.kind === "memory-control" ||
+          proposedRoute.kind === "control"
+        ? permissions.explicitControl
+        : permissions.generalState;
 
   const guidedSmallStep = permissions.generalState &&
     prefersGuidedSmallStep(
@@ -278,6 +286,20 @@ async function main(text: string, statePath: string): Promise<void> {
   const unhandledTaskChange = requestsUnhandledTaskChange(
     understanding.semanticOperation,
   );
+
+  const deterministicTimeControl = proposedRoute.kind === "control" &&
+    (proposedRoute.action === "timezone" ||
+      proposedRoute.action === "quiet-hours");
+  const deterministicTaskMutation = proposedRoute.kind === "update-task" ||
+    proposedRoute.kind === "complete-task";
+  const deterministicTaskRead = proposedRoute.kind === "show-tasks";
+  const route = proposedRouteAllowed &&
+      (!requiresLiveState || deterministicTimeControl ||
+        deterministicTaskMutation || deterministicTaskRead) &&
+      !requiresAgentPlanning
+      ? proposedRoute
+      : ({ kind: "conversation" } as const);
+
   const globalRoute = selectGlobalRoute({
     intent: understanding.intent === "request" || requiresAgentPlanning
       ? "request"
@@ -285,20 +307,96 @@ async function main(text: string, statePath: string): Promise<void> {
     messageLength: text.length,
     needsStepByStep: understanding.needsStepByStep,
     assessment: understanding.routingAssessment ?? null,
-    specializedFlow: unhandledTaskChange,
+    specializedFlow: requiresLiveState || unhandledTaskChange,
     guidedInteraction: guidedSmallStep,
     risk: triage.level,
   });
-  const useAgent = route.kind === "conversation" &&
-    permissions.generalState &&
+  // Daftar bentuk intent-nya milik policy, bukan probe. Menyalinnya ke sini
+  // adalah cara probe ini pernah mengukur gerbang yang berbeda dari yang
+  // dijalankan pengguna.
+  const agentEligible = permissions.generalState &&
+    route.kind === "conversation" &&
+    (intentAllowsAgentRuntime(understanding.intent) ||
+      requiresLiveState || requiresAgentPlanning);
+  const useAgent = agentEligible &&
+    !isModelIdentityQuestion(text) &&
     (globalRoute === "specialized" || globalRoute === "orchestrate") &&
-    (requiresAgentPlanning || unhandledTaskChange ||
+    (requiresLiveState || requiresAgentPlanning || unhandledTaskChange ||
       requestsAgentTooling(understanding.routingAssessment));
 
   const before = await repository.list(OWNER);
   let reply: string;
   let runStatus = "reply";
-  if (route.kind === "save-task") {
+  // Tanpa jejak, "pakaiAgent: true" tidak membedakan run yang benar-benar
+  // membaca data pengguna dari run yang menjawab dari ingatan prompt saja.
+  // Jejak harness sengaja tidak membawa input tool, jadi baris ini aman.
+  let jejak: string[] = [];
+  if (route.kind === "show-tasks") {
+    // Pembacaan task deterministik. Tanpa cabang ini probe melaporkan
+    // `route: "show-tasks"` lalu diam-diam menjawab lewat `reply()`, sehingga
+    // jalur tanpa tool tampak jauh lebih sering dipakai daripada kenyataannya.
+    // Teks pembukanya tidak identik dengan adapter karena copy itu lokal di
+    // sana; bentuk panggilan model dan route-nya yang harus sama.
+    const active = await tasks.listActive(OWNER);
+    runStatus = active.length === 0 ? "show-tasks:kosong" : "show-tasks";
+    reply = await retry(() =>
+      conversation.presentOperation(
+        active.length === 0
+          ? {
+              kind: "empty-state",
+              outcome: "information",
+              userMessage: text,
+              stableBody: "Tugas aktif: tidak ada.",
+              fallbackText: "Belum ada tugas aktif.",
+              allowedNextSteps: [
+                "Kalau ada yang ingin kamu pegang, tulis saja dengan kalimat biasa.",
+              ],
+            }
+          : {
+              kind: "task-list",
+              outcome: "information",
+              userMessage: text,
+              stableBody: [
+                "Tugas aktif",
+                "",
+                ...active.map((task) =>
+                  formatTask(task, config.defaultTimezone)
+                ),
+              ].join("\n"),
+              fallbackText: [
+                "Tugas aktif",
+                "",
+                ...active.map((task) =>
+                  formatTask(task, config.defaultTimezone)
+                ),
+              ].join("\n"),
+            },
+        context,
+        null,
+        runtimeBase,
+      )
+    );
+  } else if (
+    route.kind === "update-task" || route.kind === "memory-control" ||
+    route.kind === "control"
+  ) {
+    // Tiga route ini dipilih adapter tetapi tidak dijalankan di sini.
+    // Menirunya berarti menulis implementasi kedua yang akan menyimpang
+    // sendiri; menjatuhkannya diam-diam ke `reply()` justru sumber
+    // over-report yang dahulu membuat probe ini menyesatkan. Jadi probe
+    // berhenti dan mengatakannya.
+    runStatus = `${route.kind}:tidak-dijalankan-di-probe`;
+    reply =
+      `<probe berhenti: adapter akan menjalankan route ${route.kind} secara deterministik>`;
+  } else if (
+    route.kind === "conversation" && permissions.generalState &&
+    isDirectTimeQuestion(text)
+  ) {
+    // Jalur cepat waktu milik adapter; tanpa ini probe melaporkan panggilan
+    // model untuk giliran yang di produksi tidak pernah memanggil model.
+    runStatus = "waktu-deterministik";
+    reply = conversation.deterministicTimeReply(config.defaultTimezone);
+  } else if (route.kind === "save-task") {
     // Adapter nyata mengeksekusi cabang ini sendiri sebelum menyusun balasan.
     // Tanpa ini probe akan menyalahkan Harvy untuk write yang memang bukan
     // tugas lapisan model.
@@ -362,7 +460,10 @@ async function main(text: string, statePath: string): Promise<void> {
         : "Tugas itu sudah berubah sebelum sempat kuselesaikan.";
     }
   } else if (useAgent) {
-    const result = await retry(() =>
+    // `agent()` tidak melempar saat provider bermasalah; ia mengembalikan
+    // `stopped`. Tanpa pengulangan berbasis hasil, satu gangguan sesaat
+    // terhitung sebagai run yang gagal dan mengotori pengukuran.
+    const result = await retryAgentRun(() =>
       conversation.agent(
         text,
         globalRoute === "orchestrate" ? "orchestrate" : "tools",
@@ -371,6 +472,11 @@ async function main(text: string, statePath: string): Promise<void> {
       )
     );
     runStatus = result.status;
+    jejak = result.trace.map((event) =>
+      `${event.step}:${event.phase}:${event.outcome}${
+        event.capabilityId ? `:${event.capabilityId}` : ""
+      }`
+    );
     if (result.status === "completed") {
       reply = result.reply;
     } else if (result.status === "needs_input") {
@@ -416,10 +522,15 @@ async function main(text: string, statePath: string): Promise<void> {
     diagnostik: {
       intent: understanding.intent,
       risk: triage.level,
+      routeDiusulkan: proposedRoute.kind,
+      routeDiizinkan: proposedRouteAllowed,
       route: route.kind,
+      requiresLiveState,
+      requiresAgentPlanning,
       globalRoute,
       pakaiAgent: useAgent,
       runStatus,
+      jejak,
       toolNeed: understanding.routingAssessment?.toolNeed ?? null,
       confidence: understanding.routingAssessment?.confidence ?? null,
       unhandledTaskChange,
@@ -454,20 +565,7 @@ function argument(prefix: string): string | null {
 }
 
 async function retry<T>(run: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await run();
-    } catch (error) {
-      const retryable = !(error instanceof AiResponseError) &&
-        ((error instanceof AiError && error.status !== undefined &&
-          (error.status === 408 || error.status === 429 || error.status >= 500)) ||
-          (error instanceof Error && error.name === "AbortError"));
-      if (attempt >= RETRY_LIMIT || !retryable) throw error;
-      await new Promise((resolve) =>
-        setTimeout(resolve, BACKOFF_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 500))
-      );
-    }
-  }
+  return retryOnTransient(run, RETRY_LIMIT);
 }
 
 class MemoryTaskRepository implements TaskRepository {

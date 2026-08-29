@@ -37,3 +37,7 @@ Harvy-MVP-v0.1.0.zip
 # secara default dan isinya transkrip percakapan nyata, bukan cache.
 .probe-chat-session.json
 *.probe-chat-session.json
+# --session= boleh menamai berkas lain; polanya dilebarkan supaya transkrip
+# tidak masuk Git hanya karena namanya berbeda.
+.probe-*.json
+*.probe-session.json

@@ -48,7 +48,8 @@
     "eval:routing": "tsx scripts/evaluasi-routing.ts",
     "eval:group": "tsx scripts/evaluasi-grup.ts",
     "eval:group:full": "tsx scripts/evaluasi-grup.ts --all",
-    "eval:group:direct": "tsx scripts/evaluasi-grup-direct.ts"
+    "eval:group:direct": "tsx scripts/evaluasi-grup-direct.ts",
+    "uji:telegram": "npm run build --silent && tsx scripts/uji-telegram-langsung.ts"
   },
   "engines": {
     "node": ">=22.16.0"

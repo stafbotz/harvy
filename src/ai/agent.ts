@@ -14,6 +14,7 @@ import { isDirectTimeQuestion } from "../agent/time-fast-path.js";
 import type {
   AgentPlannerDecision,
   AgentPlannerInput,
+  AgentRunResult,
 } from "../harness/agent-harness.js";
 import {
   DEFAULT_EXECUTION_POLICY,
@@ -57,6 +58,12 @@ const AGENT_PLANNER_SHARED = [
   "Jawaban final mengikuti bahasa, bentuk, struktur, field, dan kedalaman yang diminta pengguna.",
   "Jika pengguna tidak menentukan kedalaman, jawab padat; jangan menghapus langkah, bukti, kriteria, atau detail yang diminta eksplisit demi keringkasan.",
   "Sebut hasil parsial, kegagalan, dan ketidakpastian yang relevan.",
+  // Probe recall 2026-08-29: satu run menjawab "aku nemu satu episode ... tapi
+  // dari hasil cari ini belum ada klaim spesifik". Isinya jujur, tetapi
+  // "episode", "klaim", dan "hasil cari" adalah nama struktur data internal.
+  // Pengguna tidak dapat berbuat apa pun dengan kosakata itu, dan ia membuat
+  // batas yang nyata terdengar seperti kerusakan teknis.
+  "Ceritakan hasil tool sebagai ingatan atau keadaan, bukan sebagai struktur data: jangan menyebut episode, klaim, record, field, query, hasil pencarian, atau nama tool di jawabanmu.",
 ];
 
 /** Kontrak lama: setiap langkah wajib berupa satu function call. */
@@ -82,6 +89,23 @@ export const AGENT_AUTO_PLANNER_PROMPT = [
   "Panggil paling banyak satu function pada satu langkah, dan jangan menulis nama tool sebagai teks biasa.",
   "Bila capability yang diperlukan tidak ada, katakan batasnya dengan jujur dalam teks biasa lalu tawarkan yang benar-benar bisa kamu lakukan.",
 ].join("\n");
+
+/**
+ * Membuang bungkus `<final>` dari jawaban teks biasa.
+ *
+ * Di bawah kontrak auto, teks biasa berarti "tidak ada tool yang diperlukan"
+ * dan langsung menjadi jawaban. Probe 2026-08-29 menangkap model membungkus
+ * teksnya sendiri dengan `<final>…</final>`, meniru protokol tag yang tidak
+ * pernah kita pakai—dan tag itu terkirim apa adanya kepada pengguna.
+ *
+ * Sengaja sesempit mungkin: hanya bila seluruh teks terbungkus, dan hanya tag
+ * itu. Penyaring tag umum akan merusak jawaban yang memang memuat markup,
+ * misalnya potongan kode.
+ */
+function unwrapFinalTag(text: string): string {
+  if (!text.startsWith("<final>") || !text.endsWith("</final>")) return text;
+  return text.slice("<final>".length, -"</final>".length).trim();
+}
 
 const FINAL_TOOL_NAME = "harvy_final_v1";
 const NEED_INPUT_TOOL_NAME = "harvy_need_input_v1";
@@ -117,6 +141,49 @@ const NEED_INPUT_TOOL: ChatFunctionTool = {
   },
 };
 
+/**
+ * Ringkasan run agent yang aman masuk log operasional.
+ *
+ * Sampai 29 Agustus 2026 hanya run yang **gagal** meninggalkan jejak
+ * (`agent_run_stopped`). Run yang berhasil tidak mencatat apa pun, sehingga
+ * tidak ada cara membuktikan giliran mana yang benar-benar masuk Agent
+ * Runtime maupun capability mana yang dipanggil—persis pertanyaan yang
+ * muncul pertama kali ketika percakapan nyata berperilaku aneh.
+ *
+ * Seluruh isinya bebas konten: ID capability, mode planner, dan cacahan.
+ * Tidak ada observation, prompt, balasan, maupun teks pengguna. Daftar
+ * capability digabung dengan `+` karena sanitizer log hanya menerima skalar
+ * dengan charset terbatas; koma akan membuat seluruh nilai diredaksi.
+ */
+export function agentRunLogFields(
+  result: AgentRunResult,
+  mode: "tools" | "orchestrate",
+): Record<string, unknown> {
+  // Jejak diperlakukan sebagai opsional dengan sengaja. Tipe hasil run memang
+  // selalu membawanya, tetapi fungsi ini dipanggil di jalur giliran pengguna,
+  // dan pemanggilnya menerima objek dari luar—termasuk test double yang
+  // membentuk hasil seperlunya. Versi pertama berkas ini melakukan iterasi
+  // langsung, lalu satu hasil `needs_input` tanpa `trace` melempar
+  // TypeError dan menjatuhkan seluruh giliran: checkpoint tidak tersimpan dan
+  // pengguna kehilangan pertanyaan lanjutannya. Observability tidak boleh
+  // pernah menjadi sebab giliran gagal.
+  const trace = result.trace ?? [];
+  const invoked: string[] = [];
+  for (const event of trace) {
+    if (event.phase !== "execute" || event.outcome !== "ok") continue;
+    if (event.capabilityId && !invoked.includes(event.capabilityId)) {
+      invoked.push(event.capabilityId);
+    }
+  }
+  return {
+    plannerMode: mode,
+    status: result.status,
+    stepCount: trace.length,
+    capabilityCount: invoked.length,
+    capabilities: invoked.join("+") || "none",
+    ...(result.status === "stopped" ? { reason: result.reason } : {}),
+  };
+}
 /** Native tool set selalu berasal dari irisan capability+executor harness. */
 export function agentNativeTools(
   callable: AgentPlannerInput["callableCapabilities"],
@@ -129,6 +196,14 @@ export function agentNativeTools(
   for (const capability of callable) {
     const spec = capability.nativeTool;
     if (!spec) {
+      // Kesalahan wiring, bukan kesalahan model, tetapi gejalanya menyamar:
+      // lemparan ini terjadi di dalam planner, sehingga harness menamainya
+      // `invalid_planner_output` dan setiap giliran agent di proses ini
+      // berhenti dengan teks "Harvy tidak berhasil"—selamanya, karena
+      // penyebabnya tidak berlalu sendiri. Pesan di bawah adalah satu-satunya
+      // petunjuk yang tersisa; ia sengaja menyebut capability yang salah.
+      // Executor sungguhan di `src/agent/` semuanya membawa schema. Yang
+      // pernah kehilangan schema adalah executor sintetis di `scripts/`.
       throw new Error(`Schema native capability tidak tersedia: ${capability.id}@${capability.version}`);
     }
     tools.push({
@@ -159,7 +234,7 @@ export function parseAgentAutoDecision(
 ): AgentPlannerDecision | null {
   if (completion.kind === "text") {
     if (replyContract !== null) return null;
-    const reply = completion.content.trim();
+    const reply = unwrapFinalTag(completion.content.trim());
     return reply.length > 0 ? { kind: "final", reply } : null;
   }
   return parseAgentNativeDecision(

@@ -194,6 +194,19 @@ export class GroupAgentRunExecutor {
       signal: input.signal,
       execution,
       runBudget,
+      // Daftar capability sengaja kosong, jadi satu-satunya tool di sini
+      // adalah fungsi final dan fungsi pertanyaan. Itulah sebabnya kontrak
+      // wajib tetap benar di lane ini walau jalur privat sudah pindah ke
+      // `auto` pada 2026-08: yang membuat kontrak wajib merugikan di sana
+      // adalah pertanyaan opini yang dipaksa memanggil capability dan
+      // berakhir tanpa jawaban. Di sini tidak ada capability untuk dipanggil,
+      // sehingga "wajib" hanya berarti "jawab lewat fungsi final atau
+      // ajukan satu pertanyaan"—persis bentuk yang dibutuhkan.
+      //
+      // Kontrak wajib juga yang membuat `validateToolCalls` punya arti. Hasil
+      // di lane ini terbaca seluruh anggota grup dan disimpan sebagai
+      // pekerjaan durable; teks bebas akan melewati batas panjang dan
+      // pemeriksaan bentuk yang dijalankan `validDecisionCalls`.
       tools: agentNativeTools([]),
       toolChoice: "required",
       parallelToolCalls: false,

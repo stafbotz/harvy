@@ -252,6 +252,24 @@ describe("agent routing dan planner contract", () => {
       null,
     );
 
+    // Model pernah membungkus jawaban teksnya sendiri dengan protokol tag yang
+    // tidak pernah kita minta, dan tag itu terkirim apa adanya ke pengguna.
+    assert.deepEqual(
+      parseAgentAutoDecision(
+        { kind: "text", content: "<final>\n  Hasilnya 126.\n</final>" },
+        callable,
+      ),
+      { kind: "final", reply: "Hasilnya 126." },
+    );
+    // Penyaringnya sengaja sempit: markup di tengah jawaban milik pengguna.
+    assert.deepEqual(
+      parseAgentAutoDecision(
+        { kind: "text", content: "Tulis <final> di berkasmu." },
+        callable,
+      ),
+      { kind: "final", reply: "Tulis <final> di berkasmu." },
+    );
+
     const calls = [nativeCall("harvy_task_list_active_v1", {})];
     assert.deepEqual(
       parseAgentAutoDecision({

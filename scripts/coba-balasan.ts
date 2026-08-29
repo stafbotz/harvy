@@ -111,8 +111,13 @@ const conversation = new Conversation(
   config.defaultTimezone,
   undefined,
   undefined,
+  // Katalog dijaga sama dengan `src/app.ts`, tetapi ia inert di jalur ini:
+  // `capabilityContext` hanya masuk prompt `sessionReply`, sedangkan probe ini
+  // memanggil `reply()`. Skrip ini mengukur suara Harvy, bukan pemilihan tool —
+  // untuk itu pakai `probe-chat.ts` atau `coba-agent.ts`.
   new AgentHarness(createHarvyCapabilityCatalog({
     internalToolsInstalled: true,
+    recallToolsInstalled: true,
     virtualTerminalInstalled: true,
     parallelDelegationInstalled: true,
   })),

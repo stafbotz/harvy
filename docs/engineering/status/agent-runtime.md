@@ -1,13 +1,13 @@
 # Status — Agent Runtime
 
-Refreshed: 24 Agustus 2026 pada provider smoke, routing evaluation, dan live
-restart AgentRun privat. Kontrak tool tulis, koreksi bentuk tool call, dan
-penjelasan penghentian ditambahkan 28 Agustus 2026 dengan bukti unit test
-saja — tidak ada provider smoke atau kanal nyata untuk ketiganya. Kontrak
-planner `tool_choice: "auto"` dan tool recall (`history.search`, `memory.list`,
-`memory.remember`) ditambahkan 28 Agustus 2026, juga dengan bukti unit test
-saja: belum ada eval provider nyata maupun kanal live untuk keduanya. Bukti
-gerbang terbaru dicatat di `docs/LOG.md`.
+Refreshed: 29 Agustus 2026. Kontrak planner `tool_choice: "auto"` dan ketiga
+tool recall kini punya bukti provider nyata, bukan hanya unit test: probe
+`scripts/probe-chat.ts --riwayat-sintetis` memanggil `history.search` di 3 dari
+3 run dan `scripts/coba-agent.ts` membuktikan `terminal.run`,
+`agent.delegate.parallel`, `calendar.agenda`, serta `history.search` benar-benar
+dipanggil. Yang belum terbukti dicatat di "Batas dan defect aktif". Bukti lama
+24 Agustus 2026 pada provider smoke, routing evaluation, dan live restart
+AgentRun privat tetap berlaku untuk bagian yang tidak disebut di sini.
 Detail ini dibaca hanya untuk task di `src/agent/`, `src/harness/`, planner
 agent, scope/authority, atau executor internal.
 
@@ -191,7 +191,56 @@ agent, scope/authority, atau executor internal.
   authority ditolak; PLAN_CONFLICT serta evidence gap memakai status/failure
   code provider-neutral.
 
+- Penghentian run yang berasal dari transport provider punya alasan sendiri,
+  `provider_unavailable`, dan tidak lagi jatuh ke `invalid_planner_output`.
+  Kelasnya dipisahkan struktural di `abortReason` (nama `AiError` plus status
+  408/429/5xx), sehingga harness tetap tidak mengenal modul provider mana pun.
+  Penolakan 4xx lain sengaja tetap `invalid_planner_output`: itu request yang
+  kita susun sendiri, jadi cacatnya harus terlihat. Executor delegasi yang
+  gagal karena provider tetap boleh dilanjutkan run-nya, seperti sebelum
+  pemisahan ini. Teks penghentiannya ada di `src/bot/agent-stop-copy.ts` dan
+  tidak memicu panggilan model tambahan — yang barusan gagal justru panggilan
+  model.
+- Gerbang bentuk intent menuju Agent Runtime tidak lagi ditulis terpisah di
+  kedua adapter. `intentAllowsAgentRuntime` di `src/ai/model-policy.ts` adalah
+  satu-satunya daftar, dan ia kini menerima `history` serta `memory` di samping
+  `question` dan `request`. Sebelum ini ketiga tool recall tidak dapat
+  dijangkau oleh kalimat yang paling khas bagi mereka. Authority tidak
+  bertambah: pemanggil tetap wajib membuktikan `requestsAgentTooling` atau flow
+  state-live, permission per-kind tetap berlaku, dan kontrol memori eksplisit
+  sudah ditangkap route deterministik sebelum titik itu.
+- Jawaban teks biasa di bawah kontrak auto dilepas dari bungkus `<final>` bila
+  seluruh teksnya terbungkus. Penyaringnya sengaja sesempit itu; markup di
+  tengah jawaban adalah milik pengguna.
+- Status transient Telegram dikirim dengan `disable_notification: true`.
+  `initialProgressEvent()` dilaporkan sebelum `understand()`, bukan sesudah,
+  dan dilewati saat `immediateDanger`, `urgentBoundary`, serta `hasImageInput`.
+  Ia sengaja tidak membawa `publicFocus`: ia menyala sebelum triase final, jadi
+  tidak boleh ada keluaran model yang tampil di sana. `src/bot/agent-stop-copy.ts`
+  menjadi satu sumber teks penghentian deterministik untuk tiga call site yang
+  sebelumnya menyimpang, dan tiga string di `src/bot/run-anchor.ts` tidak lagi
+  membocorkan kosakata internal.
+
 ## Batas dan defect aktif
+
+- `history.search` terbukti dipanggil, tetapi ketepatan isinya belum stabil.
+  Pencariannya leksikal atas teks klaim episode, jadi query yang hanya memuat
+  topik mengembalikan topik/fakta/penanda waktu dan melewatkan klaim
+  `unresolved` yang justru ditanyakan. Pada probe 2026-08-29, dari lima run
+  dengan pertanyaan yang sama, dua menyebut klaim yang tepat, dua menjawab
+  jujur bahwa hasilnya tidak memuat klaim itu, dan satu menjahit klaim dari dua
+  episode berbeda menjadi satu ingatan yang tidak pernah terjadi. Deskripsi
+  tool sudah memperingatkan keduanya; efeknya belum diukur ulang.
+- Lane grup tetap memakai `toolChoice: "required"` dan itu keputusan, bukan
+  sisa. Daftar capability-nya kosong, sehingga satu-satunya tool adalah fungsi
+  final dan fungsi pertanyaan; yang membuat kontrak wajib merugikan di jalur
+  privat—pertanyaan opini dipaksa memanggil capability lalu berakhir tanpa
+  jawaban—tidak dapat terjadi di sana. Kontrak wajib juga yang membuat
+  `validDecisionCalls` punya arti pada hasil yang dibaca seluruh anggota grup.
+- Satu capability callable tanpa schema native menghentikan **seluruh** run di
+  proses itu pada langkah pertama, dan gejalanya menyamar sebagai
+  `invalid_planner_output`. Seluruh executor di `src/agent/` membawa schema;
+  yang pernah kehilangannya adalah executor sintetis di `scripts/`.
 
 - Smoke exact GMI/MiniMax 25 Agustus sudah meluluskan native tool,
   continuation, structured output, truncation/pressure lokal, timeout, gambar,

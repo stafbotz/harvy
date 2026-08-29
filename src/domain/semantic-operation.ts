@@ -17,7 +17,8 @@ export type SemanticDomain =
   | "history"
   | "project"
   | "goal"
-  | "skill";
+  | "skill"
+  | "coding";
 
 export type SemanticOperationName =
   | "show-summary"
@@ -115,6 +116,19 @@ const DOMAIN_OPERATIONS = Object.freeze({
   project: ["create", "list", "show"],
   goal: ["show", "set", "complete", "block", "resolve"],
   skill: ["list", "create", "apply"],
+  // Hanya membaca status dan membatalkan run yang sedang berjalan.
+  //
+  // Memulai CodingRun sengaja tidak ada di sini. Ia memerlukan teks task
+  // tersendiri, memakai sandbox dan anggaran, dan batasnya terhadap
+  // permintaan bantuan biasa tidak dapat ditarik dari label saja: "tolong
+  // perbaiki bug token expired" adalah kalimat yang sama untuk keduanya.
+  // Selama pembedaan itu belum bisa dibuktikan kode, `/code` tetap satu-satunya
+  // pintu, dan itu keputusan gagal-tertutup, bukan kekurangan.
+  //
+  // `github` dan `publish` juga tidak masuk: keduanya memegang credential dan
+  // mengirim keluar. Pintu bahasa alami ke sana berarti tindakan ke luar dapat
+  // dipicu tanpa invokasi tegas.
+  coding: ["show", "cancel"],
 } satisfies Readonly<Record<SemanticDomain, readonly SemanticOperationName[]>>);
 
 const REFERENCES: readonly SemanticReference[] = [
@@ -203,6 +217,49 @@ export function semanticOperationForExactCommand(
   });
   if (!parsed) throw new Error("Semantic operation exact tidak sah.");
   return parsed;
+}
+
+/**
+ * Operasi yang boleh dijangkau bahasa alami pada permukaan coding.
+ *
+ * Sebelum ini kedua adapter menuliskan daftarnya sendiri, sebaris demi
+ * sebaris, di dalam handler masing-masing. Dua salinan aturan otorisasi
+ * adalah dua tempat yang harus diingat setiap kali daftarnya berubah.
+ */
+export const NATURAL_SURFACE_OPERATIONS = Object.freeze({
+  project: ["create", "list", "show"],
+  goal: ["show", "set", "complete", "block", "resolve"],
+  skill: ["list", "create", "apply"],
+  coding: ["show", "cancel"],
+} satisfies Readonly<Record<string, readonly SemanticOperationName[]>>);
+
+export type NaturalSurfaceDomain = keyof typeof NATURAL_SURFACE_OPERATIONS;
+
+export function isNaturalSurfaceDomain(
+  domain: SemanticDomain,
+): domain is NaturalSurfaceDomain {
+  return domain in NATURAL_SURFACE_OPERATIONS;
+}
+
+/**
+ * Gerbang tunggal untuk permukaan project/goal/skill/coding.
+ *
+ * Ambangnya sengaja dipertahankan seperti sebelumnya: confidence 0,85,
+ * explicitness eksplisit, dan referensi yang menunjuk sesuatu yang nyata.
+ * Yang berubah hanya jumlah tempat aturan itu ditulis.
+ */
+export function naturalSurfaceAuthorized(
+  message: string,
+  operation: SemanticOperation | null | undefined,
+): operation is SemanticOperation & { domain: NaturalSurfaceDomain } {
+  if (!operation || !isNaturalSurfaceDomain(operation.domain)) return false;
+  return semanticOperationAuthorized(message, operation, {
+    domain: operation.domain,
+    operations: NATURAL_SURFACE_OPERATIONS[operation.domain],
+    minConfidence: 0.85,
+    explicitness: ["explicit"],
+    references: ["none", "current", "recent", "quoted"],
+  });
 }
 
 export interface SemanticAuthorization {

@@ -251,6 +251,36 @@ export function requestsAgentTooling(
 }
 
 /**
+ * Bentuk intent yang boleh mencapai Agent Runtime.
+ *
+ * Sampai 29 Agustus 2026 kedua adapter menuliskan daftar ini sendiri dan hanya
+ * menerima `question` dan `request`. Akibatnya tiga tool recall tidak dapat
+ * dijangkau oleh kalimat yang justru paling khas bagi mereka: "cari di riwayat
+ * percakapan kita" diberi label intent `history` oleh extractor, sehingga
+ * gerbang intent menolaknya sebelum `requestsAgentTooling` sempat dinilai.
+ * Probe model nyata 2026-08-29 merekamnya: `intent: history`,
+ * `toolNeed: internal_state` pada confidence 0,70, `history.search` tidak
+ * pernah dipanggil, dan Harvy menjawab bahwa ia tidak punya riwayat—padahal
+ * tiga episode ada di penyimpanan. Menyangkal data yang dimiliki lebih buruk
+ * daripada menjawab lambat.
+ *
+ * `history` dan `memory` masuk karena keduanya menunjuk data pengguna sendiri
+ * yang tool bacanya read-only (`history.search`, `memory.list`). Ini bukan
+ * authority baru: pemanggil tetap wajib membuktikan `requestsAgentTooling`
+ * atau flow state-live, permission per-kind tetap berlaku, dan kontrol memori
+ * eksplisit sudah ditangkap route deterministik sebelum titik ini. Tulis
+ * durable tetap `confirmation: "contextual"` dan gagal tertutup.
+ *
+ * `task`, `feeling`, `smalltalk`, dan `control` sengaja di luar: masing-masing
+ * sudah punya jalur sendiri, dan membuka mereka menukar balasan murah dengan
+ * loop planner tanpa cacat yang terbukti.
+ */
+export function intentAllowsAgentRuntime(intent: ConversationIntent): boolean {
+  return intent === "question" || intent === "request" ||
+    intent === "history" || intent === "memory";
+}
+
+/**
  * Surface deterministik cocok untuk navigasi/state read yang benar-benar
  * mekanis. Permintaan normal atau deep tetap dijawab oleh model meski semantic
  * extractor keliru mengusulkan domain menu/account.

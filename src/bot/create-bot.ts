@@ -26,10 +26,11 @@ import {
 import {
   allowsDeterministicSurface,
   requiresPlannedExecution,
+  intentAllowsAgentRuntime,
   requestsAgentTooling,
   selectGlobalRoute,
 } from "../ai/model-policy.js";
-import { liveStateRequirement } from "../ai/agent.js";
+import { agentRunLogFields, liveStateRequirement } from "../ai/agent.js";
 import {
   canUseDirectTimeFastPath,
   isDirectTimeQuestion,
@@ -183,6 +184,7 @@ import type { StudentTask } from "../domain/task.js";
 import {
   semanticConfidenceBucket,
   semanticOperationContextAvailable,
+  naturalSurfaceAuthorized,
   semanticOperationAuthorized,
   semanticOperationForExactCommand,
 } from "../domain/semantic-operation.js";
@@ -3405,8 +3407,7 @@ export function createBot(
           effectPermissions.generalState &&
           (!engagedSession || requiresAgentPlanning) &&
           route.kind === "conversation" &&
-          (understanding.intent === "question" ||
-            understanding.intent === "request" ||
+          (intentAllowsAgentRuntime(understanding.intent) ||
             requiresLiveState ||
             requiresAgentPlanning)
         ) {
@@ -3484,15 +3485,28 @@ export function createBot(
                   memoryAcknowledgements,
                 },
               );
+              // Setiap run meninggalkan jejak, bukan hanya yang gagal. Tanpa
+              // baris ini tidak ada cara membuktikan giliran mana yang masuk
+              // Agent Runtime maupun capability mana yang benar-benar dipanggil.
+              const agentFields = agentRunLogFields(agentResult, planningMode);
               if (agentResult.status === "stopped") {
                 logger.warn(
                   "agent_run_stopped",
                   "Run agent dihentikan oleh guard runtime.",
                   {
-                    status: agentResult.status,
-                    reason: agentResult.reason,
+                    ...agentFields,
                     outcome: agentResult.trace.at(-1)?.outcome,
                     count: agentResult.trace.length,
+                  },
+                );
+              } else {
+                logger.info(
+                  "agent_run_completed",
+                  "Run agent selesai.",
+                  {
+                    ...agentFields,
+                    intent: agentIntent,
+                    toolNeed: understanding.routingAssessment?.toolNeed ?? "none",
                   },
                 );
               }
@@ -7404,21 +7418,25 @@ export function createBot(
     runtime: ConversationRuntime,
   ): Promise<boolean> {
     const semantic = understanding.semanticOperation;
-    if (
-      !semantic ||
-      !["project", "goal", "skill"].includes(semantic.domain) ||
-      !semanticOperationAuthorized(text, semantic, {
-        domain: semantic.domain,
-        operations: semantic.domain === "project"
-          ? ["create", "list", "show"]
-          : semantic.domain === "goal"
-            ? ["show", "set", "complete", "block", "resolve"]
-            : ["list", "create", "apply"],
-        minConfidence: 0.85,
-        explicitness: ["explicit"],
-        references: ["none", "current", "recent", "quoted"],
-      })
-    ) return false;
+    if (!naturalSurfaceAuthorized(text, semantic)) return false;
+
+    // Dicatat begitu otorisasi lolos, sebelum bercabang pada ketersediaan
+    // runtime. Sebelum ini cabang "runtime coding mati" membalas lalu keluar
+    // tanpa jejak apa pun, sehingga pemeriksaan live tidak dapat membedakan
+    // operasi yang tidak pernah diusulkan extractor dari operasi yang
+    // diusulkan, diotorisasi, lalu ditolak deployment. Keduanya terlihat
+    // sebagai kekosongan yang sama.
+    logger.info(
+      "semantic_route_selected",
+      "Permukaan bahasa alami project/coding terotorisasi.",
+      {
+        semanticDomain: semantic.domain,
+        semanticOperation: semantic.operation,
+        confidenceBucket: semanticConfidenceBucket(semantic),
+        route: "natural-surface",
+        deterministic: false,
+      },
+    );
 
     if (!codingRuntime) {
       const response = "Runtime coding belum diaktifkan oleh deployment Harvy.";
@@ -7455,6 +7473,26 @@ export function createBot(
         response = renderProjectGoal(await codingRuntime.application.completeGoal(actor));
       } else if (semantic.domain === "skill" && semantic.operation === "list") {
         response = renderProjectSkills(await codingRuntime.application.listSkills(actor));
+      } else if (semantic.domain === "coding" && semantic.operation === "show") {
+        // Padanan bahasa alami untuk /code_status.
+        const run = (await codingRuntime.application.current(actor)).run;
+        response = run
+          ? renderCodingRunAnchor(run).text
+          : "Tidak ada CodingRun foreground aktif.";
+      } else if (semantic.domain === "coding" && semantic.operation === "cancel") {
+        // Padanan bahasa alami untuk /code_cancel. Membatalkan hanya
+        // menghentikan pekerjaan milik pengguna sendiri; tidak ada yang
+        // terhapus, dan menunggu invokasi tegas justru membuat "stop" gagal
+        // pada saat ia paling dibutuhkan.
+        const cancelled = await codingRuntime.application.cancel(actor);
+        const anchor = codingAnchors.get(ownerId);
+        if (anchor?.runId === cancelled.runId) {
+          await flushCodingAnchor(cancelled, anchor.chatId, anchor.messageId);
+          codingAnchors.delete(ownerId);
+          response = null;
+        } else {
+          response = renderCodingRunAnchor(cancelled).text;
+        }
       } else {
         const proposal = await conversation.interpretProjectIntent(
           text,

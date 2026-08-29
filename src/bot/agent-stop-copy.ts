@@ -57,6 +57,13 @@ export function agentStopMessage(
     case "stale":
     case "invalid_checkpoint":
       return "Pekerjaan yang tadi sudah tidak nyambung lagi dengan percakapan kita sekarang, jadi aku tidak melanjutkannya. Sampaikan lagi apa yang kamu perlukan, dan aku kerjakan dari keadaan sekarang.";
+    case "provider_unavailable":
+      // Satu-satunya kelas di berkas ini yang benar-benar berlalu sendiri,
+      // jadi menyuruh mencoba lagi di sini bukan memindahkan kegagalan Harvy
+      // ke pengguna—itu memang langkah yang benar. Penyebabnya tidak disebut
+      // dengan istilah internal: "layanan modelnya" cukup untuk menjelaskan
+      // bahwa masalahnya bukan pada kalimat pengguna.
+      return "Layanan modelnya sedang tidak bisa kuhubungi, jadi pekerjaannya berhenti sebelum ada jawaban dan aku tidak akan mengarang isinya. Coba lagi sebentar lagi; task dan percakapanmu tetap tersimpan.";
     case "usage_anti_abuse":
       return "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan.";
     case "usage_wallet_disabled":

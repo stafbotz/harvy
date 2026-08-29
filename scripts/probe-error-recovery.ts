@@ -10,10 +10,10 @@
  * pengguna nyata yang disentuh.
  */
 import { Conversation } from "../src/ai/conversation.js";
-import { AiError, AiResponseError } from "../src/ai/client.js";
 import { createInternalAgentExecutors } from "../src/agent/internal-executors.js";
 import { createWriteAgentExecutors } from "../src/agent/write-executors.js";
 import { VirtualTerminalExecutor } from "../src/agent/virtual-terminal.js";
+import { createMemoryAgentExecutors } from "../src/agent/memory-executors.js";
 import { AgentHarness } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { ProfileService } from "../src/core/profile-service.js";
@@ -21,6 +21,13 @@ import { SessionService } from "../src/core/session-service.js";
 import { TaskService } from "../src/core/task-service.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
+import { retryAgentRun } from "./probe-retry.js";
+import {
+  createSyntheticHistorySearch,
+  createSyntheticMemoryStore,
+  SYNTHETIC_CONSENT,
+} from "./synthetic-recall.js";
+import type { MemoryItem } from "../src/domain/memory.js";
 import type { ProfileRepository, UserProfile } from "../src/domain/profile.js";
 import type {
   ActiveSession,
@@ -30,8 +37,6 @@ import type {
 import type { StudentTask, TaskRepository } from "../src/domain/task.js";
 
 const OWNER = "probe-siswa";
-const RETRY_LIMIT = 4;
-const BACKOFF_BASE_MS = 4_000;
 
 interface Scenario {
   id: string;
@@ -102,6 +107,7 @@ async function main(): Promise<void> {
   for (const scenario of SCENARIOS) {
     const repository = new MemoryTaskRepository();
     const tasks = new TaskService(repository);
+    const scenarioNotes: MemoryItem[] = [];
     await scenario.seed?.(tasks);
 
     const conversation = new Conversation(
@@ -113,6 +119,7 @@ async function main(): Promise<void> {
       new AgentHarness(
         createHarvyCapabilityCatalog({
           internalToolsInstalled: true,
+          recallToolsInstalled: true,
           virtualTerminalInstalled: true,
           parallelDelegationInstalled: false,
           specialistDelegationInstalled: false,
@@ -127,10 +134,21 @@ async function main(): Promise<void> {
         }),
         ...createWriteAgentExecutors({ tasks }),
         new VirtualTerminalExecutor(),
+        // Recall ikut dipasang supaya himpunan tool yang dilihat planner sama
+        // dengan produksi. Skenario di sini tidak menargetkannya, tetapi
+        // katalog yang lebih sempit membuat probe mengukur pilihan yang tidak
+        // pernah dihadapi Harvy sungguhan.
+        ...createMemoryAgentExecutors({
+          history: () => createSyntheticHistorySearch(),
+          memories: createSyntheticMemoryStore(scenarioNotes, "probe-recovery"),
+          profiles: SYNTHETIC_CONSENT,
+        }),
       ],
     );
 
-    const outcome = await runWithBackoff(() =>
+    // Gangguan provider dilaporkan lewat hasil, bukan lemparan; skenario
+    // kegagalan tool tidak boleh tercampur dengan provider yang sedang goyah.
+    const outcome = await retryAgentRun(() =>
       conversation.agent(scenario.message, "tools", undefined, {
         ownerId: OWNER,
         channel: "telegram",
@@ -174,23 +192,6 @@ function readReply(outcome: unknown): string {
   if (typeof record.prompt === "string") return record.prompt;
   if (record.error instanceof Error) return `<probe error: ${record.error.name}>`;
   return `<tidak ada balasan: ${String(record.status ?? "unknown")}>`;
-}
-
-async function runWithBackoff<T>(run: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await run();
-    } catch (error) {
-      const retryable = !(error instanceof AiResponseError) &&
-        ((error instanceof AiError && error.status !== undefined &&
-          (error.status === 408 || error.status === 429 || error.status >= 500)) ||
-          (error instanceof Error && error.name === "AbortError"));
-      if (attempt >= RETRY_LIMIT || !retryable) throw error;
-      await new Promise((resolve) =>
-        setTimeout(resolve, BACKOFF_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 500))
-      );
-    }
-  }
 }
 
 class MemoryTaskRepository implements TaskRepository {

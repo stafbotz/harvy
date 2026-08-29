@@ -1,40 +1,39 @@
 # Current Context
 
-Refreshed: 2026-08-28
-Baseline: d4a56ef
+Refreshed: 2026-08-29
+Baseline: deb2d46
 Context-Version: 1
 
 ## Verified baseline
 
 - Perubahan material yang dirangkum di sini dimulai di atas commit dasar
-  `d4a56ef` pada `main`; status commit dan push aktual tetap dibaca dari Git.
-- `npm run check` PASS; `npm test` 1.974 lulus dengan 2 gagal yang tercatat di
-  `docs/engineering/KNOWN-FAILURES.md`; `git diff --check` PASS selain warning
-  line-ending Windows.
+  `deb2d46` pada `main`; status commit dan push aktual tetap dibaca dari Git.
+- `npm run check` PASS; `npm test` hijau tanpa kegagalan tercatat, dan bagian
+  Aktif `docs/engineering/KNOWN-FAILURES.md` kosong.
+- `npm run eval:conversation` 12/12 pada model sungguhan. Probe recall
+  memanggil `history.search` 3 dari 3 run; `scripts/coba-agent.ts` membuktikan
+  `terminal.run`, `agent.delegate.parallel`, `calendar.agenda`, dan
+  `history.search` benar-benar dipanggil. Ketepatan isi hasil recall belum
+  stabil dan dicatat di `docs/agent/SCRATCHPAD.md`.
 - Smoke Edge nyata PASS pada desktop/mobile: login, navigasi tiga langkah setup,
   isi/simpan/verifikasi Compute+GitHub, non-reflection secret, dan layout. Ini
   memakai probe/storage sementara dan bukan bukti remote live.
 
 ## Recent material changes
 
-- Percakapan privat kini punya tool tulis (`task.manage`, `reminder.schedule`)
-  dengan policy otorisasi kontekstual; penghapusan tugas ditolak dengan alasan
-  terbaca model. Native tool call salah bentuk mendapat satu koreksi, dan
-  penghentian run dijelaskan model untuk kelas invalid_planner_output/max_steps.
-- Planner memakai `tool_choice: "auto"` sebagai kontrak default; obrolan biasa
-  dijawab teks tanpa dibungkus function, sedangkan kelas state-live dan kontrak
-  bentuk terstruktur tetap wajib memanggil tool. Tiga capability recall
-  ditambahkan: `history.search`, `memory.list`, dan `memory.remember`, privat
-  saja dan memeriksa ulang consent. Keduanya baru dibuktikan unit test; belum
-  ada eval provider atau kanal live, dan pencarian web tetap tidak ada.
-  Gerbang masuk Agent Runtime sengaja tidak dilebarkan pada sesi ini.
-- `HARVY_IDENTITY` menyatakan dua register: santai saat mengobrol, rapi saat
-  bekerja, boleh berpindah dalam satu balasan. `resolveActiveTaskReference`
-  tidak lagi memilih kandidat tunggal tanpa memeriksa sebutan pengguna.
-- Anggaran konteks naik ke 48.000 karakter, 40 giliran, 24 memori. Biaya token
-  terukur: satu giliran 11.000–15.000 token, `understandingPrompt` ~8.200 di
-  antaranya. `response_format` tidak dihormati provider; rute memori semantik
-  mati karena tidak ada model embedding dan GMI tidak melayani `/embeddings`.
+- Gerbang bentuk intent menuju Agent Runtime menjadi satu fungsi,
+  `intentAllowsAgentRuntime`, dan menerima `history` serta `memory` di samping
+  `question`/`request`. Sebelumnya kedua adapter menuliskan daftarnya sendiri
+  dan ketiga tool recall tidak dapat dijangkau kalimat yang paling khas bagi
+  mereka. Kontrak `tool_choice: "auto"` dan `history.search` kini punya bukti
+  provider nyata; `memory.list` dan `memory.remember` belum.
+- Kegagalan transport provider punya alasan sendiri, `provider_unavailable`,
+  terpisah dari `invalid_planner_output`. Penolakan 4xx lain sengaja tetap
+  `invalid_planner_output` karena itu request yang kita susun sendiri.
+- Domain semantic `coding` (`show`, `cancel`) memberi padanan bahasa alami untuk
+  `/code_status` dan `/code_cancel` di kedua adapter. Permukaan slash WhatsApp
+  turun dari 29 menjadi 12 yang ditampilkan tanpa melepas satu pun dari katalog
+  eksekusi; slash tak dikenal tidak lagi membuang seluruh katalog ke layar.
 
 ## Active cross-subsystem blockers
 

@@ -392,6 +392,19 @@ const ALLOWED_DATA_KEYS = new Set([
   "updatekind",
   "requiresagentplanning",
   "requireslivestate",
+  // Bukti jalur kode saat percakapan nyata. Sampai 29 Agustus 2026 run agent
+  // yang berhasil tidak meninggalkan jejak apa pun—hanya kegagalan yang
+  // dicatat—sehingga tidak ada cara membuktikan giliran mana yang benar-benar
+  // masuk Agent Runtime, apalagi capability mana yang dipanggil. Seluruhnya
+  // bebas isi: nama capability, mode planner, dan cacahan, bukan observation
+  // maupun teks pengguna.
+  "agentused",
+  "capabilities",
+  "capabilitycount",
+  "plannermode",
+  "stepcount",
+  "intent",
+  "toolneed",
   "reminderpresent",
   "version",
   "warningtype",

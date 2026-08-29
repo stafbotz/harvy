@@ -238,7 +238,7 @@ describe("Conversation agent runtime", () => {
           },
           {
             role: "harvy",
-            text: "Run agent berhenti sebelum menghasilkan jawaban yang dapat dipercaya.",
+            text: "Aku belum berhasil menyelesaikan permintaan itu, dan aku tidak mau mengarang hasilnya. Sebutkan bagian mana yang paling kamu butuhkan, biar aku kerjakan itu dulu.",
             at: "2026-08-06T11:06:01.000Z",
           },
         ],

@@ -29,7 +29,8 @@ import {
 } from "../ai/safety.js";
 import { withUsageAttribution } from "../ai/usage-attribution.js";
 import { canUseDirectTimeFastPath } from "../agent/time-fast-path.js";
-import { liveStateRequirement } from "../ai/agent.js";
+import {
+  agentRunLogFields, liveStateRequirement } from "../ai/agent.js";
 import {
   prefersGuidedSmallStep,
   requestsUnhandledTaskChange,
@@ -37,6 +38,7 @@ import {
 import {
   allowsDeterministicSurface,
   requiresPlannedExecution,
+  intentAllowsAgentRuntime,
   requestsAgentTooling,
   selectGlobalRoute,
 } from "../ai/model-policy.js";
@@ -164,6 +166,7 @@ import {
   renderCommandCategory,
   renderCommandMenu,
   renderHelpMessage,
+  renderUnknownCommand,
   type TelegramCommandOptions,
 } from "../bot/commands.js";
 import {
@@ -221,6 +224,7 @@ import {
 import {
   semanticConfidenceBucket,
   semanticOperationContextAvailable,
+  naturalSurfaceAuthorized,
   semanticOperationAuthorized,
   semanticOperationForExactCommand,
   type SemanticDomain,
@@ -1586,12 +1590,7 @@ export class WhatsAppPrivateConversation {
     );
     if (capabilityReply !== null) return capabilityReply;
     if (text.startsWith("/")) {
-      return [
-        "Aku belum punya perintah itu di WhatsApp.",
-        "",
-        renderHelpMessage(this.commandOptions(), "whatsapp"),
-      ]
-        .join("\n");
+      return renderUnknownCommand(this.commandOptions(), "whatsapp");
     }
 
     const credentialReply = economyCredentialSafetyReply(text);
@@ -2054,21 +2053,25 @@ export class WhatsAppPrivateConversation {
   ): Promise<ComposedPrivateReply | null> {
     const text = privateConversationText(message);
     const semantic = understanding.semanticOperation;
-    if (
-      !semantic ||
-      !["project", "goal", "skill"].includes(semantic.domain) ||
-      !semanticOperationAuthorized(text, semantic, {
-        domain: semantic.domain,
-        operations: semantic.domain === "project"
-          ? ["create", "list", "show"]
-          : semantic.domain === "goal"
-            ? ["show", "set", "complete", "block", "resolve"]
-            : ["list", "create", "apply"],
-        minConfidence: 0.85,
-        explicitness: ["explicit"],
-        references: ["none", "current", "recent", "quoted"],
-      })
-    ) return null;
+    if (!naturalSurfaceAuthorized(text, semantic)) return null;
+
+    // Dicatat begitu otorisasi lolos, sebelum bercabang pada ketersediaan
+    // runtime. Sebelum ini cabang "runtime coding mati" membalas lalu keluar
+    // tanpa jejak apa pun, sehingga pemeriksaan live tidak dapat membedakan
+    // operasi yang tidak pernah diusulkan extractor dari operasi yang
+    // diusulkan, diotorisasi, lalu ditolak deployment. Keduanya terlihat
+    // sebagai kekosongan yang sama.
+    this.logger.info(
+      "semantic_route_selected",
+      "Permukaan bahasa alami project/coding terotorisasi.",
+      {
+        semanticDomain: semantic.domain,
+        semanticOperation: semantic.operation,
+        confidenceBucket: semanticConfidenceBucket(semantic),
+        route: "natural-surface",
+        deterministic: false,
+      },
+    );
 
     await this.appendUserHistory(ownerId, text, runtime);
     await ensurePrivateCurrent(runtime);
@@ -2104,6 +2107,15 @@ export class WhatsAppPrivateConversation {
       response = renderProjectGoal(await coding.application.completeGoal(actor));
     } else if (semantic.domain === "skill" && semantic.operation === "list") {
       response = renderProjectSkills(await coding.application.listSkills(actor));
+    } else if (semantic.domain === "coding" && semantic.operation === "show") {
+      // Padanan bahasa alami untuk /code_status; helper yang sama dipakai
+      // command-nya, jadi teksnya tidak dapat menyimpang.
+      response = await this.codingStatus(message);
+    } else if (semantic.domain === "coding" && semantic.operation === "cancel") {
+      // Padanan bahasa alami untuk /code_cancel. Membatalkan hanya
+      // menghentikan pekerjaan milik pengguna sendiri; menunggu invokasi
+      // tegas justru membuat "stop" gagal saat ia paling dibutuhkan.
+      response = await this.cancelCoding(message);
     } else {
       const interpreter = this.dependencies.conversation.interpretProjectIntent;
       const proposal = interpreter
@@ -3577,8 +3589,8 @@ export class WhatsAppPrivateConversation {
       // Sesi adalah konteks lunak, bukan alasan menurunkan permintaan planning
       // explicit ke reply biasa. Ini juga menjaga parity dengan Telegram.
       const hasAgentAuthority =
-        (understanding.intent === "question" ||
-          understanding.intent === "request") &&
+        (intentAllowsAgentRuntime(understanding.intent) || requiresLiveState ||
+          requiresAgentPlanning) &&
         (requiresLiveState || requiresAgentPlanning || unhandledTaskChange ||
           requestsAgentTooling(understanding.routingAssessment));
       const useAgent = !hasImageInput && hasAgentAuthority &&
@@ -3641,6 +3653,22 @@ export class WhatsAppPrivateConversation {
             ],
           },
         );
+        // Parity dengan Telegram juga untuk observability: setiap run
+        // meninggalkan jejak bebas isi, bukan hanya yang gagal.
+        const agentFields = agentRunLogFields(result, planningMode);
+        if (result.status === "stopped") {
+          this.logger.warn(
+            "agent_run_stopped",
+            "Run agent dihentikan oleh guard runtime.",
+            { ...agentFields, count: result.trace.length },
+          );
+        } else {
+          this.logger.info("agent_run_completed", "Run agent selesai.", {
+            ...agentFields,
+            intent: agentIntent,
+            toolNeed: understanding.routingAssessment?.toolNeed ?? "none",
+          });
+        }
         // Parity dengan Telegram: penghentian dijelaskan model lebih dulu.
         const explained = result.status === "stopped" &&
           agentStopDeservesExplanation(result.reason)

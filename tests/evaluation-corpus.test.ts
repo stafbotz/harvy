@@ -17,8 +17,8 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = process.cwd();
 
 describe("corpus evaluasi percakapan", () => {
-  it("memuat 57 skenario sintetis lintas jalur utama", () => {
-    assert.equal(CONVERSATION_EVAL_CASES.length, 57);
+  it("memuat 61 skenario sintetis lintas jalur utama", () => {
+    assert.equal(CONVERSATION_EVAL_CASES.length, 61);
     const ids = new Set(CONVERSATION_EVAL_CASES.map((testCase) => testCase.id));
     for (const required of [
       // Cakupan semantic dan routing ditambahkan 2026-08-28. Tanpa daftar ini,
@@ -46,6 +46,14 @@ describe("corpus evaluasi percakapan", () => {
       "human-bridge",
       "memory-learning-preference",
       "memory-learning-preference-after-session",
+      // Mutu review artefak kode ditambahkan 2026-08-29. Keempatnya
+      // menjalankan kode balasan sungguhan lewat `codeCheck`; tanpa daftar
+      // ini, satu-satunya pengukuran mutu kode dapat hilang tanpa satu tes
+      // pun berubah merah.
+      "code-empty-input",
+      "code-reject-wrong-type",
+      "code-no-mutation",
+      "code-boundary",
     ]) {
       assert.equal(ids.has(required), true, `kasus ${required} hilang`);
     }
