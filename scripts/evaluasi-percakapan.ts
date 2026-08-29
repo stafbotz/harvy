@@ -771,6 +771,26 @@ async function withProviderBackoff<T>(run: () => Promise<T>): Promise<T> {
  * Kode di sini berasal dari model, jadi ia diperlakukan sebagai masukan tidak
  * tepercaya seperti keluaran model mana pun.
  */
+/**
+ * Menamai kegagalan sandbox tanpa `instanceof`.
+ *
+ * Error yang dilempar di dalam `node:vm` dibuat pada realm berbeda, sehingga
+ * `error instanceof Error` selalu false dan `safeEvaluationError` mengembalikan
+ * "unknown" untuk setiap kegagalan. Akibatnya perbandingan mutu kode tidak
+ * dapat dibaca sama sekali: model yang menulis kode rusak dan sandbox yang
+ * tidak bisa menjalankan kode sah terlihat persis sama.
+ *
+ * Isinya berasal dari keluaran model, jadi dipotong dan dibersihkan dari baris
+ * baru sebelum masuk laporan.
+ */
+function sandboxError(error: unknown): string {
+  if (!error || typeof error !== "object") return String(error).slice(0, 120);
+  const record = error as { name?: unknown; message?: unknown };
+  const name = typeof record.name === "string" ? record.name : "Error";
+  const message = typeof record.message === "string" ? record.message : "";
+  return `${name}: ${message.replaceAll(/s+/gu, " ").slice(0, 160)}`.trim();
+}
+
 function runCodeCheck(
   delivered: string,
   check: NonNullable<ConversationEvalCase["codeCheck"]>,
@@ -784,7 +804,7 @@ function runCodeCheck(
   try {
     runInNewContext(source, sandbox, { timeout: 2_000 });
   } catch (error) {
-    return `kode gagal dievaluasi: ${safeEvaluationError(error)}`;
+    return `kode gagal dievaluasi: ${sandboxError(error)}`;
   }
   if (typeof (sandbox as Record<string, unknown>)[check.symbol] !== "function") {
     return `kode tidak mendefinisikan fungsi ${check.symbol}`;
@@ -792,7 +812,7 @@ function runCodeCheck(
   try {
     runInNewContext(check.assertions, sandbox, { timeout: 2_000 });
   } catch (error) {
-    return `perilaku kode salah: ${safeEvaluationError(error)}`;
+    return `perilaku kode salah: ${sandboxError(error)}`;
   }
   return null;
 }

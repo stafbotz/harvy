@@ -227,17 +227,56 @@ Yang belum, dan tetap terbuka:
   sendiri, tetapi penyatuan bukti dan penilaiannya dapat dipakai ulang apa
   adanya.
 
-## 6. Mutu review artefak kode: lima kasus, semua lulus
+## 6. Langkah review artefak kode: terbukti berbayar hasil
 
-`codeCheck` menjalankan blok kode dari balasan di `node:vm` dan mengeksekusi
-assertion. Lima kasus lulus 5/5, termasuk penolakan tipe salah, larangan mutasi,
-dan batas panjang.
+Korpus dinaikkan dari 5 menjadi 9 kasus, empat tambahannya dipilih karena draft
+pertamanya memang sering salah: rekursi dengan kasus dasar dan batas waktu,
+aritmetika tanggal melewati batas bulan dan tahun, perbandingan float, dan
+pembagian rupiah yang jumlahnya harus persis kembali ke total.
 
-Lulus semuanya pada percobaan pertama berarti korpusnya belum cukup sulit untuk
-memisahkan draft dari draft yang sudah direview. Korpus berikutnya perlu kasus
-yang draft pertamanya memang sering salah — rekursi dengan kasus dasar meleset,
-aritmetika tanggal melewati batas bulan, atau perbandingan float — dan idealnya
-satu run pembanding dengan langkah review dimatikan.
+Kesembilannya lulus dengan review menyala, jadi korpus saja tetap tidak dapat
+menjawab apakah langkah review berguna. Jawabannya datang dari menjalankan
+korpus yang sama tanpa review, lewat `HARVY_DISABLE_CODE_ARTIFACT_REVIEW=1`
+yang sengaja hanya dapat dinyalakan dari variabel lingkungan:
+
+| | lulus |
+|---|---|
+| review menyala, dua ulangan | **18 dari 18** |
+| review dimatikan, dua ulangan | 15 dari 18 |
+
+Kegagalan tanpa review:
+
+- `code-request` gagal **dua kali dengan error yang sama persis**:
+  `SyntaxError: Identifier 'jumlahkanArray' has already been declared`. Model
+  mengeluarkan dua blok kode yang keduanya mendeklarasikan fungsi yang sama.
+  Reproduksi, bukan varians.
+- `code-reject-wrong-type` melempar `TypeError` dari fungsinya sendiri pada
+  masukan yang sah.
+
+Satu kejujuran soal alat ukurnya: pemeriksa menggabungkan **seluruh** blok kode
+dalam balasan sebelum menjalankannya, jadi dua blok yang sama-sama
+mendeklarasikan fungsi itu fatal baginya. Bagi pembaca manusia, blok kedua
+mungkin sekadar contoh pemakaian. Kegagalan kedua—fungsi melempar pada masukan
+sah—tidak punya keringanan seperti itu.
+
+Kesimpulan yang ditopang datanya: langkah review menghapus cacat yang benar-
+benar ada pada draft, dan satu panggilan model tambahan per giliran kode
+terbayar. Yang belum: apakah manfaatnya bertahan pada korpus yang jauh lebih
+besar, dan berapa biayanya dalam token.
+
+Untuk menjalankan pembandingnya lagi:
+
+```bash
+CASES=code-request,code-empty-input,code-reject-wrong-type,code-no-mutation,code-boundary,code-rekursi-basis,code-tanggal-lintas-bulan,code-float,code-bagi-rupiah
+npm run eval:conversation -- --case=$CASES
+HARVY_DISABLE_CODE_ARTIFACT_REVIEW=1 npm run eval:conversation -- --case=$CASES
+```
+
+Catatan alat: error dari `node:vm` dibuat pada realm berbeda, sehingga
+`error instanceof Error` selalu false. Sebelum diperbaiki, setiap kegagalan
+sandbox dilaporkan sebagai "unknown" dan perbandingan ini tidak dapat dibaca
+sama sekali—model yang menulis kode rusak dan sandbox yang tidak bisa
+menjalankan kode sah terlihat persis sama.
 
 ## 7. Batas giliran 2 detik: diukur, angkanya tetap, frekuensinya lebih buruk dari dugaan
 

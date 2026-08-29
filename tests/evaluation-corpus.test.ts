@@ -17,8 +17,8 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = process.cwd();
 
 describe("corpus evaluasi percakapan", () => {
-  it("memuat 61 skenario sintetis lintas jalur utama", () => {
-    assert.equal(CONVERSATION_EVAL_CASES.length, 61);
+  it("memuat 65 skenario sintetis lintas jalur utama", () => {
+    assert.equal(CONVERSATION_EVAL_CASES.length, 65);
     const ids = new Set(CONVERSATION_EVAL_CASES.map((testCase) => testCase.id));
     for (const required of [
       // Cakupan semantic dan routing ditambahkan 2026-08-28. Tanpa daftar ini,
@@ -54,6 +54,13 @@ describe("corpus evaluasi percakapan", () => {
       "code-reject-wrong-type",
       "code-no-mutation",
       "code-boundary",
+      // Empat kasus di bawah dipilih karena draft pertamanya memang sering
+      // salah. Tanpa mereka korpus kode tidak dapat memisahkan draft biasa
+      // dari draft yang sudah direview.
+      "code-rekursi-basis",
+      "code-tanggal-lintas-bulan",
+      "code-float",
+      "code-bagi-rupiah",
     ]) {
       assert.equal(ids.has(required), true, `kasus ${required} hilang`);
     }

@@ -418,6 +418,39 @@ export const CONVERSATION_EVAL_CASES: readonly ConversationEvalCase[] = [
     "assert.ok(potongTeks(String.fromCharCode(97).repeat(50), 10).endsWith(String.fromCharCode(46, 46, 46)));",
     "assert.equal(potongTeks(String.fromCharCode(97, 98, 99), 3), String.fromCharCode(97, 98, 99));",
   ].join(String.fromCharCode(10)) } },
+  // Empat kasus di bawah dipilih karena draft pertamanya memang sering
+  // salah, bukan karena sulit ditulis. Lima kasus sebelumnya lulus semua
+  // pada percobaan pertama, artinya korpusnya tidak dapat memisahkan draft
+  // biasa dari draft yang sudah direview—dan langkah review menjadi biaya
+  // yang manfaatnya tidak terukur.
+  { id: "code-rekursi-basis", message: "buatkan fungsi JavaScript bernama persis fibonacci yang mengembalikan suku ke-n, dengan fibonacci(0) bernilai 0 dan fibonacci(1) bernilai 1. Harus tetap cepat untuk n = 35. Tulis kodenya saja.", expectedIntent: "request", expectedRisk: "biasa", allowCode: true, codeCheck: { symbol: "fibonacci", assertions: [
+    "assert.equal(fibonacci(0), 0);",
+    "assert.equal(fibonacci(1), 1);",
+    "assert.equal(fibonacci(2), 1);",
+    "assert.equal(fibonacci(10), 55);",
+    "const mulai = Date.now();",
+    "assert.equal(fibonacci(35), 9227465);",
+    "assert.ok(Date.now() - mulai < 1000);",
+  ].join(String.fromCharCode(10)) } },
+  { id: "code-tanggal-lintas-bulan", message: "buatkan fungsi JavaScript bernama persis tambahHari yang menerima tanggal format YYYY-MM-DD dan jumlah hari, lalu mengembalikan tanggal baru dalam format yang sama. Harus benar saat melewati batas bulan dan tahun. Tulis kodenya saja.", expectedIntent: "request", expectedRisk: "biasa", allowCode: true, codeCheck: { symbol: "tambahHari", assertions: [
+    "assert.equal(tambahHari(String.fromCharCode(50,48,50,54,45,48,49,45,51,49), 1), String.fromCharCode(50,48,50,54,45,48,50,45,48,49));",
+    "assert.equal(tambahHari(String.fromCharCode(50,48,50,54,45,48,50,45,50,56), 1), String.fromCharCode(50,48,50,54,45,48,51,45,48,49));",
+    "assert.equal(tambahHari(String.fromCharCode(50,48,50,54,45,49,50,45,51,49), 1), String.fromCharCode(50,48,50,55,45,48,49,45,48,49));",
+    "assert.equal(tambahHari(String.fromCharCode(50,48,50,52,45,48,50,45,50,56), 1), String.fromCharCode(50,48,50,52,45,48,50,45,50,57));",
+  ].join(String.fromCharCode(10)) } },
+  { id: "code-float", message: "buatkan fungsi JavaScript bernama persis hampirSama yang mengembalikan true kalau dua angka desimal praktis sama. 0.1 + 0.2 harus dianggap sama dengan 0.3. Tulis kodenya saja.", expectedIntent: "request", expectedRisk: "biasa", allowCode: true, codeCheck: { symbol: "hampirSama", assertions: [
+    "assert.equal(hampirSama(0.1 + 0.2, 0.3), true);",
+    "assert.equal(hampirSama(1, 1), true);",
+    "assert.equal(hampirSama(0.3, 0.4), false);",
+    "assert.equal(hampirSama(1000000.1, 1000000.2), false);",
+  ].join(String.fromCharCode(10)) } },
+  { id: "code-bagi-rupiah", message: "buatkan fungsi JavaScript bernama persis bagiRata yang membagi sejumlah rupiah kepada beberapa orang. Hasilnya array bilangan bulat, jumlahnya harus persis sama dengan total, dan sisa pembagian diberikan ke orang-orang pertama. Tulis kodenya saja.", expectedIntent: "request", expectedRisk: "biasa", allowCode: true, codeCheck: { symbol: "bagiRata", assertions: [
+    "assert.deepEqual(bagiRata(100, 3), [34, 33, 33]);",
+    "assert.deepEqual(bagiRata(90, 3), [30, 30, 30]);",
+    "assert.deepEqual(bagiRata(10, 4), [3, 3, 2, 2]);",
+    "assert.equal(bagiRata(100000, 7).reduce((a, b) => a + b, 0), 100000);",
+    "assert.ok(bagiRata(100000, 7).every((n) => Number.isInteger(n)));",
+  ].join(String.fromCharCode(10)) } },
   { id: "concept-question", message: "kenapa langit terlihat biru?", expectedIntent: "question", expectedRisk: "biasa" },
   { id: "listen-choice", message: "aku capek banget hari ini, dengerin dulu ya", expectedIntent: "feeling", expectedRisk: "biasa", style: "listen", forbidAdvice: true, expectNoButtons: true },
   { id: "sad-ordinary", message: "aku sedih karena nilai ulanganku turun", expectedIntent: "feeling", expectedRisk: "biasa", style: "listen", forbidAdvice: true, expectNoButtons: true },

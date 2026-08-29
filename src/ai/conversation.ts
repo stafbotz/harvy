@@ -286,6 +286,24 @@ const DIRECT_ARTIFACT_GUIDANCE = [
   "  bagian itu beserta penjelasan minimum yang memang diperlukan.",
 ].join("\n");
 
+/**
+ * Mematikan langkah review artefak kode, khusus untuk pengukuran pembanding.
+ *
+ * Langkah review memakai satu panggilan model tambahan pada setiap giliran
+ * yang menghasilkan kode. Manfaatnya belum pernah terukur: sembilan kasus
+ * korpus lulus 9 dari 9 dengan review menyala, termasuk empat yang sengaja
+ * dipilih karena draft pertamanya sering salah. Angka itu tidak dapat
+ * membedakan draft yang baik dari draft yang diperbaiki review.
+ *
+ * Satu-satunya cara menjawabnya adalah menjalankan korpus yang sama tanpa
+ * review lalu membandingkan. Gerbangnya sengaja berupa variabel lingkungan,
+ * bukan opsi runtime: ia tidak boleh dapat dinyalakan dari konfigurasi
+ * produksi maupun dari isi percakapan.
+ */
+function codeArtifactReviewDisabled(): boolean {
+  return process.env["HARVY_DISABLE_CODE_ARTIFACT_REVIEW"] === "1";
+}
+
 const CODE_ARTIFACT_REVIEW_PROMPT = [
   HARVY_REPLY_CACHE_SPINE,
   "",
@@ -1223,6 +1241,7 @@ export class Conversation {
     if (
       triage.level === "biasa" &&
       !runtime.images?.length &&
+      !codeArtifactReviewDisabled() &&
       hasCompleteFencedCode(reply)
     ) {
       // Rencana eksekusi dibangun di luar `try` provider. Kesalahan di sini
