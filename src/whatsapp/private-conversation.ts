@@ -3590,7 +3590,7 @@ export class WhatsAppPrivateConversation {
       // explicit ke reply biasa. Ini juga menjaga parity dengan Telegram.
       const hasAgentAuthority =
         (intentAllowsAgentRuntime(understanding.intent) || requiresLiveState ||
-          requiresAgentPlanning) &&
+          requiresAgentPlanning || unhandledTaskChange) &&
         (requiresLiveState || requiresAgentPlanning || unhandledTaskChange ||
           requestsAgentTooling(understanding.routingAssessment));
       const useAgent = !hasImageInput && hasAgentAuthority &&

@@ -1,4 +1,7 @@
-import type { HistorySearchOptions } from "../core/history-search.js";
+import {
+  HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT,
+  type HistorySearchOptions,
+} from "../core/history-search.js";
 import type { HistoricalEpisodeMatch } from "../domain/history.js";
 import type { MemoryItem, MemoryKind, NewMemory } from "../domain/memory.js";
 import type {
@@ -12,7 +15,19 @@ import type { PrivateAgentScope } from "../harness/scope.js";
 
 const MAX_QUERY_CHARACTERS = 300;
 const MAX_HISTORY_MATCHES = 6;
-const MAX_CLAIMS_PER_MATCH = 4;
+/**
+ * Sengaja sama dengan `HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT`.
+ *
+ * Sebelumnya 4, sementara pencariannya sendiri sudah memilih 6 klaim terbaik
+ * per episode. Selisih dua itu memotong justru bagian yang paling sering
+ * ditanyakan: pengukuran 29 Agustus 2026 menunjukkan klaim `unresolved`
+ * ("belum tahu apakah soalnya pilihan ganda atau uraian") jatuh di urutan
+ * keempat ke bawah, sehingga jawaban Harvy benar soal topik dan tanggal tetapi
+ * meleset pada hal yang benar-benar ditanyakan.
+ *
+ * Menyamakannya menambah dua klaim pendek per episode, bukan mekanisme baru.
+ */
+const MAX_CLAIMS_PER_MATCH = HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT;
 const MAX_NOTE_CHARACTERS = 300;
 const MAX_LISTED_NOTES = 32;
 
@@ -89,8 +104,14 @@ const MEMORY_LIST_NATIVE_TOOL = {
  */
 const MEMORY_REMEMBER_NATIVE_TOOL = {
   name: "harvy_memory_remember_v1",
+  // Larangan menulis ulang ditambahkan 29 Agustus 2026 dari kejadian nyata:
+  // dalam satu run, planner memanggil tool ini pada langkah 1 dan langkah 2
+  // untuk fakta yang sama, tampaknya untuk memperbaiki kata yang keliru pada
+  // tulisan pertama. Keduanya mendarat. Dedupe `MemoryService` hanya
+  // membandingkan isi persis, jadi dua kalimat yang berbeda satu kata lolos
+  // berdua dan pengguna melihat catatan kembar di daftar memorinya.
   description:
-    "Simpan satu catatan durable tentang pemilik scope. Tulis satu kalimat pendek dan faktual, bukan salinan percakapan.",
+    "Simpan satu catatan durable tentang pemilik scope. Tulis satu kalimat pendek dan faktual, bukan salinan percakapan. Satu fakta cukup disimpan sekali per giliran: jika kamu sudah menyimpannya di langkah sebelumnya, jangan menulis ulang walau ingin memperbaiki kalimatnya.",
   inputSchema: objectSchema({
     kind: {
       type: "string",

@@ -16,44 +16,89 @@ mana pun di bawah:
 - `npx tsx scripts/ukur-batas-giliran.ts` — distribusi latensi classifier batas
   giliran tanpa timeout produksi yang mengikat.
 
-Yang tertutup pada putaran ini: gerbang intent `history` terbukti end-to-end di
-Telegram nyata (`agent: tools, capability history.search`); pintu bahasa alami
-`coding/show` terbukti menyala; run agent yang berhasil kini meninggalkan jejak
-`agent_run_completed`; batas giliran sudah diukur dan diputuskan.
+Putaran 29 Agustus sore, diverifikasi sesi Telegram nyata **7/7 lulus**:
+
+- Pagar wiring capability tanpa schema berjalan di composition root.
+- `task/cancel` punya pintu bahasa alami. Terbukti live: Harvy meminta
+  konfirmasi sebelum menghapus dan menawarkan "tandai selesai" sebagai
+  alternatif yang tidak menghilangkan riwayat.
+- Ambang otorisasi permukaan bertingkat menurut akibat, bukan seragam.
+- `memory.list` dan `memory.remember` terbukti dipanggil model nyata, dan
+  penyangkalan palsu "belum ada catatan" hilang.
+- Aturan gagal-aman untuk pengumpulan bukti tercatat di `AGENTS.md`.
+
+Yang diukur dan **tidak** menghasilkan perbaikan ada di butir 1: dua percobaan
+menaikkan ketepatan `history.search` belum terbukti membantu.
 
 ## 1. Ketepatan isi `history.search` belum stabil
 
 Tool-nya terbukti dipanggil di probe maupun kanal nyata; yang belum terbukti
-adalah isinya benar. Dari lima run probe dengan pertanyaan sama: dua menyebut
-klaim `unresolved` yang tepat, dua menjawab jujur bahwa hasilnya tidak
-memuatnya, satu menjahit klaim dari dua episode berbeda menjadi satu ingatan
-yang tidak pernah terjadi.
+adalah isinya benar. Dua percobaan perbaikan sudah dilakukan dan **keduanya
+belum terbukti membantu**:
+
+1. Dua peringatan ditambahkan ke deskripsi tool (sertakan kata pengguna; jangan
+   gabungkan klaim lintas episode). Pengukuran sesudahnya: 1 dari 3 run
+   menyebut klaim `unresolved` yang tepat.
+2. `MAX_CLAIMS_PER_MATCH` disamakan dengan
+   `HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT` (4 → 6), karena executor memotong
+   lebih agresif daripada pencariannya sendiri dan klaim yang dicari jatuh di
+   urutan keempat ke bawah. Pengukuran sesudahnya: 1 tepat, 1 meleset, 1 tidak
+   terbaca.
+
+Dengan n=3 dan varians setinggi ini, tidak satu pun angka di atas boleh disebut
+perbaikan. Yang konsisten di seluruh pengukuran hanya dua hal: `history.search`
+selalu terpanggil, dan Harvy tidak pernah mengarang ketika tidak menemukan.
 
 Sebabnya struktural. `searchConversationEpisodes` memberi peringkat leksikal
 atas teks klaim, jadi query yang hanya memuat topik mengembalikan topik, fakta,
-dan penanda waktu — sementara klaim `unresolved` yang justru ditanyakan berada
-di luar empat klaim teratas. Query yang memuat kata pengguna sendiri
-("belum jelas") mengambilnya.
+dan penanda waktu — sementara klaim `unresolved` yang justru ditanyakan tidak
+naik. Query yang memuat kata pengguna sendiri ("belum jelas") mengambilnya.
 
-Dua peringatan sudah ditambahkan ke deskripsi tool. **Efeknya belum diukur
-ulang.** Ukur dulu sebelum menambah mekanisme; bila belum cukup, langkah
-berikutnya memberi bobot pada field yang cocok dengan bentuk pertanyaan, bukan
-menambah pass model kedua.
+Langkah berikutnya yang benar-benar mengubah mekanisme, bukan menambah
+peringatan: memberi bobot pada field yang cocok dengan bentuk pertanyaan.
+Pertanyaan tentang hal yang menggantung menaikkan `unresolved` dan
+`uncertainties`; pertanyaan tentang keputusan menaikkan `decisions`. Ukur
+dengan ulangan minimal 10 sebelum menyimpulkan apa pun—tiga run tidak cukup
+untuk membedakan perbaikan dari keberuntungan.
 
-## 2. Capability tanpa schema mematikan seluruh run, dan gejalanya menyamar
+## 1b. Kosakata internal bocor meski ada aturan prompt yang melarangnya
 
-`agentNativeTools` melempar begitu satu capability callable tidak punya
-`nativeTool`, lemparan itu terjadi di dalam planner, dan `abortReason`
-menamainya `invalid_planner_output`. Akibatnya setiap giliran agent di proses
-itu berhenti pada langkah pertama — selamanya, karena penyebabnya tidak berlalu
-sendiri.
+`AGENT_PLANNER_SHARED` memuat aturan eksplisit: "jangan menyebut episode,
+klaim, record, field, query, hasil pencarian, atau nama tool di jawabanmu."
+Aturan itu **tidak dipatuhi**. Dari lima jawaban recall terakhir, tiga memakai
+kata "episode" secara harfiah ("ketemu episode dari 14 Agustus", "nemu dua
+episode").
 
-Seluruh executor di `src/agent/` membawa schema, jadi ini bukan cacat produksi
-hari ini. Yang belum ada adalah pagar yang membuatnya tidak bisa terulang.
-Pemeriksaan di `executorMap` akan menangkapnya sebelum panggilan model mana pun,
-tetapi ia menolak juga executor fixture yang sah: puluhan tes memakai executor
-tanpa schema bersama planner stub. Pagar yang benar harus memakai irisan
-installed dan executor, bukan daftar executor saja.
+Aturan prompt yang tidak berlaku lebih buruk daripada tidak ada aturan: ia
+membuat pembaca kode mengira masalahnya sudah tertutup. Dua arah yang masuk
+akal, dan keduanya belum dicoba:
+
+- Hilangkan sumbernya. Hasil tool memuat `episodeId` dan
+  `kind: "history.search.result"`; model mencontoh kosakata yang dilihatnya.
+  Menamai field hasil dengan istilah netral menghapus contohnya, bukan sekadar
+  melarangnya.
+- Ukur dulu apakah aturannya memang tidak sampai. Aturan itu ada di
+  `AGENT_PLANNER_SHARED`, yang dipakai kedua kontrak; pastikan ia benar-benar
+  ikut terkirim pada giliran recall sebelum menyalahkan kepatuhan model.
+
+## 2. Capability tanpa schema: pagarnya sudah ada
+
+`assertCallableCapabilitySchemas` menolak capability yang terpasang tetapi
+executornya tanpa schema native, dipanggil dari composition root di
+`src/app.ts`. Kesalahan wiring kini terlihat saat proses dinyalakan, bukan pada
+pesan pertama pengguna.
+
+Pemeriksaannya memakai irisan terpasang dan executor, bukan daftar executor
+saja: executor untuk capability yang tidak dipasang tidak pernah ditawarkan ke
+planner, jadi menuntut schema darinya akan menolak fixture yang sah. Lima tes
+mengunci keduanya.
+
+Yang tersisa dan sengaja tidak dikerjakan: lemparan di dalam
+`agentNativeTools` masih dinamai `invalid_planner_output` oleh `abortReason`.
+Menamainya sendiri berarti menambah alasan penghentian baru beserta copy-nya,
+padahal pagar composition root membuat kelas ini tidak lagi sampai ke pengguna
+pada deployment yang sehat. Kerjakan hanya bila kelas ini pernah muncul lagi di
+produksi.
 
 ## 3. Anggaran run `orchestrate` foreground terlalu ketat untuk delegasi paralel
 
@@ -67,40 +112,105 @@ AgentRun latar lewat `requiresAgentPlanning`, sedangkan probe memanggil
 permintaan nyata yang lolos ke jalur foreground tetapi membutuhkan delegasi
 paralel; bila ada, yang salah gerbangnya, bukan anggarannya.
 
-## 4. `memory.list` dan `memory.remember` belum pernah terpanggil
+## 4. `memory.list` dan `memory.remember`: terbukti dipanggil
 
-Sesi Telegram nyata menjawab sebagian pertanyaannya: "apa aja yang kamu inget
-tentang aku?" dijawab dalam 4,6 detik oleh kartu memori deterministik dengan
-`intent: memory`, `route: memory-control`, `agent: tidak dipakai`.
-`immediateUnderstandingRoute` menangkapnya sebagai kontrol memori sebelum
-gerbang agent dinilai.
+Keduanya punya bukti model nyata sejak 29 Agustus 2026, diukur dengan
+`scripts/probe-chat.ts --catatan-sintetis` di atas korpus tiga catatan.
 
-Perilakunya benar dan murah, jadi bukan regresi. Tetapi ia membatalkan asumsi
-lama: membuka intent `memory` pada gerbang agent tidak dengan sendirinya membuat
-`memory.list` terpakai, karena frasa paling alami untuk memori sudah punya jalur
-deterministik yang lebih cepat.
+Rantai lengkap terekam: `memory.list` → `memory.remember` → `task.list_active`
+→ final, lima langkah, `completed`, dan jadwal yang dihasilkan memakai isi
+catatan dengan benar (blok 20 menit, pagi sebelum jam tujuh).
 
-Untuk benar-benar mengukur keduanya, cari frasa yang **tidak** lolos
-`memoryControlAuthorized` tetapi tetap membutuhkan isi catatan — kemungkinan
-besar di tengah pekerjaan multi-langkah, bukan sebagai pertanyaan pembuka.
-Catatan: `memory.remember` memakai `confirmation: "contextual"`, jadi hasil yang
-diharapkan mungkin `needs_approval`, bukan `completed`.
+Yang menutup jalannya ternyata bukan kontrol memori deterministik melainkan
+`toolNeed`, dan sebabnya sama persis di dua tempat: **catatan tersimpan tidak
+disebut sebagai state.** Prompt ekstraksi hanya menyebut tugas, agenda, sesi,
+pengingat, waktu, dan pengaturan; prompt planner hanya menyebut tugas, agenda,
+waktu, dan pengingat. Keduanya sudah diperbaiki, dan efeknya terukur:
 
-## 5. Permukaan slash WhatsApp: yang belum dikerjakan
+| frasa "sesuaikan sama cara belajarku yang biasanya" | sebelum | sesudah |
+|---|---|---|
+| `toolNeed` internal_state | 0 dari 1 | 3 dari 3 |
+| mencapai Agent Runtime | tidak | 3 dari 3 |
+| `memory.list` terpanggil | — | 2 dari 3 |
+| menyangkal punya catatan | 1 dari 3 | 0 dari 3 |
 
-Pemangkasan 29 menjadi 12 bersifat presentasi. Yang belum:
+Penyangkalan palsu itu yang paling merugikan dan sudah hilang: giliran yang
+tidak memanggil tool kini tidak lagi mengklaim catatannya tidak ada. Aturannya
+ditambahkan ke prompt planner—menyatakan state kosong juga tebakan bila tool
+pembacanya belum dipanggil.
 
-- `batalkan-tugas` dan `checkin` tetap ditampilkan **karena tidak punya pintu
-  bahasa alami**, bukan karena keduanya layak jadi slash. `DOMAIN_OPERATIONS`
-  tidak punya `task/cancel` maupun operasi penjadwalan check-in. Menambahkan
-  keduanya akan menurunkan permukaan menjadi 10 sekaligus menghapus satu-satunya
-  jalur yang menuntut ID task disalin manual.
-- Pola balasan bernomor yang pernah diusulkan tidak dikerjakan. Ia memerlukan
-  state per pengguna, pemetaan nomor ke aksi, dan kedaluwarsa — fitur
-  tersendiri, bukan perapian permukaan.
-- Belum ada padanan `uji:telegram` untuk WhatsApp. Kejadian surface WhatsApp
-  punya bentuk sendiri, tetapi penyatuan bukti dan penilaiannya dapat dipakai
-  ulang apa adanya.
+Yang tersisa: `memory.list` masih terlewat pada sebagian run meski tool-nya
+tersedia dan aturannya ada. n masih kecil; ukur dengan ulangan lebih banyak
+sebelum menambah mekanisme.
+
+## 4b. Duplikat catatan durable: diperbaiki, penyebab dalamnya tetap ada
+
+Terekam sekali: planner memanggil `memory.remember` pada langkah 1 dan 2 untuk
+fakta yang sama, tampaknya memperbaiki kata yang keliru pada tulisan pertama,
+dan keduanya mendarat. Salah satunya bahkan memuat aksara Mandarin di tengah
+kalimat Indonesia ("kondisi安静"), tersimpan permanen dan terlihat pengguna.
+
+Deskripsi tool kini melarang menulis ulang fakta yang sudah disimpan pada
+giliran yang sama. Pengukuran sesudahnya: 3 run, `memory.remember` terpanggil
+sekali di dua di antaranya, jumlah catatan 3 → 4, tidak pernah 5.
+
+Penyebab dalamnya tetap ada dan tidak ditambal: dedupe `MemoryService`
+(`src/core/memory-service.ts:63`) hanya membandingkan `content.toLowerCase()`
+persis, jadi dua kalimat berbeda satu kata tetap lolos berdua. Menormalkan
+tanda baca tidak akan menolong—kedua kalimatnya memang berbeda kata. Perbaikan
+yang benar memerlukan pembandingan makna, dan rute memori semantik mati karena
+tidak ada model embedding.
+
+Aksara asing yang bocor sengaja **tidak** ditambal penyaring charset: pengguna
+Indonesia sah mengutip aksara lain, dan menolaknya akan membuang isi yang
+benar. Ukur frekuensinya dulu.
+
+## 4c. Probe melaporkan kandidat auto-memory, belum memprosesnya
+
+`scripts/probe-chat.ts` kini mencetak `kandidatMemori` dan `catatanTersimpan`
+di diagnostiknya. Sebelumnya kandidat dari `understand()` diabaikan diam-diam,
+dan itu sempat menyesatkan: giliran yang membalas "Catat dulu biar konsisten"
+tanpa perubahan jumlah catatan tampak seperti klaim menyimpan yang palsu,
+padahal jalur yang menyimpannya—pipa auto-memory adapter—memang absen dari
+probe.
+
+Probe tetap **tidak** memprosesnya, dan itu disengaja. Adapter Telegram punya
+derivasi metadata, gerbang consent, penolakan rahasia, dan resolusi konflik
+dengan retraction (`src/bot/create-bot.ts:3164`, `:3197`, `:5749`). Meniru
+separuhnya akan membuat probe menyimpan hal yang produksi tolak—salah dengan
+cara yang lebih sulit dilihat daripada tidak menyimpan sama sekali.
+
+Menirunya utuh tetap terbuka, dan wajib dikerjakan sebelum probe dipakai
+menilai klaim "sudah kucatat". Adapter tetap authority; probe yang mengikuti.
+
+## 5. Permukaan slash WhatsApp: 29 dijalankan, 11 ditampilkan
+
+`task/cancel` kini ada di closed set dan dikenali `requestsUnhandledTaskChange`,
+sehingga "batalin aja tugas biologi itu" punya pintu bahasa alami.
+`/batalkan-tugas` ditandai `fallback`: masih dijalankan, tidak lagi memenuhi
+layar. Itu menghapus satu-satunya perintah tersisa yang menuntut pengguna
+menyalin ID task dari daftar.
+
+Pembatalan tidak diberi route deterministik. Ia selalu "belum tertangani",
+jadi satu-satunya jalur adalah Agent Runtime, tempat `task.manage` menuntut
+konfirmasi kontekstual. Gerbang bentuk intent ikut diperbaiki supaya sinyal itu
+dapat membukanya: sebelumnya `unhandledTaskChange` dihitung **sesudah** gerbang,
+sehingga intent `task` selalu ditolak lebih dulu dan sinyal tersebut tidak
+terjangkau persis pada bentuk giliran yang melahirkannya.
+
+**Keputusan: `/checkin` tetap sebagai slash.** Ia hanya bekerja di dalam sesi
+aktif, dan pada konteks itu tombol `schedule_checkin` sudah tersedia. Memberinya
+pintu bahasa alami berarti menambah nilai enum operasi baru, aturan prompt,
+jalur di dua adapter, dan tes—demi menghapus satu baris dari daftar 11.
+Nilainya tidak sepadan.
+
+Yang belum, dan tetap terbuka:
+
+- Pola balasan bernomor. Ia memerlukan state per pengguna, pemetaan nomor ke
+  aksi, dan kedaluwarsa — fitur tersendiri, bukan perapian permukaan.
+- Padanan `uji:telegram` untuk WhatsApp. Kejadian surface WhatsApp punya bentuk
+  sendiri, tetapi penyatuan bukti dan penilaiannya dapat dipakai ulang apa
+  adanya.
 
 ## 6. Mutu review artefak kode: lima kasus, semua lulus
 
@@ -114,7 +224,7 @@ yang draft pertamanya memang sering salah — rekursi dengan kasus dasar meleset
 aritmetika tanggal melewati batas bulan, atau perbandingan float — dan idealnya
 satu run pembanding dengan langkah review dimatikan.
 
-## 7. Batas giliran 2 detik: sudah diukur, angkanya tetap
+## 7. Batas giliran 2 detik: diukur, angkanya tetap, frekuensinya lebih buruk dari dugaan
 
 `npx tsx scripts/ukur-batas-giliran.ts --ulang=3`, 24 pengukuran pada
 MiniMax-M3, tanpa timeout produksi yang mengikat:
@@ -131,41 +241,50 @@ Nol error, nol bentuk salah: model selalu menjawab benar bila diberi waktu.
 kerumitan prompt — kalimat terpendek ("halo") mencatat 2.013 / 9.416 / 9.228ms
 pada tiga ulangan berturut-turut. Itu variance provider.
 
+**Di runtime nyata, angkanya jauh lebih buruk.** Sesi Telegram 29 Agustus
+mencatat `turn_boundary_check_failed` pada **5 dari 7 giliran**, bukan 29%.
+Pengukuran terisolasi tidak menanggung beban runtime yang sedang melayani
+giliran; angka 29% itu batas bawah, bukan perkiraan.
+
 **Keputusan: `TURN_BOUNDARY_TIMEOUT_MS` tetap 2.000ms.** Hasil assessment
 menentukan `waitMs` sebelum giliran dijadwalkan, jadi timeout ini ada di jalur
 kritis: menaikkannya ke p90 berarti menambah sampai 9 detik mati sebelum Harvy
-mulai berpikir, demi sebuah *petunjuk* penggabungan bubble. Ekor 6–12 detik juga
-tidak dapat ditangkap timeout mana pun yang masih layak. Fallback yang ada
+mulai berpikir, demi sebuah *petunjuk* penggabungan bubble. Ekor 6–12 detik
+juga tidak tertangkap timeout mana pun yang masih layak. Fallback yang ada
 (`open`, confidence 0, continuationLikelihood 0,65) adalah perilaku yang benar.
 
-Yang masih terbuka, dan lebih besar daripada satu konstanta: 29% giliran
-ambigu membayar satu request penuh yang hasilnya dibuang, lalu tetap menunggu
+Yang terbuka, dan lebih besar daripada satu konstanta: pada mayoritas giliran,
+Harvy membayar satu request penuh yang hasilnya dibuang lalu tetap menunggu
 2 detik. Memperbaikinya berarti berhenti memblokir penjadwalan pada petunjuk
 ini—menjadwalkan dengan default lalu memperbaiki bila jawabannya keburu
 datang—dan itu perubahan pada batcher, bukan pada angka. Jangan naikkan
 konstantanya; datanya sudah menunjukkan itu bukan jalan keluarnya.
 
-## 8. Usulan extractor untuk frasa status coding belum stabil
+Catatan biaya: 5 dari 7 giliran membuang satu panggilan model tier `cheap`.
+Bila jalur ini dipertahankan apa adanya, itu tagihan tetap tanpa manfaat pada
+mayoritas giliran.
 
-Pintu bahasa alaminya bekerja: satu run mencatat `semantic_route_selected`
-dengan `semanticDomain: "coding"`, `semanticOperation: "show"`, confidence
-`high`, dan Harvy menjawab lewat jalur itu. Run berikutnya pada kalimat yang
-sama tidak mengusulkan operasi apa pun, masuk Agent Runtime, dan memanggil
-`task.list_active`.
+## 8. Ambang otorisasi kini bertingkat menurut akibat
 
-Kalimat yang lebih pendek lebih buruk lagi: "gimana status coding-nya sekarang?"
-terukur `data`/`show-controls` pada confidence rendah — extractor menyamakan
-kata "status" dengan pusat kontrol data.
+Diagnosis lama—"usulan extractor berayun"—ternyata tidak tepat. Pengukuran
+29 Agustus dengan `coba-pemahaman.ts`, tiga ulangan per frasa:
 
-Langkah berikutnya menjalankan `scripts/coba-pemahaman.ts` pada beberapa frasa
-status coding dengan pengulangan, seperti yang dilakukan untuk
-`no-physical-claim`, lalu memperbaiki **aturan prompt**-nya. Jangan menurunkan
-ambang 0,85: ambang itu yang menjaga mutasi tidak dipicu label lemah, dan
-masalahnya di sini bukan ambang melainkan usulan yang berayun.
+| frasa | domain/operasi | confidence |
+|---|---|---|
+| "gimana status pekerjaan coding yang lagi jalan?" | `coding/show` 3/3 | 0,90 · 0,95 · 0,95 |
+| "gimana status coding-nya sekarang?" | `coding/show` 3/3 | 0,60 · 0,90 · 0,82 |
 
-Kasus `status-coding` di `scripts/live-telegram-cases.ts` sengaja hanya mengunci
-bagian yang tidak boleh berayun—jawaban tidak mengarang pekerjaan coding yang
-sedang berjalan—supaya harness tidak menjadi merah permanen dan berhenti dibaca.
+Domainnya tidak pernah salah. Yang berayun confidence-nya, dan ambang seragam
+0,85 memotongnya di tengah: frasa pendek hanya lolos 1 dari 3, sehingga
+pengguna mendapat jawaban berbeda untuk kalimat yang sama.
+
+`naturalSurfaceAuthorized` kini memakai 0,70 untuk operasi baca (`show`,
+`list`) dan tetap 0,85 untuk yang mengubah state. Ambang bertingkat sudah
+menjadi pola di repositori ini—pembacaan daftar task 0,85, penyelesaiannya
+0,90—dan alasannya sama: yang salah membaca kehilangan satu pembacaan, yang
+salah menulis mengubah data pengguna.
+
+Belum diukur ulang di kanal nyata sesudah perubahan ini.
 
 ## 9. Pemeriksaan live: yang masih kurang
 
@@ -181,25 +300,29 @@ sedang berjalan—supaya harness tidak menjadi merah permanen dan berhenti dibac
 - Belum dijalankan berulang. Sesi tunggal tidak membedakan lulus yang stabil
   dari lulus yang kebetulan; butir 8 lahir persis dari selisih antar-run.
 
-## 10. Dua sinyal mutu yang baru terlihat lewat harness
+## 10. Tiga sinyal mutu dengan frekuensi, bukan lagi anekdot
 
-Keduanya muncul di kolom `masalah` sesi 6/6 lulus, jadi tidak satu pun
-menggagalkan giliran. Dicatat karena baru terlihat setelah log runtime ikut
-dibaca, bukan karena sudah dinilai penting.
+Ketiganya muncul di kolom `masalah` pada sesi yang **7/7 lulus**, jadi tidak
+satu pun menggagalkan giliran. Yang berubah sejak pencatatan pertama: sekarang
+ada angkanya.
 
-- `operation_presentation_invalid` pada giliran simpan task: copy presentasi
-  dari model tidak lolos `parseOperationPresentation`, lalu fallback
-  deterministik dipakai. Pengguna tetap menerima kartu task yang benar, jadi
-  degradasinya anggun. Yang belum diketahui frekuensinya: satu kejadian dalam
-  satu sesi bukan angka. Hitung dulu lewat beberapa run `npm run uji:telegram`
-  sebelum menyentuh prompt presentasinya.
-- Latensi basa-basi 31 detik untuk "makasih ya, kamu ngebantu banget". Sebagian
-  memang anggaran desain—jendela batch sekitar 7 detik plus 2 detik batas
-  giliran yang habis waktu—tetapi sisanya belum dijelaskan. `maxLatencyMs`
-  sudah tersedia di kontrak kasus dan belum dipakai; memasangnya pada kasus
-  basa-basi akan mengubah ini dari pengamatan menjadi pagar.
+- **`operation_presentation_invalid`, 2 dari 7 giliran.** Copy presentasi dari
+  model tidak lolos `parseOperationPresentation`, lalu fallback deterministik
+  dipakai. Pengguna tetap menerima kartu task yang benar, jadi degradasinya
+  anggun. Keduanya terjadi pada giliran task (simpan dan baca), bukan tersebar
+  acak — itu petunjuk pertama tentang di mana harus mencari.
+- **`agent_tool_shape_repair`, 1 dari 7.** Bentuk tool call perlu diperbaiki
+  sekali sebelum diterima, pada giliran recall. Mekanisme perbaikannya bekerja;
+  yang belum diketahui apakah kelas ini sering pada tool tertentu.
+- **Latensi.** Basa-basi 16,6 detik pada sesi ini, di bawah pagar 40 detik yang
+  kini terpasang di `scripts/live-telegram-cases.ts`. Pengamatan 31 detik yang
+  memicu pemasangan pagar itu belum terulang.
 
-## 11. Observability pernah menjatuhkan giliran; pagarnya baru satu
+Langkah berikutnya untuk ketiganya sama: jalankan `npm run uji:telegram`
+beberapa kali dan hitung. Tiga sampel dari satu sesi belum cukup untuk
+membedakan cacat dari variance.
+
+## 11. Observability pernah menjatuhkan giliran
 
 `agentRunLogFields` versi pertama melakukan iterasi langsung atas
 `result.trace`. Tipe hasil run memang selalu membawanya, jadi `npm run check`
@@ -208,10 +331,9 @@ di jalur giliran pengguna, dan satu hasil `needs_input` tanpa jejak melempar
 `TypeError`: checkpoint tidak tersimpan dan pengguna kehilangan pertanyaan
 lanjutannya. `tests/create-bot-flow.test.ts` yang menangkapnya.
 
-Sudah diperbaiki dan dikunci tes. Yang belum: tidak ada aturan yang mencegah
-pemanggil log berikutnya mengulang bentuk kesalahan yang sama. Setiap
-pengumpulan bukti yang berjalan di dalam giliran—bukan sesudahnya—wajib gagal
-aman terhadap bentuk hasil yang tidak lengkap.
+Sudah diperbaiki, dikunci tes, dan aturannya kini tercatat di bagian jebakan
+`AGENTS.md`: pengumpulan bukti yang berjalan di dalam giliran wajib gagal aman
+terhadap bentuk hasil yang tidak lengkap.
 
 Dua pelajaran yang layak dicatat karena keduanya berbiaya waktu:
 

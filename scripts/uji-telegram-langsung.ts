@@ -46,6 +46,16 @@ const CONSENT_LABEL = "Okei, mulai.";
  * mengubah state apa pun.
  */
 const CONSENT_SURFACE_CANDIDATES = ["surface-2", "surface-3", "surface-4"];
+/**
+ * Batas perintah per sesi tester (`MAX_SCRIPTED_COMMANDS`).
+ *
+ * Dilampaui tanpa sadar begitu kasus ketujuh ditambahkan: onboarding plus tujuh
+ * kasus menghasilkan 34 perintah, tester keluar dengan kode 2 sebelum satu
+ * kejadian pun terkirim, dan satu-satunya pesan yang muncul adalah "tester
+ * keluar dengan kode 2". Onboarding kini berjalan sebagai sesi tersendiri
+ * supaya sesi kasus tidak ikut membawanya, dan batas ini dijaga eksplisit.
+ */
+const MAX_TESTER_COMMANDS = 32;
 
 interface TesterEvent {
   type: string;
@@ -89,7 +99,33 @@ interface CommandPlan {
   caseBySequence: (string | null)[];
 }
 
-function buildCommands(cases: readonly LiveTelegramCase[]): CommandPlan {
+/**
+ * Sesi pertama: menyetujui izin AI pada journey baru.
+ *
+ * Journey baru menahan seluruh pesan sampai izin disetujui, dan alias bubble
+ * pembawa tombol tidak dapat dicabang di tengah run karena semua perintah
+ * dimuat sekaligus. Kandidatnya dicoba berurutan; klik yang salah sasaran
+ * ditolak transport tanpa mengubah state apa pun.
+ */
+function buildOnboardingCommands(): string[] {
+  const lines: string[] = [
+    JSON.stringify({ type: "send", text: "halo" }),
+    JSON.stringify({ type: "wait", ms: 25_000 }),
+    JSON.stringify({ type: "settle" }),
+  ];
+  for (const surface of CONSENT_SURFACE_CANDIDATES) {
+    lines.push(
+      JSON.stringify({ type: "click", surface, label: CONSENT_LABEL }),
+      JSON.stringify({ type: "wait", ms: 6_000 }),
+      JSON.stringify({ type: "settle" }),
+    );
+  }
+  lines.push(JSON.stringify({ type: "stop" }));
+  return lines;
+}
+
+/** Sesi kedua: hanya kasus, pada journey yang izinnya sudah tersetujui. */
+function buildCaseCommands(cases: readonly LiveTelegramCase[]): CommandPlan {
   const lines: string[] = [];
   // Indeks 0 tidak terpakai: `commandSequence` milik tester dimulai dari 1.
   const caseBySequence: (string | null)[] = [null];
@@ -97,14 +133,6 @@ function buildCommands(cases: readonly LiveTelegramCase[]): CommandPlan {
     lines.push(JSON.stringify(command));
     caseBySequence.push(caseId);
   };
-  push({ type: "send", text: "halo" }, null);
-  push({ type: "wait", ms: 25_000 }, null);
-  push({ type: "settle" }, null);
-  for (const surface of CONSENT_SURFACE_CANDIDATES) {
-    push({ type: "click", surface, label: CONSENT_LABEL }, null);
-    push({ type: "wait", ms: 6_000 }, null);
-    push({ type: "settle" }, null);
-  }
   for (const testCase of cases) {
     push({ type: "send", text: testCase.message }, testCase.id);
     push({ type: "wait", ms: testCase.waitMs ?? 45_000 }, null);
@@ -393,7 +421,23 @@ async function main(): Promise<void> {
   console.error(`journey : ${journey}`);
   console.error(`kasus   : ${cases.length}`);
 
-  const plan = buildCommands(cases);
+  const plan = buildCaseCommands(cases);
+  if (plan.lines.length > MAX_TESTER_COMMANDS) {
+    const maxCases = Math.floor((MAX_TESTER_COMMANDS - 1) / 3);
+    console.error(
+      `Terlalu banyak perintah: ${plan.lines.length} melewati batas ` +
+        `${MAX_TESTER_COMMANDS}. Jalankan paling banyak ${maxCases} kasus per ` +
+        "sesi, atau pilih sebagiannya dengan --kasus=.",
+    );
+    process.exit(2);
+  }
+
+  // Onboarding dijalankan sebagai sesi tersendiri pada journey yang sama.
+  // Menyatukannya dengan kasus pernah melewati batas perintah tester tanpa
+  // pesan yang dapat dibaca, dan ia juga membatasi berapa kasus yang muat.
+  console.error("fase 1: menyetujui izin AI");
+  await runTester(journey, buildOnboardingCommands());
+  console.error("fase 2: menjalankan kasus");
   const events = await runTester(journey, plan.lines);
   const records = readRuntimeLog(journey);
   const turns = joinEvidence(events, records, plan.caseBySequence);

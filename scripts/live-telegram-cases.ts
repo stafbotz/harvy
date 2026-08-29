@@ -112,6 +112,22 @@ export const LIVE_TELEGRAM_CASES: readonly LiveTelegramCase[] = [
     },
   },
   {
+    id: "batalkan-task-alami",
+    // `/batalkan-tugas <id>` adalah satu-satunya perintah tersisa yang menuntut
+    // pengguna menyalin ID dari daftar. Kalimat ini menguji padanan bahasa
+    // alaminya. Pembatalan tidak punya route deterministik, jadi ia wajib
+    // sampai ke Agent Runtime—tempat `task.manage` menuntut konfirmasi.
+    message: "batalin aja tugas biologi itu, nggak jadi aku kerjain",
+    waitMs: 60_000,
+    expect: {
+      semanticDomain: "task",
+      semanticOperation: "cancel",
+      // Menghapus tanpa menyebutkan apa yang dihapus adalah kegagalan yang
+      // paling mahal di sini: pengguna tidak punya cara tahu apa yang hilang.
+      replyMatches: [/biologi/iu],
+    },
+  },
+  {
     id: "obrolan-biasa",
     message: "makasih ya, kamu ngebantu banget",
     expect: {
@@ -120,6 +136,11 @@ export const LIVE_TELEGRAM_CASES: readonly LiveTelegramCase[] = [
       // Basa-basi tidak boleh menaikkan biaya menjadi loop planner.
       agentUsed: false,
       replyForbids: [/tugas aktif/iu],
+      // Sesi 29 Agustus mencatat 31 detik untuk kalimat ini. Sebagian memang
+      // anggaran desain—jendela batch sekitar 7 detik plus 2 detik batas
+      // giliran—tetapi sisanya tidak dijelaskan. Angka ini mengubah pengamatan
+      // itu menjadi pagar; bila terlampaui, yang salah bukan harness-nya.
+      maxLatencyMs: 40_000,
     },
   },
 ];

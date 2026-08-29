@@ -65,6 +65,7 @@ import {
   createSyntheticHistorySearch,
   createSyntheticMemoryStore,
   SYNTHETIC_EPISODES,
+  SYNTHETIC_NOTES,
 } from "./synthetic-recall.js";
 import { VirtualTerminalExecutor } from "../src/agent/virtual-terminal.js";
 import { AgentHarness } from "../src/harness/agent-harness.js";
@@ -161,9 +162,12 @@ function reportTokenCost(): void {
 const sessionPath = argument("--session=") ?? ".probe-chat-session.json";
 const message = argument("--message=");
 const seedEpisodes = process.argv.includes("--riwayat-sintetis");
+// Tanpa catatan, `memory.list` selalu mengembalikan kosong dan pemanggilannya
+// tidak dapat dibedakan dari tidak dipanggil sama sekali.
+const seedNotes = process.argv.includes("--catatan-sintetis");
 if (!message) {
   console.error(
-    'Pakai: tsx scripts/probe-chat.ts --message="..." [--session=berkas.json] [--riwayat-sintetis]',
+    'Pakai: tsx scripts/probe-chat.ts --message="..." [--session=berkas.json] [--riwayat-sintetis] [--catatan-sintetis]',
   );
   process.exit(2);
 }
@@ -177,6 +181,12 @@ async function main(text: string, statePath: string): Promise<void> {
     state.episodes = [...SYNTHETIC_EPISODES];
     console.error(
       `riwayat : ${state.episodes.length} episode sintetis dimuat (bukan data pengguna)`,
+    );
+  }
+  if (seedNotes && state.notes.length === 0) {
+    state.notes = [...SYNTHETIC_NOTES];
+    console.error(
+      `catatan: ${state.notes.length} catatan sintetis dimuat (bukan data pengguna)`,
     );
   }
   const config = loadConfig();
@@ -531,6 +541,18 @@ async function main(text: string, statePath: string): Promise<void> {
       pakaiAgent: useAgent,
       runStatus,
       jejak,
+      // Kandidat auto-memory dari `understand()`. Probe **tidak** memprosesnya:
+      // adapter Telegram punya pipa tersendiri (derivasi metadata, gerbang
+      // consent, penolakan rahasia, konflik dengan retraction) yang tidak
+      // ditiru di sini. Melaporkannya menghindari kesimpulan yang keliru—
+      // giliran yang membalas "sudah kucatat" tanpa perubahan jumlah catatan
+      // tampak seperti klaim palsu, padahal yang menyimpannya jalur yang
+      // memang absen dari probe.
+      kandidatMemori: (understanding.memories ?? []).map((memory) => ({
+        kind: memory.kind,
+        content: memory.content,
+      })),
+      catatanTersimpan: state.notes.length,
       toolNeed: understanding.routingAssessment?.toolNeed ?? null,
       confidence: understanding.routingAssessment?.confidence ?? null,
       unhandledTaskChange,

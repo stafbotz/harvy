@@ -127,7 +127,8 @@ import { installProcessDiagnostics } from "./observability/process-diagnostics.j
 import {
   AgentHarness,
 } from "./harness/agent-harness.js";
-import { createHarvyCapabilityCatalog } from "./harness/capabilities.js";
+import {
+  assertCallableCapabilitySchemas, createHarvyCapabilityCatalog } from "./harness/capabilities.js";
 import {
   groupScopeKey,
   type GroupMessage,
@@ -350,14 +351,21 @@ const agentExecutors = [
 ];
 // Satu registry tepercaya dipakai semua kanal. Capability hanya tersedia bila
 // executor dan dependency yang cocok benar-benar dipasang.
+const agentCapabilityCatalog = createHarvyCapabilityCatalog({
+  internalToolsInstalled: true,
+  recallToolsInstalled: true,
+  virtualTerminalInstalled: true,
+  parallelDelegationInstalled: specialistExecutor === null,
+  specialistDelegationInstalled: specialistExecutor !== null,
+});
+// Kesalahan wiring harus terlihat saat proses dinyalakan, bukan pada pesan
+// pertama pengguna. Satu capability terpasang tanpa schema native mematikan
+// seluruh run agent di proses ini sambil menyamar sebagai keluaran planner
+// yang tidak sah. Katalog yang diperiksa wajib katalog yang sama dengan yang
+// dipakai harness; dua salinan opsi akan berbeda diam-diam.
+assertCallableCapabilitySchemas(agentCapabilityCatalog, agentExecutors);
 const agentHarness = new AgentHarness(
-  createHarvyCapabilityCatalog({
-    internalToolsInstalled: true,
-    recallToolsInstalled: true,
-    virtualTerminalInstalled: true,
-    parallelDelegationInstalled: specialistExecutor === null,
-    specialistDelegationInstalled: specialistExecutor !== null,
-  }),
+  agentCapabilityCatalog,
   undefined,
   longTermMemory,
 );

@@ -84,8 +84,23 @@ export const AGENT_AUTO_PLANNER_PROMPT = [
   ...AGENT_PLANNER_SHARED,
   "Seluruh tool di bawah tersedia pada setiap giliran. Kamu yang memutuskan memakainya atau tidak.",
   "Bila pertanyaannya dapat dijawab dari pengetahuanmu dan konteks yang ada, jawab langsung dengan teks biasa tanpa memanggil function apa pun.",
-  "Panggil capability hanya ketika kamu benar-benar perlu membaca atau mengubah state pengguna, misalnya daftar tugas, agenda, waktu, atau pengingat.",
+  // Daftar contohnya sengaja menyebut catatan dan riwayat. Sampai 29 Agustus
+  // 2026 ia hanya menyebut tugas, agenda, waktu, dan pengingat, dan akibatnya
+  // terukur: pada "susunin rencana belajar, sesuaikan sama cara belajarku yang
+  // biasanya", planner masuk Agent Runtime dengan `memory.list` tersedia lalu
+  // menanyakan cara belajar itu kepada pengguna—padahal jawabannya sudah
+  // tersimpan. Model tidak menganggap catatan sebagai state karena tidak ada
+  // yang menyebutnya begitu.
+  "Panggil capability hanya ketika kamu benar-benar perlu membaca atau mengubah state pengguna, misalnya daftar tugas, agenda, waktu, pengingat, catatan yang sudah kamu simpan tentang dia, atau percakapan lama.",
+  "Sebelum menanyakan sesuatu tentang pengguna, periksa dulu apakah jawabannya sudah ada di state yang dapat kamu baca. Bertanya ulang tentang hal yang sudah kamu simpan membuatnya mengulang dirinya tanpa alasan.",
   "Jangan menebak state yang seharusnya dibaca lewat tool, dan jangan memanggil tool untuk hal yang sudah kamu ketahui.",
+  // Bentuk tebakan yang paling merugikan justru terlihat seperti kejujuran.
+  // Terukur 29 Agustus 2026: giliran yang meminta rencana "sesuai cara
+  // belajarku yang biasanya" masuk Agent Runtime dengan `memory.list`
+  // tersedia, tidak memanggilnya, lalu menjawab "belum ada catatan tentang
+  // cara belajarmu"—padahal tiga catatan tersimpan. Pengguna diberi tahu
+  // datanya tidak ada, bukan diberi tahu bahwa Harvy tidak memeriksanya.
+  "Menyatakan bahwa state-nya kosong juga tebakan bila kamu belum membacanya. Jangan bilang tidak ada catatan, tidak ada tugas, atau tidak ada riwayat sebelum tool yang membacanya benar-benar kamu panggil.",
   "Panggil paling banyak satu function pada satu langkah, dan jangan menulis nama tool sebagai teks biasa.",
   "Bila capability yang diperlukan tidak ada, katakan batasnya dengan jujur dalam teks biasa lalu tawarkan yang benar-benar bisa kamu lakukan.",
 ].join("\n");

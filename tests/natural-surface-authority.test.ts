@@ -7,6 +7,7 @@ import {
   type SemanticOperation,
   type SemanticOperationName,
 } from "../src/domain/semantic-operation.js";
+import { requestsUnhandledTaskChange } from "../src/core/action-policy.js";
 
 function proposal(
   draft: Partial<SemanticOperation> & {
@@ -96,6 +97,77 @@ describe("otorisasi permukaan bahasa alami", () => {
         `usulan lemah #${index + 1}`,
       );
     }
+  });
+
+  // `/batalkan-tugas <id>` adalah satu-satunya perintah tersisa yang menuntut
+  // pengguna menyalin ID dari daftar. `task/cancel` membuka padanan bahasa
+  // alaminya, tetapi tanpa memberi authority menghapus: route deterministik
+  // tidak menanganinya, jadi ia hanya boleh sampai ke Agent Runtime tempat
+  // `task.manage` menuntut konfirmasi kontekstual.
+  it("mengenali pembatalan task sebagai perubahan yang belum tertangani", () => {
+    assert.equal(
+      requestsUnhandledTaskChange(proposal({
+        domain: "task",
+        operation: "cancel",
+        evidence: "batalin tugas fisika",
+      })),
+      true,
+    );
+  });
+
+  it("tidak menaikkan usulan pembatalan yang lemah", () => {
+    for (const weak of [
+      proposal({ domain: "task", operation: "cancel", confidence: 0.5 }),
+      proposal({ domain: "task", operation: "cancel", explicitness: "implicit" }),
+      proposal({ domain: "task", operation: "cancel", subject: "other" }),
+    ]) {
+      assert.equal(requestsUnhandledTaskChange(weak), false);
+    }
+  });
+
+  // Ambang bertingkat menurut akibat, bukan seragam. Pengukuran 29 Agustus:
+  // "gimana status coding-nya sekarang?" mengembalikan `coding/show` di 3 dari
+  // 3 run, tetapi confidence-nya 0,60 / 0,90 / 0,82 terhadap ambang seragam
+  // 0,85 — pengguna mendapat jawaban berbeda untuk kalimat yang sama.
+  it("menerima pembacaan pada confidence sedang", () => {
+    assert.equal(
+      naturalSurfaceAuthorized("gimana status coding-nya sekarang?", proposal({
+        domain: "coding",
+        operation: "show",
+        evidence: "status coding",
+        confidence: 0.82,
+      })),
+      true,
+    );
+  });
+
+  // Yang mengubah data tetap di 0,85. Salah membaca kehilangan satu pembacaan;
+  // salah menulis mengubah data pengguna.
+  it("tidak menurunkan ambang untuk operasi yang mengubah state", () => {
+    for (const operation of ["cancel", "create", "set"] as const) {
+      assert.equal(
+        naturalSurfaceAuthorized("batalin coding dan bikin project baru", proposal({
+          domain: operation === "cancel" ? "coding" : "project",
+          operation: operation === "set" ? "create" : operation,
+          evidence: "batalin coding",
+          confidence: 0.82,
+        })),
+        false,
+        operation,
+      );
+    }
+  });
+
+  it("tetap menolak pembacaan di bawah ambang sedang", () => {
+    assert.equal(
+      naturalSurfaceAuthorized("gimana status coding-nya sekarang?", proposal({
+        domain: "coding",
+        operation: "show",
+        evidence: "status coding",
+        confidence: 0.6,
+      })),
+      false,
+    );
   });
 
   it("menjaga daftar operasi permukaan tetap eksplisit", () => {

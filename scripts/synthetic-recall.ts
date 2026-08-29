@@ -188,6 +188,46 @@ export function createSyntheticMemoryStore(
 }
 
 /**
+ * Catatan durable sintetis untuk mengukur `memory.list`.
+ *
+ * Tanpa isi, tool itu selalu mengembalikan kosong dan pemanggilannya tidak
+ * dapat dibedakan dari tidak dipanggil sama sekali. Isinya sengaja berupa
+ * preferensi cara belajar, bukan fakta yang dapat ditebak dari kalimat
+ * pengguna: kalau Harvy menyebutkannya, ia pasti membacanya dari sini.
+ *
+ * Seluruhnya karangan. Jangan menaruh catatan pengguna nyata di sini.
+ */
+export const SYNTHETIC_NOTES: readonly MemoryItem[] = [
+  {
+    id: "sintetis-catatan-1",
+    ownerId: "probe",
+    kind: "preference",
+    content: "Lebih paham kalau materi dipecah jadi potongan 20 menit, bukan satu sesi panjang",
+    createdAt: "2026-08-12T02:00:00.000Z",
+    lastUsedAt: null,
+    expiresAt: null,
+  },
+  {
+    id: "sintetis-catatan-2",
+    ownerId: "probe",
+    kind: "routine",
+    content: "Paling fokus belajar pagi sebelum jam tujuh, malam hampir selalu mengantuk",
+    createdAt: "2026-08-15T02:00:00.000Z",
+    lastUsedAt: null,
+    expiresAt: null,
+  },
+  {
+    id: "sintetis-catatan-3",
+    ownerId: "probe",
+    kind: "profile",
+    content: "Kelas sebelas IPA, mata pelajaran paling berat baginya kimia",
+    createdAt: "2026-08-18T02:00:00.000Z",
+    lastUsedAt: null,
+    expiresAt: null,
+  },
+];
+
+/**
  * Consent yang sudah selesai.
  *
  * Tool catatan gagal tertutup tanpa consent onboarding. Probe memakai profil

@@ -105,6 +105,20 @@ export class CapabilityCatalog {
     this.activeSurfaces = new Set(activeSurfaces);
   }
 
+  /**
+   * ID capability yang benar-benar terpasang, lepas dari scope.
+   *
+   * Snapshot menambahkan pagar ruang, kanal, dan permission; daftar ini hanya
+   * menjawab "apakah kemampuannya dipasang deployment ini". Itu yang diperlukan
+   * pemeriksaan wiring, karena schema native tidak boleh bergantung pada siapa
+   * yang kebetulan mengirim pesan.
+   */
+  installedIds(): readonly string[] {
+    return [...this.definitions.values()]
+      .filter((definition) => definition.installed)
+      .map((definition) => definition.id);
+  }
+
   snapshot(scope: AgentScope): CapabilitySnapshot {
     const entries = [...this.definitions.values()]
       .map((definition): CapabilitySnapshotEntry => {
@@ -196,6 +210,55 @@ export function capabilitySystemContext(
     "- Jika permintaan memerlukan kemampuan yang belum tersedia, katakan batasnya",
     "  dengan singkat lalu tawarkan bantuan yang memang bisa dilakukan sekarang.",
   ].join("\n");
+}
+
+/**
+ * Bentuk minimum executor yang diperlukan pemeriksaan ini.
+ *
+ * Sengaja struktural, bukan `AgentCapabilityExecutor`, supaya modul katalog
+ * tidak perlu mengimpor harness yang justru mengimpornya.
+ */
+export interface CapabilitySchemaCandidate {
+  capabilityId: string;
+  nativeTool?: unknown;
+}
+
+/**
+ * Menolak capability yang terpasang tetapi executornya tanpa schema native.
+ *
+ * Kombinasi itu mematikan **seluruh** run agent di proses tersebut pada langkah
+ * pertama: `agentNativeTools` melempar begitu satu capability callable tidak
+ * punya schema, lemparannya terjadi di dalam planner, dan `abortReason`
+ * menamainya `invalid_planner_output`. Pengguna diberi tahu Harvy gagal
+ * menyusun jawaban, operator mencari cacat parser yang tidak ada, dan
+ * penyebabnya tidak berlalu sendiri.
+ *
+ * Pemeriksaannya memakai irisan terpasang dan executor, bukan daftar executor
+ * saja. Executor untuk capability yang tidak dipasang tidak pernah ditawarkan
+ * ke planner, jadi menuntut schema darinya akan menolak fixture yang sah:
+ * puluhan tes memakai executor tanpa schema bersama planner stub, dan di sana
+ * schema memang tidak diperlukan.
+ *
+ * Dipanggil dari composition root, bukan dari jalur giliran. Kesalahan wiring
+ * harus terlihat saat proses dinyalakan, bukan pada pesan pertama pengguna.
+ */
+export function assertCallableCapabilitySchemas(
+  catalog: CapabilityCatalog,
+  executors: readonly CapabilitySchemaCandidate[],
+): void {
+  const installed = new Set(catalog.installedIds());
+  const missing = executors
+    .filter((executor) =>
+      installed.has(executor.capabilityId) && !executor.nativeTool
+    )
+    .map((executor) => executor.capabilityId)
+    .sort();
+  if (missing.length === 0) return;
+  throw new Error(
+    `Capability terpasang tanpa schema native: ${missing.join(", ")}. ` +
+      "Tanpa schema, seluruh run agent di proses ini berhenti pada langkah " +
+      "pertama dan dilaporkan sebagai keluaran planner yang tidak sah.",
+  );
 }
 
 export function createHarvyCapabilityCatalog(

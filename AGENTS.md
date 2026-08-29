@@ -92,6 +92,13 @@ Model hanya melihat capability yang benar-benar terpasang. `web.search` dan
 ## Jebakan yang memakan waktu
 
 - ESM `NodeNext`: impor antarmodul wajib berakhiran `.js` walau sumbernya `.ts`.
+- Pengumpulan bukti yang berjalan **di dalam** giliran wajib gagal aman.
+  Helper log boleh menerima objek yang bentuknya tidak selengkap tipenya:
+  test double membentuk hasil seperlunya, dan tipe tidak menjaga itu. Satu
+  helper yang melakukan iterasi langsung atas `result.trace` pernah melempar
+  pada hasil `needs_input` tanpa jejak dan menjatuhkan seluruh giliran—
+  checkpoint tidak tersimpan, pengguna kehilangan pertanyaan lanjutannya.
+  Observability tidak boleh pernah menjadi sebab giliran gagal.
 - `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, dan
   `noUnusedLocals` aktif. Impor atau variabel tak terpakai menggagalkan
   `npm run check`.

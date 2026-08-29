@@ -3379,6 +3379,14 @@ export function createBot(
       // Sesudah policy dan commit selesai, balasan tetap disusun sebagai
       // percakapan utama—bukan struk penyimpanan. Kalimat yang membawa perasaan
       // sekaligus pekerjaan harus tetap menjawab perasaannya lebih dulu.
+      // Perubahan task yang tidak ditangani route deterministik dihitung di
+      // sini, bukan di dalam cabang agent. Sebelumnya ia dihitung sesudah
+      // gerbang bentuk intent, sehingga tidak pernah dapat membuka gerbang itu
+      // sendiri: intent `task` selalu ditolak lebih dulu, dan sinyal ini
+      // menjadi tidak terjangkau persis pada bentuk giliran yang melahirkannya.
+      const unhandledTaskChange = requestsUnhandledTaskChange(
+        understanding.semanticOperation,
+      );
       let reply: string | null = null;
       let debitDeliveredReply = true;
       let agentPending: Extract<Pending, { kind: "agent-input" }> | null = null;
@@ -3409,14 +3417,9 @@ export function createBot(
           route.kind === "conversation" &&
           (intentAllowsAgentRuntime(understanding.intent) ||
             requiresLiveState ||
-            requiresAgentPlanning)
+            requiresAgentPlanning ||
+            unhandledTaskChange)
         ) {
-          // Cabang ini hanya tercapai ketika route immediate memilih
-          // `conversation`, jadi jalur task deterministik sudah menolak
-          // menangani permintaannya.
-          const unhandledTaskChange = requestsUnhandledTaskChange(
-            understanding.semanticOperation,
-          );
           const globalRoute = selectGlobalRoute({
             intent: agentIntent,
             messageLength: text.length,

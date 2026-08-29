@@ -131,7 +131,10 @@ export function requestsUnhandledTaskChange(
   if (operation.explicitness === "implicit") return false;
   return operation.operation === "save" ||
     operation.operation === "update" ||
-    operation.operation === "complete";
+    operation.operation === "complete" ||
+    // Pembatalan tidak punya route deterministik sama sekali, jadi ia selalu
+    // "belum tertangani" dan wajib melewati konfirmasi Agent Runtime.
+    operation.operation === "cancel";
 }
 
 /** Pagar terakhir: tombol tidak boleh bersaing dengan pertanyaan bebas. */

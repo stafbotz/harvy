@@ -111,6 +111,8 @@ const COMMANDS: readonly UserCommandDefinition[] = [
   },
   {
     command: "batalkan-tugas",
+    // Pintu bahasa alami: task/cancel.
+    surface: "fallback",
     description: "Batalkan satu tugas",
     category: "tasks",
     channels: ["whatsapp"],

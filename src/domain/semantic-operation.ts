@@ -101,7 +101,13 @@ const DOMAIN_OPERATIONS = Object.freeze({
     "contribute",
   ],
   memory: ["list", "remember", "forget", "edit", "recall"],
-  task: ["save", "list", "update", "complete"],
+  // `cancel` membuat pembatalan tugas dapat diusulkan bahasa alami. Sebelum
+  // ini satu-satunya jalur adalah `/batalkan-tugas <id>`, yang menuntut
+  // pengguna menyalin ID dari daftar—satu-satunya perintah tersisa yang
+  // memaksa begitu. Usulan ini tetap tidak berwenang menghapus apa pun:
+  // route deterministik tidak menanganinya, jadi ia hanya boleh sampai ke
+  // Agent Runtime, tempat `task.manage` menuntut konfirmasi kontekstual.
+  task: ["save", "list", "update", "complete", "cancel"],
   session: ["continue", "stuck", "done", "cancel"],
   menu: ["show", "show-help", "show-category"],
   data: [
@@ -242,11 +248,28 @@ export function isNaturalSurfaceDomain(
 }
 
 /**
+ * Operasi yang hanya membaca. Salah membacanya berbiaya satu pembacaan.
+ */
+const READ_ONLY_SURFACE_OPERATIONS: ReadonlySet<SemanticOperationName> =
+  new Set(["show", "list"]);
+
+/**
  * Gerbang tunggal untuk permukaan project/goal/skill/coding.
  *
- * Ambangnya sengaja dipertahankan seperti sebelumnya: confidence 0,85,
- * explicitness eksplisit, dan referensi yang menunjuk sesuatu yang nyata.
- * Yang berubah hanya jumlah tempat aturan itu ditulis.
+ * Ambangnya bertingkat menurut akibat, bukan seragam. Tulis durable—membuat
+ * project, menetapkan tujuan, membatalkan pekerjaan—tetap menuntut 0,85, sama
+ * seperti sebelumnya. Pembacaan menuntut 0,70.
+ *
+ * Ini bukan pelonggaran demi meloloskan sesuatu. Pengukuran 29 Agustus 2026
+ * pada "gimana status coding-nya sekarang?" mengembalikan `coding/show` di 3
+ * dari 3 run—domainnya tidak pernah salah—tetapi confidence-nya 0,60, 0,90,
+ * dan 0,82, sehingga hanya satu yang lolos ambang seragam. Akibatnya pengguna
+ * mendapat jawaban yang berbeda untuk kalimat yang sama, dan yang menentukan
+ * bukan maksudnya melainkan angka yang berayun.
+ *
+ * Ambang bertingkat sudah menjadi pola di repositori ini: pembacaan daftar
+ * task memakai 0,85 sedangkan penyelesaiannya 0,90. Yang salah membaca
+ * kehilangan satu pembacaan; yang salah menulis mengubah data pengguna.
  */
 export function naturalSurfaceAuthorized(
   message: string,
@@ -256,7 +279,9 @@ export function naturalSurfaceAuthorized(
   return semanticOperationAuthorized(message, operation, {
     domain: operation.domain,
     operations: NATURAL_SURFACE_OPERATIONS[operation.domain],
-    minConfidence: 0.85,
+    minConfidence: READ_ONLY_SURFACE_OPERATIONS.has(operation.operation)
+      ? 0.7
+      : 0.85,
     explicitness: ["explicit"],
     references: ["none", "current", "recent", "quoted"],
   });
