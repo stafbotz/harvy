@@ -103,17 +103,53 @@ padahal pagar composition root membuat kelas ini tidak lagi sampai ke pengguna
 pada deployment yang sehat. Kerjakan hanya bila kelas ini pernah muncul lagi di
 produksi.
 
-## 3. Anggaran run `orchestrate` foreground terlalu ketat untuk delegasi paralel
+## 3. Anggaran orchestrate foreground: gerbangnya benar, anggarannya cukup
 
-`scripts/coba-agent.ts` kasus "root orchestrate": `agent.delegate.parallel`
-selesai `ok`, lalu run berhenti `deadline` pada langkah berikutnya di 2 dari 3
-run. Batasnya `deadlineMs: 45_000` dan itu memang batas produksi.
+Pertanyaannya—apakah ada permintaan nyata yang lolos ke jalur foreground tetapi
+membutuhkan delegasi paralel—kini terjawab dengan pengukuran, bukan pembacaan
+kode saja.
 
-Bukan otomatis cacat: produksi mengarahkan pekerjaan orchestrate berat ke
-AgentRun latar lewat `requiresAgentPlanning`, sedangkan probe memanggil
-`conversation.agent()` langsung. Yang perlu diperiksa adalah apakah ada
-permintaan nyata yang lolos ke jalur foreground tetapi membutuhkan delegasi
-paralel; bila ada, yang salah gerbangnya, bukan anggarannya.
+**Jalur foregroundnya memang terjangkau.** Kombinasinya sempit tetapi nyata:
+`globalRoute` orchestrate, Agent Runtime aktif, dan `requiresAgentPlanning`
+false sehingga lane latar tidak dipilih. Contoh yang menghasilkannya:
+
+> "menurutmu beban dua minggu ke depan masih masuk akal buat aku atau enggak?
+> pertimbangkan semua yang sudah tercatat, timbang risikonya, dan jelaskan
+> alasanmu sedetail mungkin"
+
+Sebabnya struktural: `requiresPlannedExecution` menuntut `toolNeed` bernilai
+`execution` atau `external`, sementara pencarian web sudah dicabut dan satu-
+satunya capability `execution` di lane privat adalah terminal virtual. Giliran
+"deep" yang membutuhkan state pengguna karena itu hampir selalu berujung
+`toolNeed: internal_state`, yang tidak pernah memenuhi syarat lane latar.
+
+**Tetapi delegasi paralel tidak pernah dipilih di sana.** Tujuh frasa realistis
+diuji—perbandingan mendalam, keputusan bertaruh tinggi, penyusunan prioritas
+beralasan, rencana dua pekan, penelusuran tiga sudut sekaligus—dan tidak satu
+pun memanggil `agent.delegate.parallel`. Lima run pada frasa yang paling berat
+menghasilkan 4 selesai dan 1 berhenti `invalid_planner_output`.
+
+Kasus `coba-agent.ts` yang menabrak deadline **memerintahkan** delegasi secara
+eksplisit ("tiga subpekerjaan independen"). Itu bentuk yang dibuat untuk
+menguji capability-nya, bukan bentuk yang datang dari pengguna.
+
+**Kesimpulan: jangan ubah `deadlineMs`.** Yang menabrak batas adalah kasus
+sintetis yang meminta delegasi, sedangkan permintaan berbentuk manusia tidak
+memilih delegasi sama sekali pada jalur ini. Menaikkan anggaran akan membayar
+biaya nyata—jeda lebih panjang pada setiap giliran berat—untuk kasus yang belum
+pernah teramati di luar probe.
+
+Dua hal yang tersisa, keduanya lebih menarik daripada anggaran:
+
+- `invalid_planner_output` muncul 1 dari 5 pada jalur orchestrate foreground.
+  Bukan pola pada n sekecil ini, tetapi jalur ini menjalankan 15–19 kejadian
+  jejak per giliran, jadi permukaan kegagalannya lebih luas daripada jalur
+  `tools`. Layak dihitung bila kelas ini muncul lagi.
+- `agent.delegate.parallel` tidak pernah dipilih pada permintaan berbentuk
+  manusia. Ia terpasang di lane privat, ikut menempati schema tool pada setiap
+  giliran orchestrate, dan manfaatnya belum pernah teramati di luar kasus yang
+  memerintahkannya. Pertanyaannya bukan lagi anggaran melainkan apakah ia layak
+  ditawarkan di lane ini.
 
 ## 4. `memory.list` dan `memory.remember`: terbukti dipanggil
 
