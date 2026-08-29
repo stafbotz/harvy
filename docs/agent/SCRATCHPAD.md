@@ -30,36 +30,39 @@ Putaran 29 Agustus sore, diverifikasi sesi Telegram nyata **7/7 lulus**:
 Yang diukur dan **tidak** menghasilkan perbaikan ada di butir 1: dua percobaan
 menaikkan ketepatan `history.search` belum terbukti membantu.
 
-## 1. Ketepatan isi `history.search` belum stabil
+## 1. Ketepatan isi `history.search`: dari 1 dari 3 menjadi 5 dari 5
 
-Tool-nya terbukti dipanggil di probe maupun kanal nyata; yang belum terbukti
-adalah isinya benar. Dua percobaan perbaikan sudah dilakukan dan **keduanya
-belum terbukti membantu**:
+Tertutup, dan yang menutupnya bukan perbaikan peringkat melainkan satu
+instrumentasi. Dua percobaan pertama—peringatan pada deskripsi tool, lalu
+menyamakan cap klaim 4 → 6—tidak menghasilkan perubahan terukur. Yang mengubah
+segalanya adalah mencatat query yang **benar-benar** dikirim planner:
 
-1. Dua peringatan ditambahkan ke deskripsi tool (sertakan kata pengguna; jangan
-   gabungkan klaim lintas episode). Pengukuran sesudahnya: 1 dari 3 run
-   menyebut klaim `unresolved` yang tepat.
-2. `MAX_CLAIMS_PER_MATCH` disamakan dengan
-   `HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT` (4 → 6), karena executor memotong
-   lebih agresif daripada pencariannya sendiri dan klaim yang dicari jatuh di
-   urutan keempat ke bawah. Pengukuran sesudahnya: 1 tepat, 1 meleset, 1 tidak
-   terbaca.
+```
+history.search query: "ujian biologi persiapan"   (4 dari 5)
+```
 
-Dengan n=3 dan varians setinggi ini, tidak satu pun angka di atas boleh disebut
-perbaikan. Yang konsisten di seluruh pengukuran hanya dua hal: `history.search`
-selalu terpanggil, dan Harvy tidak pernah mengarang ketika tidak menemukan.
+Kata isyarat pengguna dibuang. Pembobotan field yang dibangun untuk menaikkan
+klaim `unresolved` tidak pernah punya kesempatan menyala, dan deskripsi tool
+yang memintanya tidak dipatuhi—kelas yang sama dengan butir 1b.
 
-Sebabnya struktural. `searchConversationEpisodes` memberi peringkat leksikal
-atas teks klaim, jadi query yang hanya memuat topik mengembalikan topik, fakta,
-dan penanda waktu — sementara klaim `unresolved` yang justru ditanyakan tidak
-naik. Query yang memuat kata pengguna sendiri ("belum jelas") mengambilnya.
+Perbaikannya berhenti memakai prosa dan memberi **slot di schema**: parameter
+`aspect` untuk jenis hal yang dicari, terpisah dari topik. Hasilnya:
 
-Langkah berikutnya yang benar-benar mengubah mekanisme, bukan menambah
-peringatan: memberi bobot pada field yang cocok dengan bentuk pertanyaan.
-Pertanyaan tentang hal yang menggantung menaikkan `unresolved` dan
-`uncertainties`; pertanyaan tentang keputusan menaikkan `decisions`. Ukur
-dengan ulangan minimal 10 sebelum menyimpulkan apa pun—tiga run tidak cukup
-untuk membedakan perbaikan dari keberuntungan.
+| | sebelum | sesudah |
+|---|---|---|
+| klaim tepat disebut | 1/3, lalu 2/5 | **5/5** |
+| `aspect` diisi planner | — | 5/5 |
+| query memuat kata isyarat | 1/5 | 4/5 |
+
+Efeknya melampaui dugaan: menamai konsepnya di schema mengubah perilaku pada
+**kedua** field, bukan hanya slot barunya.
+
+Nuansa yang perlu diingat penulis berikutnya: pengaruh langsung `aspect` pada
+skor sederhana saja. Bonusnya 2,5 dan sengaja tidak cukup mengalahkan kecocokan
+frasa persis yang bernilai 3. Nilai terbesarnya adalah mengubah apa yang
+dikirim planner, bukan menata ulang hasil. Tes penguncinya memakai query yang
+tidak muncul utuh di klaim mana pun, karena fixture yang memberi bonus frasa
+kepada klaim pesaing akan menutup pengaruh aspek seluruhnya.
 
 ## 1b. Kosakata internal bocor meski ada aturan prompt yang melarangnya
 
@@ -143,27 +146,39 @@ Yang tersisa: `memory.list` masih terlewat pada sebagian run meski tool-nya
 tersedia dan aturannya ada. n masih kecil; ukur dengan ulangan lebih banyak
 sebelum menambah mekanisme.
 
-## 4b. Duplikat catatan durable: diperbaiki, penyebab dalamnya tetap ada
+## 4b. Duplikat catatan durable: diperbaiki di hulu, hilirnya sengaja dibiarkan
 
 Terekam sekali: planner memanggil `memory.remember` pada langkah 1 dan 2 untuk
 fakta yang sama, tampaknya memperbaiki kata yang keliru pada tulisan pertama,
-dan keduanya mendarat. Salah satunya bahkan memuat aksara Mandarin di tengah
-kalimat Indonesia ("kondisi安静"), tersimpan permanen dan terlihat pengguna.
+dan keduanya mendarat. Salah satunya memuat aksara Mandarin di tengah kalimat
+Indonesia ("kondisi安静"), tersimpan permanen dan terlihat pengguna.
 
 Deskripsi tool kini melarang menulis ulang fakta yang sudah disimpan pada
 giliran yang sama. Pengukuran sesudahnya: 3 run, `memory.remember` terpanggil
 sekali di dua di antaranya, jumlah catatan 3 → 4, tidak pernah 5.
 
-Penyebab dalamnya tetap ada dan tidak ditambal: dedupe `MemoryService`
-(`src/core/memory-service.ts:63`) hanya membandingkan `content.toLowerCase()`
-persis, jadi dua kalimat berbeda satu kata tetap lolos berdua. Menormalkan
-tanda baca tidak akan menolong—kedua kalimatnya memang berbeda kata. Perbaikan
-yang benar memerlukan pembandingan makna, dan rute memori semantik mati karena
-tidak ada model embedding.
+**Dedupe `MemoryService` sengaja tidak diubah**, dan alasannya lebih kuat
+daripada "butuh embedding". Pembanding berbasis tumpang tindih token akan
+menangkap pasangan yang teramati—kemiripannya sekitar 0,85—tetapi negasi
+mematahkannya:
 
-Aksara asing yang bocor sengaja **tidak** ditambal penyaring charset: pengguna
-Indonesia sah mengutip aksara lain, dan menolaknya akan membuang isi yang
-benar. Ukur frekuensinya dulu.
+> "Boleh dihubungi lewat telepon sebelum jam lima sore"
+> "**Tidak** boleh dihubungi lewat telepon sebelum jam lima sore"
+
+Kemiripannya sekitar 0,91, sementara maknanya berlawanan. Penjaga seperti itu
+akan menolak koreksi justru karena ia mirip dengan hal yang dikoreksi, dan
+koreksi memori adalah kelas yang memang ditangani sistem ini lewat
+`memoryRetractions`. Menukar duplikat yang terlihat dengan koreksi yang hilang
+diam-diam adalah pertukaran yang buruk.
+
+Bila kelas ini muncul lagi, kerjakan di tingkat run, bukan penyimpanan: tulisan
+kedua dalam satu run yang sangat mirip hampir pasti penulisan ulang, bukan
+koreksi keyakinan lama. Itu memerlukan state ber-scope run pada executor.
+
+Aksara asing yang bocor juga tidak ditambal penyaring charset: pengguna
+Indonesia sah mengutip aksara lain, dan menolaknya membuang isi yang benar.
+Belum terulang sejak deskripsi tool diperbaiki; ukur frekuensinya sebelum
+menambah pagar.
 
 ## 4c. Probe melaporkan kandidat auto-memory, belum memprosesnya
 
@@ -300,27 +315,31 @@ Belum diukur ulang di kanal nyata sesudah perubahan ini.
 - Belum dijalankan berulang. Sesi tunggal tidak membedakan lulus yang stabil
   dari lulus yang kebetulan; butir 8 lahir persis dari selisih antar-run.
 
-## 10. Tiga sinyal mutu dengan frekuensi, bukan lagi anekdot
+## 10. Frekuensi tiga sinyal mutu, dari 28 giliran
 
-Ketiganya muncul di kolom `masalah` pada sesi yang **7/7 lulus**, jadi tidak
-satu pun menggagalkan giliran. Yang berubah sejak pencatatan pertama: sekarang
-ada angkanya.
+Empat sesi `npm run uji:telegram` berturut-turut, 28 giliran kasus:
 
-- **`operation_presentation_invalid`, 2 dari 7 giliran.** Copy presentasi dari
-  model tidak lolos `parseOperationPresentation`, lalu fallback deterministik
-  dipakai. Pengguna tetap menerima kartu task yang benar, jadi degradasinya
-  anggun. Keduanya terjadi pada giliran task (simpan dan baca), bukan tersebar
-  acak — itu petunjuk pertama tentang di mana harus mencari.
-- **`agent_tool_shape_repair`, 1 dari 7.** Bentuk tool call perlu diperbaiki
-  sekali sebelum diterima, pada giliran recall. Mekanisme perbaikannya bekerja;
-  yang belum diketahui apakah kelas ini sering pada tool tertentu.
-- **Latensi.** Basa-basi 16,6 detik pada sesi ini, di bawah pagar 40 detik yang
-  kini terpasang di `scripts/live-telegram-cases.ts`. Pengamatan 31 detik yang
-  memicu pemasangan pagar itu belum terulang.
+| sinyal | frekuensi |
+|---|---|
+| `turn_boundary_check_failed` | 16 dari 28 (57%) |
+| `operation_presentation_invalid` | 3 dari 28 (11%) |
+| `agent_tool_shape_repair` | 2 dari 28 (7%) |
 
-Langkah berikutnya untuk ketiganya sama: jalankan `npm run uji:telegram`
-beberapa kali dan hitung. Tiga sampel dari satu sesi belum cukup untuk
-membedakan cacat dari variance.
+Kelulusan 25 dari 28. Kegagalannya bukan acak:
+
+- `batalkan-task-alami` gagal 2 dari 4 sesi, selalu dengan tanda tangan yang
+  sama: routing benar (`task/cancel` high, agent memanggil `task.list_active`)
+  tetapi balasannya tidak menyebut tugas yang akan dihapus. Lihat butir 12.
+- `memori-deterministik` gagal 1 dari 4: extractor tidak menghasilkan operasi
+  semantik sama sekali (`none/none`), sehingga route deterministik tidak dapat
+  mengambilnya dan giliran jatuh ke Agent Runtime—yang lalu tidak memanggil
+  capability apa pun selama 16 detik. Ini biaya nyata dari membuka intent
+  `memory` ke Agent Runtime: ketika extractor gagal, jalur mahal menggantikan
+  jalur murah tanpa memberi manfaat. Layak diukur ulang bila kelas ini sering.
+
+`turn_boundary_check_failed` pada 57% giliran mengonfirmasi butir 7: angka 29%
+dari pengukuran terisolasi adalah batas bawah, dan mayoritas giliran membayar
+satu panggilan model tier `cheap` yang hasilnya dibuang.
 
 ## 11. Observability pernah menjatuhkan giliran
 
@@ -345,6 +364,29 @@ Dua pelajaran yang layak dicatat karena keduanya berbiaya waktu:
   kegagalan. Yang benar-benar macet adalah proses tes lama dari perintah
   sebelumnya yang tidak dibersihkan. Periksa CPU proses sebelum menyimpulkan
   hang, dan pastikan tidak ada run tes lain yang masih hidup.
+
+## 12. Konfirmasi destruktif tidak menyebut sasarannya
+
+Terukur 2 dari 4 sesi. Harvy meminta konfirmasi sebelum menghapus—perilaku yang
+benar—tetapi tanpa menyebut apa yang akan dihapus:
+
+> "Hmm, aku nggak bisa langsung hapus tanpa konfirmasi. Mau aku tandai selesai
+> aja, atau emang mau dihapus permanen?"
+
+Sesi yang benar menyebutnya: "yakin mau hapus permanen tugas 'Mengumpulkan
+tugas biologi' yang jatuh tempo besok?"
+
+Dengan satu tugas ini ceroboh. Dengan lima tugas ia berbahaya: pengguna
+menjawab "iya hapus" tanpa tahu mana yang hilang, dan konfirmasi yang tidak
+menyebut sasarannya bukan konfirmasi.
+
+Deskripsi `harvy_need_input_v1` kini menuntut menyebut sasaran dengan nama
+memakai hasil tool yang sudah dibaca. Pengukuran sesudahnya 2 dari 3 lulus,
+dibanding 2 dari 4 sebelumnya—**belum cukup untuk disebut perbaikan**. Ukur
+dengan ulangan lebih banyak. Bila prosa tetap tidak dipatuhi, pelajaran butir 1
+berlaku di sini juga: beri slot pada schema, misalnya field sasaran yang
+terpisah dari teks pertanyaan, karena parameter yang dideklarasikan diisi
+sedangkan prosa diabaikan.
 
 ## Kemampuan yang absen secara rancangan
 

@@ -15,6 +15,18 @@ export const HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT = 6;
 
 export interface HistorySearchOptions {
   limit?: number;
+  /**
+   * Kata pengguna untuk menyebut *jenis* hal yang dicari, terpisah dari topik.
+   *
+   * Dipakai hanya untuk memilih field, tidak untuk pencocokan kata, sehingga
+   * peringkat leksikal tidak bergeser karenanya. Terpisah dari `query` karena
+   * pengukuran 29 Agustus 2026 menunjukkan planner membuang isyarat itu:
+   * 4 dari 5 pencarian untuk "ada satu hal yang masih belum jelas soal
+   * persiapan ujian biologi" dikirim sebagai "ujian biologi persiapan" saja.
+   * Deskripsi tool sudah memintanya dan tidak dipatuhi; slot tersendiri lebih
+   * mungkin diisi daripada prosa lebih panjang.
+   */
+  aspect?: string;
 }
 
 interface IndexedClaim {
@@ -62,13 +74,20 @@ export function searchConversationEpisodes(
     );
   }
 
+  // Isyarat jenis klaim dibaca dari query **dan** aspek. Aspek sengaja tidak
+  // ikut menjadi term pencarian: ia memilih field, bukan menggeser relevansi.
+  const cueText = `${queryText} ${
+    normalizeText((options.aspect ?? "").slice(0, HISTORY_SEARCH_QUERY_MAX_CHARS))
+  }`;
+  const requestedFields = fieldsRequestedBy(cueText);
   const matches = indexed
     .map((episode) => scoreEpisode(
       episode,
-      queryText,
       queryTerms,
       documentFrequency,
       indexed.length,
+      requestedFields,
+      queryText,
     ))
     .filter((match): match is HistoricalEpisodeMatch => match !== null)
     .sort(compareMatches);
@@ -93,12 +112,68 @@ function indexEpisode(episode: ConversationEpisode): IndexedEpisode {
   return { episode, claims, terms };
 }
 
+/**
+ * Isyarat pertanyaan yang menunjuk jenis klaim tertentu.
+ *
+ * Peringkat leksikal murni menjawab "episode mana", bukan "bagian mana dari
+ * episode itu". Pengukuran 29 Agustus 2026 memperlihatkan biayanya: pertanyaan
+ * "hal yang masih belum jelas soal persiapan ujian biologi" mengembalikan
+ * topik, fakta, dan penanda waktu di urutan atas, sementara klaim `unresolved`
+ * yang justru ditanyakan tenggelam. Harvy menjawab benar soal topik dan
+ * tanggal, lalu meleset pada satu hal yang benar-benar diminta.
+ *
+ * Isyarat di bawah sengaja berbahasa Indonesia dan sempit. Ia bukan pemahaman
+ * bahasa: ia hanya menaikkan klaim yang **sudah** cocok secara leksikal,
+ * sehingga tidak dapat menyeret klaim tak berkaitan ke dalam hasil.
+ */
+const FIELD_CUES: readonly (readonly [EpisodeClaimField, readonly string[]])[] =
+  [
+    ["unresolved", [
+      "belum jelas",
+      "belum tahu",
+      "belum kelar",
+      "belum selesai",
+      "belum diputuskan",
+      "masih bingung",
+      "masih menggantung",
+      "menggantung",
+    ]],
+    ["uncertainties", [
+      "belum pasti",
+      "belum yakin",
+      "kurang yakin",
+      "nggak yakin",
+      "tidak yakin",
+      "ragu",
+    ]],
+    ["decisions", ["keputusan", "memutuskan", "diputuskan", "akhirnya pilih"]],
+    ["commitments", ["janji", "komitmen", "berjanji", "sanggup"]],
+    ["corrections", ["koreksi", "ralat", "ternyata salah", "salah ingat"]],
+    ["goals", ["tujuan", "target", "mau capai", "pengin capai"]],
+    ["temporalAnchors", ["kapan", "tanggal berapa", "waktu itu kapan"]],
+  ];
+
+/**
+ * Cukup untuk menaikkan klaim yang tepat di atas fakta yang sekadar cocok kata,
+ * tidak cukup untuk mengalahkan relevansi leksikal yang jauh lebih kuat.
+ */
+const FIELD_CUE_BONUS = 2.5;
+
+function fieldsRequestedBy(queryText: string): ReadonlySet<EpisodeClaimField> {
+  const requested = new Set<EpisodeClaimField>();
+  for (const [field, cues] of FIELD_CUES) {
+    if (cues.some((cue) => queryText.includes(cue))) requested.add(field);
+  }
+  return requested;
+}
+
 function scoreEpisode(
   indexed: IndexedEpisode,
-  queryText: string,
   queryTerms: readonly string[],
   documentFrequency: ReadonlyMap<string, number>,
   documentCount: number,
+  requestedFields: ReadonlySet<EpisodeClaimField>,
+  queryText: string,
 ): HistoricalEpisodeMatch | null {
   const claims: HistoricalEpisodeClaimMatch[] = [];
   const matchedTerms = new Set<string>();
@@ -122,6 +197,7 @@ function scoreEpisode(
 
     const coverage = claimMatchedTerms / queryTerms.length;
     score += coverage * 2;
+    if (requestedFields.has(indexedClaim.field)) score += FIELD_CUE_BONUS;
     if (queryText.length >= 4 && indexedClaim.normalizedText.includes(queryText)) {
       score += 3;
     }

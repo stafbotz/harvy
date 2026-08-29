@@ -147,6 +147,66 @@ describe("history full-text search", () => {
       ["episode_alpha", "episode_zeta"],
     );
   });
+  // Peringkat leksikal murni menjawab "episode mana", bukan "bagian mana dari
+  // episode itu". Pengukuran 29 Agustus 2026: pertanyaan tentang hal yang masih
+  // menggantung mengembalikan topik, fakta, dan penanda waktu di urutan atas
+  // sementara klaim `unresolved` yang justru ditanyakan tenggelam, sehingga
+  // Harvy menjawab benar soal topik lalu meleset pada yang diminta.
+  it("menaikkan klaim yang jenisnya ditanyakan pertanyaan", () => {
+    const target = episode("ujian", 1, {
+      topics: [claim("Persiapan ujian biologi bab sistem pernapasan", 1)],
+      facts: [claim("Ujian biologi diadakan hari Rabu pagi", 2)],
+      unresolved: [claim("Belum tahu apakah soal ujian pilihan ganda atau uraian", 3)],
+    });
+
+    const fields = searchConversationEpisodes(
+      [target],
+      "apa yang belum jelas soal ujian biologi",
+    )[0]?.claims.map((entry) => entry.field);
+
+    assert.equal(fields?.[0], "unresolved");
+  });
+
+  // Planner membuang isyarat pengguna dari query: 4 dari 5 pencarian untuk
+  // "ada satu hal yang masih belum jelas soal ujian biologi" dikirim sebagai
+  // "ujian biologi persiapan" saja. Deskripsi tool sudah memintanya dan tidak
+  // dipatuhi, jadi isyaratnya diberi slot tersendiri.
+  //
+  // Query di sini sengaja tidak muncul utuh di klaim mana pun. Kecocokan frasa
+  // persis bernilai +3, lebih besar daripada bonus aspek, jadi fixture yang
+  // memberi bonus itu kepada klaim pesaing akan menutup pengaruh aspek
+  // seluruhnya—dan menguji sesuatu yang memang tidak dijanjikan.
+  it("membaca isyarat jenis klaim dari aspect ketika query tidak memuatnya", () => {
+    const target = episode("ujian", 1, {
+      facts: [claim("Ujian biologi diadakan hari Rabu pagi", 1)],
+      unresolved: [claim("Belum tahu apakah soal ujian pilihan ganda atau uraian", 2)],
+    });
+
+    const tanpaAspek = searchConversationEpisodes([target], "ujian pagi")[0]
+      ?.claims.map((entry) => entry.field);
+    const denganAspek = searchConversationEpisodes([target], "ujian pagi", {
+      aspect: "belum jelas",
+    })[0]?.claims.map((entry) => entry.field);
+
+    assert.equal(tanpaAspek?.[0], "facts");
+    assert.equal(denganAspek?.[0], "unresolved");
+  });
+  // Pembobotan hanya menata ulang klaim yang sudah cocok secara leksikal. Ia
+  // tidak boleh mengubah hasil ketika pertanyaannya tidak menyebut jenis
+  // apa pun, dan tidak boleh menyeret klaim tak berkaitan ke dalam hasil.
+  it("tidak mengubah urutan ketika pertanyaan tidak menyebut jenis klaim", () => {
+    const target = episode("ujian", 1, {
+      topics: [claim("Persiapan ujian biologi bab sistem pernapasan", 1)],
+      facts: [claim("Ujian biologi diadakan hari Rabu pagi", 2)],
+      unresolved: [claim("Belum tahu apakah soalnya pilihan ganda atau uraian", 3)],
+    });
+
+    const fields = searchConversationEpisodes([target], "ujian biologi")[0]
+      ?.claims.map((entry) => entry.field);
+
+    assert.equal(fields?.includes("unresolved"), false);
+    assert.equal(fields?.[0], "facts");
+  });
 });
 
 function episode(

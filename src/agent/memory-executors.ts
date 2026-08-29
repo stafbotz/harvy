@@ -70,6 +70,12 @@ const HISTORY_SEARCH_NATIVE_TOOL = {
       description:
         "Kata kunci pencarian dalam bahasa pengguna. Sertakan kata yang dipakai pengguna untuk menyebut hal yang dicarinya, bukan hanya topiknya.",
     },
+    aspect: {
+      type: "string",
+      maxLength: MAX_QUERY_CHARACTERS,
+      description:
+        "Kata pengguna untuk menyebut jenis hal yang dicari, bukan topiknya. Contoh: \"belum jelas\", \"keputusan\", \"janji\", \"koreksi\". Isi bila pengguna menyebutnya; ini yang menentukan bagian mana dari percakapan lama yang diangkat.",
+    },
     limit: {
       type: "integer",
       minimum: 1,
@@ -172,6 +178,7 @@ export function createMemoryAgentExecutors(
 interface HistorySearchInput {
   query: string;
   limit: number;
+  aspect?: string;
 }
 
 export class HistorySearchExecutor
@@ -186,11 +193,14 @@ implements AgentCapabilityExecutor<HistorySearchInput> {
   ) {}
 
   validate(input: unknown) {
-    if (!isExactRecord(input, ["query"], ["limit"])) {
+    if (!isExactRecord(input, ["query"], ["aspect", "limit"])) {
       return {
         ok: false as const,
-        reason: "Input hanya boleh memuat query dan limit opsional.",
+        reason: "Input hanya boleh memuat query, aspect, dan limit opsional.",
       };
+    }
+    if (input.aspect !== undefined && typeof input.aspect !== "string") {
+      return { ok: false as const, reason: "aspect harus berupa string." };
     }
     if (typeof input.query !== "string") {
       return { ok: false as const, reason: "query harus berupa string." };
@@ -210,7 +220,17 @@ implements AgentCapabilityExecutor<HistorySearchInput> {
         reason: `limit harus bilangan 1–${MAX_HISTORY_MATCHES}.`,
       };
     }
-    return { ok: true as const, value: { query, limit: limit as number } };
+    const aspect = input.aspect === undefined
+      ? undefined
+      : boundedUserText(input.aspect, MAX_QUERY_CHARACTERS);
+    return {
+      ok: true as const,
+      value: {
+        query,
+        limit: limit as number,
+        ...(aspect ? { aspect } : {}),
+      },
+    };
   }
 
   async execute(
@@ -222,7 +242,10 @@ implements AgentCapabilityExecutor<HistorySearchInput> {
     const matches = await this.history().search(
       scope.value.userId,
       input.query,
-      { limit: input.limit },
+      {
+        limit: input.limit,
+        ...(input.aspect ? { aspect: input.aspect } : {}),
+      },
     );
     const visible = matches.slice(0, input.limit).map((match) => ({
       episodeId: match.episodeId,

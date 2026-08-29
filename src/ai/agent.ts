@@ -150,7 +150,15 @@ const NEED_INPUT_TOOL: ChatFunctionTool = {
       prompt: {
         type: "string",
         minLength: 1,
-        description: "Satu pertanyaan singkat untuk pengguna.",
+        // Konfirmasi yang tidak menyebut sasarannya terukur 2 dari 4 sesi
+        // Telegram nyata pada 29 Agustus 2026: "aku nggak bisa langsung hapus
+        // tanpa konfirmasi. Mau aku tandai selesai aja, atau emang mau dihapus
+        // permanen?"—tanpa menyebut tugas mana. Dengan satu tugas itu ceroboh;
+        // dengan lima tugas pengguna menjawab "iya hapus" tanpa tahu mana yang
+        // hilang. Sesi yang benar menyebutnya: "yakin mau hapus permanen tugas
+        // 'Mengumpulkan tugas biologi' yang jatuh tempo besok?"
+        description:
+          "Satu pertanyaan singkat untuk pengguna. Bila kamu meminta konfirmasi untuk tindakan yang menghapus atau mengubah sesuatu, sebutkan sasarannya dengan nama—judul task, isi catatan—memakai hasil tool yang sudah kamu baca. Jangan meminta konfirmasi atas sesuatu yang tidak kamu sebutkan.",
       },
     }, ["prompt"]),
   },

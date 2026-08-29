@@ -144,6 +144,15 @@ export function createSyntheticHistorySearch(
 ): AgentHistorySearch {
   return {
     async search(_ownerId, query, options) {
+      // Query yang benar-benar dikirim planner, bukan yang diketik pengguna.
+      // Pembobotan field hanya menyala bila kata isyarat pengguna ikut
+      // terbawa; tanpa jejak ini, kegagalan peringkat dan kegagalan penyusunan
+      // query terlihat sama persis dari luar.
+      console.error(
+        `  history.search query=${JSON.stringify(query)} aspect=${
+          JSON.stringify(options?.aspect ?? null)
+        }`,
+      );
       return searchConversationEpisodes(episodes, query, options ?? {});
     },
   };
