@@ -79,6 +79,10 @@ interface TesterEvent {
   at: string;
   turn?: number;
   text?: string;
+  /** Alias stabil per pesan kanal; sama untuk pembuatan dan seluruh suntingannya. */
+  surface?: string;
+  /** `create` menandai pesan baru; `edit` menandai perubahan pesan yang sudah ada. */
+  operation?: string;
   buttons?: string[];
   latencyMs?: number | null;
   code?: string;
@@ -255,6 +259,14 @@ function reportProgress(event: TesterEvent): void {
   else if (event.type === "sent") console.error(`  giliran ${event.turn} terkirim`);
   else if (event.type === "startup_failed" || event.type === "blocked_or_failed") {
     console.error(`  GAGAL: ${event.code}`);
+  } else if (event.type === "command_rejected") {
+    // Perintah yang ditolak transport dulu hanya terlihat sebagai kasus yang
+    // "tidak pernah terkirim" di akhir laporan, tanpa sebab. Sesi 30 Agustus
+    // 2026 berhenti sesudah tujuh giliran tanpa satu baris pun menjelaskan
+    // kenapa, dan itu menghabiskan satu sesi penuh untuk mencari tahu.
+    console.error(
+      `  perintah #${event.commandSequence ?? "?"} ditolak: ${event.code ?? "tanpa kode"}`,
+    );
   }
 }
 
@@ -307,6 +319,8 @@ function joinEvidence(
 ): TurnEvidence[] {
   const turns: TurnEvidence[] = [];
   let current: TurnEvidence | null = null;
+  /** Alias pesan -> giliran pemiliknya, supaya suntingan tidak berpindah. */
+  const surfaceOwner = new Map<string, TurnEvidence>();
   for (const event of events) {
     const at = Date.parse(event.at);
     if (event.type === "sent" && event.turn !== undefined) {
@@ -323,10 +337,28 @@ function joinEvidence(
         failures: [],
       };
       turns.push(current);
-    } else if (event.type === "surface" && current) {
-      const text = String(event.text ?? "").trim();
-      if (text) current.replies.push(text);
-      if (event.latencyMs != null) current.latencyMs = event.latencyMs;
+    } else if (event.type === "surface") {
+      // Balasan dikembalikan ke giliran tempat pesannya **dibuat**, bukan ke
+      // giliran yang kebetulan sedang terbuka.
+      //
+      // Harvy mengirim status "Memikirkan..." lebih dulu lalu menyuntingnya
+      // menjadi jawaban akhir. Ketika suntingan itu datang sesudah kasus
+      // berikutnya dikirim, atribusi berdasarkan jendela waktu memberikannya
+      // kepada kasus yang salah. Sesi 30 Agustus 2026 merekamnya terang-
+      // terangan: satu balasan yang sama persis tercatat sebagai balasan tiga
+      // kasus berbeda, padahal log runtime menunjukkan permukaannya hanya
+      // menyala sekali. Laporan seperti itu lebih buruk daripada tidak ada
+      // laporan—ia menyembunyikan giliran yang sebenarnya tidak dijawab.
+      const alias = event.surface;
+      const owner = event.operation === "create" || alias === undefined
+        ? current
+        : surfaceOwner.get(alias) ?? current;
+      if (owner) {
+        const text = String(event.text ?? "").trim();
+        if (text) owner.replies.push(text);
+        if (event.latencyMs != null) owner.latencyMs = event.latencyMs;
+        if (alias !== undefined) surfaceOwner.set(alias, owner);
+      }
     } else if (event.type === "turn_settled" && current) {
       current.settledAt = at;
       current = null;
@@ -415,6 +447,14 @@ function evaluate(
   const failures: string[] = [];
   const reply = turn.replies.join("\n");
   const expect = testCase.expect;
+  // Giliran tanpa balasan dilaporkan sendiri, bukan lewat assertion isi yang
+  // gagal. Keduanya dulu terlihat sama—"balasan tidak memuat X"—padahal yang
+  // satu berarti Harvy salah menjawab dan yang lain berarti ia tidak menjawab
+  // sama sekali. Yang kedua jauh lebih serius, dan sebelum atribusi balasan
+  // diperbaiki ia tersamar sebagai balasan milik giliran lain.
+  if (turn.replies.length === 0) {
+    return ["giliran terkirim tetapi tidak ada balasan sama sekali"];
+  }
 
   if (expect.intent !== undefined) {
     const actual = decisionIntent(turn.route);
@@ -564,6 +604,28 @@ async function main(): Promise<void> {
   }
   console.error("fase 2: menjalankan kasus");
   const events = await runTester(journey, plan.lines);
+
+  // Penguji wajib menghabiskan seluruh perintahnya. Sesi 30 Agustus 2026
+  // berhenti sesudah tujuh dari sembilan kasus tanpa satu baris penjelasan;
+  // dua kasus terakhir hanya muncul sebagai "tidak pernah terkirim" di antara
+  // kegagalan lain, sehingga terbaca seolah Harvy yang bermasalah. Sesi yang
+  // tidak lengkap bukan sesi yang gagal sebagian—ia sesi yang tidak sah, dan
+  // menilai Harvy darinya berarti menilai dari bukti yang tidak ada.
+  const executed = events.filter((event) =>
+    event.type === "sent" || event.type === "command_rejected"
+  ).length;
+  const expectedTurns = plan.caseBySequence.filter((id) => id !== null).length;
+  const sentTurns = events.filter((event) => event.type === "sent").length;
+  if (sentTurns < expectedTurns) {
+    console.error("");
+    console.error(
+      `SESI TIDAK LENGKAP: ${sentTurns} dari ${expectedTurns} giliran kasus terkirim ` +
+        `(${executed} perintah terpakai dari ${plan.lines.length}).`,
+    );
+    console.error(
+      "Penilaian di bawah hanya berlaku untuk kasus yang benar-benar berjalan.",
+    );
+  }
   const records = readRuntimeLog(journey);
   const turns = joinEvidence(events, records, plan.caseBySequence);
   const byCase = new Map<string, TurnEvidence>();

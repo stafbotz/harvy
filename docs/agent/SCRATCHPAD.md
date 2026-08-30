@@ -907,6 +907,51 @@ memecah sesi—batasan yang sudah tercatat di butir 9. Yang sudah diukur dengan
 model nyata adalah bagian yang paling mungkin gagal, yaitu apakah pengakuannya
 benar-benar muncul.
 
+## 17. Harness kini jujur tentang balasan milik siapa dan sesi yang tidak lengkap
+
+Sesi 30 Agustus 2026 mencatat teks yang sama persis—"Runtime coding belum
+diaktifkan oleh deployment Harvy."—sebagai balasan **tiga kasus berbeda**,
+sementara log runtime menunjukkan permukaan coding hanya menyala sekali.
+
+**Dugaan pertama saya salah dan ditarik.** Saya menyimpulkan itu artefak
+pencatatan: suntingan yang datang terlambat diberikan kepada kasus berikutnya.
+Bukti berkas evidence membantahnya—ketiganya `create`, pesan baru, dengan
+`textDigest` identik. Yang benar: satu balasan lama tetap terbaca sebagai
+balasan giliran yang sedang terbuka.
+
+Tiga perbaikan, semuanya pada alat ukur:
+
+- **Atribusi per pesan.** Balasan dikembalikan ke giliran tempat pesannya
+  dibuat, bukan ke giliran yang kebetulan terbuka. Alias pesan dan penanda
+  `create`/`edit` sudah ada di kejadian tester; sebelumnya keduanya dibuang.
+- **Giliran tanpa balasan dilaporkan sendiri.** Dulu ia menyamar sebagai
+  "balasan tidak memuat X", yang terbaca seolah Harvy salah menjawab padahal ia
+  tidak menjawab sama sekali. Yang kedua jauh lebih serius.
+- **Sesi tidak lengkap ditandai keras.** Sesi berikutnya berhenti sesudah tujuh
+  dari sembilan kasus tanpa satu baris penjelasan, dan dua kasus terakhir hanya
+  muncul sebagai "tidak pernah terkirim" di antara kegagalan lain. Harness kini
+  membandingkan giliran terkirim dengan yang direncanakan, dan mencetak
+  perintah yang ditolak berikut kodenya.
+
+Diagnostik terakhir langsung berbayar: penolakan yang muncul ternyata seluruhnya
+dari fase onboarding yang memang mencoba lima kandidat tombol berurutan—benigna,
+dan sebelumnya tak terlihat sama sekali.
+
+**Hasil sesudahnya.** `batalkan-task-alami` lulus dan permukaan coding menyala
+tepat sekali; kontaminasi hilang. `interupsi-mengalihkan` lulus dengan assertion
+kelakuan yang baru.
+
+**Varians korpus tetap besar dan itu harus dibaca sebagai sifat, bukan sinyal.**
+Empat sesi berturut-turut memberi kegagalan pada kasus yang berbeda-beda:
+`status-coding`, lalu `memori-deterministik` + `interupsi`, lalu
+`batalkan` + `interupsi`, lalu `recall` + `burst`. Keduanya yang terakhir
+terbukti bukan regresi—detektor memori tidak menangkap kalimat recall
+(diperiksa langsung), dan giliran burst-nya menumpuk kegagalan provider termasuk
+`message_understanding_failed` dengan latensi 32 detik, sedangkan empat sesi
+sebelumnya semuanya menggabungkan tiga bubble dengan benar.
+
+Menyimpulkan perbaikan dari satu sesi karena itu tidak sah, ke arah mana pun.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai
