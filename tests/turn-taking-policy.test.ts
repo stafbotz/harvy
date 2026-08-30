@@ -6,6 +6,8 @@ import {
   classifyTurnBoundaryLocally,
   guardTurnBoundary,
   idleWindowMs,
+  acknowledgesPrematureReply,
+  withPrematureAcknowledgement,
   MULTI_BUBBLE_IDLE_MS,
 } from "../src/core/turn-taking-policy.js";
 
@@ -150,5 +152,125 @@ describe("penilaian batas giliran lokal pada semburan", () => {
       ),
       null,
     );
+  });
+});
+
+describe("kesadaran Harvy ketika ia memotong pengguna", () => {
+  const BALASAN =
+    "Dua tenggat barengan memang bikin pusing. Coba mulai dari yang paling dekat, lalu pecah jadi bagian kecil biar nggak numpuk.";
+
+  it("mengakui sambungan cepat yang membawa isi baru", () => {
+    for (
+      const message of [
+        "yang biologi sama yang sejarah, aku harus gimana ya",
+        "sama satu lagi ada ulangan kimia",
+      ]
+    ) {
+      assert.equal(
+        acknowledgesPrematureReply({ message, reply: BALASAN, elapsedMs: 1_200 }),
+        true,
+        message,
+      );
+    }
+  });
+
+  // Penjaga terpenting berkas ini. Pertanyaan lanjutan berbentuk sama persis
+  // dengan sambungan yang terpotong; yang membedakan hanya waktu. Orang harus
+  // membaca balasannya lebih dulu sebelum dapat menyusun pertanyaan baru, dan
+  // itu tidak mungkin selesai dalam hitungan detik.
+  it("tidak mengakui pertanyaan lanjutan yang datang setelah sempat dibaca", () => {
+    assert.equal(
+      acknowledgesPrematureReply({
+        message: "terus kalau ujiannya besok gimana?",
+        reply: BALASAN,
+        elapsedMs: 30_000,
+      }),
+      false,
+    );
+  });
+
+  it("tidak mengakui penutup maupun topik baru", () => {
+    for (
+      const message of ["makasih ya", "oke", "besok aku ada les renang"]
+    ) {
+      assert.equal(
+        acknowledgesPrematureReply({ message, reply: BALASAN, elapsedMs: 1_000 }),
+        false,
+        message,
+      );
+    }
+  });
+
+  // Inilah arti "hanya ketika mengubah jawaban". Sambungan yang seluruh isinya
+  // sudah disinggung balasan tadi tidak mengubah apa pun, jadi mengakuinya
+  // hanya menambah kalimat tanpa menambah kejujuran.
+  it("diam ketika sambungannya sudah terjawab balasan sebelumnya", () => {
+    assert.equal(
+      acknowledgesPrematureReply({
+        message: "yang tenggat paling dekat itu",
+        reply: BALASAN,
+        elapsedMs: 1_000,
+      }),
+      false,
+    );
+  });
+
+  // Fragmen telanjang belum membawa isi apa pun; isinya datang di bubble
+  // berikutnya, dan bubble-bubble itu digabung menjadi satu giliran.
+  it("diam pada fragmen yang belum membawa isi", () => {
+    assert.equal(
+      acknowledgesPrematureReply({ message: "tapi", reply: BALASAN, elapsedMs: 700 }),
+      false,
+    );
+  });
+
+  it("gagal aman pada masukan yang tidak masuk akal", () => {
+    assert.equal(
+      acknowledgesPrematureReply({ message: "yang sejarah", reply: "", elapsedMs: 500 }),
+      false,
+    );
+    assert.equal(
+      acknowledgesPrematureReply({
+        message: "yang sejarah",
+        reply: BALASAN,
+        elapsedMs: Number.NaN,
+      }),
+      false,
+    );
+  });
+});
+
+describe("pengakuan potong yang dimiliki kode", () => {
+  // Pengukuran provider nyata 30 Agustus 2026: arahan berbentuk kalimat di
+  // prompt menghasilkan pengakuan 0 dari 5. Sesudah kalimatnya dimiliki kode,
+  // 3 dari 3. Yang wajib terjadi tidak boleh bergantung kepatuhan model.
+  it("menambahkan pengakuan di depan balasan", () => {
+    const reply = withPrematureAcknowledgement("Kerjain biologi dulu.", "siswa");
+
+    assert.match(reply, /keburu|motong|belum selesai/iu);
+    assert.match(reply, /Kerjain biologi dulu\./u);
+  });
+
+  // Kalau model kebetulan sudah mengakui, menambah lagi membuat Harvy meminta
+  // maaf dua kali dalam satu balasan.
+  it("tidak menulis pengakuan dua kali", () => {
+    const already = "Eh, aku keburu jawab tadi. Kerjain biologi dulu.";
+
+    assert.equal(withPrematureAcknowledgement(already, "siswa"), already);
+  });
+
+  it("memilih kalimat yang stabil per pengguna tetapi tidak seragam", () => {
+    const a = withPrematureAcknowledgement("Oke.", "siswa-a");
+    const b = withPrematureAcknowledgement("Oke.", "siswa-a");
+
+    assert.equal(a, b);
+    const seeds = ["a", "b", "c", "d", "e", "f", "g", "h"].map((seed) =>
+      withPrematureAcknowledgement("Oke.", seed)
+    );
+    assert.ok(new Set(seeds).size > 1, "kalimatnya tidak boleh selalu sama");
+  });
+
+  it("membiarkan balasan kosong apa adanya", () => {
+    assert.equal(withPrematureAcknowledgement("   ", "siswa"), "   ");
   });
 });

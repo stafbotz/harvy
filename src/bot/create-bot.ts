@@ -31,6 +31,7 @@ import {
   selectGlobalRoute,
 } from "../ai/model-policy.js";
 import { agentRunLogFields, liveStateRequirement } from "../ai/agent.js";
+import { acknowledgesPrematureReply } from "../core/turn-taking-policy.js";
 import {
   canUseDirectTimeFastPath,
   isDirectTimeQuestion,
@@ -858,6 +859,7 @@ export function createBot(
             awaitCurrent: batch.awaitCurrent,
             markUserCommitted: batch.markUserCommitted,
             interruptionRelation: batch.interruptionRelation,
+            turnReceivedAt: batch.firstReceivedAt,
           },
           batch.firstIngressSequence ?? batch.carrier.update.update_id,
           batch.explicitImmediateDanger,
@@ -2842,6 +2844,26 @@ export function createBot(
           undefined,
           understanding.routingAssessment?.emotionalNuance ?? null,
         ) !== null;
+      // Harvy sudah mengenali empat bentuk penyelaan, tetapi keempatnya satu
+      // arah: pengguna menyela pekerjaan yang sedang berjalan. Ketika balasan
+      // sudah terkirim tidak ada pekerjaan yang tergantikan, sehingga sambungan
+      // kalimat pengguna diperlakukan sebagai topik baru—Harvy tidak punya cara
+      // tahu bahwa ia baru saja memotong orang di tengah pikiran.
+      //
+      // Hanya sambungan yang mengubah jawaban yang diakui. Mengakui setiap
+      // potongan lebih jujur tetapi terasa cerewet, dan potongan yang tidak
+      // mengubah apa pun memang tidak merugikan siapa pun.
+      const lastHarvyTurn = [...context.turns].reverse().find(
+        (turn) => turn.role === "harvy",
+      );
+      const prematureReply = !hasImageInput && lastHarvyTurn !== undefined &&
+        runtime.turnReceivedAt !== undefined &&
+        acknowledgesPrematureReply({
+          message: text,
+          reply: lastHarvyTurn.text,
+          elapsedMs: runtime.turnReceivedAt - Date.parse(lastHarvyTurn.at),
+        });
+      if (prematureReply) runtime = { ...runtime, prematureReply: true };
       const guidedSmallStep = !hasImageInput &&
         effectPermissions.generalState &&
         !activeSession &&

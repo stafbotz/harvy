@@ -837,6 +837,67 @@ model menolak memanggil capability yang diwajibkan; di sini model kadang tidak
 mengusulkan apa-apa. Bentuk kegagalannya berbeda, obatnya sama: pindahkan
 pengenalannya ke kode dan sisakan bahasa untuk model.
 
+## 16. Harvy kini sadar ketika ia memotong pengguna
+
+Dikerjakan 30 Agustus 2026 atas usul pengguna, dan usul itu mengubah arah butir
+7. Pertanyaannya bukan lagi bagaimana menebak batas giliran lebih akurat—
+menebak tidak akan pernah sempurna, manusia pun saling memotong—melainkan
+bagaimana Harvy tahu ketika dirinya memotong lalu memperbaikinya.
+
+**Lubangnya nyata dan satu arah.** Harvy sudah mengenali empat bentuk penyelaan
+(`addition`, `correction`, `redirect`, `independent`), tetapi semuanya menilai
+*pengguna menyela pekerjaan Harvy*—kodenya menyebutnya "hubungan dengan run
+yang digantikan". Ketika balasan sudah terkirim, tidak ada run yang
+tergantikan, jadi sambungan kalimat pengguna diperlakukan sebagai topik baru.
+Harvy tidak punya cara tahu bahwa ia baru saja memotong orang di tengah pikiran.
+
+**Batasan yang diminta pengguna: hanya ketika sambungannya mengubah jawaban.**
+Mengakui setiap potongan lebih jujur tetapi terasa cerewet, dan potongan yang
+tidak mengubah apa pun memang tidak merugikan siapa pun. Batasan itu sekaligus
+membuatnya dapat diperiksa kode tanpa menebak.
+
+`acknowledgesPrematureReply` menuntut tiga hal bersamaan:
+
+1. **Waktu.** Pesan tiba dalam 8 detik sesudah balasan terkirim. Ini angka waktu
+   *membaca*, bukan mengetik: orang yang menyusun pertanyaan lanjutan harus
+   membaca balasannya lebih dulu, dan itu tidak selesai dalam hitungan detik.
+   Pertanyaan lanjutan dan sambungan yang terpotong berbentuk sama persis;
+   hanya waktu yang membedakan.
+2. **Bentuk menyambung.** Pembuka penyambung atau fragmen. Bentuk yang jelas
+   menutup giliran ("makasih", "oke") tidak pernah dihitung.
+3. **Isi yang belum terjawab.** Ada kata isi pada sambungan yang tidak muncul di
+   balasan tadi. Inilah arti "mengubah jawaban".
+
+`MessageBatch` kini membawa `firstReceivedAt` supaya jaraknya diukur dari saat
+bubble pengguna tiba, bukan sesudah jendela batching—kalau tidak, waktu tunggu
+Harvy sendiri ikut terhitung sebagai jeda pengguna.
+
+**Arahan prompt tidak cukup, dan ini terukur.** Sinyalnya mula-mula hanya
+diteruskan ke prompt seperti receipt ingatan. Pengukuran provider nyata:
+pengakuan **0 dari 5**, baik sinyal menyala maupun tidak. Arahannya bukan tanpa
+efek—jawabannya berubah menjadi menyambung alih-alih memulai topik baru—tetapi
+bagian yang paling penting tidak pernah muncul.
+
+Kalimatnya karena itu ikut dimiliki kode, sejajar dengan identitas capybara:
+tiga varian, dipilih stabil per pengguna, dan tidak ditambahkan bila balasannya
+sudah mengakui sendiri. Sesudah itu **3 dari 3**. Arahan prompt tetap dipasang
+karena efek bentuknya nyata.
+
+Ini pola yang sama dengan butir 13 dan 15, dan ini kali ketiga berturut-turut:
+yang wajib terjadi tidak boleh bergantung pada kepatuhan model. Di butir 13
+model menolak memanggil capability, di butir 15 model kadang tidak mengusulkan
+apa pun, di sini model tidak mengakui meski diminta.
+
+**Akibatnya untuk butir 7.** Memotong terlalu cepat jadi jauh lebih murah bila
+Harvy dapat memperbaiki diri sesudahnya, sehingga arah "perpendek fallback
+kegagalan" lebih aman diambil daripada sebelumnya.
+
+**Belum diperiksa di kanal nyata.** Korpus `uji-telegram-langsung` sudah memakai
+30 dari 32 perintah untuk sembilan kasus, jadi kasus baru tidak muat tanpa
+memecah sesi—batasan yang sudah tercatat di butir 9. Yang sudah diukur dengan
+model nyata adalah bagian yang paling mungkin gagal, yaitu apakah pengakuannya
+benar-benar muncul.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

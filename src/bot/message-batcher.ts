@@ -48,6 +48,14 @@ export interface MessageBatch<T> {
   markUserCommitted: () => void;
   /** Hubungan dengan run yang digantikan, bila ada. */
   interruptionRelation: TurnInterruptionRelation | null;
+  /**
+   * Kapan bubble pertama giliran ini tiba.
+   *
+   * Diukur sebelum jendela batching, sehingga jarak ke balasan sebelumnya
+   * mencerminkan jeda pengguna yang sebenarnya—bukan jeda itu ditambah
+   * waktu tunggu Harvy sendiri.
+   */
+  firstReceivedAt: number;
 }
 
 export interface MessageBatchMetrics {
@@ -651,6 +659,7 @@ export class MessageBatcher<T> {
           active.userCommitted = true;
         },
         interruptionRelation: entry.interruptionRelation,
+        firstReceivedAt: entry.firstReceivedAt,
       };
       let outcome: MessageBatchMetrics["outcome"] = "completed";
       try {
@@ -764,6 +773,7 @@ export class MessageBatcher<T> {
       awaitCurrent: async () => true,
       markUserCommitted: () => undefined,
       interruptionRelation: null,
+      firstReceivedAt: entry.firstReceivedAt,
     };
     void this.urgentHandler(ownerId, batch).catch((error: unknown) => {
       this.logger.error(

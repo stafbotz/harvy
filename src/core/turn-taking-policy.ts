@@ -317,3 +317,151 @@ function probability(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(1, Math.max(0, value));
 }
+
+/**
+ * Jendela tempat pesan susulan masih mungkin sudah diketik sebelum balasan
+ * Harvy muncul.
+ *
+ * Angkanya waktu membaca, bukan waktu mengetik. Orang yang menerima balasan
+ * lalu menyusun pertanyaan lanjutan harus membacanya lebih dulu; delapan detik
+ * terlalu singkat untuk itu pada balasan sepanjang apa pun yang dikirim Harvy.
+ * Pesan yang tiba lebih cepat dari itu hampir pasti sudah dalam perjalanan
+ * ketika Harvy menjawab—artinya Harvy yang memotong, bukan pengguna yang
+ * bertanya lagi.
+ */
+export const PREMATURE_REPLY_WINDOW_MS = 8_000;
+
+/**
+ * Pembuka yang menandai kalimat ini menyambung sesuatu, bukan memulai.
+ *
+ * Sengaja hanya bentuk yang tidak dapat berdiri sendiri sebagai pembuka topik
+ * baru. "Terus" dan "jadi" ikut karena keduanya lazim menyambung semburan yang
+ * terpotong, dan jendela delapan detik sudah menahan pemakaian lain.
+ */
+const CONTINUATION_OPENERS =
+  /^(?:yang|sama|serta|terus|trus|lalu|tapi|tp|jadi|soalnya|karena|karna|dan|plus|maksudku|maksudnya|oh iya|eh)\b/u;
+
+/** Kata yang tidak membuktikan apa pun tentang isi. */
+const CONTENT_STOPWORDS: ReadonlySet<string> = new Set([
+  "yang", "sama", "untuk", "dengan", "aku", "saya", "kamu", "harus", "gimana",
+  "bagaimana", "sudah", "udah", "belum", "juga", "masih", "nanti", "kalau",
+  "kalo", "kayak", "banget", "tapi", "terus", "jadi", "soalnya", "karena",
+  "itu", "ini", "ada", "nggak", "enggak", "gak", "bisa", "mau", "dari",
+]);
+
+/**
+ * Kata isi yang benar-benar baru terhadap sebuah balasan.
+ *
+ * Perbandingan dilakukan pada kata utuh supaya "sejarah" tidak dianggap sudah
+ * terjawab hanya karena balasannya memuat "sejarahnya" — justru sebaliknya,
+ * bentuk berimbuhan itu memang menandakan topiknya sudah disinggung, jadi
+ * pencocokan memakai awalan.
+ */
+function unaddressedContentWords(
+  message: string,
+  reply: string,
+): readonly string[] {
+  const replyText = reply.toLowerCase();
+  const seen = new Set<string>();
+  const unaddressed: string[] = [];
+  for (const raw of message.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+    if (raw.length < 4 || CONTENT_STOPWORDS.has(raw) || seen.has(raw)) continue;
+    seen.add(raw);
+    if (!replyText.includes(raw)) unaddressed.push(raw);
+  }
+  return unaddressed;
+}
+
+export interface PrematureReplyInput {
+  /** Pesan susulan yang baru tiba. */
+  message: string;
+  /** Balasan Harvy yang sudah terlanjur terkirim. */
+  reply: string;
+  /** Jarak antara balasan itu terkirim dan pesan ini tiba. */
+  elapsedMs: number;
+}
+
+/**
+ * Menilai apakah Harvy memotong pengguna **dan** jawabannya jadi berbeda.
+ *
+ * Harvy sudah mengenali empat bentuk penyelaan, tetapi keempatnya satu arah:
+ * pengguna menyela pekerjaan yang sedang berjalan. Ketika balasan sudah
+ * terkirim tidak ada pekerjaan yang tergantikan, sehingga sambungan kalimat
+ * pengguna diperlakukan sebagai topik baru—Harvy tidak punya cara tahu bahwa
+ * ia baru saja memotong orang di tengah pikiran.
+ *
+ * Menebak batas giliran tidak akan pernah sempurna; manusia pun saling
+ * memotong. Yang membedakan percakapan yang enak bukan tidak pernah memotong,
+ * melainkan sadar ketika memotong lalu memperbaikinya.
+ *
+ * Pengakuan sengaja dibatasi pada sambungan yang **mengubah jawaban**. Mengakui
+ * setiap potongan lebih jujur tetapi terasa cerewet, dan potongan yang tidak
+ * mengubah apa pun memang tidak merugikan siapa pun.
+ */
+export function acknowledgesPrematureReply(
+  input: PrematureReplyInput,
+): boolean {
+  const message = input.message.trim();
+  const reply = input.reply.trim();
+  if (message.length === 0 || reply.length === 0) return false;
+  if (!Number.isFinite(input.elapsedMs) || input.elapsedMs < 0) return false;
+  if (input.elapsedMs > PREMATURE_REPLY_WINDOW_MS) return false;
+
+  // Bentuk yang jelas menutup giliran tidak pernah menjadi sambungan yang
+  // terpotong, betapa pun cepat datangnya.
+  if (classifyTurnBoundaryLocally(message) === "complete") return false;
+
+  const continues = CONTINUATION_OPENERS.test(message.toLowerCase()) ||
+    classifyTurnBoundaryLocally(message) === "incomplete";
+  if (!continues) return false;
+
+  return unaddressedContentWords(message, reply).length > 0;
+}
+
+/**
+ * Bentuk pengakuan yang dipakai ketika Harvy memotong pengguna.
+ *
+ * Pengukuran 30 Agustus 2026 dengan model nyata: arahan berbentuk kalimat di
+ * prompt menghasilkan pengakuan **0 dari 5**, baik sinyalnya menyala maupun
+ * tidak. Arahannya bukan tanpa efek—jawabannya berubah menjadi menyambung
+ * alih-alih memulai topik baru—tetapi bagian yang paling penting, mengakui
+ * telah memotong, tidak pernah muncul.
+ *
+ * Ini pola yang sama dengan dua perbaikan sebelumnya: yang wajib terjadi tidak
+ * boleh bergantung pada kepatuhan model. Faktanya milik kode, jadi kalimatnya
+ * juga.
+ */
+const PREMATURE_ACKNOWLEDGEMENTS: readonly string[] = [
+  "Eh, aku keburu jawab tadi.",
+  "Maaf, tadi aku motong kamu.",
+  "Eh, kamu belum selesai ya—aku keburu nyaut.",
+];
+
+/** Menandai pengakuan yang sudah ada supaya tidak ditulis dua kali. */
+const ACKNOWLEDGEMENT_PRESENT =
+  /\b(?:keburu|kecepetan|kepotong|motong|memotong|nyela|menyela|belum selesai)\b/iu;
+
+/**
+ * Menambahkan pengakuan di depan balasan, kecuali balasannya sudah mengakui.
+ *
+ * Seed membuat pilihannya stabil dalam satu giliran tetapi berbeda antar
+ * pengguna, sehingga tidak terdengar seperti satu kalimat template yang sama
+ * setiap kali.
+ */
+export function withPrematureAcknowledgement(
+  reply: string,
+  seed = "harvy",
+): string {
+  const text = reply.trim();
+  if (text.length === 0) return reply;
+  if (ACKNOWLEDGEMENT_PRESENT.test(text)) return reply;
+  let hash = 2166136261;
+  for (const character of seed) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  const prefix =
+    PREMATURE_ACKNOWLEDGEMENTS[(hash >>> 0) % PREMATURE_ACKNOWLEDGEMENTS.length] ??
+      PREMATURE_ACKNOWLEDGEMENTS[0]!;
+  return `${prefix} ${text}`;
+}

@@ -10,6 +10,7 @@ import type { SemanticOperation } from "../domain/semantic-operation.js";
 import type { AiPurpose } from "../domain/telemetry.js";
 import {
   normalizeTurnBoundaryAssessment,
+  withPrematureAcknowledgement,
   type TurnBoundaryAssessment,
   type TurnBoundarySignals,
   type TurnBoundaryState,
@@ -221,6 +222,13 @@ export interface ConversationRuntime {
   plannedActionLabels?: readonly string[];
   /** Receipt code-owned; model hanya memilih cara bicara setelah commit sukses. */
   memoryAcknowledgements?: readonly MemoryAcknowledgementReceipt[];
+  /**
+   * Balasan sebelumnya terkirim sebelum pengguna selesai bicara, dan
+   * sambungannya mengubah jawaban. Ditetapkan adapter, bukan model.
+   */
+  prematureReply?: boolean;
+  /** Kapan bubble pertama giliran ini tiba; dipakai menilai `prematureReply`. */
+  turnReceivedAt?: number;
   /** Kontrak suara/intent untuk jawaban final Agent Runtime. */
   style?: StylePreference | null;
   intent?: ConversationIntent;
@@ -1038,6 +1046,7 @@ export class Conversation {
       ...(runtime.memoryAcknowledgements
         ? { memoryAcknowledgements: runtime.memoryAcknowledgements }
         : {}),
+      ...(runtime.prematureReply ? { prematureReply: true } : {}),
     });
 
     // Satu jalur arahan saja. Dulu ada dua: `safetyGuidance` yang lengkap, dan
@@ -1365,6 +1374,12 @@ export class Conversation {
       }
     }
     reply = normalizeAccidentalDuplicatePunctuation(reply);
+    // Sejajar dengan identitas capybara: fakta dan kalimatnya sama-sama milik
+    // kode. Model tidak pernah mengakui potongan meski diminta—0 dari 5 pada
+    // pengukuran provider nyata—sedangkan kode tahu persis kapan itu terjadi.
+    if (runtime.prematureReply) {
+      reply = withPrematureAcknowledgement(reply, runtime.ownerId ?? "harvy");
+    }
     return modelIdentityQuestion
       ? prependCapybaraIdentity(reply)
       : reply;

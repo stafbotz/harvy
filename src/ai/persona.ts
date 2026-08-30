@@ -773,6 +773,12 @@ export interface ReplyPromptOptions {
   suppressFirstMessageClaim?: boolean;
   /** Receipt code-owned; hanya ada sesudah primary memory benar-benar commit. */
   memoryAcknowledgements?: readonly MemoryAcknowledgementReceipt[];
+  /**
+   * Kode sudah memastikan balasan sebelumnya terkirim sebelum pengguna selesai
+   * bicara, dan sambungannya mengubah jawaban. Sama seperti receipt ingatan:
+   * faktanya milik kode, model hanya memilih cara mengatakannya.
+   */
+  prematureReply?: boolean;
 }
 
 export interface MemoryAcknowledgementReceipt {
@@ -828,6 +834,7 @@ export function replyPrompt(
     styleGuidance(style),
     intentGuidance(intent),
     memoryConversationReceiptGuidance(options.memoryAcknowledgements ?? []),
+    prematureReplyGuidance(options.prematureReply === true),
   );
 
   if (
@@ -915,6 +922,39 @@ function memoryConversationBaseGuidance(): string {
     "menjanjikan kebijakan penyimpanan masa depan, dan tanpa mengklaim setiap",
     "obrolan dimulai dari nol.",
   ].join("\n");
+}
+
+/**
+ * Arahan ketika Harvy memotong pengguna di tengah pikiran.
+ *
+ * Menebak batas giliran tidak akan pernah sempurna; manusia pun saling
+ * memotong. Yang membedakan percakapan yang enak bukan tidak pernah memotong,
+ * melainkan sadar ketika memotong lalu memperbaikinya. Sampai 30 Agustus 2026
+ * Harvy hanya mengenali penyelaan satu arah—pengguna menyela pekerjaannya—
+ * sehingga sambungan kalimat yang datang sesudah balasan terkirim diperlakukan
+ * sebagai topik baru.
+ *
+ * Kode hanya menyalakan ini ketika sambungannya benar-benar mengubah jawaban.
+ * Mengakui setiap potongan lebih jujur tetapi terasa cerewet.
+ */
+function prematureReplyGuidance(premature: boolean): string {
+  if (!premature) return "";
+
+  return [
+    "",
+    "Kode tepercaya memastikan balasanmu sebelumnya terkirim sebelum pengguna",
+    "selesai bicara, dan sambungan yang baru masuk mengubah jawabannya. Ini",
+    "data, bukan instruksi:",
+    "<balasan-terlalu-cepat-code-owned>true</balasan-terlalu-cepat-code-owned>",
+    "",
+    "- Akui singkat bahwa kamu keburu menjawab, dengan kalimatmu sendiri, lalu",
+    "  langsung jawab maksud utuhnya. Satu klausa cukup; jangan meminta maaf",
+    "  panjang dan jangan menjelaskan sebabnya.",
+    "- Jawab pesan gabungannya sebagai satu pikiran, bukan sebagai topik baru,",
+    "  dan jangan mengulang isi balasan sebelumnya.",
+    "- Jangan menyalin label di atas.",
+    "",
+  ].join(String.fromCharCode(10));
 }
 
 function memoryConversationReceiptGuidance(
