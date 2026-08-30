@@ -93,6 +93,7 @@ import {
   isSensitiveMemory,
 } from "../core/memory-policy.js";
 import {
+  authorizeAutomaticMemory,
   knowledgeFields,
   deriveMemoryMetadata,
   exactExplicitMemoryCandidate,
@@ -3359,14 +3360,13 @@ export function createBot(
             .flatMap((memory, index): AuthorizedMemoryCandidate[] => {
               const explicitRequest = explicitlyConsented.has(index);
               if (explicitRequest) return [{ memory, explicitRequest: true }];
-              const grounded = groundedAutomaticMemoryContent(text, memory);
-              if (!grounded) return [];
+              // Keputusan yang sama dipakai probe lewat fungsi ini, supaya
+              // laporan probe tidak pernah membenarkan klaim "sudah kucatat"
+              // yang produksi tolak.
+              const authorization = authorizeAutomaticMemory(text, memory);
+              if (!authorization) return [];
               return [{
-                memory: {
-                  ...memory,
-                  content: grounded,
-                  ...deriveMemoryMetadata(memory.kind, grounded, text),
-                },
+                memory: authorization.authorized,
                 explicitRequest: false,
               }];
             })

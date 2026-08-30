@@ -285,23 +285,36 @@ Indonesia sah mengutip aksara lain, dan menolaknya membuang isi yang benar.
 Belum terulang sejak deskripsi tool diperbaiki; ukur frekuensinya sebelum
 menambah pagar.
 
-## 4c. Probe melaporkan kandidat auto-memory, belum memprosesnya
+## 4c. Probe menilai kandidat auto-memory dengan pagar produksi
 
-`scripts/probe-chat.ts` kini mencetak `kandidatMemori` dan `catatanTersimpan`
-di diagnostiknya. Sebelumnya kandidat dari `understand()` diabaikan diam-diam,
-dan itu sempat menyesatkan: giliran yang membalas "Catat dulu biar konsisten"
-tanpa perubahan jumlah catatan tampak seperti klaim menyimpan yang palsu,
-padahal jalur yang menyimpannya—pipa auto-memory adapter—memang absen dari
-probe.
+`scripts/probe-chat.ts` dulu mencetak kandidat **mentah** dari `understand()`.
+Itu menyesatkan dengan cara yang halus: kandidat mentah memuat parafrasa model
+yang produksi tolak, sehingga probe tampak menyimpan lebih banyak daripada yang
+sebenarnya terjadi, dan laporannya membenarkan klaim "sudah kucatat" yang tidak
+pernah tercatat.
 
-Probe tetap **tidak** memprosesnya, dan itu disengaja. Adapter Telegram punya
-derivasi metadata, gerbang consent, penolakan rahasia, dan resolusi konflik
-dengan retraction (`src/bot/create-bot.ts:3164`, `:3197`, `:5749`). Meniru
-separuhnya akan membuat probe menyimpan hal yang produksi tolak—salah dengan
-cara yang lebih sulit dilihat daripada tidak menyimpan sama sekali.
+Keputusan pembumian isi kini hidup di `authorizeAutomaticMemory`
+(`src/core/memory-candidate.ts`), dipakai adapter maupun probe. Bukan tiruan:
+adapter tetap pemegang wewenang, dan bentuknya satu supaya keduanya tidak dapat
+berayun sendiri-sendiri.
 
-Menirunya utuh tetap terbuka, dan wajib dikerjakan sebelum probe dipakai
-menilai klaim "sudah kucatat". Adapter tetap authority; probe yang mengikuti.
+Keluaran probe sekarang membedakan keduanya:
+
+```
+"kandidatMemori": [{
+  "usulanModel": "Lebih suka belajar malam hari.",
+  "lolosPagar": true,
+  "isiTersimpan": "aku lebih suka belajar malam hari"
+}]
+```
+
+Yang **sengaja tidak** dipindahkan: consent, penolakan permintaan eksplisit,
+resolusi retraction, dan penulisan durable tetap milik adapter. Probe tidak
+menulis apa pun ke penyimpanan memori pengguna, dan itu batas yang dijaga—probe
+yang menyimpan akan mengubah data nyata demi sebuah pengukuran.
+
+Dengan begitu probe kini cukup untuk menilai klaim "sudah kucatat" sejauh isi
+kandidatnya, tanpa meniru separuh pipa adapter—yang justru bahaya aslinya.
 
 ## 5. Permukaan slash WhatsApp: 29 dijalankan, 11 ditampilkan
 

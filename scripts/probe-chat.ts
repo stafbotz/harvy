@@ -79,6 +79,7 @@ import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { ProfileService } from "../src/core/profile-service.js";
 import { SessionService } from "../src/core/session-service.js";
 import { TaskService } from "../src/core/task-service.js";
+import { authorizeAutomaticMemory } from "../src/core/memory-candidate.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 import { retryAgentRun, retryOnTransient } from "./probe-retry.js";
@@ -587,10 +588,21 @@ async function main(text: string, statePath: string): Promise<void> {
       // giliran yang membalas "sudah kucatat" tanpa perubahan jumlah catatan
       // tampak seperti klaim palsu, padahal yang menyimpannya jalur yang
       // memang absen dari probe.
-      kandidatMemori: (understanding.memories ?? []).map((memory) => ({
-        kind: memory.kind,
-        content: memory.content,
-      })),
+      // Kandidat dinilai dengan pagar yang sama seperti produksi
+      // (`authorizeAutomaticMemory`), bukan dilaporkan mentah. Kandidat mentah
+      // memuat parafrasa model yang produksi tolak, sehingga laporan mentah
+      // membenarkan klaim "sudah kucatat" yang tidak pernah tercatat.
+      kandidatMemori: (understanding.memories ?? []).map((memory) => {
+        const authorization = authorizeAutomaticMemory(text, memory);
+        return {
+          kind: memory.kind,
+          usulanModel: memory.content,
+          lolosPagar: authorization !== null,
+          ...(authorization
+            ? { isiTersimpan: authorization.authorized.content }
+            : {}),
+        };
+      }),
       autoMemoriDisimpan: autoMemory.disimpan,
       autoMemoriSensitifDilewati: autoMemory.dilewatiSensitif,
       catatanTersimpan: state.notes.length,

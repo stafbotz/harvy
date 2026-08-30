@@ -498,3 +498,47 @@ const CORRECTION_PATTERNS = [
 
 const FORBIDDEN_TEXT_CONTROL =
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
+
+/**
+ * Kandidat auto-memory yang lolos pagar, beserta isinya yang sudah dibumikan.
+ *
+ * Satu tempat untuk keputusan yang sama, dipakai adapter maupun probe. Sebelum
+ * ini keputusannya hidup sebagai `flatMap` di dalam `create-bot.ts`, sehingga
+ * probe hanya dapat melaporkan kandidat mentah dari extractor. Selisihnya besar
+ * dan menyesatkan: kandidat mentah memuat parafrasa model yang produksi tolak,
+ * jadi probe tampak menyimpan lebih banyak daripada yang sebenarnya terjadi.
+ *
+ * Menyalin logikanya ke probe akan lebih buruk lagi—dua salinan yang berayun
+ * sendiri-sendiri, dan probe yang membenarkan klaim "sudah kucatat" yang tidak
+ * pernah dicatat produksi. Adapter tetap pemegang wewenang; ini bentuk bersama
+ * dari keputusannya, bukan tiruan.
+ *
+ * Yang **tidak** ada di sini disengaja: consent, penolakan permintaan eksplisit,
+ * resolusi retraction, dan penulisan durable tetap milik adapter. Fungsi ini
+ * hanya menjawab satu pertanyaan—apakah isi kandidat ini benar-benar berasal
+ * dari kalimat pengguna, dan metadata apa yang diturunkan darinya.
+ */
+export interface AutomaticMemoryAuthorization<T> {
+  /** Kandidat dengan isi yang sudah dibumikan dan metadata turunannya. */
+  authorized: T;
+}
+
+export function authorizeAutomaticMemory<
+  T extends {
+    kind: MemoryKind;
+    content: string;
+    sourceEvidence?: string;
+    sourceSubject?: "self" | "other" | "work";
+    durability?: "durable" | "bounded" | "transient";
+  },
+>(rawTurn: string, candidate: T): AutomaticMemoryAuthorization<T> | null {
+  const grounded = groundedAutomaticMemoryContent(rawTurn, candidate);
+  if (!grounded) return null;
+  return {
+    authorized: {
+      ...candidate,
+      content: grounded,
+      ...deriveMemoryMetadata(candidate.kind, grounded, rawTurn),
+    },
+  };
+}

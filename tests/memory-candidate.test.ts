@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  authorizeAutomaticMemory,
   automaticMemoryCandidateAuthorized,
   deriveMemoryMetadata,
   exactExplicitMemoryCandidate,
@@ -306,5 +307,59 @@ describe("deriveMemoryMetadata", () => {
     assert.equal(corrected.value, "tidak:Rani");
     assert.equal(corrected.correction, true);
     assert.equal(corrected.graphProjection?.relation, "no_longer_partner_of");
+  });
+});
+
+/**
+ * Keputusan yang dipakai adapter maupun probe.
+ *
+ * Sebelum dipisahkan, keputusan ini hidup sebagai `flatMap` di dalam
+ * `create-bot.ts`, sehingga probe hanya dapat melaporkan kandidat mentah dari
+ * extractor—dan kandidat mentah memuat parafrasa yang produksi tolak. Probe
+ * karena itu tampak menyimpan lebih banyak daripada yang sebenarnya terjadi,
+ * dan laporannya membenarkan klaim "sudah kucatat" yang tidak pernah tercatat.
+ */
+describe("otorisasi kandidat auto-memory", () => {
+  it("membumikan isi kandidat pada kalimat pengguna", () => {
+    const authorization = authorizeAutomaticMemory(
+      "aku lebih suka belajar malam hari",
+      {
+        kind: "preference" as const,
+        content: "Selalu memilih belajar malam untuk semua mata pelajaran",
+        sourceEvidence: "lebih suka belajar malam hari",
+        sourceSubject: "self" as const,
+        durability: "durable" as const,
+      },
+    );
+
+    assert.ok(authorization);
+    // Yang tersimpan adalah span dari kalimat pengguna, bukan perluasan model.
+    assert.equal(authorization.authorized.content, "lebih suka belajar malam hari");
+  });
+
+  // Penjaga terpenting di sini. Parafrasa yang tidak berpijak pada kalimat
+  // pengguna adalah cara paling halus sebuah catatan salah masuk: isinya
+  // terdengar benar, dan tidak ada yang pernah mengatakannya.
+  it("menolak kandidat yang tidak berpijak pada kalimat pengguna", () => {
+    assert.equal(
+      authorizeAutomaticMemory("besok aku ada ujian biologi", {
+        kind: "preference" as const,
+        content: "Menyukai biologi lebih daripada mata pelajaran lain",
+        sourceEvidence: "menyukai biologi lebih daripada mata pelajaran lain",
+        sourceSubject: "self" as const,
+        durability: "durable" as const,
+      }),
+      null,
+    );
+  });
+
+  it("menolak kandidat tanpa evidence sama sekali", () => {
+    assert.equal(
+      authorizeAutomaticMemory("halo", {
+        kind: "preference" as const,
+        content: "Ramah",
+      }),
+      null,
+    );
   });
 });
