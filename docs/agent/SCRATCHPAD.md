@@ -423,22 +423,56 @@ p90 classifier 9.228 ms, lebih besar daripada jendela `open` 7.000 ms itu
 sendiri; menunggu jawabannya justru dapat melampaui jendela yang hendak
 ditentukannya.
 
-Tiga arah yang masuk akal, dan tidak satu pun dikerjakan di sini karena
-semuanya mengubah kapan Harvy memotong pengguna—keputusan produk yang menuntut
-pengukuran tersendiri:
+Tiga arah masuk akal. **Yang kedua sudah dikerjakan**; dua sisanya tetap
+keputusan produk karena mengubah kapan Harvy memotong pengguna.
 
 - **Perpendek fallback kegagalan.** Kegagalan bukan bukti pengguna masih
   mengetik; `open` penuh 7 detik memperlakukannya seolah begitu. Jendela yang
   lebih pendek khusus untuk kegagalan mengurangi jeda tanpa mengklaim
-  kelengkapan. Risikonya memotong orang yang memang masih menulis.
-- **Panggil lebih jarang.** Perkuat `assessTurnBoundaryLocally` supaya lebih
-  sedikit giliran ambigu yang sampai ke model. Ini menghapus biaya sekaligus
-  jeda pada giliran yang tertangani heuristik.
+  kelengkapan. Risikonya memotong orang yang memang masih menulis. Belum
+  dikerjakan.
+- **Panggil lebih jarang.** Dikerjakan 30 Agustus, lihat di bawah.
 - **Terima apa adanya.** Tujuh detik jeda pada sebagian giliran adalah harga
   untuk tidak memotong orang yang sedang mengetik, dan itu pertukaran yang sah.
 
 Yang jelas salah adalah menaikkan timeout, dan yang jelas tidak menolong adalah
 memindahkan penjadwalan lebih awal.
+
+### Lever kedua: heuristik lokal kini membaca semburan
+
+`assessTurnBoundaryLocally` menyerah pada **setiap** pesan multi-bubble
+(`if (rawBubbles.length !== 1) return null;`). Karena classifier model hanya
+dipanggil ketika fungsi ini mengembalikan null (`message-batcher.ts:524`),
+setiap semburan otomatis membayar satu panggilan model—pada bentuk pesan yang
+paling wajar diketik pelajar.
+
+Kini ia menilai bubble **terakhir**. Keyakinannya sengaja diturunkan ke 0,7
+dengan continuation 0,5 untuk multi-bubble, supaya `assessmentIdleWindowMs`
+memberi bantalan `MULTI_BUBBLE_IDLE_MS` 4 detik alih-alih memotong di nol
+detik—penjaga terpenting di `tests/turn-taking-policy.test.ts`.
+
+Cakupan, diukur atas dua belas bentuk semburan: **7 selesai di kode, 5 tetap ke
+model**, dari sebelumnya 0 dari 12. Karena panggilan model bergantung langsung
+pada nilai balik fungsi ini, tujuh itu adalah panggilan yang benar-benar hilang.
+
+**Pengurangan di kanal nyata: nol, tidak terukur.** Dua sesi sesudah perubahan
+memberi 20 giliran dengan 6 kegagalan batas (30%); baseline 18 giliran dengan 5
+kegagalan (28%). Sama saja, dan sebabnya struktural, bukan kebetulan:
+
+- **8 dari 9 kasus di `live-telegram-cases.ts` hanya satu bubble.** Korpusnya
+  tidak dapat melihat perbaikan multi-bubble.
+- Satu-satunya kasus multi-bubble, `burst-satu-pikiran`, berakhir dengan bubble
+  "yang biologi sama yang sejarah, aku harus gimana ya"—persis salah satu dari
+  lima bentuk yang masih diserahkan ke model. Kedua sesi mencatatnya
+  `3 bubble, batas open`, tidak berubah.
+- Keempat giliran yang berakhir `open` semuanya pesan satu bubble yang ambigu,
+  yang memang bukan sasaran perubahan ini.
+
+Jadi cakupan 7 dari 12 berdiri sebagai sifat fungsinya, sementara klaim
+perbaikan latensi di kanal nyata **tidak punya bukti**. Untuk mendapatkannya,
+korpus harness perlu beberapa kasus semburan lagi yang bubble akhirnya memang
+dapat diputuskan—dan sebaiknya bentuknya diambil dari lalu lintas nyata, bukan
+dikarang seperti dua belas bentuk di atas.
 
 ## 8. Ambang otorisasi kini bertingkat menurut akibat
 

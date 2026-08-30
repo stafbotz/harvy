@@ -109,17 +109,39 @@ export function assessTurnBoundaryLocally(
     .split("\n")
     .map((bubble) => bubble.trim())
     .filter(Boolean);
-  if (rawBubbles.length !== 1) return null;
-  const raw = rawBubbles[0] ?? "";
+  if (rawBubbles.length === 0) return null;
+  // Bubble terakhir yang menentukan apakah pengguna sudah selesai, sama seperti
+  // cara orang membacanya. Sampai 30 Agustus 2026 fungsi ini menyerah pada
+  // setiap pesan multi-bubble, sehingga seluruh semburan dilempar ke classifier
+  // model—padahal semburan justru bentuk yang paling sering muncul dan
+  // classifier itu gagal pada 16 dari 28 giliran, dan setiap kegagalan menjadi
+  // tunggu tujuh detik.
+  const multiBubble = rawBubbles.length > 1;
+  const raw = rawBubbles.at(-1) ?? "";
   const normalized = normalize(raw);
   if (!normalized) return null;
   if (looksClearlyComplete(raw, normalized)) {
-    return Object.freeze({
-      state: "complete",
-      confidence: 0.99,
-      continuationLikelihood: 0.02,
-      reasonClass: "closed-request",
-    });
+    // Keyakinan sengaja diturunkan untuk semburan. Dengan 0,99 dan
+    // continuation 0,02, `assessmentIdleWindowMs` melewati bantalan
+    // multi-bubble dan memotong di nol detik—tepat pada bentuk pesan yang
+    // paling mungkin masih berlanjut. Nilai di bawah membuatnya memakai
+    // `MULTI_BUBBLE_IDLE_MS`, angka yang memang dipilih repositori ini untuk
+    // "sudah lengkap tetapi masih mungkin disambung".
+    return Object.freeze(
+      multiBubble
+        ? {
+            state: "complete" as const,
+            confidence: 0.7,
+            continuationLikelihood: 0.5,
+            reasonClass: "closed-request" as const,
+          }
+        : {
+            state: "complete" as const,
+            confidence: 0.99,
+            continuationLikelihood: 0.02,
+            reasonClass: "closed-request" as const,
+          },
+    );
   }
   if (looksClearlyIncomplete(normalized)) {
     return Object.freeze({
