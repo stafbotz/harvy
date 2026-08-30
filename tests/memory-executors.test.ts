@@ -45,14 +45,18 @@ describe("tool ingatan dan pencarian riwayat", () => {
       externalSearch: boolean;
       trust: string;
       total: number;
-      matches: { episodeId: string; claims: { text: string }[] }[];
+      matches: { sumber: number; claims: { text: string }[] }[];
     };
     // Model harus melihat bahwa sumbernya riwayat Harvy sendiri, supaya ia
     // tidak menjanjikan hasil internet yang memang tidak pernah ada.
     assert.equal(payload.externalSearch, false);
     assert.equal(payload.trust, "user-authored-data");
     assert.equal(payload.total, 1);
-    assert.equal(payload.matches[0]?.episodeId, "ep-1");
+    // Nomor urut, bukan identifier. `episodeId` sungguhan berawalan
+    // `episode_`—kata yang aturan planner larang muncul di jawaban, tetapi
+    // dulu terbaca model pada setiap hasil pencarian.
+    assert.equal(payload.matches[0]?.sumber, 1);
+    assert.doesNotMatch(result.summary, /episode/iu);
     assert.equal(payload.matches[0]?.claims[0]?.text, "Ujian biologi pekan depan.");
     assert.deepEqual(queries, [{ query: "biologi", limit: 2 }]);
   });

@@ -64,25 +64,52 @@ dikirim planner, bukan menata ulang hasil. Tes penguncinya memakai query yang
 tidak muncul utuh di klaim mana pun, karena fixture yang memberi bonus frasa
 kepada klaim pesaing akan menutup pengaruh aspek seluruhnya.
 
-## 1b. Kosakata internal bocor meski ada aturan prompt yang melarangnya
+## 1b. Kosakata internal: sumbernya dihapus, bukan larangannya dipertegas
 
-`AGENT_PLANNER_SHARED` memuat aturan eksplisit: "jangan menyebut episode,
-klaim, record, field, query, hasil pencarian, atau nama tool di jawabanmu."
-Aturan itu **tidak dipatuhi**. Dari lima jawaban recall terakhir, tiga memakai
-kata "episode" secara harfiah ("ketemu episode dari 14 Agustus", "nemu dua
-episode").
+Aturannya sudah ada dan terbukti terkirim: `AGENT_PLANNER_SHARED` memuat
+"jangan menyebut episode, klaim, record, field, query, hasil pencarian, atau
+nama tool di jawabanmu", hadir di kedua kontrak planner, baris 15 dari 23 pada
+kontrak auto. Jadi ini tidak pernah soal pengiriman.
 
-Aturan prompt yang tidak berlaku lebih buruk daripada tidak ada aturan: ia
-membuat pembaca kode mengira masalahnya sudah tertutup. Dua arah yang masuk
-akal, dan keduanya belum dicoba:
+Ia tetap dilanggar 2 dari 5 karena kata terlarangnya justru ada di bahan yang
+dibaca model, dan sebagian besar **buatan sendiri**:
 
-- Hilangkan sumbernya. Hasil tool memuat `episodeId` dan
-  `kind: "history.search.result"`; model mencontoh kosakata yang dilihatnya.
-  Menamai field hasil dengan istilah netral menghapus contohnya, bukan sekadar
-  melarangnya.
-- Ukur dulu apakah aturannya memang tidak sampai. Aturan itu ada di
-  `AGENT_PLANNER_SHARED`, yang dipakai kedua kontrak; pastikan ia benar-benar
-  ikut terkirim pada giliran recall sebelum menyalahkan kepatuhan model.
+- Deskripsi `history.search` menyebut "episode" dua kali dan "episodeId" sekali.
+  Kalimat itu ditulis untuk memperbaiki penggabungan lintas-percakapan, dan
+  tanpa disadari memberi model contoh kata yang dilarang dipakainya.
+- Setiap hasil pencarian membawa field `episodeId`, dan nilainya sendiri
+  berawalan `episode_` karena begitulah `episodic-compaction` menamainya.
+
+Melarang sebuah kata sambil menyodorkannya pada setiap hasil adalah aturan yang
+tidak dapat dipatuhi. Perbaikannya menghapus sumbernya: deskripsi ditulis ulang
+tanpa kosakata internal, dan `episodeId` diganti `sumber` berisi nomor urut
+dalam satu hasil pencarian. Model hanya perlu membedakan sumber, bukan
+mengidentifikasinya secara global.
+
+| | sebelum | sesudah |
+|---|---|---|
+| jawaban memuat kosakata internal | 2 dari 5 | **0 dari 5** |
+| klaim yang tepat disebut | 5 dari 5 | 5 dari 5 |
+
+Satu tes mengunci bentuk hasilnya: ringkasan `history.search` tidak boleh
+memuat kata "episode" sama sekali.
+
+Pelajaran yang berlaku lebih luas daripada butir ini: bila sebuah aturan prompt
+tidak dipatuhi, periksa dulu apakah yang dilarang justru muncul di tempat model
+membacanya. Mempertegas larangan tidak akan menolong selama contohnya masih
+disodorkan.
+
+## 1c. Register bahasa kadang berpindah
+
+Dua pengamatan sambil lalu, belum diukur: satu jawaban recall memakai "Saya"
+alih-alih "aku", dan satu jawaban jadwal belajar sebelumnya dimulai dalam
+bahasa Inggris ("I have what I need. Here's a study plan..."). Keduanya pada
+giliran yang lewat Agent Runtime.
+
+Persona Harvy berbahasa Indonesia santai dengan "aku". Perpindahan register
+tidak merusak isi, tetapi ia terlihat jelas oleh pengguna dan menandakan prompt
+persona tidak sepenuhnya mengikat pada jalur planner. Hitung dulu frekuensinya
+lewat beberapa run sebelum menyentuh prompt mana pun.
 
 ## 2. Capability tanpa schema: pagarnya sudah ada
 

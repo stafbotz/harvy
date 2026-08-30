@@ -48,13 +48,18 @@ const WRITABLE_NOTE_KINDS: readonly MemoryKind[] = [
 
 const HISTORY_SEARCH_NATIVE_TOOL = {
   name: "harvy_history_search_v1",
-  // Peringkat leksikal berarti episode bertema lain ikut muncul hanya karena
-  // berbagi satu kata. Probe 2026-08-29: query soal ujian biologi
-  // mengembalikan juga episode jam tidur, dan model menjawab bahwa hal yang
+  // Peringkat leksikal berarti percakapan bertema lain ikut muncul hanya
+  // karena berbagi satu kata. Probe 2026-08-29: pencarian soal ujian biologi
+  // mengembalikan juga obrolan jam tidur, dan model menjawab bahwa hal yang
   // belum jelas soal ujian itu adalah jam tidur yang berantakan—dua percakapan
   // berbeda dijahit menjadi satu ingatan yang tidak pernah terjadi.
+  //
+  // Kalimatnya sengaja bebas kosakata internal. Versi sebelumnya menyebut
+  // "episode" dua kali dan "episodeId" sekali, dan itu justru memberi model
+  // contoh kata yang dilarang dipakai di jawabannya oleh aturan planner. Yang
+  // dilarang tidak boleh muncul di tempat model membacanya.
   description:
-    "Cari percakapan lama pemilik scope ini berdasarkan kata kunci. Sumbernya hanya riwayat Harvy sendiri, bukan web atau aplikasi lain. Hasilnya diurutkan berdasarkan kecocokan kata, jadi episode yang tidak berkaitan bisa ikut muncul: pakai episodeId untuk memisahkannya dan jangan menggabungkan klaim dari beberapa episode menjadi satu ingatan.",
+    "Cari percakapan lama pemilik scope ini berdasarkan kata kunci. Sumbernya hanya riwayat Harvy sendiri, bukan web atau aplikasi lain. Hasilnya diurutkan berdasarkan kecocokan kata, jadi obrolan yang tidak berkaitan bisa ikut muncul: nomor sumber membedakannya, dan isi dari dua sumber berbeda tidak boleh digabung menjadi satu ingatan.",
   inputSchema: objectSchema({
     query: {
       type: "string",
@@ -247,8 +252,13 @@ implements AgentCapabilityExecutor<HistorySearchInput> {
         ...(input.aspect ? { aspect: input.aspect } : {}),
       },
     );
-    const visible = matches.slice(0, input.limit).map((match) => ({
-      episodeId: match.episodeId,
+    // Nomor urut, bukan identifier. Model hanya perlu membedakan sumber, dan
+    // `episodeId` sungguhan berawalan `episode_`—kata yang dilarang muncul di
+    // jawaban, tetapi dulu terbaca model pada setiap hasil pencarian. Melarang
+    // sebuah kata sambil menyodorkannya adalah aturan yang tidak dapat
+    // dipatuhi.
+    const visible = matches.slice(0, input.limit).map((match, index) => ({
+      sumber: index + 1,
       createdAt: match.createdAt,
       claims: match.claims.slice(0, MAX_CLAIMS_PER_MATCH).map((claim) => ({
         field: claim.field,
@@ -259,7 +269,7 @@ implements AgentCapabilityExecutor<HistorySearchInput> {
       kind: "history.search.result",
       source: "harvy_conversation_history",
       externalSearch: false,
-      // Klaim episode ditulis model peringkas dari giliran pengguna. Ia bahan
+      // Isi ringkasan ditulis model peringkas dari giliran pengguna. Ia bahan
       // ingatan, bukan bukti bahwa isinya benar.
       trust: "user-authored-data",
       query: input.query,
