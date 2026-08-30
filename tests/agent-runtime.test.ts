@@ -106,6 +106,75 @@ describe("agent routing dan planner contract", () => {
     assert.equal(liveStateRequirement("jelaskan status sesi HTTP"), null);
   });
 
+  // Sampai 30 Agustus 2026 kalimat berbentuk keluhan tidak pernah membaca
+  // daftar tugas: extractor memberinya intent `feeling`/`task` dengan
+  // `toolNeed: none` pada 14 dari 14 ulangan, dan kedua intent itu di luar
+  // `intentAllowsAgentRuntime`. Jalur yang tersisa tanpa menyentuh intent
+  // adalah kewajiban state-live ini.
+  it("membaca daftar tugas untuk keluhan yang meminta arahan urutan", () => {
+    for (
+      const message of [
+        "eh btw\naku baru inget besok ada dua deadline barengan\nyang biologi sama yang sejarah, aku harus gimana ya",
+        "tugas numpuk banget, harus mulai dari mana?",
+        "besok ada ujian sama deadline tugas, aku harus ngapain duluan?",
+        "deadline minggu ini banyak, gimana caranya aku atur prioritas",
+        "pr numpuk semua, yang mana dulu ya",
+      ]
+    ) {
+      assert.equal(
+        liveStateRequirement(message)?.capabilityId,
+        "task.list_active",
+        message,
+      );
+    }
+  });
+
+  // Penjaga terpenting pasangan tes ini. Menaikkan setiap keluhan menjadi
+  // pekerjaan menghapus mode menyimak, dan kerugian itu lebih sulit dilihat
+  // daripada keuntungannya.
+  it("membiarkan curhat dan pertanyaan isi tetap tanpa pembacaan state", () => {
+    for (
+      const message of [
+        "capek banget deadline numpuk",
+        "besok ada ujian biologi, aku belum siap sama sekali",
+        "gimana cara belajar biologi yang efektif?",
+        "pr matematika nomor 3 gimana caranya?",
+        "aku sedih banget hari ini",
+        "besok libur nggak sih?",
+      ]
+    ) {
+      assert.equal(liveStateRequirement(message), null, message);
+    }
+  });
+
+  // Penjaga terpenting butir ini, dan satu-satunya yang ditemukan suite
+  // sesudah perubahan dikira selesai. Ketiga syarat cocok penuh di sini—
+  // "ujian", "besok", "harus gimana"—tetapi mengubah kalimat duka menjadi
+  // pembacaan daftar tugas adalah kegagalan yang jauh lebih buruk daripada
+  // jawaban yang kurang berdasar.
+  it("menutup cabang keluhan ketika nuansa emosinya tinggi", () => {
+    const message = "Ayahku meninggal. Besok aku ujian. Aku harus gimana?";
+
+    assert.equal(
+      liveStateRequirement(message, undefined, "medium")?.capabilityId,
+      "task.list_active",
+    );
+    assert.equal(liveStateRequirement(message, undefined, "high"), null);
+  });
+
+  // Kelas state-live lain adalah kewajiban keras: pertanyaan tentang agenda
+  // tetap wajib membaca agenda betapa pun beratnya perasaan yang menyertainya.
+  it("tidak membiarkan nuansa tinggi menutup kewajiban state-live lain", () => {
+    assert.equal(
+      liveStateRequirement("apa agendaku?", undefined, "high")?.capabilityId,
+      "calendar.agenda",
+    );
+    assert.equal(
+      liveStateRequirement("cek tugasku", undefined, "high")?.capabilityId,
+      "task.list_active",
+    );
+  });
+
   it("native tools hanya berasal dari registry callable dan parser gagal tertutup", () => {
     const callable = [{
       id: "settings.time.get",

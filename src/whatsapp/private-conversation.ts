@@ -3550,7 +3550,11 @@ export class WhatsAppPrivateConversation {
     try {
       await ensurePrivateCurrent(runtime);
       const requiresLiveState = !hasImageInput &&
-        liveStateRequirement(text) !== null;
+        liveStateRequirement(
+          text,
+          undefined,
+          understanding.routingAssessment?.emotionalNuance ?? null,
+        ) !== null;
       const guidedSmallStep = !hasImageInput &&
         effectPermissions.generalState &&
         !activeSession &&

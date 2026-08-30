@@ -173,6 +173,12 @@ export const LIVE_TELEGRAM_CASES: readonly LiveTelegramCase[] = [
       // Ketiganya satu pikiran, jadi jawabannya wajib menyentuh isi bubble
       // terakhir—bukan hanya menanggapi "eh btw".
       replyMatches: [/biologi/iu, /sejarah/iu],
+      // Sejak 30 Agustus 2026 keluhan yang meminta arahan urutan wajib
+      // membaca daftar tugas lebih dulu (`complaintNeedsTaskState`). Tugas
+      // biologi sudah tercatat oleh kasus `simpan-task`, jadi jawabannya
+      // dapat berdasar pada apa yang benar-benar ada, bukan pengetahuan umum.
+      agentUsed: true,
+      capabilities: ["task.list_active"],
     },
   },
   {

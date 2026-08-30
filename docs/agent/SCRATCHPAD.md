@@ -641,56 +641,121 @@ butir 1 berlaku di sini juga: beri slot pada schema—field sasaran yang terpisa
 dari teks pertanyaan—karena parameter yang dideklarasikan diisi sedangkan prosa
 diabaikan.
 
-## 13. Kalimat berbentuk keluhan tidak memicu pembacaan state
+## 13. Keluhan yang meminta arahan kini membaca daftar tugas
 
-**Versi pertama butir ini salah dan sudah ditarik.** Ia menyatakan pembuka
-"eh btw" membalikkan klasifikasi menjadi `smalltalk` dan menyimpulkan
-`understandingPrompt` sudah jenuh. Keduanya berdiri di atas artefak: perintah
-shell hanya meneruskan baris pertama, sehingga model menerima `"eh btw"` saja.
-Kode yang sempat dibuat untuk membuang pembuka sudah dicabut seluruhnya.
+Dikerjakan 30 Agustus 2026. Diagnosisnya benar, tetapi jalur perbaikan yang
+diusulkan versi sebelumnya tidak akan bekerja, dan menemukan sebabnya membuka
+dua cacat yang lebih dalam.
 
-Pengukuran ulang memakai `scripts/ukur-pemahaman.ts`, yang menanam kalimat
-ujinya di kode supaya shell tidak dapat memotongnya. Lima ulangan per kasus:
+**Usul lama—menaikkan `toolNeed`—tidak membuka apa pun.** Gerbangnya di
+`create-bot.ts:3419` berbunyi
+`intentAllowsAgentRuntime(intent) || requiresLiveState || …`, dan `toolNeed`
+baru dinilai *sesudah* gerbang itu. Dengan intent `feeling`, satu-satunya jalan
+masuk yang tidak menyentuh intent adalah `liveStateRequirement`.
 
-| kasus | intent | toolNeed |
-|---|---|---|
-| semburan 3 baris, dengan pembuka | `task`×3, `feeling`×1 | `none` 4 dari 4 |
-| semburan 2 baris, tanpa pembuka | `feeling`×4, `task`×1 | `none` 5 dari 5 |
-| satu baris, isi sama | `feeling`×3, `task`×1, `question`×1 | `none` 5 dari 5 |
-| "tolong bantu aku menyusun urutan mengerjakan dua tugas yang deadline-nya besok" | `request`×4, `task`×1 | **`internal_state` 4 dari 5** |
+**Perbaikan: satu cabang baru di `liveStateRequirement`** yang menuntut tiga
+syarat bersamaan—kata kewajiban, penanda waktu atau kemajemukan, dan permintaan
+arahan. Konjungsi ketiga memisahkan curhat dari permintaan bantuan, sehingga
+mode menyimak tetap utuh; konjungsi kedua menahan pertanyaan isi.
 
-**Bentuk permukaan tidak berpengaruh sama sekali.** Ketiga varian ambigu—tiga
-baris, dua baris, satu baris—berperilaku sama. Yang membedakan adalah bentuk
-permintaannya: kalimat berbentuk keluhan ("besok ada dua deadline barengan, aku
-harus gimana ya") dibaca `feeling` atau `task` dengan `toolNeed: none`,
-sedangkan kalimat berbentuk permintaan eksplisit dibaca `request` dengan
-`internal_state`.
+| lolos ke pembacaan state | tetap ditangani percakapan |
+|---|---|
+| "besok ada dua deadline barengan … aku harus gimana ya" | "capek banget deadline numpuk" |
+| "tugas numpuk banget, harus mulai dari mana?" | "besok ada ujian biologi, aku belum siap sama sekali" |
+| "deadline minggu ini banyak, gimana caranya aku atur prioritas" | "pr matematika nomor 3 gimana caranya?" |
 
-Akibatnya nyata: `toolNeed: none` berarti daftar tugas tidak pernah dibaca,
-jadi Harvy menjawab "aku harus gimana ya" dari pengetahuan umum tanpa melihat
-apa yang sebenarnya tercatat untuk orang itu.
+Lima positif dan delapan negatif dikunci di `tests/agent-runtime.test.ts`.
 
-**Apakah itu cacat belum dapat dipastikan, dan sengaja tidak diputuskan di
-sini.** Kalimat itu memang ambigu—ia bisa keluhan yang pantas disimak, dan
-Harvy punya mode menyimak justru untuk itu. Menaikkannya menjadi `request`
-secara paksa akan membuat setiap keluhan berubah menjadi pekerjaan, dan itu
-kerugian yang lebih sulit dilihat daripada keuntungannya.
+### Cacat yang tersingkap: model menolak `tool_choice` yang dipaksakan
 
-Yang dapat dinilai tanpa memutuskan perdebatan itu adalah akibatnya, dan itu
-sudah dijaga: kasus `burst-satu-pikiran` di `scripts/live-telegram-cases.ts`
-menuntut balasannya menyebut kedua mata pelajaran yang disebut pengguna. Ia
-lulus 2 dari 3 sesi. Bila kelas ini hendak ditutup, jalur yang menjanjikan
-adalah menaikkan `toolNeed` untuk kalimat yang menyebut tenggat atau tugas
-tercatat—tanpa menyentuh intent—karena membaca daftar tugas tidak mengubah
-nada jawaban, hanya membuatnya berdasar.
+Membuka gerbang saja **memperburuk keadaan**: empat probe berturut-turut
+berakhir `stopped:invalid_planner_output`, kini dengan empat panggilan model.
 
-**Pelajaran metodologis, dan ini yang paling mahal dari putaran itu.** Sebuah
-kesimpulan dipublikasikan dan di-commit sebelum masukannya diperiksa. Alat
-ukurnya tidak melaporkan kesalahan apa pun; ia hanya menerima lebih sedikit
-daripada yang dikira. Tanda bahayanya justru hasil yang terlalu rapi—tiga
-bentuk, tiga intent, 3 dari 3 setiap kali. Keteraturan sebersih itu pada
-extractor yang variansnya besar lebih sering menandakan cacat alat daripada
-temuan.
+Nama status itu menyesatkan. `invalid_planner_output` adalah *fallback
+catch-all* terakhir di `abortReason`—setiap lemparan planner yang tidak
+terklasifikasi memakai nama itu. Sebab sebenarnya, terbaca sesudah errornya
+dicetak: `AiToolShapeError` dengan `reason: 'ignored_tool_choice'` dan
+`'missing_tool_call'`. Kelas state-live memaksa model memanggil capability lewat
+named `tool_choice`, dan MiniMax-M3 berulang kali menolak—ia membalas teks
+permintaan maaf. Akibatnya kebalikan dari tujuan gerbang: jawaban akhirnya
+disusun fallback justru tanpa state yang wajib dibaca. Frasa state-live lama
+gagal dengan cara yang sama, jadi ini bukan bawaan cabang baru.
+
+**Kewajiban itu milik kode, bukan model.** `liveStateRequirement` sudah
+menetapkan capability sekaligus inputnya, jadi tidak ada keputusan tersisa untuk
+model. `planAgent` kini menerbitkan aksinya sendiri. Harness tetap memvalidasi
+proposal, memeriksa permission, dan mencatat eksekusinya; seluruh capability
+kelas ini read-only. Named `tool_choice` dan terjemahan portabelnya ikut
+dihapus karena tidak ada lagi yang memakainya.
+
+Satu langkah tambahan diperlukan: thread native harus tetap koheren. Tanpa
+pasangan call/hasil sintetis, model melihat observation tanpa jejak pemanggilnya
+lalu mengusulkan capability yang sama sekali lagi.
+
+| tahap | probe selesai |
+|---|---|
+| gerbang dibuka saja | 0 dari 4 |
+| aksi diterbitkan kode | 1 dari 4 |
+| + thread native koheren | **5 dari 5** |
+
+Biaya giliran ikut turun: 2 panggilan model dan 17.763 token, dari 4 panggilan
+dan 23.530 token pada giliran yang gagal. Balasannya kini berdasar—probe
+terakhir membuka dengan "Aku cek task list dulu — kosong, belum ada yang
+tercatat di situ", lalu menawarkan mencatat keduanya.
+
+### Regresi yang hampir lolos: kalimat duka menjadi pekerjaan
+
+Sesudah probe 8 dari 8 selesai dan perubahan dikira tuntas, suite penuh
+menjatuhkan satu tes:
+
+```
+✖ request pendek bernuansa tanpa tool tetap memakai reply
+   "Ayahku meninggal. Besok aku ujian. Aku harus gimana?"
+   agentCalls 1, seharusnya 0
+```
+
+Ketiga syarat cocok penuh—"ujian", "besok", "harus gimana". Aturan yang ditulis
+justru untuk menjaga mode menyimak malah mengubah kalimat duka menjadi
+pembacaan daftar tugas.
+
+Sebabnya struktural, bukan kata yang kurang tepat. `liveStateRequirement` adalah
+kewajiban keras yang menang atas nuansa emosi di `selectGlobalRoute`, sedangkan
+cabang keluhan ini cuma dugaan tentang beban kerja. Menaruh dugaan di tempat
+kewajiban membuatnya mengalahkan penilaian yang seharusnya lebih tinggi.
+
+Cabang keluhan kini menerima `emotionalNuance` dan tertutup seluruhnya pada
+`high`. Kelas state-live lain sengaja tidak memakai penjaga itu: pertanyaan
+tentang agenda tetap wajib membaca agenda betapa pun beratnya perasaan yang
+menyertainya. Keduanya dikunci tes.
+
+**Pelajarannya.** Delapan probe provider nyata berturut-turut hijau dan tidak
+satu pun menyentuh kelas ini. Probe mengukur kalimat yang terpikirkan; suite
+menyimpan kalimat yang pernah menyakiti seseorang. Perubahan pada gerbang
+routing tidak boleh dianggap selesai sebelum `npm test` penuh, betapa pun
+meyakinkan pengukuran di kanal nyata.
+
+### Yang dibayar sadar
+
+- **Kontinuitas reasoning provider hilang pada langkah terbitan kode.** Provider
+  tidak pernah membuat panggilan itu, jadi tidak ada `thought_signature` maupun
+  `reasoningDetails` miliknya. Dikunci eksplisit di tes, bukan disembunyikan.
+- **Kode hanya menerbitkan aksinya sekali.** Bila executor memangkas hasilnya
+  sehingga syarat tak pernah terpenuhi, giliran berikutnya dikembalikan kepada
+  model. Tanpa batas ini aksi yang sama terulang sampai penjaga siklus
+  menghentikan percakapan.
+- **Larangan post-hoc dipersempit.** `Planner mengabaikan capability state-live
+  wajib` kini hanya berlaku bila pembacaannya belum pernah terjadi. Sesudah
+  observation nyata ada, jawaban yang mengakui batasnya lebih baik daripada
+  giliran yang gagal; `coverageNote` memang sudah mekanisme untuk itu.
+- Sembilan tes di `agent-conversation.test.ts` mengodekan kontrak lama dan
+  diperbarui. Yang mereka jaga tetap dijaga—dan sebagian menjadi lebih kuat,
+  karena pembacaan yang dulu bergantung pada kepatuhan model kini dijamin kode.
+
+### Belum diperiksa
+
+Sesi Telegram nyata sesudah perubahan ini. Kasus `burst-satu-pikiran` sudah
+menuntut `agentUsed: true` dan `capabilities: ["task.list_active"]`, jadi
+harness akan menangkapnya bila jalur ini tidak benar-benar terpakai di kanal.
 
 ## 14. `create-bot-flow.test.ts` sensitif terhadap beban
 

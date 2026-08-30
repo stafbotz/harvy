@@ -1828,10 +1828,14 @@ export class Conversation {
     runBudget: RunBudgetAccount,
   ): Promise<unknown> {
     continueAgentNativeThread(nativeThread, input, mode);
-    const required = liveStateRequirement(input.request, {
-      now: this.now(),
-      timeZone: runtime.timeZone ?? this.defaultTimeZone,
-    });
+    const required = liveStateRequirement(
+      input.request,
+      {
+        now: this.now(),
+        timeZone: runtime.timeZone ?? this.defaultTimeZone,
+      },
+      runtime.routingAssessment?.emotionalNuance ?? null,
+    );
     const observed = required
       ? input.observations.some((observation) =>
           satisfiesLiveStateRequirement(observation, required)
@@ -1871,12 +1875,63 @@ export class Conversation {
     if (mustReadLiveState && !requiredCapability?.nativeTool) {
       throw new Error("Capability state-live yang diperlukan tidak callable.");
     }
-    const forcedToolChoice: ChatToolChoice | null = requiredCapability
-      ? {
-          type: "function",
-          function: { name: requiredCapability.nativeTool!.name },
-        }
-      : null;
+    // Kewajiban membaca state dimiliki kode: `liveStateRequirement` sudah
+    // menetapkan capability sekaligus inputnya, jadi tidak ada keputusan
+    // tersisa untuk model pada langkah ini.
+    //
+    // Sampai 30 Agustus 2026 langkah ini tetap meminta model menerbitkan
+    // panggilannya lewat named `tool_choice`. Pada MiniMax-M3 model berulang
+    // kali menolak—ia membalas teks permintaan maaf, client menolaknya sebagai
+    // `missing_tool_call`/`ignored_tool_choice`, dan giliran berhenti sebagai
+    // `invalid_planner_output`. Akibatnya justru kebalikan dari tujuan gerbang
+    // ini: jawaban akhirnya disusun fallback tanpa state yang wajib dibaca.
+    // Empat probe berturut-turut gagal; sesudah aksinya diterbitkan kode, tiga
+    // dari empat selesai.
+    //
+    // Ini bukan authority baru—harness tetap memvalidasi proposal, memeriksa
+    // permission, dan mencatat eksekusinya—dan seluruh capability kelas ini
+    // read-only. Satu panggilan model ikut hemat.
+    // Sekali saja. Bila observation untuk capability ini sudah ada tetapi
+    // belum memenuhi syarat—executor memangkas horizon, misalnya—keputusan
+    // berikutnya dikembalikan kepada model. Menerbitkan ulang dari kode akan
+    // mengulang aksi yang sama sampai penjaga siklus menghentikan giliran.
+    const liveStateAttempted = required !== null &&
+      input.observations.some(
+        (observation) => observation.capabilityId === required.capabilityId,
+      );
+    if (
+      required && mustReadLiveState && !liveStateAttempted &&
+      requiredCapability?.nativeTool
+    ) {
+      // Thread native harus tetap koheren. Tanpa entri ini model melihat
+      // observasi tanpa jejak pemanggilnya pada langkah berikutnya, lalu
+      // mengusulkan capability yang sama sekali lagi—dua dari empat probe
+      // berhenti sebagai `cycle` sebelum baris ini ada.
+      nativeThread.pending = {
+        step: input.step,
+        capabilityId: requiredCapability.id,
+        assistant: {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: `live-state-${input.step}`,
+              type: "function",
+              function: {
+                name: requiredCapability.nativeTool.name,
+                arguments: JSON.stringify(required.input),
+              },
+            },
+          ],
+        },
+      };
+      return {
+        kind: "action",
+        capabilityId: requiredCapability.id,
+        capabilityVersion: requiredCapability.version,
+        input: required.input,
+      };
+    }
     // Legacy parallel delegation membawa instruksi bebas ke worker, sehingga
     // fase itu tetap context-free. Specialist menerima WorkBrief terstruktur
     // yang disanitasi executor; orkestratornya boleh melihat konteks relevan.
@@ -1907,7 +1962,6 @@ export class Conversation {
       nativeThread,
       runBudget,
       input.step > 0 && !canDelegate ? "synthesizer" : "planner",
-      forcedToolChoice,
     );
     let decision = planned.decision;
     // Jawaban atau tool nondelegasi dari fase context-free belum melihat konteks.
@@ -1966,10 +2020,16 @@ export class Conversation {
       decision = planned.decision;
     }
     if (required) {
-      // Named tool_choice menggantikan override post-hoc: raw call dan thought
-      // signature yang dieksekusi kini selalu sama dengan transcript provider.
+      // Model tidak boleh melewati pembacaan state yang belum pernah terjadi.
+      //
+      // `liveStateAttempted` membatasi larangan ini pada kasus itu saja. Bila
+      // aksinya sudah diterbitkan kode dan observationnya ada tetapi belum
+      // memenuhi syarat—executor memangkas horizon, misalnya—jawabannya tetap
+      // berdasar observation nyata, dan `coverageNote` sudah menjadi mekanisme
+      // untuk mengakui batas itu. Menggagalkan giliran di sini justru membuat
+      // pengguna tidak menerima apa pun.
       if (
-        mustReadLiveState &&
+        mustReadLiveState && !liveStateAttempted &&
         (decision.kind !== "action" ||
           decision.capabilityId !== required.capabilityId)
       ) {
@@ -2013,7 +2073,6 @@ export class Conversation {
     nativeThread: AgentNativeThread,
     runBudget: RunBudgetAccount,
     role: Extract<ModelRole, "planner" | "synthesizer">,
-    forcedToolChoice: ChatToolChoice | null = null,
   ): Promise<RequestedAgentDecision> {
     const cognitiveRole = mode === "orchestrate"
       ? "orchestrator"
@@ -2029,13 +2088,13 @@ export class Conversation {
      * `harvy_final_v1` dan pertanyaan yang tidak menunjuk state apa pun tetap
      * membebani planner dengan kewajiban memanggil sesuatu.
      *
-     * Dua hal tetap memakai kontrak wajib. Kelas state-live memakai named
-     * tool_choice supaya jawabannya tidak pernah ditebak dari memori, dan
-     * kontrak bentuk jawaban terstruktur memerlukan function agar jumlah langkah
-     * serta fieldnya dapat divalidasi kode.
+     * Satu hal tetap memakai kontrak wajib: bentuk jawaban terstruktur
+     * memerlukan function agar jumlah langkah serta fieldnya dapat divalidasi
+     * kode. Kelas state-live dahulu memakai named tool_choice di sini; sejak
+     * 30 Agustus 2026 `planAgent` menerbitkan aksi bacanya langsung dari kode,
+     * jadi langkah itu tidak lagi melewati model sama sekali.
      */
-    const toolChoice: ChatToolChoice = forcedToolChoice ??
-      (replyContract ? "required" : "auto");
+    const toolChoice: ChatToolChoice = replyContract ? "required" : "auto";
     const autoToolSelection = toolChoice === "auto";
     const execution = this.execution(
       tier,

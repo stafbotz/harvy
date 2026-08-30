@@ -42,15 +42,11 @@ describe("Conversation agent runtime", () => {
     const requests: ChatRequest[] = [];
     const conversation = fixture(
       requests,
-      [
-        {
-          kind: "action",
-          capabilityId: "settings.time.get",
-          capabilityVersion: "1",
-          input: {},
-        },
-        { kind: "final", reply: "Sekarang pukul 12.00 WIB." },
-      ],
+      // Aksi baca state-live tidak lagi diminta ke model: `planAgent`
+      // menerbitkannya dari kode, jadi hanya sintesis akhir yang tersusun di
+      // sini. Bahwa pembacaannya tetap terjadi dibuktikan isi balasannya, yang
+      // hanya dapat berasal dari observation executor.
+      [{ kind: "final", reply: "Sekarang pukul 12.00 WIB." }],
       [executor("settings.time.get", {
         kind: "settings.time.get.result",
         local: "Selasa, 4 Agustus 2026 pukul 12.00 WIB",
@@ -64,20 +60,14 @@ describe("Conversation agent runtime", () => {
     );
     assert.equal(result.status, "completed");
     if (result.status === "completed") assert.match(result.reply, /12\.00/u);
-    assert.deepEqual(requests.map((request) => request.model), [
-      "efficient-model",
-      "efficient-model",
-    ]);
+    assert.deepEqual(requests.map((request) => request.model), ["efficient-model"]);
     assert.equal(requests[0]?.execution?.cognitiveRole, "everyday_conversation");
     assert.equal(requests.every((request) => request.usage?.purpose === "agent"), true);
     assert.equal(requests.every((request) => request.json === undefined), true);
-    assert.deepEqual(requests[0]?.toolChoice, {
-      type: "function",
-      function: { name: "harvy_settings_time_get_v1" },
-    });
-    // Langkah tanpa kewajiban state-live memakai kontrak auto: seluruh tool
-    // terlihat, dan model boleh menjawab teks biasa tanpa membungkusnya function.
-    assert.equal(requests[1]?.toolChoice, "auto");
+    // Named tool_choice sudah tidak dipakai kelas state-live. Satu-satunya
+    // giliran model adalah sintesis sesudah observation, dan ia memakai
+    // kontrak auto: seluruh tool terlihat, teks biasa boleh.
+    assert.equal(requests[0]?.toolChoice, "auto");
     assert.equal(requests.every((request) => request.parallelToolCalls === false), true);
     assert.deepEqual(
       requests[0]?.tools?.map((tool) => tool.function.name),
@@ -107,33 +97,37 @@ describe("Conversation agent runtime", () => {
     assert.match(requests[0]?.messages[1]?.content ?? "", /settings\.time\.get/u);
     assert.doesNotMatch(requests[0]?.messages[1]?.content ?? "", /task\.manage/u);
     assert.deepEqual(
-      requests[1]?.tools?.map((tool) => tool.function.name),
+      requests[0]?.tools?.map((tool) => tool.function.name),
       [
         "harvy_final_v1",
         "harvy_need_input_v1",
         "harvy_settings_time_get_v1",
       ],
     );
-    const assistantCall = requests[1]?.messages.at(-2);
-    const toolResult = requests[1]?.messages.at(-1);
+    // Pasangan call/hasil tetap wajib ada di thread native. Tanpa itu model
+    // melihat observation tanpa jejak pemanggilnya dan mengusulkan capability
+    // yang sama sekali lagi, yang berakhir sebagai `cycle`.
+    const assistantCall = requests[0]?.messages.at(-2);
+    const toolResult = requests[0]?.messages.at(-1);
     assert.ok(
       assistantCall?.role === "assistant" && "tool_calls" in assistantCall,
     );
     assert.ok(toolResult?.role === "tool");
-    assert.equal(
-      assistantCall.tool_calls[0]?.extra_content?.google.thought_signature,
-      "signature-0",
-    );
-    assert.deepEqual(assistantCall.continuation?.reasoningDetails, [{
-      type: "reasoning.encrypted",
-      data: "continuation-0",
-    }]);
+    // Konsekuensi yang dibayar sadar: langkah baca state-live diterbitkan kode,
+    // jadi provider tidak pernah membuat panggilan itu dan tidak ada signature
+    // maupun reasoning continuation miliknya untuk langkah ini.
+    assert.equal(assistantCall.tool_calls[0]?.extra_content, undefined);
+    assert.equal(assistantCall.continuation, undefined);
     assert.equal(toolResult.tool_call_id, assistantCall.tool_calls[0]?.id);
     assert.equal(toolResult.name, "harvy_settings_time_get_v1");
     assert.match(toolResult.content, /settings\.time\.get\.result/u);
   });
 
-  it("memaksa live-state tool secara portabel saat model tidak mendukung named choice", async () => {
+  // Dahulu kelas state-live dipaksa lewat named `tool_choice`, sehingga
+  // provider tanpa dukungan itu memerlukan terjemahan portabel tersendiri.
+  // Sejak aksinya diterbitkan kode, dukungan provider tidak lagi relevan:
+  // pembacaannya terjadi tanpa meminta model memilih tool apa pun.
+  it("membaca state-live tanpa named choice walau provider tidak mendukungnya", async () => {
     const requests: ChatRequest[] = [];
     const routing: RoutingConfig = {
       ...PRODUCTION_ROUTING,
@@ -167,15 +161,7 @@ describe("Conversation agent runtime", () => {
     };
     const conversation = fixture(
       requests,
-      [
-        {
-          kind: "action",
-          capabilityId: "settings.time.get",
-          capabilityVersion: "1",
-          input: {},
-        },
-        { kind: "final", reply: "Sekarang pukul 12.00 WIB." },
-      ],
+      [{ kind: "final", reply: "Sekarang pukul 12.00 WIB." }],
       [executor("settings.time.get", {
         kind: "settings.time.get.result",
         local: "Senin, 24 Agustus 2026 pukul 12.00 WIB",
@@ -191,19 +177,24 @@ describe("Conversation agent runtime", () => {
     );
 
     assert.equal(result.status, "completed");
-    assert.equal(requests[0]?.toolChoice, "required");
+    // Tidak ada giliran yang memakai named tool_choice, dan tidak ada pula
+    // daftar tool yang dipersempit menjadi satu demi memaksanya.
+    assert.equal(
+      requests.every((request) => typeof request.toolChoice !== "object"),
+      true,
+    );
+    assert.equal(requests.length, 1);
     assert.deepEqual(
       requests[0]?.tools?.map((tool) => tool.function.name),
-      ["harvy_settings_time_get_v1"],
-    );
-    assert.deepEqual(
-      requests[1]?.tools?.map((tool) => tool.function.name),
       [
         "harvy_final_v1",
         "harvy_need_input_v1",
         "harvy_settings_time_get_v1",
       ],
     );
+    // Pembacaannya tetap terjadi: isi balasan hanya dapat berasal dari
+    // observation executor.
+    if (result.status === "completed") assert.match(result.reply, /12\.00/u);
   });
 
   it("meneruskan observation native pada konteks dua giliran tanpa cycle", async () => {
@@ -266,12 +257,8 @@ describe("Conversation agent runtime", () => {
     const conversation = fixture(
       requests,
       [
-        {
-          kind: "action",
-          capabilityId: "session.status",
-          capabilityVersion: "1",
-          input: {},
-        },
+        // `session.status` diterbitkan kode sebagai kewajiban state-live, jadi
+        // giliran model pertama adalah tool kedua rencana ini.
         {
           kind: "action",
           capabilityId: "settings.time.get",
@@ -319,12 +306,11 @@ describe("Conversation agent runtime", () => {
 
     assert.equal(result.status, "completed");
     assert.deepEqual(executed, ["session.status", "settings.time.get"]);
-    assert.deepEqual(requests[0]?.toolChoice, {
-      type: "function",
-      function: { name: "harvy_session_status_v1" },
-    });
+    // Kewajiban state-live tidak memotong sisa rencana: model tetap mendapat
+    // giliran berikutnya dengan kontrak auto dan memilih tool keduanya sendiri.
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0]?.toolChoice, "auto");
     assert.equal(requests[1]?.toolChoice, "auto");
-    assert.equal(requests[2]?.toolChoice, "auto");
   });
 
   it("resume baru membawa pasangan prompt dan jawaban tanpa transcript provider lama", async () => {
@@ -779,15 +765,9 @@ describe("Conversation agent runtime", () => {
     let agendaCalls = 0;
     const conversation = fixture(
       requests,
-      [
-        {
-          kind: "action",
-          capabilityId: "calendar.agenda",
-          capabilityVersion: "1",
-          input: { days: 7 },
-        },
-        { kind: "final", reply: "Ada satu tenggat di agenda internalmu." },
-      ],
+      // Aksi agenda diterbitkan kode; memori yang menyuruh mengarang tidak
+      // pernah mendapat kesempatan menggantikannya.
+      [{ kind: "final", reply: "Ada satu tenggat di agenda internalmu." }],
       [{
         ...executor("calendar.agenda", {
           kind: "calendar.agenda.result",
@@ -826,9 +806,9 @@ describe("Conversation agent runtime", () => {
     );
     assert.equal(result.status, "completed");
     assert.equal(agendaCalls, 1);
-    assert.equal(requests.length, 2);
+    assert.equal(requests.length, 1);
     assert.match(
-      requests[1]?.messages.at(-1)?.content ?? "",
+      requests[0]?.messages.at(-1)?.content ?? "",
       /calendar\.agenda\.result/u,
     );
   });
@@ -862,15 +842,8 @@ describe("Conversation agent runtime", () => {
     };
     const conversation = fixture(
       requests,
-      [
-        {
-          kind: "action",
-          capabilityId: "calendar.agenda",
-          capabilityVersion: "1",
-          input: { days: 21 },
-        },
-        { kind: "final", reply: "Agenda tiga minggumu kosong." },
-      ],
+      // Aksi agenda diterbitkan kode dengan horizon dari `liveStateRequirement`.
+      [{ kind: "final", reply: "Agenda tiga minggumu kosong." }],
       [calendar],
     );
 
@@ -916,13 +889,9 @@ describe("Conversation agent runtime", () => {
     const conversation = fixture(
       requests,
       [
-        {
-          kind: "action",
-          capabilityId: "calendar.agenda",
-          capabilityVersion: "1",
-          input: { days: 31 },
-        },
-        { kind: "final", reply: "Tidak ada agenda." },
+        // Aksi agenda diterbitkan kode; horizon 31 hari berasal dari
+        // `liveStateRequirement`, bukan dari usulan model.
+        { kind: "final", reply: "Tidak ada agenda." }
       ],
       [calendar],
     );
@@ -942,7 +911,13 @@ describe("Conversation agent runtime", () => {
     }
   });
 
-  it("mengulang pembacaan agenda bila horizon observation terlalu pendek", async () => {
+  // Horizon kini berasal dari `liveStateRequirement`, jadi pembacaan pertama
+  // tidak pernah terlalu pendek karena usulan model. Yang masih mungkin adalah
+  // executor yang memangkas sendiri, dan di situ kewajiban state-live tidak
+  // pernah terpenuhi. Kode hanya boleh menerbitkan aksinya sekali; sesudah itu
+  // giliran dikembalikan kepada model, bukan diulang sampai penjaga siklus
+  // menghentikan percakapan.
+  it("tidak mengulang aksi state-live ketika executor memangkas horizon", async () => {
     const requests: ChatRequest[] = [];
     const observedDays: number[] = [];
     const calendar: AgentCapabilityExecutor<{ days: number }> = {
@@ -957,31 +932,19 @@ describe("Conversation agent runtime", () => {
           ? { ok: true, value: { days } }
           : { ok: false, reason: "days" };
       },
+      // Memangkas apa pun yang diminta menjadi tujuh hari, sehingga syarat
+      // state-live tidak akan pernah terpenuhi.
       execute: async (input) => {
         observedDays.push(input.days);
         return {
           status: "ok",
-          summary: JSON.stringify({ kind: "calendar.agenda.result", days: input.days }),
+          summary: JSON.stringify({ kind: "calendar.agenda.result", days: 7 }),
         };
       },
     };
     const conversation = fixture(
       requests,
-      [
-        {
-          kind: "action",
-          capabilityId: "calendar.agenda",
-          capabilityVersion: "1",
-          input: { days: 7 },
-        },
-        {
-          kind: "action",
-          capabilityId: "calendar.agenda",
-          capabilityVersion: "1",
-          input: { days: 30 },
-        },
-        { kind: "final", reply: "Hasil tiga puluh hari." },
-      ],
+      [{ kind: "final", reply: "Agendamu hanya terbaca tujuh hari ke depan." }],
       [calendar],
     );
 
@@ -992,12 +955,17 @@ describe("Conversation agent runtime", () => {
       { ownerId: "student", channel: "telegram" },
     );
 
+    // Satu pembacaan saja, dengan horizon yang diminta kode—bukan berulang.
+    assert.deepEqual(observedDays, [30]);
+    // Dan gilirannya tetap berakhir dengan jawaban, bukan berhenti sebagai
+    // `cycle`.
     assert.equal(result.status, "completed");
-    assert.deepEqual(observedDays, [7, 30]);
-    if (result.status === "completed") assert.match(result.reply, /tiga puluh/u);
+    if (result.status === "completed") assert.match(result.reply, /tujuh hari/u);
   });
 
-  it("mengulang agenda besok bila observation belum terikat tanggal lokal", async () => {
+  // Pengikatan tanggal lokal kini datang dari `liveStateRequirement`, jadi
+  // pembacaan pertama sudah terikat dan tidak ada yang perlu diulang.
+  it("mengikat agenda besok ke tanggal lokal pada pembacaan pertama", async () => {
     const requests: ChatRequest[] = [];
     const observedInputs: Array<{ days: number; localDate?: string }> = [];
     const calendar: AgentCapabilityExecutor<{
@@ -1039,21 +1007,7 @@ describe("Conversation agent runtime", () => {
     };
     const conversation = fixture(
       requests,
-      [
-        {
-          kind: "action",
-          capabilityId: "calendar.agenda",
-          capabilityVersion: "1",
-          input: { days: 2 },
-        },
-        {
-          kind: "action",
-          capabilityId: "calendar.agenda",
-          capabilityVersion: "1",
-          input: { days: 2, localDate: "2026-08-05" },
-        },
-        { kind: "final", reply: "Besok benar-benar kosong." },
-      ],
+      [{ kind: "final", reply: "Besok benar-benar kosong." }],
       [calendar],
     );
 
@@ -1065,14 +1019,13 @@ describe("Conversation agent runtime", () => {
     );
 
     assert.equal(result.status, "completed");
-    assert.deepEqual(observedInputs, [
-      { days: 2 },
-      { days: 2, localDate: "2026-08-05" },
-    ]);
+    assert.deepEqual(observedInputs, [{ days: 2, localDate: "2026-08-05" }]);
     if (result.status === "completed") assert.match(result.reply, /benar-benar/u);
   });
 
-  it("mengulang daftar tugas bila observation memakai limit terlalu kecil", async () => {
+  // Limit kini ditetapkan `liveStateRequirement`, jadi pembacaan pertama tidak
+  // pernah memakai limit yang terlalu kecil karena usulan model.
+  it("memakai limit dari kewajiban state-live pada pembacaan pertama", async () => {
     const requests: ChatRequest[] = [];
     const observedLimits: number[] = [];
     const taskList: AgentCapabilityExecutor<{ limit: number }> = {
@@ -1098,18 +1051,6 @@ describe("Conversation agent runtime", () => {
     const conversation = fixture(
       requests,
       [
-        {
-          kind: "action",
-          capabilityId: "task.list_active",
-          capabilityVersion: "1",
-          input: { limit: 1 },
-        },
-        {
-          kind: "action",
-          capabilityId: "task.list_active",
-          capabilityVersion: "1",
-          input: { limit: 20 },
-        },
         { kind: "final", reply: "Daftar tugas lengkap." },
       ],
       [taskList],
@@ -1123,7 +1064,7 @@ describe("Conversation agent runtime", () => {
     );
 
     assert.equal(result.status, "completed");
-    assert.deepEqual(observedLimits, [1, 20]);
+    assert.deepEqual(observedLimits, [20]);
     if (result.status === "completed") assert.match(result.reply, /lengkap/u);
   });
 

@@ -2836,7 +2836,11 @@ export function createBot(
       // runtime read-only. Label intent/action model tidak boleh membajaknya ke
       // kontrol memori atau kontrol data sebelum tool authority hidup.
       const requiresLiveState = !hasImageInput &&
-        liveStateRequirement(text) !== null;
+        liveStateRequirement(
+          text,
+          undefined,
+          understanding.routingAssessment?.emotionalNuance ?? null,
+        ) !== null;
       const guidedSmallStep = !hasImageInput &&
         effectPermissions.generalState &&
         !activeSession &&

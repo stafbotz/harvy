@@ -7,7 +7,7 @@ import type {
 } from "./client.js";
 import { jsonForPrompt } from "./prompt-data.js";
 import { currentUsageAttribution } from "./usage-attribution.js";
-import { resolveModel } from "./model-policy.js";
+import { resolveModel, type RoutingDegree } from "./model-policy.js";
 import type { RoutingConfig } from "./conversation.js";
 import type { AgentWorker } from "../agent/parallel-delegation.js";
 import { isDirectTimeQuestion } from "../agent/time-fast-path.js";
@@ -572,6 +572,12 @@ export function agentPlannerInput(
 export function liveStateRequirement(
   message: string,
   clock?: LiveStateClock,
+  /**
+   * Nuansa emosi giliran ini, bila sudah dinilai. Hanya cabang keluhan yang
+   * membacanya; kelas state-live lain adalah kewajiban keras yang tidak boleh
+   * bergantung pada penilaian model.
+   */
+  emotionalNuance?: RoutingDegree | null,
 ): LiveStateRequirement | null {
   const text = message.toLowerCase().replace(/\s+/gu, " ").trim();
   if (
@@ -600,7 +606,8 @@ export function liveStateRequirement(
     /\b(?:deadline|status) tugas .{1,60}\b(?:aku|saya)\b/u.test(text) ||
     /\b(?:deadline|status) tugas .{1,60}\b(?:kapan|gimana|bagaimana)\b/u.test(text) ||
     (!/\b(?:google|outlook)\b/u.test(text) &&
-      /\b(?:pengingat|reminder) .{1,60}\b(?:sudah|udah|telah) (?:dikirim|terkirim)\b/u.test(text))
+      /\b(?:pengingat|reminder) .{1,60}\b(?:sudah|udah|telah) (?:dikirim|terkirim)\b/u.test(text)) ||
+    complaintNeedsTaskState(text, emotionalNuance ?? null)
   ) {
     return { capabilityId: "task.list_active", input: { limit: 20 } };
   }
@@ -618,6 +625,53 @@ export function liveStateRequirement(
     return { capabilityId: "settings.time.get", input: {} };
   }
   return null;
+}
+
+/**
+ * Kalimat berbentuk keluhan yang tetap menuntut pembacaan daftar tugas.
+ *
+ * Pengukuran 30 Agustus 2026 dengan `scripts/ukur-pemahaman.ts`: "besok ada dua
+ * deadline barengan, aku harus gimana ya" dibaca `feeling` atau `task` dengan
+ * `toolNeed: none` pada 14 dari 14 ulangan, sedangkan bentuk permintaan
+ * eksplisit dibaca `request` dengan `internal_state`. Karena `feeling` dan
+ * `task` di luar `intentAllowsAgentRuntime`, giliran itu tidak pernah membaca
+ * daftar tugas—Harvy menjawab "aku harus gimana ya" dari pengetahuan umum
+ * tanpa melihat apa yang tercatat untuk orang itu.
+ *
+ * Menaikkan intent menjadi `request` ditolak: itu mengubah setiap keluhan
+ * menjadi pekerjaan dan menghapus mode menyimak. Yang dinaikkan hanya
+ * kewajiban membaca state, karena membaca daftar tugas tidak mengubah nada
+ * jawaban—hanya membuatnya berdasar.
+ *
+ * Tiga syarat wajib bersamaan, dan syarat ketiga yang memisahkan curhat dari
+ * permintaan arahan: "capek banget deadline numpuk" tetap ditangani mode
+ * menyimak, sedangkan "tugas numpuk banget, harus mulai dari mana?" tidak.
+ * Syarat kedua menahan pertanyaan isi: "pr matematika nomor 3 gimana caranya?"
+ * tidak menyebut tekanan waktu maupun kemajemukan, jadi ia bukan soal urutan
+ * pekerjaan.
+ */
+const OBLIGATION_NOUN =
+  /\b(?:deadline|tenggat|tugas|task|pr|ujian|ulangan|kuis)\b/u;
+const OBLIGATION_PRESSURE =
+  /\b(?:besok|hari ini|lusa|minggu ini|malam ini|nanti|dua|tiga|banyak|numpuk|barengan|bareng|sekaligus|semua)\b/u;
+const GUIDANCE_REQUEST =
+  /\b(?:harus gimana|harus bagaimana|harus ngapain|mulai dari mana|dari mana dulu|(?:yang )?mana dulu|duluan yang mana|gimana caranya|bagaimana caranya|atur prioritas|prioritas(?:nya)?)\b/u;
+
+function complaintNeedsTaskState(
+  text: string,
+  emotionalNuance: RoutingDegree | null,
+): boolean {
+  // Nuansa emosi tinggi menutup cabang ini seluruhnya.
+  //
+  // Ketiga syarat di bawah cocok penuh pada "Ayahku meninggal. Besok aku
+  // ujian. Aku harus gimana?"—dan mengubahnya menjadi pembacaan daftar tugas
+  // adalah kegagalan yang jauh lebih buruk daripada jawaban yang kurang
+  // berdasar. Kelas state-live lain tidak memakai penjaga ini karena mereka
+  // kewajiban keras: pertanyaan tentang agenda tetap wajib membaca agenda
+  // betapa pun beratnya perasaan yang menyertainya.
+  if (emotionalNuance === "high") return false;
+  return OBLIGATION_NOUN.test(text) && OBLIGATION_PRESSURE.test(text) &&
+    GUIDANCE_REQUEST.test(text);
 }
 
 function requestedAgendaLocalDate(
