@@ -295,21 +295,38 @@ const DIRECT_ARTIFACT_GUIDANCE = [
 ].join("\n");
 
 /**
- * Mematikan langkah review artefak kode, khusus untuk pengukuran pembanding.
+ * Gerbang langkah review artefak kode. Default **mati** sejak 30 Agustus 2026.
  *
- * Langkah review memakai satu panggilan model tambahan pada setiap giliran
- * yang menghasilkan kode. Manfaatnya belum pernah terukur: sembilan kasus
- * korpus lulus 9 dari 9 dengan review menyala, termasuk empat yang sengaja
- * dipilih karena draft pertamanya sering salah. Angka itu tidak dapat
- * membedakan draft yang baik dari draft yang diperbaiki review.
+ * Pengukuran pertama (9 kasus, 2 ulangan) menyimpulkan langkah ini terbayar:
+ * 18 dari 18 dengan review, 15 dari 18 tanpa. Korpus yang lebih besar
+ * membalikkannya. Dengan 15 kasus dan 3 ulangan per kondisi:
  *
- * Satu-satunya cara menjawabnya adalah menjalankan korpus yang sama tanpa
- * review lalu membandingkan. Gerbangnya sengaja berupa variabel lingkungan,
- * bukan opsi runtime: ia tidak boleh dapat dinyalakan dari konfigurasi
- * produksi maupun dari isi percakapan.
+ * | | total |
+ * |---|---|
+ * | review menyala | 38 dari 45 |
+ * | review dimatikan | 43 dari 45 |
+ *
+ * Arahnya konsisten pada ketiga ulangan, dan biayanya sekitar 25% token
+ * tambahan per giliran kode.
+ *
+ * Sebabnya terbaca dari bentuk kegagalannya: langkah ini tidak memeriksa
+ * melainkan **menulis ulang seluruh balasan**, sehingga setiap review adalah
+ * kesempatan baru memasukkan kesalahan. Kegagalan yang muncul hanya ketika
+ * review menyala berbentuk `Illegal return statement`, `Missing initializer in
+ * const declaration`, dan fungsi yang namanya hilang—kode yang rusak saat
+ * disalin ulang, bukan kode yang salah sejak draft.
+ *
+ * Ini bukan pengaman keselamatan: langkah ini hanya berjalan pada
+ * `triage.level === "biasa"` dan tidak pernah menyentuh jalur dukungan maupun
+ * bahaya. Mematikannya tidak menurunkan pagar apa pun.
+ *
+ * Gerbangnya tetap variabel lingkungan, bukan opsi runtime: ia tidak boleh
+ * dapat dinyalakan dari konfigurasi produksi maupun dari isi percakapan.
+ * Menyalakannya kembali untuk pengukuran lanjutan:
+ * `HARVY_ENABLE_CODE_ARTIFACT_REVIEW=1`.
  */
 function codeArtifactReviewDisabled(): boolean {
-  return process.env["HARVY_DISABLE_CODE_ARTIFACT_REVIEW"] === "1";
+  return process.env["HARVY_ENABLE_CODE_ARTIFACT_REVIEW"] !== "1";
 }
 
 const CODE_ARTIFACT_REVIEW_PROMPT = [

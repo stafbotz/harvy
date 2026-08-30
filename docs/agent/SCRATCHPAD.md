@@ -341,7 +341,7 @@ pembagian rupiah yang jumlahnya harus persis kembali ke total.
 
 Kesembilannya lulus dengan review menyala, jadi korpus saja tetap tidak dapat
 menjawab apakah langkah review berguna. Jawabannya datang dari menjalankan
-korpus yang sama tanpa review, lewat `HARVY_DISABLE_CODE_ARTIFACT_REVIEW=1`
+korpus yang sama tanpa review, lewat gerbang variabel lingkungan
 yang sengaja hanya dapat dinyalakan dari variabel lingkungan:
 
 | | lulus |
@@ -402,11 +402,20 @@ lama tetap benar untuk apa yang diukurnya—sembilan kasus, dua ulangan—tetapi
 sembilan kasus terlalu sedikit untuk menyimpulkan satu panggilan model tambahan
 di setiap giliran kode.
 
-**Mematikan langkah ini adalah keputusan produk, bukan panggilan saya.** Ia
-mengubah perilaku setiap giliran kode, dan bukti ini 45 giliran pada satu korpus
-buatan—kuat untuk membalik klaim, belum tentu cukup untuk membalik default.
-`HARVY_DISABLE_CODE_ARTIFACT_REVIEW=1` sudah tersedia bila hendak dicoba lebih
-lama.
+**Dimatikan atas keputusan pemilik produk, 30 Agustus 2026.** Default kini
+mati; menyalakannya kembali untuk pengukuran lanjutan memakai
+`HARVY_ENABLE_CODE_ARTIFACT_REVIEW=1`.
+
+Yang meyakinkan bukan hanya angkanya melainkan mekanismenya: langkah ini tidak
+memeriksa melainkan **menulis ulang seluruh balasan**, sehingga setiap review
+adalah kesempatan baru memasukkan kesalahan. Idenya sendiri tidak berlebihan—
+yang keliru caranya. Pemeriksa yang hanya boleh berkata "draft ini rusak" tanpa
+wewenang menyalin ulang tidak akan punya mode kegagalan ini, dan itu jalur yang
+terbuka bila kelas ini hendak dihidupkan lagi.
+
+Ini bukan pengaman keselamatan: langkah ini hanya berjalan pada
+`triage.level === "biasa"` dan tidak pernah menyentuh jalur dukungan maupun
+bahaya. Mematikannya tidak menurunkan pagar apa pun.
 
 Evaluator kini melaporkan biaya token nyata dari provider (`tokens` pada JSON
 hasilnya), memakai pengukur yang sama dengan probe. Sebelum ini pertanyaan biaya
@@ -417,7 +426,8 @@ Untuk menjalankan pembandingnya lagi:
 ```bash
 CASES=code-request,code-empty-input,code-reject-wrong-type,code-no-mutation,code-boundary,code-rekursi-basis,code-tanggal-lintas-bulan,code-float,code-bagi-rupiah
 npm run eval:conversation -- --case=$CASES
-HARVY_DISABLE_CODE_ARTIFACT_REVIEW=1 npm run eval:conversation -- --case=$CASES
+npm run eval:conversation -- --case=$CASES   # default: tanpa review
+HARVY_ENABLE_CODE_ARTIFACT_REVIEW=1 npm run eval:conversation -- --case=$CASES
 ```
 
 Catatan alat: error dari `node:vm` dibuat pada realm berbeda, sehingga

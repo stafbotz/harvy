@@ -848,7 +848,11 @@ describe("balasan percakapan", () => {
     );
   });
 
+  // Langkah review artefak kode default mati sejak korpus 15 kasus
+  // menunjukkan ia merusak lebih sering daripada memperbaiki. Tes ini menguji
+  // langkahnya sendiri, jadi ia menyalakannya eksplisit.
   it("meregenerasi code-only yang membawa prosa atau conditional expression rumpang", async () => {
+    process.env["HARVY_ENABLE_CODE_ARTIFACT_REVIEW"] = "1";
     const requests: ChatRequest[] = [];
     const replies = [
       [
@@ -912,7 +916,11 @@ describe("balasan percakapan", () => {
     );
   });
 
+  // Langkah review artefak kode default mati sejak korpus 15 kasus
+  // menunjukkan ia merusak lebih sering daripada memperbaiki. Tes ini menguji
+  // langkahnya sendiri, jadi ia menyalakannya eksplisit.
   it("mereview konsistensi kode dan test sebelum artefak dikirim", async () => {
+    process.env["HARVY_ENABLE_CODE_ARTIFACT_REVIEW"] = "1";
     const requests: ChatRequest[] = [];
     const draft = [
       "```js",
@@ -982,7 +990,11 @@ describe("balasan percakapan", () => {
   // membedakannya dari provider lambat. Tes ini mengunci pemisahan tersebut —
   // salah konfigurasi kode kita sendiri wajib terdengar, dan tidak boleh
   // menghabiskan panggilan provider.
+  // Langkah review artefak kode default mati sejak korpus 15 kasus
+  // menunjukkan ia merusak lebih sering daripada memperbaiki. Tes ini menguji
+  // langkahnya sendiri, jadi ia menyalakannya eksplisit.
   it("melaporkan rencana review artefak yang tidak sah tanpa memanggil provider", async () => {
+    process.env["HARVY_ENABLE_CODE_ARTIFACT_REVIEW"] = "1";
     const requests: ChatRequest[] = [];
     const draft = [
       "```ts",
