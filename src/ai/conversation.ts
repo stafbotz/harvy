@@ -61,6 +61,7 @@ import {
 } from "./agent.js";
 import {
   depthDirective,
+  shapeDirective,
   dueDateInput,
   dueDatePrompt,
   HARVY_REPLY_CACHE_SPINE,
@@ -1115,7 +1116,15 @@ export class Conversation {
     // sekali tidak berpengaruh, karena penyedia yang hanya mengenal satu
     // `system_instruction` menggabungkan atau membuangnya. Yang pasti terbaca
     // model mana pun adalah giliran terakhir.
-    const depth = depthDirective(message);
+    // Dua sisi dari satu masalah, dan keduanya tidak pernah menyala bersamaan:
+    // `depthDirective` menjaga pesan panjang tidak dijawab dua baris,
+    // `shapeDirective` menjaga pesan pendek tidak dijawab seperti dokumen.
+    //
+    // Giliran safety sengaja tidak mendapat arahan bentuk. Di sana panjang dan
+    // pertanyaan punya pertimbangannya sendiri—menanyakan keadaan seseorang dua
+    // kali bisa jadi hal yang paling benar untuk dilakukan.
+    const depth = depthDirective(message) ||
+      (triage.level === "biasa" ? shapeDirective(message) : "");
     const execution = this.execution(
       tier,
       cognitiveRole === "orchestrator" ? "synthesizer" : "conversationalist",

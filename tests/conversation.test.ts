@@ -1279,7 +1279,14 @@ describe("balasan percakapan", () => {
     assert.doesNotMatch(system, /web\.search|web\.open|agent\.delegate|terminal\.run/u);
     assert.doesNotMatch(system, /capability|tool schema|provider catalog/iu);
     assert.doesNotMatch(system, /pemilik-rahasia/u);
-    assert.equal(requests[0]?.messages.at(-1)?.content, "tolong cari berita hari ini");
+    // Giliran pengguna boleh membawa arahan bentuk milik kode di depannya
+    // (`shapeDirective`), jadi yang dijaga di sini adalah pesannya dikirim
+    // sebagai pesan chat terakhir—bukan dikutip ke dalam prompt sistem.
+    assert.ok(
+      (requests[0]?.messages.at(-1)?.content ?? "").endsWith(
+        "tolong cari berita hari ini",
+      ),
+    );
   });
 
   it("tidak memuat catalog lengkap meski harness memasang banyak capability", async () => {
@@ -1313,9 +1320,12 @@ describe("balasan percakapan", () => {
       system,
       /calendar\.agenda|terminal\.run|external\.act|agent\.delegate/u,
     );
-    assert.equal(
-      requests[0]?.messages.at(-1)?.content,
-      "kalender dan terminal apa yang kamu punya?",
+    // Sama seperti di atas: prefix arahan bentuk milik kode boleh ada, yang
+    // dijaga adalah pesannya tidak dikutip ke prompt sistem.
+    assert.ok(
+      (requests[0]?.messages.at(-1)?.content ?? "").endsWith(
+        "kalender dan terminal apa yang kamu punya?",
+      ),
     );
   });
 
@@ -1468,7 +1478,10 @@ describe("balasan percakapan", () => {
     );
     assert.equal(messages[1]?.content, "bantu aku belajar biologi");
     assert.equal(messages[2]?.content, "mulai dari bab mana?");
-    assert.equal(messages.at(-1)?.content, "yang tadi gimana?");
+    // Giliran pengguna boleh membawa arahan bentuk milik kode di depannya
+    // (`shapeDirective`), jadi yang dijaga di sini adalah pesannya dikirim
+    // sebagai pesan chat terakhir—bukan dikutip ke dalam prompt sistem.
+    assert.ok((messages.at(-1)?.content ?? "").endsWith("yang tadi gimana?"));
     assert.doesNotMatch(messages[0]?.content ?? "", /bantu aku belajar biologi/);
   });
 

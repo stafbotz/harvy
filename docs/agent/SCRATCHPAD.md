@@ -1318,6 +1318,60 @@ resmi, dan dipendekkan jadi "timbang" terbaca timbangan berat.
 Terverifikasi di kanal: bulan muncul pada seluruh giliran sesi, 12 dari 13 kasus
 lulus. Yang gagal `obrolan-biasa` pada varians extractor yang sudah tercatat.
 
+## 24. Panjang balasan kini dijaga dua arah
+
+`depthDirective` menjaga satu sisi sejak lama: pesan panjang tidak boleh dijawab
+dua baris. Sisi sebaliknya tidak dijaga apa pun, dan akibatnya terlihat di
+transkrip nyata—"besok ada dua deadline barengan" dijawab tiga pertanyaan
+bernomor beserta sub-poin.
+
+**Yang membuat balasan terasa panjang bukan jumlah katanya melainkan bentuknya.**
+Paragraf lima baris terbaca sebagai orang yang bicara; lima baris yang sama
+dengan judul, nomor, dan sub-poin terbaca sebagai laporan. `shapeDirective`
+karena itu menyasar struktur lebih dulu: tanpa judul, tanpa penomoran, daftar
+hanya bila isinya memang daftar, dan **paling banyak satu pertanyaan**.
+
+Batas satu pertanyaan menyasar pola yang paling sering muncul. Pengukuran tanpa
+arahan mencatat satu balasan dengan **sepuluh pertanyaan** untuk kalimat "aku
+bingung mau mulai belajar dari mana". Bagi orang yang sedang panik, itu terasa
+seperti mengisi formulir.
+
+Diukur dengan model nyata, dua putaran per kondisi:
+
+| | panjang | bentuk | pertanyaan |
+|---|---|---|---|
+| tanpa arahan | 85–1.910 char | sering bernomor atau butir | sampai 10 |
+| dengan arahan | 89–1.077 char | tidak pernah bernomor maupun butir | 1–2 |
+
+**Adaptif, bukan sekadar pendek.** Pertanyaan "gimana caranya biar nggak
+gampang ngantuk pas belajar" tetap dijawab 733–1.077 karakter dengan arahan
+menyala, karena isinya memang menuntut. Yang menyusut adalah balasan yang
+panjangnya tidak berasal dari isi.
+
+Tiga batas sengaja dipasang:
+
+- **Tidak menyala di bawah 20 karakter.** "halo" dan "oke" tidak pernah dijawab
+  seperti dokumen, jadi menempelinya blok arahan hanya membayar token.
+- **Tidak menyala bila pengguna meminta struktur**—kata seperti langkah, poin,
+  rinci, urutan. Yang memintanya harus mendapatkannya.
+- **Tidak dipakai sama sekali pada giliran safety.** Di sana panjang dan
+  pertanyaan punya pertimbangannya sendiri; menanyakan keadaan seseorang dua
+  kali bisa jadi hal yang paling benar untuk dilakukan.
+
+Dikirim di dalam giliran pengguna, sama seperti `depthDirective`, dan dengan
+alasan yang sama: sebagai aturan prompt sistem ia kalah oleh panduan intent, dan
+sebagai pesan sistem kedua ia dibuang penyedia yang hanya mengenal satu
+instruksi sistem.
+
+Tiga assertion tes diperbarui dari "sama persis" menjadi "berakhir dengan",
+karena giliran pengguna kini membawa prefix milik kode. Yang dijaga tes itu—
+pesan dikirim sebagai chat, bukan dikutip ke prompt sistem—tetap terjaga.
+
+Sesi Telegram sesudah perubahan: **13 dari 13 lulus**, pertama kalinya korpus
+penuh bersih sejak diperbesar.
+
+Gerbang pengukuran ulang: `HARVY_DISABLE_SHAPE_DIRECTIVE=1`.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

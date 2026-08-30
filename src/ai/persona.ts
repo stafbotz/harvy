@@ -813,6 +813,14 @@ export interface MemoryAcknowledgementReceipt {
 export const LONG_MESSAGE_CHARS = 400;
 
 /**
+ * Di bawah ini sebuah pesan masih celetukan: sapaan, "oke", "makasih".
+ *
+ * Bentuk balasannya tidak perlu dijaga—tidak ada yang menjawab "halo" dengan
+ * daftar bernomor—sehingga arahan bentuk hanya akan membayar token.
+ */
+const SHORT_MESSAGE_CHARS = 20;
+
+/**
  * Prefix stabil untuk semua balasan privat Harvy.
  *
  * Provider OpenAI-compatible yang dipakai Harvy melakukan prompt caching dari
@@ -1163,6 +1171,65 @@ export function depthDirective(message: string): string {
     "- Tulis dua sampai tiga paragraf pendek.",
     "- Jangan menceramahi, jangan membuat daftar bernomor di balasanmu, dan",
     "  jangan merangkum ulang ceritanya sebagai pembuka.",
+    "",
+    "Jangan menyebut atau mengutip catatan ini. Pengguna tidak melihatnya.",
+    "Pesannya mulai di bawah:",
+  ].join("\n");
+}
+
+/**
+ * Menjaga bentuk balasan tetap seukuran yang dibawa pengguna.
+ *
+ * `depthDirective` menutup satu sisi—pesan panjang yang dijawab dua baris—dan
+ * sisi sebaliknya tidak dijaga apa pun. Akibatnya terlihat di transkrip nyata:
+ * "besok ada dua deadline barengan" dijawab tiga pertanyaan bernomor beserta
+ * sub-poin, dan kalimat sederhana lain dijawab seperti dokumen.
+ *
+ * Yang membuat balasan terasa panjang bukan jumlah katanya melainkan
+ * bentuknya. Paragraf lima baris terbaca sebagai orang yang bicara; lima baris
+ * yang sama dengan judul, nomor, dan sub-poin terbaca sebagai laporan. Karena
+ * itu aturan di bawah menyasar struktur lebih dulu, bukan panjang.
+ *
+ * Batas satu pertanyaan menyasar pola yang paling sering muncul: Harvy bertanya
+ * tiga hal sebelum menjawab apa pun. Bagi orang yang sedang panik, tiga
+ * pertanyaan sebelum satu jawaban terasa seperti formulir.
+ *
+ * Dikirim di dalam giliran pengguna, sama seperti `depthDirective`, dan dengan
+ * alasan yang sama: sebagai aturan prompt sistem ia kalah oleh panduan intent,
+ * dan sebagai pesan sistem kedua ia dibuang penyedia yang hanya mengenal satu
+ * instruksi sistem. Yang pasti terbaca model mana pun adalah giliran terakhir.
+ *
+ * Tidak menyala ketika pengguna memang meminta struktur, dan tidak dipakai sama
+ * sekali pada giliran safety—di sana bentuk jawaban punya pertimbangannya
+ * sendiri.
+ */
+const STRUCTURE_REQUESTED =
+  /\b(?:langkah|tahap|poin|butir|daftar|list|rinci|terperinci|detail(?:kan)?|uraikan|jabarkan|breakdown|urutan|checklist)\b/iu;
+
+export function shapeDirective(message: string): string {
+  // Gerbang pengukuran, bukan opsi produksi. Satu-satunya cara mengetahui
+  // apakah arahan ini berpengaruh adalah menjalankan korpus yang sama tanpanya,
+  // dan itu tidak boleh dapat dinyalakan dari konfigurasi maupun percakapan.
+  if (process.env["HARVY_DISABLE_SHAPE_DIRECTIVE"] === "1") return "";
+  if (message.length >= LONG_MESSAGE_CHARS) return "";
+  // Celetukan tidak perlu dijaga bentuknya. "halo", "oke", dan "makasih" tidak
+  // pernah dijawab seperti dokumen, jadi menempelinya blok arahan hanya
+  // membayar token tanpa mengubah apa pun.
+  if (message.trim().length < SHORT_MESSAGE_CHARS) return "";
+  if (STRUCTURE_REQUESTED.test(message)) return "";
+
+  return [
+    "PERHATIAN. Ini percakapan, bukan dokumen.",
+    "",
+    "- Jawab seukuran yang dibawa pengguna. Pesan sebaris dijawab beberapa",
+    "  kalimat, bukan satu halaman.",
+    "- Jangan memakai judul, penomoran, atau butir bertingkat. Tulis sebagai",
+    "  orang yang sedang bicara. Daftar hanya bila isinya memang daftar—nama",
+    "  hari, nama mata pelajaran—dan itu pun cukup satu tingkat.",
+    "- Ajukan paling banyak satu pertanyaan. Menanyakan tiga hal sebelum",
+    "  menjawab apa pun membuat orang merasa mengisi formulir.",
+    "- Kalau kamu belum tahu sesuatu yang penting, jawab dulu sebisamu dengan",
+    "  yang sudah kamu tahu, baru tanyakan satu hal yang paling menentukan.",
     "",
     "Jangan menyebut atau mengutip catatan ini. Pengguna tidak melihatnya.",
     "Pesannya mulai di bawah:",
