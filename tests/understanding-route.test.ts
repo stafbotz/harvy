@@ -321,3 +321,66 @@ function semantic(
 function task(title: string) {
   return { title, dueAt: null, remindAt: null, importance: 2 as const };
 }
+
+describe("pembacaan ingatan yang dikenali kode", () => {
+  // Sesi Telegram 30 Agustus 2026: kalimat ini tidak mendapat usulan operasi
+  // apa pun dari extractor, sehingga route deterministiknya tidak menyala dan
+  // Harvy menjawab dari daftar tugas—terdengar wajar, tetapi menjawab
+  // pertanyaan yang tidak diajukan.
+  it("membaca ingatan walau extractor tidak mengusulkan apa pun", () => {
+    for (
+      const message of [
+        "apa aja yang kamu inget tentang aku?",
+        "apa yang kamu ingat tentang aku",
+        "kamu inget apa aja soal aku?",
+        "sebutkan apa aja yang kamu tau tentang aku",
+        "apa aja catatanmu tentang aku?",
+      ]
+    ) {
+      assert.deepEqual(
+        immediateUnderstandingRoute(sample({ intent: "smalltalk" }), message),
+        { kind: "memory-control", action: "list" },
+        message,
+      );
+    }
+  });
+
+  // Penjaga terpenting di sini, dan alasannya bukan presisi melainkan
+  // kerugian: kalimat penghapusan memuat frasa yang sama persis, dan
+  // menjawabnya dengan membacakan daftar berarti mengabaikan permintaan
+  // pengguna untuk melupakan sesuatu.
+  it("tidak pernah mengubah permintaan penghapusan menjadi pembacaan", () => {
+    for (
+      const message of [
+        "lupain semua yang kamu inget tentang aku",
+        "hapus catatanmu tentang aku",
+        "ganti catatan kamu tentang aku dong",
+      ]
+    ) {
+      assert.notDeepEqual(
+        immediateUnderstandingRoute(sample({ intent: "smalltalk" }), message),
+        { kind: "memory-control", action: "list" },
+        message,
+      );
+    }
+  });
+
+  // "ingetin" dan "inget" berbagi kata dasar, tetapi yang pertama adalah tugas.
+  it("tidak menangkap permintaan pengingat maupun kalimat lain", () => {
+    for (
+      const message of [
+        "ingetin aku besok jam 7 malam buat ngumpulin tugas biologi",
+        "apa aja tugasku?",
+        "kamu inget nggak yang tadi aku bilang?",
+        "aku inget banget soal ujian kemarin",
+        "coba cari di riwayat percakapan kita yang lama",
+      ]
+    ) {
+      assert.notDeepEqual(
+        immediateUnderstandingRoute(sample({ intent: "smalltalk" }), message),
+        { kind: "memory-control", action: "list" },
+        message,
+      );
+    }
+  });
+});

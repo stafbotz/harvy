@@ -51,6 +51,14 @@ export function immediateUnderstandingRoute(
   understanding: Understanding,
   originalMessage = "",
 ): ImmediateUnderstandingRoute {
+  // Extractor sesekali tidak mengusulkan apa pun untuk kalimat yang sama, dan
+  // ketika itu terjadi pertanyaan pembacaan ingatan jatuh ke jalur umum yang
+  // menjawab dari daftar tugas. Pengenalannya diambil alih kode, hanya untuk
+  // pembacaan.
+  if (asksToListOwnMemories(originalMessage)) {
+    return { kind: "memory-control", action: "list" };
+  }
+
   if (
     understanding.intent === "memory" &&
     isMemoryControl(understanding.memoryAction) &&
@@ -191,6 +199,42 @@ function meaningfulTerms(value: string): Set<string> {
     (value.normalize("NFKC").toLocaleLowerCase("und").match(/[\p{L}\p{N}]+/gu) ?? [])
       .filter((term) => term.length >= 2),
   );
+}
+
+/**
+ * Pertanyaan pembacaan ingatan yang dikenali kode, bukan classifier.
+ *
+ * Sesi Telegram 30 Agustus 2026: "apa aja yang kamu inget tentang aku?" tidak
+ * mendapat usulan operasi apa pun dari extractor, sehingga route deterministik
+ * ingatan tidak menyala dan pertanyaannya jatuh ke jalur umum—yang membaca
+ * daftar tugas lalu menjawab tentang tugas, bukan tentang ingatan.
+ *
+ * Ini kelas kegagalan yang sama dengan `codingRunStatusOperation`, dan sudah
+ * ketiga kalinya: yang wajib terjadi tidak boleh bergantung pada kepatuhan
+ * model. Bedanya di sini akibatnya lebih halus—jawabannya terdengar wajar,
+ * hanya menjawab pertanyaan yang tidak diajukan.
+ *
+ * **Hanya pembacaan.** Menghapus dan mengubah ingatan tetap menuntut usulan
+ * extractor pada ambang 0,85. Karena itu kalimat yang memuat kata kerja
+ * perubahan ditolak seluruhnya di sini: "lupain semua yang kamu inget tentang
+ * aku" memuat frasa yang sama persis, dan menjawabnya dengan membacakan daftar
+ * berarti mengabaikan permintaan penghapusan.
+ *
+ * Kata kerja pengingat juga ditolak: "ingetin aku besok jam 7" adalah tugas,
+ * bukan pertanyaan tentang ingatan, dan keduanya memakai kata dasar yang sama.
+ */
+const MEMORY_RECALL_ABOUT_USER =
+  /\b(?:inget|ingat|tau|tahu|catat(?:an)?(?:mu|an kamu)?|ketahui)\b[^?.!]{0,24}\b(?:tentang|soal|mengenai)\s+(?:aku|saya|diriku)\b/u;
+const MEMORY_LIST_REQUEST =
+  /\b(?:apa\s+(?:aja|saja)?|apa|sebutkan|kasih tau|kasih tahu|tunjukkan|lihat)\b/u;
+const MEMORY_MUTATION_VERB =
+  /\b(?:lupain|lupakan|hapus|hilangkan|buang|ganti|ubah|koreksi|betulin|perbarui)\b/u;
+const REMINDER_VERB = /\b(?:ingetin|ingatkan|remind)\b/u;
+
+export function asksToListOwnMemories(message: string): boolean {
+  const text = message.toLowerCase().replace(/\s+/gu, " ").trim();
+  if (MEMORY_MUTATION_VERB.test(text) || REMINDER_VERB.test(text)) return false;
+  return MEMORY_RECALL_ABOUT_USER.test(text) && MEMORY_LIST_REQUEST.test(text);
 }
 
 function memoryControlAuthorized(

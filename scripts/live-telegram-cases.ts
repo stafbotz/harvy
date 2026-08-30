@@ -212,7 +212,22 @@ export const LIVE_TELEGRAM_CASES: readonly LiveTelegramCase[] = [
       // Yang dijaga di sini perilaku yang terlihat pengguna: sesudah pengalihan
       // yang tegas, membalas dengan rencana dua minggu berarti mengabaikan
       // kalimat terakhirnya.
-      replyForbids: [/rencana belajar dua minggu/iu],
+      //
+      // Versi sebelumnya melarang frasa "rencana belajar dua minggu" muncul
+      // sama sekali, dan itu menandai gagal pada balasan yang justru benar:
+      // Harvy menjawab jamnya lebih dulu, lalu menawarkan kembali ke topik
+      // lama—persis yang orang lakukan dalam percakapan. Menawarkan kembali
+      // bukan kerugian yang hendak dijaga; mengirim rencananya yang kerugian.
+      //
+      // Pasangan berikut memeriksa kelakuan, bukan kata. Satu syarat yang wajib
+      // dipenuhi lebih kuat daripada satu kata yang wajib dihindari.
+      replyMatches: [/\b\d{1,2}[.:]\d{2}\b|\bjam\s+\d{1,2}\b/iu],
+      replyForbids: [
+        // Rencana harian yang benar-benar terkirim: penanda hari berurutan,
+        // bukan sekadar menyebut topiknya.
+        /\bhari\s*(?:ke-?\s*)?1\b[\s\S]{0,400}?\bhari\s*(?:ke-?\s*)?2\b/iu,
+        /\bsenin\b[\s\S]{0,400}?\bselasa\b[\s\S]{0,400}?\brabu\b/iu,
+      ],
     },
   },
   {
