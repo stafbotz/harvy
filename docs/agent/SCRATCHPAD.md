@@ -99,17 +99,45 @@ tidak dipatuhi, periksa dulu apakah yang dilarang justru muncul di tempat model
 membacanya. Mempertegas larangan tidak akan menolong selama contohnya masih
 disodorkan.
 
-## 1c. Register bahasa kadang berpindah
+## 1c. Bahasa balasan kini berpagar, frekuensinya masih diukur
 
-Dua pengamatan sambil lalu, belum diukur: satu jawaban recall memakai "Saya"
-alih-alih "aku", dan satu jawaban jadwal belajar sebelumnya dimulai dalam
-bahasa Inggris ("I have what I need. Here's a study plan..."). Keduanya pada
-giliran yang lewat Agent Runtime.
+`HARVY_IDENTITY` sudah menuntut Harvy mengikuti bahasa pengguna "dan pakai
+hanya kata serta aksara dari bahasa itu". Aturannya dilanggar dua kali secara
+teramati: satu balasan jadwal belajar dibuka dalam bahasa Inggris untuk pesan
+berbahasa Indonesia, dan satu catatan durable tersimpan dengan aksara Mandarin
+di tengah kalimat Indonesia.
 
-Persona Harvy berbahasa Indonesia santai dengan "aku". Perpindahan register
-tidak merusak isi, tetapi ia terlihat jelas oleh pengguna dan menandakan prompt
-persona tidak sepenuhnya mengikat pada jalur planner. Hitung dulu frekuensinya
-lewat beberapa run sebelum menyentuh prompt mana pun.
+Ini pola yang sama dengan butir 1b—aturannya ada, pagarnya tidak—tetapi
+sumbernya berbeda. Pada 1b kata terlarang muncul di bahan yang dibaca model,
+jadi menghapus sumbernya yang benar. Di sini tidak ada sumber untuk dihapus,
+jadi pagar memang jawabannya.
+
+`scripts/uji-telegram-langsung.ts` kini memeriksa setiap balasan pada **semua**
+kasus, bukan hanya yang menyatakannya. Dua bentuk: aksara di luar Latin, dan
+perpindahan ke bahasa Inggris yang menuntut dua penanda berbeda supaya satu
+kata pinjaman seperti "deadline" tidak memicu alarm.
+
+Polanya diuji dua arah sebelum dipasang, memakai balasan nyata yang sudah
+tersimpan:
+
+| | hasil |
+|---|---|
+| balasan Inggris yang teramati | menyala, 3 penanda |
+| catatan beraksara Mandarin | menyala |
+| bahasa Indonesia wajar | diam |
+| Indonesia dengan kata pinjaman Inggris | diam |
+| 42 baris keluaran harness nyata | nol positif palsu |
+
+**Sesi pertama dari tiga: 9 dari 9 lulus, nol pelanggaran register.** Dua sesi
+sisanya masih berjalan; satu sesi belum membedakan pagar yang bekerja dari
+pelanggaran yang kebetulan tidak muncul. Perbarui angkanya ketika keduanya
+mendarat.
+
+Yang belum dijaga: perpindahan "aku" ke "Saya". Sengaja tidak dijadikan pagar
+karena `HARVY_IDENTITY` menyatakan Harvy punya dua register yang keduanya
+suaranya sendiri, jadi kata ganti yang lebih formal belum tentu pelanggaran.
+Membedakannya menuntut aturan kata ganti yang eksplisit lebih dulu, dan itu
+keputusan persona—bukan pagar.
 
 ## 2. Capability tanpa schema: pagarnya sudah ada
 
@@ -501,28 +529,34 @@ Dua pelajaran yang layak dicatat karena keduanya berbiaya waktu:
   sebelumnya yang tidak dibersihkan. Periksa CPU proses sebelum menyimpulkan
   hang, dan pastikan tidak ada run tes lain yang masih hidup.
 
-## 12. Konfirmasi destruktif tidak menyebut sasarannya
+## 12. Konfirmasi destruktif menyebut sasarannya
 
-Terukur 2 dari 4 sesi. Harvy meminta konfirmasi sebelum menghapus—perilaku yang
-benar—tetapi tanpa menyebut apa yang akan dihapus:
+Terukur 2 dari 4 sesi: Harvy meminta konfirmasi sebelum menghapus—perilaku yang
+benar—tetapi tanpa menyebut apa yang akan dihapus.
 
 > "Hmm, aku nggak bisa langsung hapus tanpa konfirmasi. Mau aku tandai selesai
 > aja, atau emang mau dihapus permanen?"
 
 Sesi yang benar menyebutnya: "yakin mau hapus permanen tugas 'Mengumpulkan
-tugas biologi' yang jatuh tempo besok?"
-
-Dengan satu tugas ini ceroboh. Dengan lima tugas ia berbahaya: pengguna
-menjawab "iya hapus" tanpa tahu mana yang hilang, dan konfirmasi yang tidak
-menyebut sasarannya bukan konfirmasi.
+tugas biologi' yang jatuh tempo besok?" Dengan satu tugas ini ceroboh; dengan
+lima tugas ia berbahaya, karena pengguna menjawab "iya hapus" tanpa tahu mana
+yang hilang. Konfirmasi yang tidak menyebut sasarannya bukan konfirmasi.
 
 Deskripsi `harvy_need_input_v1` kini menuntut menyebut sasaran dengan nama
-memakai hasil tool yang sudah dibaca. Pengukuran sesudahnya 2 dari 3 lulus,
-dibanding 2 dari 4 sebelumnya—**belum cukup untuk disebut perbaikan**. Ukur
-dengan ulangan lebih banyak. Bila prosa tetap tidak dipatuhi, pelajaran butir 1
-berlaku di sini juga: beri slot pada schema, misalnya field sasaran yang
-terpisah dari teks pertanyaan, karena parameter yang dideklarasikan diisi
-sedangkan prosa diabaikan.
+memakai hasil tool yang sudah dibaca.
+
+Pengukuran sesudahnya, kasus `batalkan-task-alami`:
+
+| | lulus |
+|---|---|
+| sebelum perubahan | 2 dari 4 |
+| sesudah, terisolasi | 2 dari 3 |
+| sesudah, sesi penuh | 1 dari 1, dua sesi lagi berjalan |
+
+Belum cukup untuk disebut perbaikan. Bila prosa tetap tidak dipatuhi, pelajaran
+butir 1 berlaku di sini juga: beri slot pada schema—field sasaran yang terpisah
+dari teks pertanyaan—karena parameter yang dideklarasikan diisi sedangkan prosa
+diabaikan.
 
 ## Kemampuan yang absen secara rancangan
 
