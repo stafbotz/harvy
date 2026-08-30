@@ -380,45 +380,62 @@ sandbox dilaporkan sebagai "unknown" dan perbandingan ini tidak dapat dibaca
 sama sekali—model yang menulis kode rusak dan sandbox yang tidak bisa
 menjalankan kode sah terlihat persis sama.
 
-## 7. Batas giliran 2 detik: diukur, angkanya tetap, frekuensinya lebih buruk dari dugaan
+## 7. Batas giliran: biayanya bukan 2 detik, melainkan 7
 
-`npx tsx scripts/ukur-batas-giliran.ts --ulang=3`, 24 pengukuran pada
-MiniMax-M3, tanpa timeout produksi yang mengikat:
+Catatan sebelumnya di butir ini keliru dan sudah dikoreksi di sini. Ia menyebut
+"mayoritas giliran membayar satu request penuh yang hasilnya dibuang lalu tetap
+menunggu 2 detik", dan menyarankan berhenti memblokir penjadwalan. Pembacaan
+kode menunjukkan saran itu bukan perbaikan: `scheduleDeadline` menghitung
+`remaining = idleMs - (Date.now() - lastReceivedAt)`, jadi tenggat ditambatkan
+ke pesan terakhir pengguna, bukan ke saat penjadwalan. Dua detik menunggu
+classifier terserap ke dalam jendela.
 
-| | ms |
+Yang sebenarnya terjadi lebih mahal. Jendela tunggu ditentukan keluaran
+classifier:
+
+| keluaran | jendela |
 |---|---|
-| minimum | 1.150 |
-| p50 | 1.445 |
-| p90 | 9.228 |
-| p99 / maksimum | 11.683 |
+| `complete` | 0 — Harvy langsung mulai |
+| `urgent` | 0 |
+| `open` | 7.000 ms |
+| `incomplete` | 12.000 ms |
 
-Nol error, nol bentuk salah: model selalu menjawab benar bila diberi waktu.
-7 dari 24 (29%) melewati 2.000ms. Distribusinya bimodal dan ekornya bukan soal
-kerumitan prompt — kalimat terpendek ("halo") mencatat 2.013 / 9.416 / 9.228ms
-pada tiga ulangan berturut-turut. Itu variance provider.
+Ketika panggilan model gagal, `assessment` tetap pada nilai awal yang disiapkan
+sebelum `try`: `open`, confidence 0, continuationLikelihood 0,65. Artinya
+**setiap kegagalan classifier menjadi tunggu 7 detik**, sedangkan keberhasilan
+yang menyimpulkan `complete` menjadi 0.
 
-**Di runtime nyata, angkanya jauh lebih buruk.** Sesi Telegram 29 Agustus
-mencatat `turn_boundary_check_failed` pada **5 dari 7 giliran**, bukan 29%.
-Pengukuran terisolasi tidak menanggung beban runtime yang sedang melayani
-giliran; angka 29% itu batas bawah, bukan perkiraan.
+Bukti empirisnya sudah ada di log sesi: giliran dengan
+`turn_boundary_check_failed` mencatat `batchWaitMs` 7005, 7009, dan 7010,
+sementara giliran tanpa kegagalan mencatat `batchWaitMs: 0`.
 
-**Keputusan: `TURN_BOUNDARY_TIMEOUT_MS` tetap 2.000ms.** Hasil assessment
-menentukan `waitMs` sebelum giliran dijadwalkan, jadi timeout ini ada di jalur
-kritis: menaikkannya ke p90 berarti menambah sampai 9 detik mati sebelum Harvy
-mulai berpikir, demi sebuah *petunjuk* penggabungan bubble. Ekor 6–12 detik
-juga tidak tertangkap timeout mana pun yang masih layak. Fallback yang ada
-(`open`, confidence 0, continuationLikelihood 0,65) adalah perilaku yang benar.
+Frekuensinya, dari tujuh sesi tersimpan: 4, 5, 2, 5, 2, 3, dan 0 giliran per
+sesi. Pada korpus 28 giliran sebelumnya, 16 di antaranya gagal—dan 16 giliran
+itu menunggu sekitar tujuh detik sebelum Harvy mulai bekerja, bukan karena
+pengguna masih mengetik melainkan karena classifier-nya tidak menjawab tepat
+waktu.
 
-Yang terbuka, dan lebih besar daripada satu konstanta: pada mayoritas giliran,
-Harvy membayar satu request penuh yang hasilnya dibuang lalu tetap menunggu
-2 detik. Memperbaikinya berarti berhenti memblokir penjadwalan pada petunjuk
-ini—menjadwalkan dengan default lalu memperbaiki bila jawabannya keburu
-datang—dan itu perubahan pada batcher, bukan pada angka. Jangan naikkan
-konstantanya; datanya sudah menunjukkan itu bukan jalan keluarnya.
+**Pengukuran ulang latensi tetap menyimpulkan angka 2.000ms jangan dinaikkan.**
+p90 classifier 9.228 ms, lebih besar daripada jendela `open` 7.000 ms itu
+sendiri; menunggu jawabannya justru dapat melampaui jendela yang hendak
+ditentukannya.
 
-Catatan biaya: 5 dari 7 giliran membuang satu panggilan model tier `cheap`.
-Bila jalur ini dipertahankan apa adanya, itu tagihan tetap tanpa manfaat pada
-mayoritas giliran.
+Tiga arah yang masuk akal, dan tidak satu pun dikerjakan di sini karena
+semuanya mengubah kapan Harvy memotong pengguna—keputusan produk yang menuntut
+pengukuran tersendiri:
+
+- **Perpendek fallback kegagalan.** Kegagalan bukan bukti pengguna masih
+  mengetik; `open` penuh 7 detik memperlakukannya seolah begitu. Jendela yang
+  lebih pendek khusus untuk kegagalan mengurangi jeda tanpa mengklaim
+  kelengkapan. Risikonya memotong orang yang memang masih menulis.
+- **Panggil lebih jarang.** Perkuat `assessTurnBoundaryLocally` supaya lebih
+  sedikit giliran ambigu yang sampai ke model. Ini menghapus biaya sekaligus
+  jeda pada giliran yang tertangani heuristik.
+- **Terima apa adanya.** Tujuh detik jeda pada sebagian giliran adalah harga
+  untuk tidak memotong orang yang sedang mengetik, dan itu pertukaran yang sah.
+
+Yang jelas salah adalah menaikkan timeout, dan yang jelas tidak menolong adalah
+memindahkan penjadwalan lebih awal.
 
 ## 8. Ambang otorisasi kini bertingkat menurut akibat
 
@@ -481,6 +498,21 @@ batcher memperlakukannya sebagai bubble kedua dari satu pikiran—`2 bubble,
 batas open, interupsi null`. Perilaku Harvy di sana benar; kasusnya yang menguji
 sesuatu yang tidak pernah ia siapkan. Angkanya kini 14 detik.
 
+Verifikasi perbaikan onboarding, sesi baru: **8 dari 9 lulus**, izin diterima
+pada fase pertama dan kasus berjalan normal. Jalur suksesnya terbukti; jalur
+gagalnya belum, karena onboarding memang tidak gagal pada sesi itu.
+
+`burst-satu-pikiran` gagal sekali dari tiga, dan kegagalannya menyambung ke
+butir 7. Ketiga bubble digabung dengan benar—`3 bubble`—tetapi giliran itu
+mencatat **dua** `turn_boundary_check_failed` sehingga jatuh ke fallback `open`,
+dan isinya lalu dibaca sebagai `intent: feeling` lalu dijawab tanpa menyentuh
+dua mata pelajaran yang disebut pengguna.
+
+Penggabungan bubble bukan penyebabnya; ia bekerja. Yang gagal adalah membaca
+maksud teks gabungan yang diakhiri pertanyaan ("aku harus gimana ya"). Kelas
+ini layak diukur terpisah: semburan yang berakhir dengan pertanyaan mungkin
+sistematis dibaca sebagai perasaan belaka.
+
 Yang masih kurang:
 
 - Tidak ada kasus keselamatan. Menambahkannya menuntut kehati-hatian: korpus
@@ -513,8 +545,9 @@ Kelulusan 25 dari 28. Kegagalannya bukan acak:
   jalur murah tanpa memberi manfaat. Layak diukur ulang bila kelas ini sering.
 
 `turn_boundary_check_failed` pada 57% giliran mengonfirmasi butir 7: angka 29%
-dari pengukuran terisolasi adalah batas bawah, dan mayoritas giliran membayar
-satu panggilan model tier `cheap` yang hasilnya dibuang.
+dari pengukuran terisolasi adalah batas bawah. Biayanya bukan hanya panggilan
+model yang dibuang—setiap kegagalan menjadi tunggu tujuh detik sebelum Harvy
+mulai bekerja, karena fallback-nya `open`. Rinciannya di butir 7.
 
 ## 11. Observability pernah menjatuhkan giliran
 
