@@ -16,11 +16,24 @@ import type { LiveTelegramCase } from "../scripts/live-telegram-cases.js";
  * tertahan di situ.
  */
 describe("pembagian sesi penguji Telegram", () => {
-  it("membiarkan korpus yang muat tetap satu sesi", () => {
-    const batches = splitIntoBatches(LIVE_TELEGRAM_CASES);
+  // Korpus kecil tidak boleh dipecah tanpa alasan. Ukurannya dibuat di sini,
+  // bukan diambil dari korpus nyata: korpus nyata memang dimaksudkan tumbuh,
+  // dan mengikat assertion pada ukurannya berarti tes ini gagal tepat ketika
+  // kemampuan yang diujinya mulai terpakai.
+  it("tidak memecah korpus yang muat dalam satu sesi", () => {
+    const batches = splitIntoBatches(grown(3));
 
     assert.equal(batches.length, 1);
     assert.ok(batches[0]!.lines.length <= MAX_TESTER_COMMANDS);
+  });
+
+  it("menjaga setiap sesi korpus nyata tetap di bawah batas", () => {
+    for (const [index, batch] of splitIntoBatches(LIVE_TELEGRAM_CASES).entries()) {
+      assert.ok(
+        batch.lines.length <= MAX_TESTER_COMMANDS,
+        `batch ${index + 1} memakai ${batch.lines.length} perintah`,
+      );
+    }
   });
 
   it("memecah korpus besar tanpa melewati batas satu sesi pun", () => {

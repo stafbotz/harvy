@@ -133,6 +133,18 @@ export type LiveExplorationCommand =
   | { type: "interrupt"; text: string }
   | { type: "settle" }
   | { type: "wait"; ms: number }
+  /**
+   * Menunggu sampai balasan giliran berjalan benar-benar terlihat, bukan
+   * menunggu durasi tetap.
+   *
+   * Sebagian bentuk giliran hanya dapat diuji bila pesan berikutnya dikirim
+   * segera sesudah Harvy menjawab—kesadaran Harvy ketika ia memotong pengguna
+   * menuntut sambungan yang tiba dalam hitungan detik. Durasi tetap tidak dapat
+   * menjaminnya: latensi balasan berayun antara sembilan dan tiga puluh detik,
+   * sehingga jeda yang cukup lama untuk satu giliran terlalu panjang untuk
+   * giliran berikutnya.
+   */
+  | { type: "await_reply"; timeoutMs: number }
   | { type: "restart" }
   | { type: "status" }
   | { type: "mark"; markers: LiveExplorationManualCoverageMarker[] }
@@ -695,6 +707,18 @@ export function parseLiveExplorationCommand(
       ms: integerInRange(
         record["ms"],
         100,
+        300_000,
+        "LIVE_EXPLORATION_WAIT_INVALID",
+      ),
+    };
+  }
+  if (type === "await_reply") {
+    exactKeys(record, ["timeoutMs", "type"]);
+    return {
+      type,
+      timeoutMs: integerInRange(
+        record["timeoutMs"],
+        1_000,
         300_000,
         "LIVE_EXPLORATION_WAIT_INVALID",
       ),

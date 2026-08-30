@@ -42,7 +42,11 @@ export interface LiveTelegramExpectation {
  * dapat tumpang tindih, sehingga sekaligus menguji batas jendela korelasi
  * harness ini sendiri.
  */
-export type LiveTelegramTurnKind = "send" | "burst" | "interrupt";
+export type LiveTelegramTurnKind =
+  | "send"
+  | "burst"
+  | "interrupt"
+  | "follow-up";
 
 export interface LiveTelegramCase {
   id: string;
@@ -54,6 +58,15 @@ export interface LiveTelegramCase {
   gapMs?: number;
   /** `interrupt`: pesan yang datang sebelum giliran pertama selesai. */
   interruptWith?: string;
+  /**
+   * `follow-up`: sambungan yang dikirim segera sesudah Harvy menjawab.
+   *
+   * Tidak ada `wait` di antaranya. Kesadaran Harvy saat memotong hanya menyala
+   * bila sambungannya tiba dalam delapan detik—angka waktu membaca, yang
+   * memisahkan sambungan terpotong dari pertanyaan lanjutan biasa. `settle`
+   * sudah menunggu kanal tenang, jadi ia satu-satunya jeda yang dipakai.
+   */
+  followUpAfterReply?: string;
   /** `interrupt`: jeda sebelum interupsi dikirim. */
   interruptAfterMs?: number;
   waitMs?: number;
@@ -227,6 +240,31 @@ export const LIVE_TELEGRAM_CASES: readonly LiveTelegramCase[] = [
         // bukan sekadar menyebut topiknya.
         /\bhari\s*(?:ke-?\s*)?1\b[\s\S]{0,400}?\bhari\s*(?:ke-?\s*)?2\b/iu,
         /\bsenin\b[\s\S]{0,400}?\bselasa\b[\s\S]{0,400}?\brabu\b/iu,
+      ],
+    },
+  },
+  {
+    id: "sadar-memotong",
+    // Harvy menebak batas giliran, dan menebak tidak akan pernah sempurna.
+    // Yang membedakan percakapan yang enak bukan tidak pernah memotong,
+    // melainkan sadar ketika memotong lalu memperbaikinya.
+    //
+    // Kalimat pertama sengaja belum meminta arahan, supaya ia dijawab sebagai
+    // percakapan biasa dan bukan memicu pembacaan daftar tugas. Sambungannya
+    // membawa dua mata pelajaran yang belum tersentuh jawaban itu—itulah arti
+    // "mengubah jawaban", satu-satunya keadaan yang layak diakui.
+    kind: "follow-up",
+    message: "aduh besok ada dua deadline barengan",
+    followUpAfterReply: "yang biologi sama yang sejarah, aku harus gimana ya",
+    waitMs: 60_000,
+    expect: {
+      // Sambungannya harus menjadi giliran tersendiri. Bila ia justru tergabung
+      // dengan pesan pertama, yang teruji bukan kesadaran memotong melainkan
+      // penggabungan bubble—dan kasus ini diam-diam berhenti menguji apa pun.
+      bubbleCount: 1,
+      replyMatches: [
+        /\b(?:keburu|kecepetan|kepotong|motong|memotong|nyela|menyela|belum selesai)\b/iu,
+        /biologi/iu,
       ],
     },
   },

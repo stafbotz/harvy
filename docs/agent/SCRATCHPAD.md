@@ -992,6 +992,68 @@ Korpus sembilan kasus sekarang tetap satu batch—tidak ada perubahan perilaku,
 memang begitu maksudnya. Sesi Telegram sesudah perubahan 9 dari 9 lulus, yang
 membuktikan alurnya tidak rusak dan bukan lebih dari itu.
 
+## 19. Kesadaran memotong terbukti di kanal nyata
+
+Dikerjakan 30 Agustus 2026, langsung sesudah butir 18 membuka kapasitasnya.
+Kasus `sadar-memotong` mengirim satu kalimat, menunggu Harvy menjawab, lalu
+mengirim sambungan yang membawa isi baru. Balasannya:
+
+> Eh, aku keburu jawab tadi. coba mulai dari yang paling bikin pusing, beresin
+> satu-satu. yang biologi bagian apa?
+
+`1 bubble`, `interupsi -`—giliran benar-benar terpisah, bukan interupsi.
+
+**Menguji ini menuntut primitif baru, dan itu temuan tersendiri.** Sambungan
+hanya diakui bila tiba dalam delapan detik sesudah balasan, sedangkan latensi
+balasan berayun antara sembilan dan tiga puluh detik. `wait` berdurasi tetap
+karena itu tidak dapat menempatkannya: jeda yang cukup untuk satu giliran
+terlalu panjang untuk giliran berikutnya.
+
+Dua percobaan sebelum berhasil, dan keduanya gagal dengan cara yang berbeda:
+
+- **`settle` saja.** `flushObservation` hanya melakukan satu polling, tidak
+  menunggu balasan, sehingga sambungan berangkat saat giliran pertama masih
+  berjalan dan keduanya digabung menjadi satu giliran. Assertion `bubbleCount: 1`
+  menangkapnya—tanpa itu kasus ini akan lulus sambil menguji penggabungan
+  bubble, bukan kesadaran memotong.
+- **`await_reply` yang berhenti pada pesan pertama.** Harvy mengirim status
+  "sedang memikirkan" lebih dulu, dan itu juga sebuah pesan. Sambungan berangkat
+  sebelum jawaban ada, dan runtime membacanya sebagai interupsi (`redirect`).
+
+Yang berhasil adalah aturan diam: balasan dianggap utuh ketika tidak ada pesan
+baru selama 2,5 detik. Bebas-isi, jadi tester tidak perlu mengenali kalimat
+status Harvy untuk tahu gilirannya selesai—dan 2,5 detik masih jauh di dalam
+jendela delapan detik.
+
+**Kapasitas langsung terpakai.** Sepuluh kasus kini terpecah otomatis menjadi
+dua sesi berurutan, persis kemampuan yang butir 18 tambahkan. Tanpa itu kasus
+ini tidak dapat ditambahkan sama sekali.
+
+### Perkabelannya dikunci tes, kasus live-nya belum stabil
+
+Sesi nyata mendapat pengakuannya pada sebagian sesi dan tidak pada sesi lain,
+dengan bentuk giliran yang sama persis (`1 bubble`, `interupsi -`). Mengejar
+sebabnya lewat sesi live berulang tidak sepadan—satu sesi belasan menit untuk
+satu bit informasi—jadi jalurnya dipindah ke tes adapter yang deterministik.
+
+`tests/create-bot-flow.test.ts` kini mengirim dua pesan berurutan lewat adapter
+sungguhan dan memeriksa `runtime.prematureReply` pada keduanya: giliran pertama
+tidak pernah menjadi potongan karena belum ada balasan sebelumnya, dan sambungan
+yang isinya sudah terjawab tidak menyalakan apa pun. Keduanya lulus, jadi
+perkabelannya—`turnReceivedAt` yang sampai ke adapter, dan keputusan yang benar
+atas bentuk sambungan—terbukti.
+
+Yang tersisa adalah kestabilan kasus live-nya, dan itu masalah alat ukur, bukan
+perilaku: anggaran delapan detik dibagi antara jendela diam tester, `settle`,
+dan pengiriman. Perilakunya sendiri sudah terbukti pada tiga tingkat—kebijakan
+murni, perkabelan adapter, dan dua pengamatan langsung di kanal.
+
+Satu percobaan penelusuran gagal dan layak dicatat supaya tidak diulang: log
+diagnostik yang disisipkan di adapter tidak pernah muncul, bahkan setelah
+diganti `console.error` langsung, padahal log lain di baris yang lebih bawah
+tercatat. Sebabnya tidak ditemukan dan penelusurannya dihentikan; tes adapter
+menjawab pertanyaan yang sama dengan biaya jauh lebih kecil.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

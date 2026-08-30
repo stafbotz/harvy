@@ -178,6 +178,21 @@ export function buildCaseCommands(cases: readonly LiveTelegramCase[]): CommandPl
         { type: "interrupt", text: testCase.interruptWith ?? "" },
         testCase.id,
       );
+    } else if (testCase.kind === "follow-up") {
+      // Tidak ada `wait` antara balasan dan sambungan. Kesadaran Harvy saat
+      // memotong hanya menyala bila sambungannya tiba dalam delapan detik, dan
+      // `wait` berdurasi tetap tidak dapat menjamin itu: balasan yang datang
+      // cepat akan menyisakan jeda panjang sesudahnya. `settle` menunggu kanal
+      // `await_reply` menunggu balasan yang benar-benar terlihat, lalu `settle`
+      // menutup gilirannya. Sambungan berangkat beberapa ratus milidetik
+      // sesudahnya—di dalam jendela delapan detik.
+      push({ type: "send", text: testCase.message }, null);
+      push({ type: "await_reply", timeoutMs: 90_000 }, null);
+      push({ type: "settle" }, null);
+      push(
+        { type: "send", text: testCase.followUpAfterReply ?? "" },
+        testCase.id,
+      );
     } else {
       push({ type: "send", text: testCase.message }, testCase.id);
     }

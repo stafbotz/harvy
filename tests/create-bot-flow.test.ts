@@ -6146,6 +6146,81 @@ describe("work lane active AgentRun Telegram", () => {
       await restarted.bot.drainPending();
     }
   });
+
+  // Sesi Telegram nyata mendapat pengakuannya pada sebagian sesi dan tidak pada
+  // sesi lain, dengan bentuk giliran yang sama persis. Perkabelannya karena itu
+  // dikunci di sini: `turnReceivedAt` harus benar-benar sampai ke adapter, dan
+  // sambungan yang mengubah jawaban harus menyalakan `prematureReply`.
+  it("menandai sambungan cepat yang mengubah jawaban sebagai balasan terlalu cepat", async () => {
+    const runtimes: ConversationRuntime[] = [];
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({ intent: "feeling" }),
+      reply: async (
+        _message: string,
+        _understanding: unknown,
+        _context: unknown,
+        _style: unknown,
+        _triage: unknown,
+        _insight: unknown,
+        _raiseHelp: unknown,
+        runtime: ConversationRuntime,
+      ) => {
+        runtimes.push(runtime);
+        return "Dua tenggat barengan memang bikin pusing.";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(
+      messageUpdate("aduh besok ada dua deadline barengan"),
+    );
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(
+      messageUpdate("yang biologi sama yang sejarah, aku harus gimana ya"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(runtimes.length, 2);
+    // Giliran pertama tidak punya balasan sebelumnya, jadi tidak pernah menjadi
+    // potongan.
+    assert.notEqual(runtimes[0]?.prematureReply, true);
+    assert.equal(runtimes[1]?.prematureReply, true);
+  });
+
+  // Penjaga pasangannya: sambungan yang isinya sudah terjawab tidak boleh
+  // menyalakan pengakuan, karena tidak ada yang berubah untuk diakui.
+  it("tidak menandai sambungan yang isinya sudah terjawab", async () => {
+    const runtimes: ConversationRuntime[] = [];
+    const harness = basicHarness({
+      classifyTurnBoundary: async () => "complete",
+      triageRisk: async () => CALM_TRIAGE,
+      understand: async () => understanding({ intent: "feeling" }),
+      reply: async (
+        _message: string,
+        _understanding: unknown,
+        _context: unknown,
+        _style: unknown,
+        _triage: unknown,
+        _insight: unknown,
+        _raiseHelp: unknown,
+        runtime: ConversationRuntime,
+      ) => {
+        runtimes.push(runtime);
+        return "Tenggat biologi dan sejarah memang berdekatan.";
+      },
+    } as unknown as Conversation);
+
+    await harness.bot.handleUpdate(messageUpdate("besok ada dua deadline"));
+    await harness.bot.drainPending();
+    await harness.bot.handleUpdate(
+      messageUpdate("yang biologi sama yang sejarah"),
+    );
+    await harness.bot.drainPending();
+
+    assert.equal(runtimes.length, 2);
+    assert.notEqual(runtimes[1]?.prematureReply, true);
+  });
 });
 
 function profiles(overrides: Partial<UserProfile> = {}): ProfileService {
