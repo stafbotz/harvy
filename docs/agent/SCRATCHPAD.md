@@ -509,9 +509,9 @@ dan isinya lalu dibaca sebagai `intent: feeling` lalu dijawab tanpa menyentuh
 dua mata pelajaran yang disebut pengguna.
 
 Penggabungan bubble bukan penyebabnya; ia bekerja. Yang gagal adalah membaca
-maksud teks gabungan yang diakhiri pertanyaan ("aku harus gimana ya"). Kelas
-ini layak diukur terpisah: semburan yang berakhir dengan pertanyaan mungkin
-sistematis dibaca sebagai perasaan belaka.
+maksud teks gabungan yang diakhiri pertanyaan ("aku harus gimana ya"). Diukur
+terpisah di butir 13: kelas ini memang tidak pernah dibaca question maupun
+request, dan `toolNeed`-nya selalu none.
 
 Yang masih kurang:
 
@@ -604,63 +604,59 @@ butir 1 berlaku di sini juga: beri slot pada schema—field sasaran yang terpisa
 dari teks pertanyaan—karena parameter yang dideklarasikan diisi sedangkan prosa
 diabaikan.
 
-## 13. Prompt pemahaman sudah jenuh: menambah tidak lagi mengubah apa pun
+## 13. Semburan yang diakhiri permintaan tidak pernah menjadi request
 
-Temuan terpenting dari putaran 30 Agustus, dan ia menjelaskan beberapa butir
-lain sekaligus.
+**Versi sebelumnya butir ini salah dan ditarik.** Ia menyatakan pembuka "eh btw"
+membalikkan klasifikasi menjadi `smalltalk`, lalu menyimpulkan
+`understandingPrompt` sudah jenuh karena aturan maupun contoh tidak
+mengubahnya. Kedua kesimpulan itu berdiri di atas artefak pengukuran: perintah
+shell hanya meneruskan baris pertama, sehingga model tidak pernah menerima
+pesan multi-barisnya—ia menerima `"eh btw"` saja, yang memang smalltalk.
 
-**Kasus yang memicunya.** Permintaan yang isinya sama persis, dikirim dalam
-tiga bentuk permukaan, diklasifikasi tiga cara berbeda—dan tidak pernah sekali
-pun sebagai `question` atau `request`:
+Pengukuran ulang dengan masukan multi-baris yang utuh:
 
-| bentuk | intent |
+| | tiga run |
 |---|---|
-| "eh btw" + dua baris + "aku harus gimana ya" | `smalltalk` 3 dari 3 |
-| isi sama tanpa pembuka | `task` 3 dari 3 |
-| isi sama dalam satu baris | `feeling` 2 dari 2 |
+| dengan pembuka "eh btw" | `task`, `feeling`, `feeling` |
+| tanpa pembuka | `feeling`, `feeling`, `task` |
 
-Kalimat terakhirnya selalu "aku harus gimana ya". Bentuk paling wajar bagi
-pelajar—mengetik terputus-putus lalu meminta bantuan di akhir—dibaca sebagai
-basa-basi, sehingga tidak pernah mencapai Agent Runtime dan tidak pernah
-membaca daftar tugasnya.
+Pembukanya tidak berpengaruh. Kode yang sempat dibuat untuk membuangnya
+(`src/core/opening-filler.ts` beserta sembilan tesnya dan tiga situs
+pemasangan) memecahkan masalah yang tidak ada, dan sudah dicabut seluruhnya.
 
-**Dua percobaan perbaikan, keduanya nihil.** Pertama, dua kalimat aturan
-eksplisit: pembuka santai tidak menentukan intent, dan pesan beberapa baris
-dinilai utuh. Hasil: `smalltalk` tetap. Kedua, contoh konkret dengan frasa
-persis yang gagal, dipetakan ke `request`—pola yang sudah dipakai berkas ini
-untuk kasus sulit lain. Hasil: `smalltalk` 3 dari 3.
+Klaim kejenuhan prompt ikut ditarik. Buktinya hanya "aturan dan contoh tidak
+mengubah apa pun", padahal model tidak pernah membaca teks yang diuji.
+`understandingPrompt` memang sekitar 29.500 karakter, dan itu tetap fakta; yang
+tidak terbukti adalah bahwa menambah ke dalamnya sudah tidak berpengaruh.
 
-**Keduanya terbukti sampai ke model.** Prompt terpasang 30.366 karakter dengan
-contoh baru di posisi 21% dari awal. Jadi ini bukan soal pengiriman, bukan soal
-posisi, dan bukan soal bentuk instruksi—aturan maupun contoh sama-sama tidak
-berpengaruh.
+**Yang tetap berdiri, karena berasal dari kanal nyata dan dari pengukuran ulang
+yang benar:** semburan multi-baris yang diakhiri permintaan bantuan tidak
+pernah sekali pun dibaca `question` atau `request`. Lima pengukuran memberi
+`feeling` empat kali dan `task` dua kali untuk kalimat yang berakhir "aku harus
+gimana ya", dan sesi Telegram nyata mencatat hal yang sama—balasannya tidak
+menyentuh dua mata pelajaran yang disebut pengguna.
 
-Kedua tambahan itu dikembalikan. Aturan yang tidak berlaku lebih buruk daripada
-tidak ada aturan: ia membebani setiap giliran dan membuat pembaca berikutnya
-mengira kasusnya sudah tertangani.
+Akibatnya nyata: `feeling` dan `task` sama-sama di luar `intentAllowsAgentRuntime`,
+jadi giliran itu tidak pernah membaca daftar tugas pengguna sebelum menjawab
+"aku harus gimana ya".
 
-**Apa artinya.** `understandingPrompt` berisi sekitar 29.500 karakter—kira-kira
-8.200 token—instruksi untuk satu panggilan klasifikasi. Pada ukuran itu,
-menambah tidak lagi menggerakkan apa pun. Ini menjelaskan pola yang berulang di
-butir lain: aturan kosakata internal di butir 1b baru berhasil setelah
-sumbernya dihapus, bukan setelah larangannya dipertegas; slot `aspect` di
-butir 1 berhasil karena ia mengubah *bentuk* permintaan, bukan menambah kalimat.
+Belum diselidiki, dan inilah pekerjaan sebenarnya:
 
-Lever yang tersisa bukan menambah:
+- Apakah `feeling` di sini salah? Pesan itu memang membawa tekanan, dan mode
+  menyimak bisa jadi tepat. Yang jelas kurang bukan labelnya melainkan
+  `toolNeed`, yang selalu `none` sehingga daftar tugas tidak pernah dibaca.
+- Menaikkan `toolNeed` untuk kalimat yang menyebut tenggat atau tugas yang
+  sudah tercatat lebih menjanjikan daripada memperdebatkan intent. Itu jalur
+  yang sama dengan butir 4, yang berhasil setelah prompt menyebut catatan
+  sebagai state.
 
-- **Kurangi.** Ukur bagian mana yang masih membayar dirinya. Sebagian aturan
-  kemungkinan menjawab kasus yang sudah tidak ada, dan setiap kalimat mati
-  mengencerkan yang hidup.
-- **Pecah.** Satu panggilan mengerjakan intent, semantic operation, routing
-  assessment, publicFocus, riskHint, memori, dan task sekaligus. Memisahkan
-  klasifikasi intent menjadi panggilan sendiri yang jauh lebih pendek dapat
-  mengembalikan daya instruksi—dengan biaya satu panggilan tambahan.
-- **Pindahkan ke kode.** "Pembuka santai tidak menentukan intent" adalah aturan
-  yang dapat ditegakkan deterministik: buang bubble pembuka yang berdiri
-  sendiri sebelum klasifikasi, lalu nilai sisanya.
-
-Yang ketiga paling murah dan paling dapat diuji, dan tidak menyentuh prompt
-sama sekali. Kerjakan itu lebih dulu bila kelas ini hendak ditutup.
+**Pelajaran metodologis, dan ini yang paling mahal dari putaran ini.** Sebuah
+kesimpulan dipublikasikan dan di-commit sebelum masukannya diperiksa. Alat
+ukurnya diam saja: tidak ada yang salah, hanya lebih pendek dari yang dikira.
+Ketika sebuah pengukuran memberi hasil yang rapi dan mengejutkan—tiga bentuk,
+tiga intent, 3 dari 3 setiap kali—periksa dulu bahwa masukannya sampai utuh.
+Keteraturan yang terlalu bersih lebih sering menandakan cacat alat daripada
+temuan.
 
 ## Kemampuan yang absen secara rancangan
 
