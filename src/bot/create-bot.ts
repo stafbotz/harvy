@@ -2369,6 +2369,19 @@ export function createBot(
     const createdProgress = runtime.progress
       ? null
       : createTelegramProgress(ctx, currentTurnId() ?? ownerId);
+    // Status yang diserahkan dari luar—"Menunggu Harvy" yang dibuat saat pesan
+    // tiba—menjadi milik giliran ini, dan giliran ini yang wajib menutupnya.
+    //
+    // Sebelum baris ini, `finally` hanya menutup status yang dibuat di dalam.
+    // Giliran yang dibatalkan tidak pernah mengirim balasan, sehingga jalur
+    // penutupan lewat `ctx.reply` juga tidak pernah berjalan—dan statusnya
+    // tertinggal di layar pengguna selamanya. Persis yang terjadi ketika
+    // pengguna menyela: pekerjaan lama dibatalkan, statusnya tidak.
+    const handedProgress = runtime.progress as
+      | (ConversationProgressReporter & { finish?: () => Promise<void> })
+      | undefined;
+    const ownedProgress = createdProgress ??
+      (typeof handedProgress?.finish === "function" ? handedProgress : null);
     const progress = runtime.progress ?? createdProgress ?? undefined;
     const scopedRuntime: ConversationRuntime = progress
       ? { ...runtime, progress }
@@ -2393,7 +2406,7 @@ export function createBot(
       if (activeProgress.get(ownerId) === progress) {
         activeProgress.delete(ownerId);
       }
-      await createdProgress?.finish();
+      await ownedProgress?.finish?.();
     }
   }
 

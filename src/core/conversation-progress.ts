@@ -95,6 +95,20 @@ export interface TransientProgressOptions {
 }
 
 const DEFAULT_GRACE_MS = 700;
+
+/**
+ * Jeda khusus fase menunggu, jauh lebih pendek daripada fase lain.
+ *
+ * Jeda 700 ms ada supaya balasan cepat tidak memunculkan status yang langsung
+ * hilang lagi. Untuk fase menunggu itu justru menghapus gunanya: kalimat biasa
+ * yang jelas selesai mendapat jendela tunggu nol detik, sehingga fasenya sudah
+ * pindah ke "Membaca" sebelum 700 ms lewat—dan pengakuan yang seharusnya
+ * seketika tidak pernah terlihat sama sekali.
+ *
+ * Yang tersisa dijaga: balasan deterministik di bawah 250 ms tetap tidak
+ * memunculkan apa pun.
+ */
+const WAITING_GRACE_MS = 250;
 const DEFAULT_MINIMUM_UPDATE_INTERVAL_MS = 1_500;
 
 /**
@@ -140,10 +154,13 @@ export class TransientConversationProgress<Reference>
     this.latest = normalized;
     if (normalized.phase !== "waiting") this.stopWaitingAnimation();
     if (this.reference === null && this.graceTimer === null) {
+      const grace = normalized.phase === "waiting"
+        ? Math.min(this.graceMs, WAITING_GRACE_MS)
+        : this.graceMs;
       this.graceTimer = setTimeout(() => {
         this.graceTimer = null;
         this.enqueue(() => this.showLatest());
-      }, this.graceMs);
+      }, grace);
       this.graceTimer.unref?.();
       return;
     }

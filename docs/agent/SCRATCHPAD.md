@@ -1318,6 +1318,42 @@ resmi, dan dipendekkan jadi "timbang" terbaca timbangan berat.
 Terverifikasi di kanal: bulan muncul pada seluruh giliran sesi, 12 dari 13 kasus
 lulus. Yang gagal `obrolan-biasa` pada varians extractor yang sudah tercatat.
 
+### Dua cacat yang lolos verifikasi pertama
+
+Dilaporkan pengguna dari pemakaian nyata, dan keduanya kesalahan saya.
+
+**"Menunggu Harvy" tidak pernah muncul untuk kalimat biasa.** Jeda 700 ms
+sebelum status tampil ada supaya balasan cepat tidak memunculkan status yang
+langsung hilang lagi. Untuk fase menunggu itu justru menghapus gunanya: kalimat
+yang jelas selesai mendapat jendela tunggu **nol detik**, sehingga fasenya sudah
+pindah ke "Membaca" sebelum 700 ms lewat. Bulannya hanya muncul pada semburan
+dan fragmen—kebalikan dari maksudnya. Fase menunggu kini memakai jeda 250 ms;
+balasan deterministik di bawah itu tetap tidak memunculkan apa pun.
+
+**Status kadang tidak terhapus.** `finally` di adapter hanya menutup status yang
+dibuat di dalam giliran, sedangkan status "Menunggu Harvy" diserahkan dari luar.
+Giliran yang **dibatalkan**—persis yang terjadi ketika pengguna menyela—tidak
+pernah mengirim balasan, sehingga jalur penutupan lewat `ctx.reply` juga tidak
+berjalan, dan statusnya tertinggal di layar selamanya. Kepemilikan kini
+eksplisit: status yang diserahkan menjadi milik giliran itu, dan giliran itu yang
+menutupnya.
+
+**Kenapa verifikasi pertama meloloskannya.** Korpus live kebetulan penuh dengan
+kasus yang justru bekerja—semburan tiga bubble, fragmen menggantung, interupsi
+berjeda—yang semuanya menunggu lebih dari 700 ms. Kasus yang gagal adalah bentuk
+paling biasa: satu kalimat lengkap. Transkrip menunjukkan bulannya muncul, dan
+saya membaca itu sebagai bukti bahwa ia bekerja untuk semua bentuk.
+
+Bukti sesudah perbaikan, dari berkas evidence tester—pola yang sama pada ketiga
+giliran:
+
+```
+create surface-1  chars=19   🌒 Menunggu Harvy...
+edit   surface-1  chars=77   berganti fase
+create surface-2  chars=819  jawabannya
+delete surface-1             statusnya dihapus
+```
+
 ## 24. Panjang balasan kini dijaga dua arah
 
 `depthDirective` menjaga satu sisi sejak lama: pesan panjang tidak boleh dijawab

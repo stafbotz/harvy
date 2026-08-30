@@ -374,3 +374,67 @@ describe("status menunggu", () => {
     assert.match(teks, /pesan barumu masuk/u);
   });
 });
+
+/**
+ * Jeda sebelum status tampil, dan kenapa fase menunggu berbeda.
+ *
+ * Jeda 700 ms ada supaya balasan cepat tidak memunculkan status yang langsung
+ * hilang lagi. Untuk fase menunggu itu justru menghapus gunanya: kalimat biasa
+ * yang jelas selesai mendapat jendela tunggu nol detik, sehingga fasenya sudah
+ * pindah sebelum 700 ms lewat—dan pengakuan yang seharusnya seketika tidak
+ * pernah terlihat sama sekali. Ini persis yang dilaporkan pengguna.
+ */
+describe("jeda tampil status", () => {
+  it("menampilkan fase menunggu jauh lebih cepat daripada fase lain", async () => {
+    const cepat = perekamStatus();
+    cepat.progress.report({ phase: "waiting" });
+    await delay(400);
+
+    assert.equal(cepat.shown.length, 1);
+    assert.match(cepat.shown[0] ?? "", /Menunggu Harvy/u);
+
+    const lambat = perekamStatus();
+    lambat.progress.report({ phase: "thinking" });
+    await delay(400);
+
+    assert.equal(lambat.shown.length, 0);
+    await lambat.progress.finish();
+    await cepat.progress.finish();
+  });
+
+  // Status yang tidak terhapus tertinggal di layar pengguna selamanya.
+  it("menghapus surface-nya saat selesai", async () => {
+    const perekam = perekamStatus();
+    perekam.progress.report({ phase: "waiting" });
+    await delay(400);
+    await perekam.progress.finish();
+
+    assert.equal(perekam.removed, 1);
+  });
+});
+
+function perekamStatus(): {
+  progress: TransientConversationProgress<number>;
+  shown: string[];
+  removed: number;
+} {
+  const shown: string[] = [];
+  const state = { removed: 0 };
+  const progress = new TransientConversationProgress<number>({
+    show: async (text) => {
+      shown.push(text);
+      return shown.length;
+    },
+    update: async () => undefined,
+    remove: async () => {
+      state.removed += 1;
+    },
+  });
+  return {
+    progress,
+    shown,
+    get removed() {
+      return state.removed;
+    },
+  };
+}
