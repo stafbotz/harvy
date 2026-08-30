@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   buildCaseCommands,
   MAX_TESTER_COMMANDS,
+  registerViolations,
   splitIntoBatches,
 } from "../scripts/uji-telegram-langsung.js";
 import { LIVE_TELEGRAM_CASES } from "../scripts/live-telegram-cases.js";
@@ -99,3 +100,46 @@ function grown(size: number): LiveTelegramCase[] {
   }
   return cases;
 }
+
+describe("pagar register bahasa balasan", () => {
+  // Dua pelanggaran ini benar-benar teramati sebelum pagarnya dipasang: satu
+  // balasan jadwal belajar dibuka dalam bahasa Inggris untuk pesan berbahasa
+  // Indonesia, dan satu catatan durable tersimpan dengan aksara Mandarin di
+  // tengah kalimat Indonesia.
+  it("menangkap perpindahan ke bahasa Inggris", () => {
+    const reply =
+      "Here's your two-week study plan. I have arranged it by day, and you can adjust it later.";
+
+    assert.ok(registerViolations(reply).length > 0);
+  });
+
+  it("menangkap aksara di luar Latin", () => {
+    assert.ok(
+      registerViolations("Sudah kucatat ya, 学习 besok jam tujuh.").length > 0,
+    );
+  });
+
+  // Penjaga terpenting di sini. Pelajar Indonesia memakai kata pinjaman Inggris
+  // sepanjang waktu, dan pagar yang menyala pada "deadline" akan mati dibaca.
+  it("membiarkan bahasa Indonesia dengan kata pinjaman", () => {
+    for (
+      const reply of [
+        "Deadline-nya besok jam 7 malam ya, aku ingetin lagi nanti sore.",
+        "Oke, aku catat sebagai reminder buat tugas biologi kamu.",
+        "Kamu bisa mulai dari yang paling dekat deadline-nya.",
+        "Coba kamu review lagi bagian yang tadi bikin bingung.",
+      ]
+    ) {
+      assert.deepEqual(registerViolations(reply), [], reply);
+    }
+  });
+
+  // Satu penanda saja bukan bukti. Dua penanda berbeda yang membedakan kalimat
+  // Inggris dari kalimat Indonesia yang menyelipkan satu frasa.
+  it("tidak menyala pada satu penanda tunggal", () => {
+    assert.deepEqual(
+      registerViolations("Kamu bisa coba dulu, let me tahu kalau macet."),
+      [],
+    );
+  });
+});

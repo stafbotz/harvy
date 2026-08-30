@@ -469,16 +469,16 @@ const NON_LATIN_SCRIPT =
   /[一-鿿぀-ヿЀ-ӿ؀-ۿ]/u;
 /** Menuntut dua penanda berbeda supaya satu kata pinjaman tidak memicu alarm. */
 const ENGLISH_MARKERS: readonly RegExp[] = [
-  /here(?:'s| is)/iu,
-  /i have/iu,
-  /let me/iu,
-  /based on/iu,
-  /you can/iu,
-  /the following/iu,
-  /make sure/iu,
+  /\bhere(?:'s| is)\b/iu,
+  /\bi have\b/iu,
+  /\blet me\b/iu,
+  /\bbased on\b/iu,
+  /\byou can\b/iu,
+  /\bthe following\b/iu,
+  /\bmake sure\b/iu,
 ];
 
-function registerViolations(reply: string): string[] {
+export function registerViolations(reply: string): string[] {
   const problems: string[] = [];
   const asing = NON_LATIN_SCRIPT.exec(reply);
   if (asing) problems.push(`aksara di luar Latin: "${asing[0]}"`);

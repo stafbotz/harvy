@@ -166,3 +166,53 @@ describe("pemindai credential pada berkas terlacak", () => {
     }
   });
 });
+
+/**
+ * Karakter kontrol yang tidak terlihat di dalam sumber.
+ *
+ * Bukan soal kerapian. Pada 30 Agustus 2026 pagar register bahasa ternyata
+ * memuat karakter backspace (0x08) di tempat `\b` seharusnya berada—sisa escape
+ * yang termakan shell ketika pagar itu ditulis lewat skrip patch. Akibatnya
+ * pemeriksa perpindahan ke bahasa Inggris **tidak pernah bisa menyala**: ia
+ * hanya cocok pada karakter kontrol yang tak pernah ada di balasan mana pun.
+ * Selama berhari-hari ia dilaporkan "belum pernah menangkap apa pun", dan itu
+ * dibaca sebagai kabar baik.
+ *
+ * Kelas kesalahan ini tidak terlihat pada diff, tidak menggagalkan type-check,
+ * dan tidak menghasilkan pesan apa pun. Satu-satunya cara menemukannya adalah
+ * memindainya, dan satu-satunya cara mencegahnya kembali adalah memindainya
+ * terus.
+ */
+describe("karakter kontrol tak terlihat di sumber", () => {
+  it("tidak ada di berkas TypeScript mana pun", () => {
+    const offenders: string[] = [];
+    for (const path of sourceFiles()) {
+      const content = readFileSync(path, "utf8");
+      for (const [index, character] of [...content].entries()) {
+        const code = character.codePointAt(0) ?? 0;
+        const forbidden = code < 9 ||
+          (code >= 11 && code <= 12) ||
+          (code >= 14 && code < 32);
+        if (forbidden) {
+          const line = content.slice(0, index).split("\n").length;
+          offenders.push(
+            `${path}:${line} memuat U+${code.toString(16).padStart(4, "0")}`,
+          );
+          break;
+        }
+      }
+    }
+
+    assert.deepEqual(offenders, []);
+  });
+});
+
+function sourceFiles(): string[] {
+  const listed = execFileSync("git", ["ls-files", "-z"], {
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return listed
+    .split("\0")
+    .filter((path) => path.endsWith(".ts") || path.endsWith(".mjs"));
+}

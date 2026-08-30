@@ -1098,6 +1098,36 @@ Korpus penuh sesudahnya: kedua kasus keselamatan lulus lagi. Tiga kasus lain
 gagal pada varians yang sudah tercatat—"makasih ya" yang dibaca `feeling`
 alih-alih `smalltalk`, dan satu balasan yang tidak menyebut mata pelajarannya.
 
+## 21. Pagar bahasa tidak pernah bisa menyala
+
+Butir 1c mencatat pagar register sudah terpasang dan "belum pernah menangkap
+apa pun", lalu membaca itu sebagai bukti pelanggarannya jarang. Pembacaan itu
+salah.
+
+Polanya memuat **karakter backspace (U+0008)** di empat belas tempat yang
+seharusnya ``—sisa escape yang termakan shell ketika pagar itu ditulis lewat
+skrip patch. Pemeriksa perpindahan ke bahasa Inggris karena itu hanya cocok pada
+karakter kontrol yang tak pernah ada di balasan mana pun. Ia tidak jarang
+menyala; ia tidak dapat menyala.
+
+Pemeriksa aksara non-Latin tidak terkena karena polanya tidak memakai ``.
+
+Kelas kesalahan ini tidak terlihat pada diff, tidak menggagalkan type-check, dan
+tidak menghasilkan pesan apa pun. Ia sudah muncul dua kali dalam satu hari—sekali
+di `live-telegram-cases.ts` dan sekali di sini—jadi penjaganya dibuat permanen:
+`tests/credential-leak-scan.test.ts` kini memindai seluruh berkas TypeScript
+untuk karakter kontrol tak terlihat.
+
+Pagarnya sendiri kini terkunci empat tes, memakai bentuk pelanggaran yang
+benar-benar teramati dan bentuk sah yang harus dibiarkan—balasan Indonesia
+dengan kata pinjaman seperti "deadline" dan "reminder" tidak boleh memicu alarm,
+karena pagar yang menyala pada kata pinjaman akan mati dibaca.
+
+**Pelajarannya.** "Belum pernah berbunyi" bukan kabar baik sampai pemeriksanya
+sendiri terbukti bisa berbunyi. Setiap pagar yang dipasang tanpa tes yang
+membuktikannya menangkap sesuatu adalah pagar yang mungkin sudah mati sejak
+hari pertama.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai
