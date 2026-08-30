@@ -604,6 +604,64 @@ butir 1 berlaku di sini juga: beri slot pada schema—field sasaran yang terpisa
 dari teks pertanyaan—karena parameter yang dideklarasikan diisi sedangkan prosa
 diabaikan.
 
+## 13. Prompt pemahaman sudah jenuh: menambah tidak lagi mengubah apa pun
+
+Temuan terpenting dari putaran 30 Agustus, dan ia menjelaskan beberapa butir
+lain sekaligus.
+
+**Kasus yang memicunya.** Permintaan yang isinya sama persis, dikirim dalam
+tiga bentuk permukaan, diklasifikasi tiga cara berbeda—dan tidak pernah sekali
+pun sebagai `question` atau `request`:
+
+| bentuk | intent |
+|---|---|
+| "eh btw" + dua baris + "aku harus gimana ya" | `smalltalk` 3 dari 3 |
+| isi sama tanpa pembuka | `task` 3 dari 3 |
+| isi sama dalam satu baris | `feeling` 2 dari 2 |
+
+Kalimat terakhirnya selalu "aku harus gimana ya". Bentuk paling wajar bagi
+pelajar—mengetik terputus-putus lalu meminta bantuan di akhir—dibaca sebagai
+basa-basi, sehingga tidak pernah mencapai Agent Runtime dan tidak pernah
+membaca daftar tugasnya.
+
+**Dua percobaan perbaikan, keduanya nihil.** Pertama, dua kalimat aturan
+eksplisit: pembuka santai tidak menentukan intent, dan pesan beberapa baris
+dinilai utuh. Hasil: `smalltalk` tetap. Kedua, contoh konkret dengan frasa
+persis yang gagal, dipetakan ke `request`—pola yang sudah dipakai berkas ini
+untuk kasus sulit lain. Hasil: `smalltalk` 3 dari 3.
+
+**Keduanya terbukti sampai ke model.** Prompt terpasang 30.366 karakter dengan
+contoh baru di posisi 21% dari awal. Jadi ini bukan soal pengiriman, bukan soal
+posisi, dan bukan soal bentuk instruksi—aturan maupun contoh sama-sama tidak
+berpengaruh.
+
+Kedua tambahan itu dikembalikan. Aturan yang tidak berlaku lebih buruk daripada
+tidak ada aturan: ia membebani setiap giliran dan membuat pembaca berikutnya
+mengira kasusnya sudah tertangani.
+
+**Apa artinya.** `understandingPrompt` berisi sekitar 29.500 karakter—kira-kira
+8.200 token—instruksi untuk satu panggilan klasifikasi. Pada ukuran itu,
+menambah tidak lagi menggerakkan apa pun. Ini menjelaskan pola yang berulang di
+butir lain: aturan kosakata internal di butir 1b baru berhasil setelah
+sumbernya dihapus, bukan setelah larangannya dipertegas; slot `aspect` di
+butir 1 berhasil karena ia mengubah *bentuk* permintaan, bukan menambah kalimat.
+
+Lever yang tersisa bukan menambah:
+
+- **Kurangi.** Ukur bagian mana yang masih membayar dirinya. Sebagian aturan
+  kemungkinan menjawab kasus yang sudah tidak ada, dan setiap kalimat mati
+  mengencerkan yang hidup.
+- **Pecah.** Satu panggilan mengerjakan intent, semantic operation, routing
+  assessment, publicFocus, riskHint, memori, dan task sekaligus. Memisahkan
+  klasifikasi intent menjadi panggilan sendiri yang jauh lebih pendek dapat
+  mengembalikan daya instruksi—dengan biaya satu panggilan tambahan.
+- **Pindahkan ke kode.** "Pembuka santai tidak menentukan intent" adalah aturan
+  yang dapat ditegakkan deterministik: buang bubble pembuka yang berdiri
+  sendiri sebelum klasifikasi, lalu nilai sisanya.
+
+Yang ketiga paling murah dan paling dapat diuji, dan tidak menyentuh prompt
+sama sekali. Kerjakan itu lebih dulu bila kelas ini hendak ditutup.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai
