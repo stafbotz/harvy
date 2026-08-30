@@ -751,11 +751,12 @@ meyakinkan pengukuran di kanal nyata.
   diperbarui. Yang mereka jaga tetap dijaga—dan sebagian menjadi lebih kuat,
   karena pembacaan yang dulu bergantung pada kepatuhan model kini dijamin kode.
 
-### Belum diperiksa
+### Terverifikasi di kanal nyata
 
-Sesi Telegram nyata sesudah perubahan ini. Kasus `burst-satu-pikiran` sudah
-menuntut `agentUsed: true` dan `capabilities: ["task.list_active"]`, jadi
-harness akan menangkapnya bila jalur ini tidak benar-benar terpakai di kanal.
+Sesi Telegram 30 Agustus sesudah perubahan: `burst-satu-pikiran` **lulus**,
+dengan `agent: tools, capability task.list_active` dan tugas biologi yang
+benar-benar tercatat kasus `simpan-task` sebelumnya. Intent-nya tetap
+`feeling`—gerbangnya memang dibuka `liveStateRequirement`, bukan intent.
 
 ## 14. `create-bot-flow.test.ts` sensitif terhadap beban
 
@@ -777,6 +778,40 @@ konsisten—mencatatnya di sana akan membuat pembaca berikutnya mengabaikan
 kegagalan yang justru nyata. Yang perlu diperiksa bila ia muncul lagi: batas
 waktu `waitForAsync` di berkas tes itu, dan apakah ia memakai jam nyata pada
 jalur yang seharusnya deterministik.
+
+## 15. `status-coding` sesekali mengarang progres pekerjaan
+
+Sesi Telegram 30 Agustus, verifikasi butir 13. Kasus `status-coding` gagal
+sekali dari tiga sesi dengan set kasus sama:
+
+```
+kirim  : gimana status pekerjaan coding yang lagi jalan?
+agent  : tools, capability task.list_active
+masalah: balasan memuat yang dilarang
+         /sedang (?:berjalan|dikerjakan|jalan)[^?]*(?:progres|selesai|persen|%)/iu
+```
+
+Harvy menyebut ada pekerjaan yang sedang berjalan berikut progresnya, padahal
+capability yang dibaca `task.list_active`—daftar tugas belajar, bukan status
+sandbox coding. Jadi angkanya tidak berasal dari observation mana pun.
+
+Bukan akibat perubahan butir 13. `liveStateRequirement` mengembalikan null untuk
+kalimat ini pada ketiga tingkat `emotionalNuance`, jadi routing-nya tidak
+tersentuh; capability itu dipilih model sendiri di bawah kontrak auto, sama
+seperti sebelumnya. Kasus ini lulus pada dua sesi sebelumnya dan gagal pada yang
+ketiga.
+
+Yang membuatnya layak dicatat bukan frekuensinya melainkan bentuknya:
+mengarang status pekerjaan adalah kelas kesalahan yang paling sulit dilihat
+pengguna, karena jawabannya terdengar persis seperti jawaban yang benar.
+Assertion di `scripts/live-telegram-cases.ts` sudah menangkapnya, dan itu satu-
+satunya alasan ia terlihat.
+
+Belum diselidiki: apakah model memang tidak punya capability status coding yang
+callable pada sesi itu, atau punya tetapi memilih `task.list_active`. Yang
+pertama berarti jawaban jujurnya adalah mengaku tidak bisa membacanya; yang
+kedua berarti pemilihan capability yang salah. Keduanya menuntut perbaikan
+berbeda, jadi pisahkan dulu sebelum menyentuh prompt.
 
 ## Kemampuan yang absen secara rancangan
 
