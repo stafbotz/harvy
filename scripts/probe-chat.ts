@@ -54,6 +54,12 @@ import {
   normalizeTelegramText,
 } from "../src/bot/messages.js";
 import { immediateUnderstandingRoute } from "../src/bot/understanding-route.js";
+import {
+  deriveMemoryMetadata,
+  knowledgeFields,
+  memoryCandidateConflictsWithRetractions,
+} from "../src/core/memory-candidate.js";
+import { isSensitiveMemory } from "../src/core/memory-policy.js";
 import { liveStateRequirement } from "../src/ai/agent.js";
 import { isModelIdentityQuestion } from "../src/ai/identity.js";
 import { isDirectTimeQuestion } from "../src/agent/time-fast-path.js";
@@ -192,6 +198,14 @@ async function main(text: string, statePath: string): Promise<void> {
   const config = loadConfig();
   const client = await createInstrumentedAiClient(config, "evaluation");
 
+  // Jalur auto-memory adapter, memakai potongan yang sama—bukan salinan.
+  // Tanpa ini probe tidak dapat menilai klaim "sudah kucatat": giliran yang
+  // membalas begitu tanpa perubahan jumlah catatan tampak seperti klaim palsu,
+  // padahal jalur yang menyimpannya memang absen. Yang sengaja **tidak**
+  // ditiru adalah alur consent adapter untuk memori sensitif; probe menolaknya
+  // dan menghitungnya terpisah, gagal tertutup.
+  const autoMemory = { disimpan: 0, dilewatiSensitif: 0 };
+  const memoryStore = createSyntheticMemoryStore(state.notes);
   const repository = new MemoryTaskRepository(state.tasks);
   const tasks = new TaskService(repository);
   const profiles = new ProfileService(new MemoryProfileRepository());
@@ -228,7 +242,7 @@ async function main(text: string, statePath: string): Promise<void> {
       ...createWriteAgentExecutors({ tasks }),
       ...createMemoryAgentExecutors({
         history: () => createSyntheticHistorySearch(state.episodes),
-        memories: createSyntheticMemoryStore(state.notes),
+        memories: memoryStore,
         profiles,
       }),
       new VirtualTerminalExecutor(),
@@ -333,6 +347,31 @@ async function main(text: string, statePath: string): Promise<void> {
     (globalRoute === "specialized" || globalRoute === "orchestrate") &&
     (requiresLiveState || requiresAgentPlanning || unhandledTaskChange ||
       requestsAgentTooling(understanding.routingAssessment));
+
+  // Kandidat auto-memory disimpan sesudah balasan tersusun, sama seperti
+  // adapter. Konflik dengan retraction disaring lebih dulu memakai fungsi core
+  // yang sama, dan memori sensitif ditolak karena alur consent-nya milik
+  // adapter dan tidak ditiru di sini.
+  for (const candidate of understanding.memories ?? []) {
+    if (
+      memoryCandidateConflictsWithRetractions(
+        candidate,
+        understanding.memoryRetractions ?? [],
+      )
+    ) continue;
+    if (isSensitiveMemory(candidate)) {
+      autoMemory.dilewatiSensitif += 1;
+      continue;
+    }
+    const stored = await memoryStore.remember({
+      ownerId: OWNER,
+      kind: candidate.kind,
+      content: candidate.content,
+      ...deriveMemoryMetadata(candidate.kind, candidate.content, text),
+      ...knowledgeFields(candidate),
+    });
+    if (stored) autoMemory.disimpan += 1;
+  }
 
   const before = await repository.list(OWNER);
   let reply: string;
@@ -552,6 +591,8 @@ async function main(text: string, statePath: string): Promise<void> {
         kind: memory.kind,
         content: memory.content,
       })),
+      autoMemoriDisimpan: autoMemory.disimpan,
+      autoMemoriSensitifDilewati: autoMemory.dilewatiSensitif,
       catatanTersimpan: state.notes.length,
       toolNeed: understanding.routingAssessment?.toolNeed ?? null,
       confidence: understanding.routingAssessment?.confidence ?? null,

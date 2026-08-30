@@ -6,6 +6,33 @@ export type DerivedMemoryMetadata = Pick<
     "graphProjection"
 >;
 
+/**
+ * Meneruskan field pengetahuan kandidat memori apa adanya.
+ *
+ * Sebelumnya tinggal di dalam `create-bot.ts` sebagai closure, sehingga jalur
+ * auto-memory tidak dapat ditiru di luar adapter. Probe yang tidak dapat
+ * menirunya juga tidak dapat menilai klaim "sudah kucatat": giliran yang
+ * membalas begitu tanpa perubahan jumlah catatan tampak seperti klaim palsu,
+ * padahal jalur yang menyimpannya memang absen dari probe.
+ *
+ * Bentuknya sengaja diketik lewat `DerivedMemoryMetadata` alih-alih
+ * `ExtractedMemory`, karena modul core tidak boleh bergantung pada `ai/`.
+ */
+export function knowledgeFields(
+  item: Partial<DerivedMemoryMetadata>,
+): DerivedMemoryMetadata {
+  return {
+    ...(item.subject !== undefined ? { subject: item.subject } : {}),
+    ...(item.predicate !== undefined ? { predicate: item.predicate } : {}),
+    ...(item.value !== undefined ? { value: item.value } : {}),
+    ...(item.correction !== undefined ? { correction: item.correction } : {}),
+    ...(item.provenance !== undefined ? { provenance: item.provenance } : {}),
+    ...(item.graphProjection !== undefined
+      ? { graphProjection: item.graphProjection }
+      : {}),
+  };
+}
+
 export interface ExplicitResponsePreference {
   kind: "preference";
   content: string;

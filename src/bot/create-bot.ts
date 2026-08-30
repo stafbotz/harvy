@@ -92,6 +92,7 @@ import {
   isSensitiveMemory,
 } from "../core/memory-policy.js";
 import {
+  knowledgeFields,
   deriveMemoryMetadata,
   exactExplicitMemoryCandidate,
   groundedAutomaticMemoryContent,
@@ -7621,23 +7622,6 @@ export function createBot(
       }
     }
   }
-}
-
-function knowledgeFields(item: ExtractedMemory): Pick<
-  ExtractedMemory,
-  "subject" | "predicate" | "value" | "correction" | "provenance" |
-    "graphProjection"
-> {
-  return {
-    ...(item.subject !== undefined ? { subject: item.subject } : {}),
-    ...(item.predicate !== undefined ? { predicate: item.predicate } : {}),
-    ...(item.value !== undefined ? { value: item.value } : {}),
-    ...(item.correction !== undefined ? { correction: item.correction } : {}),
-    ...(item.provenance !== undefined ? { provenance: item.provenance } : {}),
-    ...(item.graphProjection !== undefined
-      ? { graphProjection: item.graphProjection }
-      : {}),
-  };
 }
 
 function ownerOf(ctx: Context): string {

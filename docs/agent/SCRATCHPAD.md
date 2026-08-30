@@ -376,19 +376,53 @@ salah menulis mengubah data pengguna.
 
 Belum diukur ulang di kanal nyata sesudah perubahan ini.
 
-## 9. Pemeriksaan live: yang masih kurang
+## 9. Turn-taking kini terperiksa; korelasi tumpang tindih tetap batasnya
 
-`npm run uji:telegram` menutup celah terbesar, tetapi tiga hal belum ada:
+Dua bentuk giliran baru masuk harness, dan keduanya menguji subsistem yang
+paling sulit dinilai dari transkrip.
 
-- Jendela korelasinya berbasis waktu antara `sent` dan `turn_settled`. Itu cukup
-  karena `settle` memang menutup jendela observasi runtime, tetapi ia akan
-  meleset bila dua giliran pernah tumpang tindih. Kasus `interrupt` dan `burst`
-  belum dipakai sama sekali.
+**`burst-satu-pikiran`** mengirim tiga bubble berjeda 900 ms. Hasilnya
+`3 bubble, batas complete`—ketiganya digabung menjadi satu giliran—dan
+balasannya menyentuh isi bubble terakhir, bukan sekadar menanggapi "eh btw".
+Penggabungan bubble terbukti bekerja di kanal nyata untuk pertama kalinya.
+
+**`interupsi-mengalihkan`** mengirim pengalihan tegas di tengah pekerjaan
+panjang. Perilakunya benar: Harvy menjawab pertanyaan baru, bukan meneruskan
+rencana dua minggu. Satu run bahkan merekam `interupsi redirect`.
+
+Keempat field bukti turn-taking sebelumnya dibuang allowlist logger
+(`fieldsOmitted: 4` pada `conversation_turn_completed`), sehingga penggabungan
+bubble dan klasifikasi interupsi tidak dapat diperiksa dari luar sama sekali.
+`boundaryState`, `boundaryConfidence`, `adaptiveTimingUsed`, dan
+`interruptionRelation` kini lolos; semuanya bebas isi.
+
+**Batas yang tidak bisa dihilangkan dengan menyetel angka.** Harness ini
+mencocokkan bukti runtime lewat jendela waktu antara `sent` dan `turn_settled`,
+dan interupsi adalah satu-satunya bentuk yang membuat dua giliran tumpang
+tindih. Akibatnya catatan runtime tidak dapat diatribusikan dengan yakin:
+`interruptionRelation` muncul pada sebagian run dan `null` pada sebagian lain
+untuk perilaku yang sama. Ia karena itu dicetak sebagai bahan baca, bukan
+dijadikan pagar; yang dijaga kasus ini adalah perilaku yang terlihat pengguna.
+
+Memperbaikinya menuntut atribusi berbasis urutan, bukan waktu—memasangkan
+catatan `conversation_turn_completed` ke giliran kasus menurut urutan
+kemunculan. Itu pekerjaan tersendiri dan baru sepadan bila kelas interupsi
+perlu dijamin, bukan sekadar diamati.
+
+**Waktu interupsi adalah bagian dari kasusnya, bukan detail.** Pada 3 detik,
+pesan kedua masih berada di dalam jendela penggabungan sekitar 7 detik sehingga
+batcher memperlakukannya sebagai bubble kedua dari satu pikiran—`2 bubble,
+batas open, interupsi null`. Perilaku Harvy di sana benar; kasusnya yang menguji
+sesuatu yang tidak pernah ia siapkan. Angkanya kini 14 detik.
+
+Yang masih kurang:
+
 - Tidak ada kasus keselamatan. Menambahkannya menuntut kehati-hatian: korpus
   eval sudah menutup triase, dan mengirim kalimat berisiko ke kanal nyata
   berulang kali bukan hal yang dilakukan tanpa alasan kuat.
-- Belum dijalankan berulang. Sesi tunggal tidak membedakan lulus yang stabil
-  dari lulus yang kebetulan; butir 8 lahir persis dari selisih antar-run.
+- Sembilan kasus menghasilkan 30 perintah dari batas 32. Kasus berikutnya tidak
+  akan muat; pemecahan per sesi sudah dijaga `MAX_TESTER_COMMANDS` dan akan
+  gagal dengan pesan yang menyebut berapa kasus yang muat.
 
 ## 10. Frekuensi tiga sinyal mutu, dari 28 giliran
 

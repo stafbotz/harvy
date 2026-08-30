@@ -85,6 +85,8 @@ interface TurnEvidence {
   latencyMs: number | null;
   route: Record<string, unknown> | null;
   agentRun: Record<string, unknown> | null;
+  /** Bukti turn-taking dari `conversation_turn_completed`. */
+  turnMetrics: Record<string, unknown> | null;
   failures: LogRecord[];
 }
 
@@ -134,7 +136,29 @@ function buildCaseCommands(cases: readonly LiveTelegramCase[]): CommandPlan {
     caseBySequence.push(caseId);
   };
   for (const testCase of cases) {
-    push({ type: "send", text: testCase.message }, testCase.id);
+    if (testCase.kind === "burst") {
+      // Satu perintah, satu giliran, beberapa bubble. Jeda antarpesan sengaja
+      // kecil supaya batcher benar-benar menghadapi semburan, bukan tiga
+      // giliran berurutan.
+      push({
+        type: "burst",
+        messages: [testCase.message, ...(testCase.followUps ?? [])],
+        gapMs: testCase.gapMs ?? 900,
+      }, testCase.id);
+    } else if (testCase.kind === "interrupt") {
+      // Interupsi menuntut giliran yang masih aktif, jadi tidak ada `settle`
+      // di antara keduanya. Ini satu-satunya bentuk yang membuat dua giliran
+      // tumpang tindih, dan karena itu satu-satunya yang menguji batas jendela
+      // korelasi harness ini sendiri.
+      push({ type: "send", text: testCase.message }, null);
+      push({ type: "wait", ms: testCase.interruptAfterMs ?? 3_000 }, null);
+      push(
+        { type: "interrupt", text: testCase.interruptWith ?? "" },
+        testCase.id,
+      );
+    } else {
+      push({ type: "send", text: testCase.message }, testCase.id);
+    }
     push({ type: "wait", ms: testCase.waitMs ?? 45_000 }, null);
     push({ type: "settle" }, null);
   }
@@ -278,6 +302,7 @@ function joinEvidence(
         latencyMs: null,
         route: null,
         agentRun: null,
+        turnMetrics: null,
         failures: [],
       };
       turns.push(current);
@@ -311,6 +336,8 @@ function joinEvidence(
         record.event === "agent_run_stopped"
       ) {
         turn.agentRun = record.data ?? null;
+      } else if (record.event === "conversation_turn_completed") {
+        turn.turnMetrics = record.data ?? null;
       } else if (record.level === "error" || record.level === "warn") {
         turn.failures.push(record);
       }
@@ -390,6 +417,33 @@ function evaluate(
   for (const pattern of expect.replyForbids ?? []) {
     if (pattern.test(reply)) {
       failures.push(`balasan memuat yang dilarang ${String(pattern)}`);
+    }
+  }
+  if (expect.bubbleCount !== undefined) {
+    const actual = turn.turnMetrics?.["bubbleCount"];
+    if (actual !== expect.bubbleCount) {
+      failures.push(
+        `bubble ${String(actual)}, diharapkan ${expect.bubbleCount}`,
+      );
+    }
+  }
+  if (expect.boundaryState !== undefined) {
+    const actual = turn.turnMetrics?.["boundaryState"];
+    if (actual !== expect.boundaryState) {
+      failures.push(
+        `batas giliran ${String(actual)}, diharapkan ${expect.boundaryState}`,
+      );
+    }
+  }
+  if (expect.interruptionRelation !== undefined) {
+    const allowed = typeof expect.interruptionRelation === "string"
+      ? [expect.interruptionRelation]
+      : [...expect.interruptionRelation];
+    const actual = turn.turnMetrics?.["interruptionRelation"];
+    if (typeof actual !== "string" || !allowed.includes(actual)) {
+      failures.push(
+        `hubungan interupsi ${String(actual)}, diharapkan ${allowed.join("|")}`,
+      );
     }
   }
   if (expect.maxLatencyMs !== undefined && turn.latencyMs !== null) {
@@ -485,6 +539,13 @@ async function main(): Promise<void> {
         }`,
       );
       console.log(`  latensi : ${turn.latencyMs ?? "-"}ms`);
+      if (turn.turnMetrics) {
+        console.log(
+          `  giliran : ${String(turn.turnMetrics["bubbleCount"] ?? "-")} bubble, batas ${
+            String(turn.turnMetrics["boundaryState"] ?? "-")
+          }, interupsi ${String(turn.turnMetrics["interruptionRelation"] ?? "-")}`,
+        );
+      }
       if (turn.failures.length > 0) {
         console.log(
           `  masalah : ${

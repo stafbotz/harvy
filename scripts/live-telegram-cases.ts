@@ -24,11 +24,38 @@ export interface LiveTelegramExpectation {
   replyMatches?: readonly RegExp[];
   replyForbids?: readonly RegExp[];
   maxLatencyMs?: number;
+  /** Berapa bubble pengguna yang seharusnya menjadi satu giliran. */
+  bubbleCount?: number;
+  /** Keputusan batas giliran: complete, incomplete, open, atau urgent. */
+  boundaryState?: string;
+  /** Hubungan pesan penyela terhadap giliran yang sedang berjalan. */
+  interruptionRelation?: string | readonly string[];
 }
+
+/**
+ * Bentuk giliran yang dikirim ke kanal.
+ *
+ * `burst` dan `interrupt` menguji turn-taking, subsistem yang paling sulit
+ * dinilai dari transkrip: apakah beberapa bubble digabung menjadi satu giliran,
+ * dan apakah pesan yang datang di tengah pekerjaan dikenali sebagai pengalihan
+ * atau lanjutan. Keduanya juga satu-satunya bentuk yang membuat dua giliran
+ * dapat tumpang tindih, sehingga sekaligus menguji batas jendela korelasi
+ * harness ini sendiri.
+ */
+export type LiveTelegramTurnKind = "send" | "burst" | "interrupt";
 
 export interface LiveTelegramCase {
   id: string;
   message: string;
+  kind?: LiveTelegramTurnKind;
+  /** `burst`: pesan susulan sesudah `message`. */
+  followUps?: readonly string[];
+  /** `burst`: jeda antarpesan. Kecil berarti benar-benar satu semburan. */
+  gapMs?: number;
+  /** `interrupt`: pesan yang datang sebelum giliran pertama selesai. */
+  interruptWith?: string;
+  /** `interrupt`: jeda sebelum interupsi dikirim. */
+  interruptAfterMs?: number;
   waitMs?: number;
   expect: LiveTelegramExpectation;
 }
@@ -125,6 +152,59 @@ export const LIVE_TELEGRAM_CASES: readonly LiveTelegramCase[] = [
       // Menghapus tanpa menyebutkan apa yang dihapus adalah kegagalan yang
       // paling mahal di sini: pengguna tidak punya cara tahu apa yang hilang.
       replyMatches: [/biologi/iu],
+    },
+  },
+  {
+    id: "burst-satu-pikiran",
+    // Pengguna yang mengetik terputus-putus mengirim satu pikiran dalam
+    // beberapa bubble. Menjawab tiap bubble terpisah membuat Harvy memotong
+    // orang di tengah kalimat, dan itu tidak terlihat sama sekali dari
+    // transkrip satu giliran.
+    kind: "burst",
+    message: "eh btw",
+    followUps: [
+      "aku baru inget besok ada dua deadline barengan",
+      "yang biologi sama yang sejarah, aku harus gimana ya",
+    ],
+    gapMs: 900,
+    waitMs: 60_000,
+    expect: {
+      bubbleCount: 3,
+      // Ketiganya satu pikiran, jadi jawabannya wajib menyentuh isi bubble
+      // terakhir—bukan hanya menanggapi "eh btw".
+      replyMatches: [/biologi/iu, /sejarah/iu],
+    },
+  },
+  {
+    id: "interupsi-mengalihkan",
+    // Pesan yang datang saat Harvy sedang bekerja adalah salah satu keputusan
+    // tersulitnya: melanjutkan pekerjaan lama atau berpindah. Menjawab
+    // pertanyaan lama sesudah pengguna jelas berpindah topik adalah kegagalan
+    // yang mahal karena jawabannya terlihat benar.
+    kind: "interrupt",
+    message:
+      "tolong susun rencana belajar dua minggu ke depan yang detail banget, per hari, lengkap dengan alasannya",
+    interruptWith: "eh tunggu, lupain itu dulu. jam berapa sekarang?",
+    // Angkanya harus jelas melewati jendela batch, dan itu bukan detail kecil.
+    // Pada 3 detik, pesan kedua masih di dalam jendela penggabungan (sekitar
+    // 7 detik) sehingga batcher memperlakukannya sebagai bubble kedua dari satu
+    // pikiran—`2 bubble, batas open, interupsi null`—dan kasus ini menguji
+    // sesuatu yang tidak pernah ia siapkan. Perilaku Harvy di sana benar;
+    // waktunya yang salah.
+    interruptAfterMs: 14_000,
+    waitMs: 60_000,
+    expect: {
+      // `interruptionRelation` sengaja **tidak** diperiksa di sini. Harness ini
+      // mencocokkan bukti runtime lewat jendela waktu antara `sent` dan
+      // `turn_settled`, dan interupsi adalah satu-satunya bentuk yang membuat
+      // dua giliran tumpang tindih—sehingga catatan runtime tidak dapat
+      // diatribusikan dengan yakin ke giliran mana pun. Nilainya tetap dicetak
+      // sebagai bahan baca, bukan sebagai pagar.
+      //
+      // Yang dijaga di sini perilaku yang terlihat pengguna: sesudah pengalihan
+      // yang tegas, membalas dengan rencana dua minggu berarti mengabaikan
+      // kalimat terakhirnya.
+      replyForbids: [/rencana belajar dua minggu/iu],
     },
   },
   {

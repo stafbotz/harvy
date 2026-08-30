@@ -398,6 +398,15 @@ const ALLOWED_DATA_KEYS = new Set([
   // masuk Agent Runtime, apalagi capability mana yang dipanggil. Seluruhnya
   // bebas isi: nama capability, mode planner, dan cacahan, bukan observation
   // maupun teks pengguna.
+  // Bukti turn-taking. Keempatnya dicatat `message-batcher` sejak lama tetapi
+  // dibuang allowlist, sehingga penggabungan bubble dan klasifikasi interupsi
+  // tidak dapat diperiksa dari luar sama sekali—dua subsistem yang justru
+  // paling sulit dinilai dari transkrip. Seluruhnya bebas isi: label tertutup,
+  // angka, dan boolean.
+  "boundarystate",
+  "boundaryconfidence",
+  "adaptivetimingused",
+  "interruptionrelation",
   "agentused",
   "capabilities",
   "capabilitycount",
