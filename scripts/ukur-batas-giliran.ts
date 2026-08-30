@@ -29,11 +29,12 @@ import {
 import {
   parseTurnBoundaryAssessment,
   TURN_BOUNDARY_MAX_TOKENS,
+  TURN_BOUNDARY_TIMEOUT_MS,
 } from "../src/ai/conversation.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
 
-/** Batas longgar khusus pengukuran; produksi tetap 2.000ms. */
+/** Batas longgar khusus pengukuran; produksi memakai konstanta nyata. */
 const MEASUREMENT_TIMEOUT_MS = 30_000;
 
 /** Kalimat sintetis yang mewakili bentuk giliran nyata, bukan data pengguna. */
@@ -64,6 +65,53 @@ function percentile(sorted: readonly number[], fraction: number): number {
   return sorted[index]!;
 }
 
+/**
+ * Konteks dan sinyal seperti yang benar-benar dikirim produksi.
+ *
+ * Pengukuran 30 Agustus 2026 mula-mula memanggil `turnBoundaryInput(sample)`
+ * tanpa keduanya, dan menyimpulkan classifier ini cepat: p90 1.775 ms, hanya
+ * 6% melewati batas 2 detik. Log sesi nyata mencatat sebaliknya—6 dari 10
+ * giliran gagal dengan `aborterror`—karena produksi mengirim empat giliran
+ * terakhir dan sinyal timing, sehingga `inputTokenEstimate` mencapai 689-831
+ * sedangkan probe hanya mengirim satu kalimat. Alat ukurnya mengukur
+ * permintaan yang lebih mudah daripada yang dipertanyakan.
+ */
+const KONTEKS = {
+  turns: [
+    {
+      role: "user" as const,
+      text: "ingetin aku besok jam 7 malam buat ngumpulin tugas biologi",
+      at: "2026-08-30T07:20:00.000Z",
+    },
+    {
+      role: "harvy" as const,
+      text:
+        "Oke, udah masuk daftar. • Ngumpulin tugas biologi — biasa, 31 Agu 2026 19.00, pengingat 31/08/26 19.00",
+      at: "2026-08-30T07:20:14.000Z",
+    },
+    {
+      role: "user" as const,
+      text: "sebutkan tugas aktifku dan kapan pengingatnya",
+      at: "2026-08-30T07:21:00.000Z",
+    },
+    {
+      role: "harvy" as const,
+      text:
+        "Ini ya tugas aktifmu yang masih tercatat. Tugas aktif: • Ngumpulin tugas biologi — 31 Agu 2026 19.00",
+      at: "2026-08-30T07:21:15.000Z",
+    },
+  ],
+};
+
+const SINYAL = {
+  bubbleCount: 1,
+  sinceFirstMs: 1_200,
+  sinceLastMs: 1_200,
+  adaptiveTimingUsed: false,
+  learnedSettleMs: 800,
+  rapidBurst: false,
+};
+
 async function main(): Promise<void> {
   const repeats = argument("--ulang=", 3);
   const config = loadConfig();
@@ -72,7 +120,9 @@ async function main(): Promise<void> {
 
   console.log(`model    : ${model}`);
   console.log(`sampel   : ${SAMPLES.length} kalimat x ${repeats} ulangan`);
-  console.log(`batas ukur: ${MEASUREMENT_TIMEOUT_MS}ms (produksi 2.000ms)`);
+  console.log(
+    `batas ukur: ${MEASUREMENT_TIMEOUT_MS}ms (produksi ${TURN_BOUNDARY_TIMEOUT_MS}ms)`,
+  );
   console.log("");
 
   const latencies: number[] = [];
@@ -93,7 +143,10 @@ async function main(): Promise<void> {
           json: true,
           messages: [
             { role: "system", content: TURN_BOUNDARY_PROMPT },
-            { role: "user", content: turnBoundaryInput(sample) },
+            {
+              role: "user",
+              content: turnBoundaryInput(sample, KONTEKS, SINYAL),
+            },
           ],
         });
         perSample.push(Date.now() - startedAt);
@@ -115,7 +168,8 @@ async function main(): Promise<void> {
   }
 
   const sorted = [...latencies].sort((a, b) => a - b);
-  const overBudget = sorted.filter((value) => value > 2_000).length;
+  const overBudget =
+    sorted.filter((value) => value > TURN_BOUNDARY_TIMEOUT_MS).length;
   console.log("");
   console.log(`pengukuran  : ${sorted.length}`);
   console.log(`error       : ${errored}`);
@@ -127,7 +181,7 @@ async function main(): Promise<void> {
   console.log(`maksimum    : ${sorted.at(-1)}ms`);
   console.log("");
   console.log(
-    `melewati batas produksi 2.000ms: ${overBudget}/${sorted.length} (${
+    `melewati batas produksi ${TURN_BOUNDARY_TIMEOUT_MS}ms: ${overBudget}/${sorted.length} (${
       Math.round((overBudget / sorted.length) * 100)
     }%)`,
   );

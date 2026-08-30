@@ -354,7 +354,21 @@ const CODE_ARTIFACT_REVIEW_PROMPT = [
 // alat diagnostiknya sendiri mereproduksi cacat yang ia dibuat untuk mencari.
 export const UNDERSTANDING_MAX_TOKENS = 2048;
 export const TURN_BOUNDARY_MAX_TOKENS = 128;
-export const TURN_BOUNDARY_TIMEOUT_MS = 2_000;
+/**
+ * Batas waktu classifier batas giliran.
+ *
+ * Angkanya harus tetap di bawah `ASSESSMENT_FAILURE_IDLE_MS`. Menunggu
+ * jawabannya tidak menambah jeda selama ia masih tiba sebelum jendela yang
+ * hendak ditentukannya habis—`scheduleDeadline` menambatkan tenggat ke pesan
+ * terakhir pengguna, bukan ke saat penjadwalan. Yang mahal justru gagal: sebuah
+ * kegagalan membuang satu request penuh lalu tetap menunggu jendela penuh.
+ *
+ * 2.000 ms dipilih ketika distribusinya belum terukur dengan benar. Pengukuran
+ * 30 Agustus 2026 memakai bentuk input produksi mencatat p50 1.216 ms dan p90
+ * 2.627 ms, sehingga seperempat permintaan dibatalkan tepat di ekor yang paling
+ * sering muncul. Sesi Telegram mencatat 6 dari 10 giliran gagal.
+ */
+export const TURN_BOUNDARY_TIMEOUT_MS = 3_500;
 export const TURN_INTERRUPTION_MAX_TOKENS = 128;
 export const TURN_INTERRUPTION_TIMEOUT_MS = 2_000;
 

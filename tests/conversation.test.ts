@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ASSESSMENT_FAILURE_IDLE_MS } from "../src/core/turn-taking-policy.js";
 import { describe, it } from "node:test";
 import type { AiClient, ChatRequest } from "../src/ai/client.js";
 import {
@@ -504,7 +505,16 @@ describe("pemahaman pesan", () => {
     assert.equal(request?.json, true);
     assert.equal(request?.maxAttempts, 1);
     assert.equal(request?.usage?.safetyCritical, true);
-    assert.ok((request?.timeoutMs ?? Infinity) <= 2_500);
+    // Yang harus dijaga bukan angka tertentu melainkan invariannya: batas
+    // waktu classifier wajib lebih kecil daripada jendela yang diberikan saat
+    // ia gagal. Selama jawabannya tiba sebelum jendela itu habis, menunggu
+    // tidak menambah jeda—tenggat ditambatkan ke pesan terakhir pengguna.
+    // Sebaliknya bila batasnya melewati jendela, menunggu selalu lebih mahal
+    // daripada menyerah, dan menaikkannya menjadi kesalahan.
+    assert.ok(
+      (request?.timeoutMs ?? Infinity) < ASSESSMENT_FAILURE_IDLE_MS,
+      "batas waktu classifier harus di bawah jendela kegagalan",
+    );
     assert.match(request?.messages[0]?.content ?? "", /batas giliran/i);
     assert.match(request?.messages[0]?.content ?? "", /aku mau curhat/i);
     assert.match(request?.messages[0]?.content ?? "", /selesai menulis/i);
