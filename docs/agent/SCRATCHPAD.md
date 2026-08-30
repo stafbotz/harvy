@@ -503,7 +503,27 @@ menjadi pola di repositori ini—pembacaan daftar task 0,85, penyelesaiannya
 0,90—dan alasannya sama: yang salah membaca kehilangan satu pembacaan, yang
 salah menulis mengubah data pengguna.
 
-Belum diukur ulang di kanal nyata sesudah perubahan ini.
+**Diukur ulang di kanal nyata 30 Agustus 2026, dan jawabannya bercabang.**
+Korpus hanya memuat frasa panjangnya, sehingga frasa pendek yang justru
+melahirkan ambang ini tidak pernah diuji di kanal. Kasus
+`status-coding-pendek` menutup itu, dan harness kini menyebutkan asal
+operasinya:
+
+| frasa | jalur |
+|---|---|
+| "gimana status pekerjaan coding yang lagi jalan?" | `coding/show (high)` lewat extractor |
+| "gimana status coding-nya sekarang?" | `coding/show (high, dikenali kode)` |
+
+Ambang bertingkat masih menanggung beban: frasa panjang lolos lewat usulan
+extractor, dan tanpa penurunan ke 0,70 sebagian run-nya akan tertolak. Frasa
+pendek kini punya jaring kedua—`codingRunStatusOperation` dari butir 15—sehingga
+ayunan confidence-nya tidak lagi menentukan.
+
+Satu batasan alat yang ditemukan sambil mengukur ini: journey dihapus sesudah
+sesi selesai, jadi log runtime hanya ada selama sesi berjalan. Pertanyaan
+tentang jalur mana yang menyala karena itu harus dijawab oleh keluaran harness
+saat itu juga, bukan oleh arkeologi berkas sesudahnya—dan sebelum baris "dikenali
+kode" ada, keduanya tampak identik.
 
 ## 9. Turn-taking kini terperiksa; korelasi tumpang tindih tetap batasnya
 

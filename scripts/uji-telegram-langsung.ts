@@ -759,7 +759,9 @@ async function main(): Promise<void> {
       console.log(
         `  semantik: ${String(turn.route?.["semanticDomain"] ?? "-")}/${
           String(turn.route?.["semanticOperation"] ?? "-")
-        } (${String(turn.route?.["confidenceBucket"] ?? "-")})`,
+        } (${String(turn.route?.["confidenceBucket"] ?? "-")}${
+          turn.route?.["deterministic"] === true ? ", dikenali kode" : ""
+        })`,
       );
       console.log(
         `  agent   : ${

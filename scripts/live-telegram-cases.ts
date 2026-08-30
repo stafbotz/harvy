@@ -163,6 +163,23 @@ export const LIVE_TELEGRAM_CASES: readonly LiveTelegramCase[] = [
     },
   },
   {
+    id: "status-coding-pendek",
+    // Frasa pendek inilah yang melahirkan ambang bertingkat butir 8: pengukuran
+    // 29 Agustus mencatat `coding/show` 3 dari 3 dengan confidence 0,60 · 0,90 ·
+    // 0,82, sehingga ambang seragam 0,85 hanya meloloskan satu dari tiga dan
+    // pengguna mendapat jawaban berbeda untuk kalimat yang sama.
+    //
+    // Korpus hanya memuat versi panjangnya, jadi yang dipertanyakan justru tidak
+    // pernah diuji di kanal. Kasus ini menutup itu.
+    message: "gimana status coding-nya sekarang?",
+    waitMs: 45_000,
+    expect: {
+      semanticDomain: "coding",
+      semanticOperation: "show",
+      agentUsed: false,
+    },
+  },
+  {
     id: "batalkan-task-alami",
     // `/batalkan-tugas <id>` adalah satu-satunya perintah tersisa yang menuntut
     // pengguna menyalin ID dari daftar. Kalimat ini menguji padanan bahasa
