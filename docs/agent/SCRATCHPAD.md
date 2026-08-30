@@ -15,6 +15,9 @@ mana pun di bawah:
   dan capability mana yang berhasil. Exit 1 bila menyimpang.
 - `npx tsx scripts/ukur-batas-giliran.ts` — distribusi latensi classifier batas
   giliran tanpa timeout produksi yang mengikat.
+- `npx tsx scripts/ukur-pemahaman.ts` — klasifikasi `understand()` pada kalimat
+  berulang, termasuk pesan multi-baris. Kalimat ujinya tertanam di kode karena
+  argumen shell pernah memotongnya diam-diam dan melahirkan kesimpulan keliru.
 
 Putaran 29 Agustus sore, diverifikasi sesi Telegram nyata **7/7 lulus**:
 
@@ -604,58 +607,55 @@ butir 1 berlaku di sini juga: beri slot pada schema—field sasaran yang terpisa
 dari teks pertanyaan—karena parameter yang dideklarasikan diisi sedangkan prosa
 diabaikan.
 
-## 13. Semburan yang diakhiri permintaan tidak pernah menjadi request
+## 13. Kalimat berbentuk keluhan tidak memicu pembacaan state
 
-**Versi sebelumnya butir ini salah dan ditarik.** Ia menyatakan pembuka "eh btw"
-membalikkan klasifikasi menjadi `smalltalk`, lalu menyimpulkan
-`understandingPrompt` sudah jenuh karena aturan maupun contoh tidak
-mengubahnya. Kedua kesimpulan itu berdiri di atas artefak pengukuran: perintah
-shell hanya meneruskan baris pertama, sehingga model tidak pernah menerima
-pesan multi-barisnya—ia menerima `"eh btw"` saja, yang memang smalltalk.
+**Versi pertama butir ini salah dan sudah ditarik.** Ia menyatakan pembuka
+"eh btw" membalikkan klasifikasi menjadi `smalltalk` dan menyimpulkan
+`understandingPrompt` sudah jenuh. Keduanya berdiri di atas artefak: perintah
+shell hanya meneruskan baris pertama, sehingga model menerima `"eh btw"` saja.
+Kode yang sempat dibuat untuk membuang pembuka sudah dicabut seluruhnya.
 
-Pengukuran ulang dengan masukan multi-baris yang utuh:
+Pengukuran ulang memakai `scripts/ukur-pemahaman.ts`, yang menanam kalimat
+ujinya di kode supaya shell tidak dapat memotongnya. Lima ulangan per kasus:
 
-| | tiga run |
-|---|---|
-| dengan pembuka "eh btw" | `task`, `feeling`, `feeling` |
-| tanpa pembuka | `feeling`, `feeling`, `task` |
+| kasus | intent | toolNeed |
+|---|---|---|
+| semburan 3 baris, dengan pembuka | `task`×3, `feeling`×1 | `none` 4 dari 4 |
+| semburan 2 baris, tanpa pembuka | `feeling`×4, `task`×1 | `none` 5 dari 5 |
+| satu baris, isi sama | `feeling`×3, `task`×1, `question`×1 | `none` 5 dari 5 |
+| "tolong bantu aku menyusun urutan mengerjakan dua tugas yang deadline-nya besok" | `request`×4, `task`×1 | **`internal_state` 4 dari 5** |
 
-Pembukanya tidak berpengaruh. Kode yang sempat dibuat untuk membuangnya
-(`src/core/opening-filler.ts` beserta sembilan tesnya dan tiga situs
-pemasangan) memecahkan masalah yang tidak ada, dan sudah dicabut seluruhnya.
+**Bentuk permukaan tidak berpengaruh sama sekali.** Ketiga varian ambigu—tiga
+baris, dua baris, satu baris—berperilaku sama. Yang membedakan adalah bentuk
+permintaannya: kalimat berbentuk keluhan ("besok ada dua deadline barengan, aku
+harus gimana ya") dibaca `feeling` atau `task` dengan `toolNeed: none`,
+sedangkan kalimat berbentuk permintaan eksplisit dibaca `request` dengan
+`internal_state`.
 
-Klaim kejenuhan prompt ikut ditarik. Buktinya hanya "aturan dan contoh tidak
-mengubah apa pun", padahal model tidak pernah membaca teks yang diuji.
-`understandingPrompt` memang sekitar 29.500 karakter, dan itu tetap fakta; yang
-tidak terbukti adalah bahwa menambah ke dalamnya sudah tidak berpengaruh.
+Akibatnya nyata: `toolNeed: none` berarti daftar tugas tidak pernah dibaca,
+jadi Harvy menjawab "aku harus gimana ya" dari pengetahuan umum tanpa melihat
+apa yang sebenarnya tercatat untuk orang itu.
 
-**Yang tetap berdiri, karena berasal dari kanal nyata dan dari pengukuran ulang
-yang benar:** semburan multi-baris yang diakhiri permintaan bantuan tidak
-pernah sekali pun dibaca `question` atau `request`. Lima pengukuran memberi
-`feeling` empat kali dan `task` dua kali untuk kalimat yang berakhir "aku harus
-gimana ya", dan sesi Telegram nyata mencatat hal yang sama—balasannya tidak
-menyentuh dua mata pelajaran yang disebut pengguna.
+**Apakah itu cacat belum dapat dipastikan, dan sengaja tidak diputuskan di
+sini.** Kalimat itu memang ambigu—ia bisa keluhan yang pantas disimak, dan
+Harvy punya mode menyimak justru untuk itu. Menaikkannya menjadi `request`
+secara paksa akan membuat setiap keluhan berubah menjadi pekerjaan, dan itu
+kerugian yang lebih sulit dilihat daripada keuntungannya.
 
-Akibatnya nyata: `feeling` dan `task` sama-sama di luar `intentAllowsAgentRuntime`,
-jadi giliran itu tidak pernah membaca daftar tugas pengguna sebelum menjawab
-"aku harus gimana ya".
+Yang dapat dinilai tanpa memutuskan perdebatan itu adalah akibatnya, dan itu
+sudah dijaga: kasus `burst-satu-pikiran` di `scripts/live-telegram-cases.ts`
+menuntut balasannya menyebut kedua mata pelajaran yang disebut pengguna. Ia
+lulus 2 dari 3 sesi. Bila kelas ini hendak ditutup, jalur yang menjanjikan
+adalah menaikkan `toolNeed` untuk kalimat yang menyebut tenggat atau tugas
+tercatat—tanpa menyentuh intent—karena membaca daftar tugas tidak mengubah
+nada jawaban, hanya membuatnya berdasar.
 
-Belum diselidiki, dan inilah pekerjaan sebenarnya:
-
-- Apakah `feeling` di sini salah? Pesan itu memang membawa tekanan, dan mode
-  menyimak bisa jadi tepat. Yang jelas kurang bukan labelnya melainkan
-  `toolNeed`, yang selalu `none` sehingga daftar tugas tidak pernah dibaca.
-- Menaikkan `toolNeed` untuk kalimat yang menyebut tenggat atau tugas yang
-  sudah tercatat lebih menjanjikan daripada memperdebatkan intent. Itu jalur
-  yang sama dengan butir 4, yang berhasil setelah prompt menyebut catatan
-  sebagai state.
-
-**Pelajaran metodologis, dan ini yang paling mahal dari putaran ini.** Sebuah
+**Pelajaran metodologis, dan ini yang paling mahal dari putaran itu.** Sebuah
 kesimpulan dipublikasikan dan di-commit sebelum masukannya diperiksa. Alat
-ukurnya diam saja: tidak ada yang salah, hanya lebih pendek dari yang dikira.
-Ketika sebuah pengukuran memberi hasil yang rapi dan mengejutkan—tiga bentuk,
-tiga intent, 3 dari 3 setiap kali—periksa dulu bahwa masukannya sampai utuh.
-Keteraturan yang terlalu bersih lebih sering menandakan cacat alat daripada
+ukurnya tidak melaporkan kesalahan apa pun; ia hanya menerima lebih sedikit
+daripada yang dikira. Tanda bahayanya justru hasil yang terlalu rapi—tiga
+bentuk, tiga intent, 3 dari 3 setiap kali. Keteraturan sebersih itu pada
+extractor yang variansnya besar lebih sering menandakan cacat alat daripada
 temuan.
 
 ## 14. `create-bot-flow.test.ts` sensitif terhadap beban
