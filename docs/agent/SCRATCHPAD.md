@@ -905,11 +905,10 @@ apa pun, di sini model tidak mengakui meski diminta.
 Harvy dapat memperbaiki diri sesudahnya, sehingga arah "perpendek fallback
 kegagalan" lebih aman diambil daripada sebelumnya.
 
-**Belum diperiksa di kanal nyata.** Korpus `uji-telegram-langsung` sudah memakai
-30 dari 32 perintah untuk sembilan kasus, jadi kasus baru tidak muat tanpa
-memecah sesi—batasan yang sudah tercatat di butir 9. Yang sudah diukur dengan
-model nyata adalah bagian yang paling mungkin gagal, yaitu apakah pengakuannya
-benar-benar muncul.
+**Sudah diperiksa di kanal nyata, lihat butir 19.** Kasus `sadar-memotong`
+merekam pengakuannya di Telegram sungguhan, dan perkabelannya dikunci dua tes
+adapter. Yang tersisa hanya kestabilan kasus live-nya—masalah alat ukur, bukan
+perilaku.
 
 ## 17. Harness kini jujur tentang balasan milik siapa dan sesi yang tidak lengkap
 
