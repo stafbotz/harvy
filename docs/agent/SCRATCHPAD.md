@@ -658,6 +658,27 @@ tiga intent, 3 dari 3 setiap kali—periksa dulu bahwa masukannya sampai utuh.
 Keteraturan yang terlalu bersih lebih sering menandakan cacat alat daripada
 temuan.
 
+## 14. `create-bot-flow.test.ts` sensitif terhadap beban
+
+Satu tes di berkas itu—"tidak menganggap chat berikutnya sebagai jawaban tanpa
+binding pertanyaan"—gagal sekali pada suite penuh 30 Agustus dengan
+`Kondisi async uji tidak tercapai` sesudah 15,3 detik. Itu timeout pada
+`waitForAsync`, bukan assertion perilaku.
+
+Kodenya identik dengan commit yang suite-nya hijau berkali-kali, dan berkas itu
+lulus 114 dari 114 pada tiga kali penjalanan terisolasi berturut-turut sesudah
+kegagalan tersebut. Jadi ia intermiten di bawah beban, bukan merah.
+
+Gejala serupa pernah muncul lebih parah: berkas yang sama menggantung 50 menit
+ketika dua run tes berjalan bersamaan, dan sempat terbaca sebagai "suite macet"
+padahal itu kontensi.
+
+Tidak dicatat di `KNOWN-FAILURES.md` karena tesnya tidak merah secara
+konsisten—mencatatnya di sana akan membuat pembaca berikutnya mengabaikan
+kegagalan yang justru nyata. Yang perlu diperiksa bila ia muncul lagi: batas
+waktu `waitForAsync` di berkas tes itu, dan apakah ia memakai jam nyata pada
+jalur yang seharusnya deterministik.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai
