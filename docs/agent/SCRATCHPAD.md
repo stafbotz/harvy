@@ -339,8 +339,8 @@ Nilainya tidak sepadan.
 
 Yang belum, dan tetap terbuka:
 
-- Pola balasan bernomor. Ia memerlukan state per pengguna, pemetaan nomor ke
-  aksi, dan kedaluwarsa — fitur tersendiri, bukan perapian permukaan.
+- ~~Pola balasan bernomor.~~ Selesai 31 Agustus 2026, lihat butir 22. Nomor
+  menyimpan frasa, bukan aksi—sehingga ia tidak pernah memberi wewenang.
 - Padanan `uji:telegram` untuk WhatsApp. Kejadian surface WhatsApp punya bentuk
   sendiri, tetapi penyatuan bukti dan penilaiannya dapat dipakai ulang apa
   adanya.
@@ -1222,6 +1222,45 @@ karena pagar yang menyala pada kata pinjaman akan mati dibaca.
 sendiri terbukti bisa berbunyi. Setiap pagar yang dipasang tanpa tes yang
 membuktikannya menangkap sesuatu adalah pagar yang mungkin sudah mati sejak
 hari pertama.
+
+## 22. Balasan bernomor: nomor menjadi kalimat, bukan wewenang
+
+Butir 5 menyebut pola ini "fitur tersendiri" yang memerlukan state per pengguna,
+pemetaan nomor ke aksi, dan kedaluwarsa. Benar semuanya—tetapi rancangan
+"nomor ke aksi" itu justru yang berbahaya, dan itu terlihat sesudah membaca
+jalurnya.
+
+**Daftar tugas yang dilihat pengguna disusun model, bukan teks tetap.** Penomoran
+yang dikirim belum tentu bertahan pada balasan yang tampil. Memetakan nomor ke
+ID tugas berarti nomor tersimpan dapat menunjuk tugas yang berbeda dari yang
+orangnya baca, dan pada pembatalan itu menghapus tugas yang salah.
+
+Dua pengaman menutup itu, dan keduanya dipilih karena mode kegagalannya mahal:
+
+1. **Nomor menyimpan frasa, bukan identifier.** "2" diperluas menjadi judul
+   tugasnya, lalu kalimat itu mengalir lewat jalur biasa dengan seluruh pagar
+   authority-nya. Nomor tidak pernah memberi wewenang apa pun; pemetaan basi
+   paling jauh menghasilkan pertanyaan, bukan penghapusan salah sasaran.
+2. **Pemetaan hanya dicatat bila penomorannya benar-benar muncul** pada teks
+   yang terkirim. Bila penyusun menjatuhkannya, pemetaannya dihapus—lebih baik
+   fitur ini diam daripada menunjuk baris yang tidak ada.
+
+Satu pemetaan per pengguna, kedaluwarsa sepuluh menit, daftar baru mengganti
+yang lama seluruhnya. Tidak ada tumpukan nomor dari dua daftar berbeda yang
+dapat tertukar.
+
+Pengenalan bentuknya sempit dan itu disengaja: "2", "nomor 2", "opsi 2" adalah
+pilihan; "aku mau yang 2 dulu" dan "besok jam 2 aku ada les" bukan. Menafsirkan
+kalimat biasa sebagai pilihan menu akan salah persis pada bentuk yang paling
+wajar diketik orang. Tujuh tes mengunci kedua sisinya.
+
+**Terbukti di kanal nyata.** Daftar tampil sebagai `1. • Ngumpulin tugas
+biologi`, dan mengirim "1" dipahami sebagai operasi atas tugas itu.
+
+Catatan: `operation_presentation_invalid` muncul pada giliran daftar tugas, dan
+itu kondisi lama—sudah tercatat pada sesi sebelum perubahan ini.
+
+Sesi penuh sesudah perubahan: 13 dari 13 lulus.
 
 ## Kemampuan yang absen secara rancangan
 

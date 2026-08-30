@@ -99,6 +99,20 @@ export const LIVE_TELEGRAM_CASES: readonly LiveTelegramCase[] = [
     },
   },
   {
+    id: "balasan-bernomor",
+    // Daftar tugas kini bernomor, dan "2" menjadi singkatan frasa pilihannya.
+    // Nomor tidak memberi wewenang apa pun—yang dihasilkan hanya kalimat yang
+    // setara dengan mengetiknya sendiri—jadi yang diuji di sini adalah apakah
+    // Harvy benar-benar mengerti pilihan itu menunjuk tugas yang tampil.
+    message: "1",
+    waitMs: 45_000,
+    expect: {
+      // Frasa hasil perluasan menyebut judul tugas, jadi balasannya wajib
+      // menyentuh tugas yang sama—bukan menanyakan ulang nomor berapa.
+      replyMatches: [/biologi/iu],
+    },
+  },
+  {
     id: "memori-deterministik",
     message: "apa aja yang kamu inget tentang aku?",
     expect: {

@@ -193,6 +193,10 @@ import {
   semanticOperationForExactCommand,
 } from "../domain/semantic-operation.js";
 import {
+  NumberedOptionStore,
+  parseNumberedReply,
+} from "../core/numbered-options.js";
+import {
   TransientInteractionContextStore,
 } from "../core/transient-interaction-context.js";
 import {
@@ -442,6 +446,7 @@ export function createBot(
     githubPublishing: Boolean(codingRuntime?.privateGitHub),
   });
   const interactionContext = new TransientInteractionContextStore();
+  const numberedOptions = new NumberedOptionStore();
   const interactionScope = (ownerId: string) => ({
     ownerId,
     channel: "telegram" as const,
@@ -2298,6 +2303,26 @@ export function createBot(
     explicitImmediateDanger = false,
     urgentBoundary = false,
   ): Promise<void> {
+    // "2" diperluas menjadi frasa pilihan yang tercatat, lalu mengalir lewat
+    // jalur biasa.
+    //
+    // Nomor tidak pernah memberi wewenang apa pun: yang dihasilkan hanyalah
+    // kalimat yang setara dengan mengetiknya sendiri, sehingga pembatalan tetap
+    // menuntut konfirmasi dan pemetaan yang basi paling jauh menghasilkan
+    // pertanyaan. Itu sengaja, karena mode kegagalan yang ditakuti di sini
+    // bukan salah paham melainkan menghapus tugas yang salah.
+    const choice = parseNumberedReply(text);
+    const chosen = choice === null
+      ? null
+      : numberedOptions.resolve(ownerId, choice);
+    if (chosen) {
+      logger.info(
+        "numbered_reply_expanded",
+        "Balasan bernomor diperluas menjadi frasa pilihannya.",
+        { decision: String(choice) },
+      );
+      text = chosen;
+    }
     const createdProgress = runtime.progress
       ? null
       : createTelegramProgress(ctx, currentTurnId() ?? ownerId);
@@ -7386,7 +7411,9 @@ export function createBot(
     const fallbackText = [
       taskListLead(),
       "",
-      ...active.map((task) => formatTask(task, timeZone)),
+      ...active.map((task, index) =>
+        `${index + 1}. ${formatTask(task, timeZone)}`
+      ),
     ].join("\n");
     const response = await presentPrivateOperation(ownerId, {
       kind: "task-list",
@@ -7395,11 +7422,34 @@ export function createBot(
       stableBody: [
         "Tugas aktif",
         "",
-        ...active.map((task) => formatTask(task, timeZone)),
+        ...active.map((task, index) =>
+          `${index + 1}. ${formatTask(task, timeZone)}`
+        ),
       ].join("\n"),
       fallbackText,
     }, { timeZone });
     await ctx.reply(response, { reply_markup: taskListActions(active) });
+    // Pemetaan nomor dicatat hanya bila penomorannya benar-benar muncul pada
+    // teks yang terkirim.
+    //
+    // Badan daftar disusun model, bukan teks tetap, sehingga penomoran yang
+    // dikirim belum tentu bertahan pada balasan yang dilihat pengguna. Mencatat
+    // pemetaan tanpa memeriksa itu berarti nomor yang tersimpan dapat menunjuk
+    // tugas yang berbeda dari yang orangnya baca—dan pada pembatalan, itu
+    // menghapus tugas yang salah.
+    //
+    // Nomornya sendiri hanya menyimpan frasa judul, bukan ID, sehingga ia
+    // mengalir lewat jalur biasa dengan seluruh pagar konfirmasinya.
+    const numbering = active.map((task, index) => `${index + 1}.`);
+    const numberingVisible = numbering.every((prefix, index) =>
+      response.includes(prefix) &&
+      response.includes(active[index]!.title)
+    );
+    if (numberingVisible) {
+      numberedOptions.record(ownerId, active.map((task) => task.title));
+    } else {
+      numberedOptions.forget(ownerId);
+    }
     interactionContext.record(interactionScope(ownerId), {
       domain: "task",
       operation: "list",
