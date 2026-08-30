@@ -224,6 +224,7 @@ import {
 import {
   semanticConfidenceBucket,
   semanticOperationContextAvailable,
+  codingRunStatusOperation,
   naturalSurfaceAuthorized,
   semanticOperationAuthorized,
   semanticOperationForExactCommand,
@@ -2052,8 +2053,15 @@ export class WhatsAppPrivateConversation {
     runtime: ConversationRuntime,
   ): Promise<ComposedPrivateReply | null> {
     const text = privateConversationText(message);
-    const semantic = understanding.semanticOperation;
-    if (!naturalSurfaceAuthorized(text, semantic)) return null;
+    const proposed = understanding.semanticOperation;
+    // Extractor sesekali tidak mengusulkan apa pun untuk kalimat yang sama.
+    // Ketika itu terjadi pada pertanyaan status CodingRun, pengenalannya
+    // diambil alih kode—jatuh ke planner generik membuat jawabannya mengarang
+    // progres dari daftar tugas belajar.
+    const semantic = naturalSurfaceAuthorized(text, proposed)
+      ? proposed
+      : codingRunStatusOperation(text);
+    if (!semantic) return null;
 
     // Dicatat begitu otorisasi lolos, sebelum bercabang pada ketersediaan
     // runtime. Sebelum ini cabang "runtime coding mati" membalas lalu keluar
@@ -2069,7 +2077,10 @@ export class WhatsAppPrivateConversation {
         semanticOperation: semantic.operation,
         confidenceBucket: semanticConfidenceBucket(semantic),
         route: "natural-surface",
-        deterministic: false,
+        // Benar ketika operasinya berasal dari pengenalan kode, bukan usulan
+        // extractor. Membedakan keduanya di log adalah satu-satunya cara
+        // pemeriksaan live tahu jalur mana yang sebenarnya menyala.
+        deterministic: semantic !== proposed,
       },
     );
 

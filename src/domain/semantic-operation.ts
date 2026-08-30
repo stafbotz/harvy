@@ -287,6 +287,51 @@ export function naturalSurfaceAuthorized(
   });
 }
 
+
+/**
+ * Pertanyaan status CodingRun yang dikenali kode, bukan classifier.
+ *
+ * Ambang bertingkat di `naturalSurfaceAuthorized` menyelesaikan kasus
+ * confidence yang berayun, tetapi tidak menyelesaikan kasus extractor yang
+ * tidak mengusulkan apa pun. Sesi Telegram 30 Agustus 2026 merekamnya: kalimat
+ * yang sama menghasilkan `coding/show` pada dua sesi dan `none` pada sesi
+ * ketiga. Pada sesi ketiga permukaan deterministik tidak pernah menyala,
+ * pertanyaannya jatuh ke planner generik, dan jawabannya menyebut ada pekerjaan
+ * berjalan berikut progresnya—disusun dari daftar tugas belajar, bukan dari
+ * status coding mana pun.
+ *
+ * Mengarang status pekerjaan adalah kelas kesalahan yang paling sulit dilihat
+ * pengguna karena terdengar persis seperti jawaban yang benar. Karena itu
+ * pengenalannya dipindahkan ke kode: dua bentuk sempit, keduanya menuntut kata
+ * status atau keterangan sedang berjalan di dekat kata coding, sehingga
+ * "gimana cara belajar coding?" tidak ikut tertangkap.
+ *
+ * Operasinya read-only (`coding/show`), jadi salah tangkap paling jauh
+ * menjawab bahwa tidak ada CodingRun aktif.
+ */
+const CODING_RUN_STATUS_FORMS: readonly RegExp[] = [
+  /\bstatus\b[^?.!]{0,30}\b(?:coding|ngoding|koding)\b/u,
+  /\b(?:coding|ngoding|koding)\b[^?.!]{0,20}\b(?:lagi|sedang)\s+(?:jalan|berjalan|dikerjakan|proses)\b/u,
+];
+
+export function codingRunStatusOperation(
+  message: string,
+): (SemanticOperation & { domain: NaturalSurfaceDomain }) | null {
+  const text = message.toLowerCase().replace(/\s+/gu, " ").trim();
+  if (!CODING_RUN_STATUS_FORMS.some((form) => form.test(text))) return null;
+  return Object.freeze({
+    version: 1 as const,
+    domain: "coding" as const,
+    operation: "show" as const,
+    target: null,
+    subject: "self" as const,
+    reference: "current" as const,
+    explicitness: "explicit" as const,
+    evidence: null,
+    confidence: 1,
+  });
+}
+
 export interface SemanticAuthorization {
   domain: SemanticDomain;
   operations: readonly SemanticOperationName[];

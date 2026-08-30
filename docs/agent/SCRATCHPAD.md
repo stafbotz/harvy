@@ -779,39 +779,63 @@ kegagalan yang justru nyata. Yang perlu diperiksa bila ia muncul lagi: batas
 waktu `waitForAsync` di berkas tes itu, dan apakah ia memakai jam nyata pada
 jalur yang seharusnya deterministik.
 
-## 15. `status-coding` sesekali mengarang progres pekerjaan
+## 15. Pengenalan status CodingRun dipindahkan ke kode
 
-Sesi Telegram 30 Agustus, verifikasi butir 13. Kasus `status-coding` gagal
-sekali dari tiga sesi dengan set kasus sama:
+Dikerjakan 30 Agustus 2026. Kedua hipotesis di catatan sebelumnya meleset:
+capability coding memang tidak terpasang, tetapi bukan itu sebabnya, dan model
+juga tidak "memilih capability yang salah dari daftar yang benar".
 
-```
-kirim  : gimana status pekerjaan coding yang lagi jalan?
-agent  : tools, capability task.list_active
-masalah: balasan memuat yang dilarang
-         /sedang (?:berjalan|dikerjakan|jalan)[^?]*(?:progres|selesai|persen|%)/iu
-```
+Membandingkan tiga sesi dengan kalimat yang sama memberi jawabannya:
 
-Harvy menyebut ada pekerjaan yang sedang berjalan berikut progresnya, padahal
-capability yang dibaca `task.list_active`—daftar tugas belajar, bukan status
-sandbox coding. Jadi angkanya tidak berasal dari observation mana pun.
+| sesi | semantik | agent | hasil |
+|---|---|---|---|
+| A | `coding/show` (high) | tidak dipakai | lulus |
+| B | `coding/show` (high) | `capability none` | lulus |
+| C | **`none/none`** | `task.list_active` | **gagal** |
 
-Bukan akibat perubahan butir 13. `liveStateRequirement` mengembalikan null untuk
-kalimat ini pada ketiga tingkat `emotionalNuance`, jadi routing-nya tidak
-tersentuh; capability itu dipilih model sendiri di bawah kontrak auto, sama
-seperti sebelumnya. Kasus ini lulus pada dua sesi sebelumnya dan gagal pada yang
-ketiga.
+Extractor sesekali tidak mengusulkan operasi apa pun. Ketika itu terjadi,
+`naturalSurfaceAuthorized` menolak, permukaan deterministik tidak pernah
+menyala, dan pertanyaannya jatuh ke planner generik—yang membaca daftar tugas
+belajar lalu menyusun jawaban tentang pekerjaan coding yang sedang berjalan
+berikut progresnya. Angka itu tidak berasal dari observation mana pun.
 
-Yang membuatnya layak dicatat bukan frekuensinya melainkan bentuknya:
-mengarang status pekerjaan adalah kelas kesalahan yang paling sulit dilihat
-pengguna, karena jawabannya terdengar persis seperti jawaban yang benar.
-Assertion di `scripts/live-telegram-cases.ts` sudah menangkapnya, dan itu satu-
-satunya alasan ia terlihat.
+Perhatikan sesi B: usulannya ada dan confidence-nya tinggi, tetapi agent tetap
+berjalan. Otorisasi permukaan tidak hanya menuntut confidence—ia juga menuntut
+`explicitness: explicit` dan reference tertentu. Jadi jalur ini dapat gagal
+karena tiga sebab berbeda, dan ambang bertingkat butir 8 hanya menutup satu.
 
-Belum diselidiki: apakah model memang tidak punya capability status coding yang
-callable pada sesi itu, atau punya tetapi memilih `task.list_active`. Yang
-pertama berarti jawaban jujurnya adalah mengaku tidak bisa membacanya; yang
-kedua berarti pemilihan capability yang salah. Keduanya menuntut perbaikan
-berbeda, jadi pisahkan dulu sebelum menyentuh prompt.
+**Perbaikan: `codingRunStatusOperation` di `semantic-operation.ts`.** Dua bentuk
+sempit—kata `status` di dekat kata coding, atau coding yang diikuti keterangan
+sedang berjalan—dikenali kode dan menghasilkan `coding/show` sintetis ketika
+usulan extractor tidak lolos. Kedua adapter memakainya. Lima positif dan enam
+negatif dikunci tes, termasuk "gimana cara belajar coding?" yang wajib lolos:
+kata "coding" saja bukan bukti.
+
+Hanya pembacaan yang diambil alih kode. `coding/cancel` tetap menuntut usulan
+extractor yang lolos ambang 0,85, karena ia menghentikan pekerjaan.
+
+Field log `deterministic` sebelumnya selalu `false` dan kini menyatakan asal
+operasinya sebenarnya. Tanpa itu pemeriksaan live tidak dapat membedakan
+permukaan yang menyala karena extractor dari yang menyala karena kode.
+
+Assertion `status-coding` di `scripts/live-telegram-cases.ts` ikut diperketat
+menjadi `semanticDomain: coding`, `semanticOperation: show`, `agentUsed: false`.
+Sebelumnya sengaja longgar karena jalurnya berayun; sesudah pengenalannya milik
+kode, alasan itu hilang.
+
+**Sesi Telegram sesudah perubahan: 9 dari 9 lulus**, `status-coding` dengan
+`coding/show` (high), agent tidak dipakai, latensi 8,3 detik—turun dari 46
+detik pada sesi yang gagal. Perlu dicatat jujur: pada sesi itu extractor
+*berhasil* mengusulkan operasinya, jadi jalur deterministiknya belum tentu
+ikut menyala. Yang dibuktikan sesi ini adalah tidak adanya regresi; bahwa
+detektornya bekerja dibuktikan tes unit. Kegagalan aslinya muncul 1 dari 3
+sesi, jadi satu sesi hijau memang belum dapat membedakannya.
+
+**Pelajaran yang mengulang butir 13.** Kelas berpresisi tinggi yang jawabannya
+sudah ditentukan kode tidak boleh bergantung pada klasifikasi model. Di butir 13
+model menolak memanggil capability yang diwajibkan; di sini model kadang tidak
+mengusulkan apa-apa. Bentuk kegagalannya berbeda, obatnya sama: pindahkan
+pengenalannya ke kode dan sisakan bahasa untuk model.
 
 ## Kemampuan yang absen secara rancangan
 

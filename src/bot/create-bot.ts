@@ -185,6 +185,7 @@ import type { StudentTask } from "../domain/task.js";
 import {
   semanticConfidenceBucket,
   semanticOperationContextAvailable,
+  codingRunStatusOperation,
   naturalSurfaceAuthorized,
   semanticOperationAuthorized,
   semanticOperationForExactCommand,
@@ -7425,8 +7426,15 @@ export function createBot(
     context: HarvyContext,
     runtime: ConversationRuntime,
   ): Promise<boolean> {
-    const semantic = understanding.semanticOperation;
-    if (!naturalSurfaceAuthorized(text, semantic)) return false;
+    const proposed = understanding.semanticOperation;
+    // Extractor sesekali tidak mengusulkan apa pun untuk kalimat yang sama.
+    // Ketika itu terjadi pada pertanyaan status CodingRun, pengenalannya
+    // diambil alih kode—jatuh ke planner generik membuat jawabannya mengarang
+    // progres dari daftar tugas belajar.
+    const semantic = naturalSurfaceAuthorized(text, proposed)
+      ? proposed
+      : codingRunStatusOperation(text);
+    if (!semantic) return false;
 
     // Dicatat begitu otorisasi lolos, sebelum bercabang pada ketersediaan
     // runtime. Sebelum ini cabang "runtime coding mati" membalas lalu keluar
@@ -7442,7 +7450,10 @@ export function createBot(
         semanticOperation: semantic.operation,
         confidenceBucket: semanticConfidenceBucket(semantic),
         route: "natural-surface",
-        deterministic: false,
+        // Benar ketika operasinya berasal dari pengenalan kode, bukan usulan
+        // extractor. Membedakan keduanya di log adalah satu-satunya cara
+        // pemeriksaan live tahu jalur mana yang sebenarnya menyala.
+        deterministic: semantic !== proposed,
       },
     );
 

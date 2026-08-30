@@ -122,17 +122,19 @@ export const LIVE_TELEGRAM_CASES: readonly LiveTelegramCase[] = [
     id: "status-coding",
     message: "gimana status pekerjaan coding yang lagi jalan?",
     expect: {
-      // Pintu bahasa alami `coding/show` terbukti menyala: satu run mencatat
-      // `semantic_route_selected` dengan domain coding, operasi show,
-      // confidence high. Tetapi run berikutnya pada kalimat yang sama tidak
-      // mengusulkan operasi apa pun dan masuk Agent Runtime membaca daftar
-      // tugas. Usulan extractor untuk frasa status coding belum stabil.
+      // Usulan extractor untuk frasa ini berayun: `coding/show` pada dua sesi,
+      // tidak ada usulan sama sekali pada sesi ketiga—dan sesi ketiga itu
+      // masuk Agent Runtime lalu mengarang progres dari daftar tugas belajar.
       //
-      // Menuntut satu jalur di sini akan membuat harness merah permanen pada
-      // hal yang memang berayun, dan harness yang selalu merah berhenti
-      // dibaca. Yang dikunci adalah bagian yang tidak boleh berayun: jawaban
-      // tidak boleh mengarang pekerjaan coding yang sedang berjalan.
-      // Kestabilan usulannya dicatat sebagai butir tersendiri di scratchpad.
+      // Sejak 30 Agustus 2026 pengenalannya milik kode
+      // (`codingRunStatusOperation`), jadi permukaannya wajib menyala setiap
+      // kali dan menuntut satu jalur di sini tidak lagi membuat harness merah
+      // pada hal yang berayun.
+      semanticDomain: "coding",
+      semanticOperation: "show",
+      agentUsed: false,
+      // Tetap dikunci terpisah: apa pun jalurnya, jawaban tidak boleh
+      // mengarang pekerjaan coding yang sedang berjalan.
       replyForbids: [
         /sedang (?:berjalan|dikerjakan|jalan)[^?]*(?:progres|selesai|persen|%)/iu,
       ],

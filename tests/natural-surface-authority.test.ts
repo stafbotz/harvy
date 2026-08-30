@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   NATURAL_SURFACE_OPERATIONS,
+  codingRunStatusOperation,
   naturalSurfaceAuthorized,
   type SemanticOperation,
   type SemanticOperationName,
@@ -177,5 +178,53 @@ describe("otorisasi permukaan bahasa alami", () => {
       "project",
       "skill",
     ]);
+  });
+});
+
+// Sesi Telegram 30 Agustus 2026: kalimat yang sama menghasilkan `coding/show`
+// pada dua sesi dan `none` pada sesi ketiga. Pada sesi ketiga permukaan
+// deterministik tidak menyala dan jawabannya menyebut ada pekerjaan berjalan
+// berikut progresnya—disusun dari daftar tugas belajar.
+describe("pengenalan status CodingRun oleh kode", () => {
+  it("mengenali bentuk status dan sedang-berjalan", () => {
+    for (
+      const message of [
+        "gimana status pekerjaan coding yang lagi jalan?",
+        "gimana status coding-nya sekarang?",
+        "status coding gimana?",
+        "coding yang lagi jalan gimana?",
+        "cek status ngoding dong",
+      ]
+    ) {
+      const operation = codingRunStatusOperation(message);
+      assert.equal(operation?.domain, "coding", message);
+      assert.equal(operation?.operation, "show", message);
+    }
+  });
+
+  // Penjaga terpenting di sini. Pertanyaan belajar tidak boleh dijawab dengan
+  // status CodingRun, dan kata "coding" saja tidak cukup menjadi bukti.
+  it("membiarkan pertanyaan belajar dan kalimat lain tanpa status coding", () => {
+    for (
+      const message of [
+        "gimana cara belajar coding?",
+        "aku mau mulai belajar coding dari mana ya",
+        "coding itu susah nggak sih",
+        "gimana status tugasku?",
+        "besok aku ada kelas coding",
+        "kamu bisa coding nggak?",
+      ]
+    ) {
+      assert.equal(codingRunStatusOperation(message), null, message);
+    }
+  });
+
+  // Hanya pembacaan yang boleh diambil alih kode. Pembatalan tetap menuntut
+  // usulan extractor yang lolos ambang 0,85, karena ia menghentikan pekerjaan.
+  it("tidak pernah menghasilkan operasi selain show", () => {
+    assert.equal(
+      codingRunStatusOperation("batalin coding yang lagi jalan dong")?.operation,
+      "show",
+    );
   });
 });
