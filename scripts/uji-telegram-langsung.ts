@@ -580,6 +580,14 @@ function evaluate(
       );
     }
   }
+  if (expect.maxBatchWaitMs !== undefined) {
+    const actual = turn.turnMetrics?.["batchWaitMs"];
+    if (typeof actual !== "number" || actual > expect.maxBatchWaitMs) {
+      failures.push(
+        `jeda penggabungan ${String(actual)}ms, batas ${expect.maxBatchWaitMs}ms`,
+      );
+    }
+  }
   if (expect.boundaryState !== undefined) {
     const actual = turn.turnMetrics?.["boundaryState"];
     if (actual !== expect.boundaryState) {
