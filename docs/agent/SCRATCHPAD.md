@@ -426,11 +426,20 @@ ditentukannya.
 Tiga arah masuk akal. **Yang kedua sudah dikerjakan**; dua sisanya tetap
 keputusan produk karena mengubah kapan Harvy memotong pengguna.
 
-- **Perpendek fallback kegagalan.** Kegagalan bukan bukti pengguna masih
-  mengetik; `open` penuh 7 detik memperlakukannya seolah begitu. Jendela yang
-  lebih pendek khusus untuk kegagalan mengurangi jeda tanpa mengklaim
-  kelengkapan. Risikonya memotong orang yang memang masih menulis. Belum
-  dikerjakan.
+- **Perpendek fallback kegagalan.** Dikerjakan 30 Agustus, sesudah butir 16.
+  Kegagalan bukan bukti pengguna masih mengetik; ia bukti kita tidak tahu
+  apa-apa. `ASSESSMENT_FAILURE_IDLE_MS` memberinya 4 detik—kelonggaran yang
+  sama dengan bantalan multi-bubble, tidak lebih—sementara `open` yang
+  benar-benar dinilai model tetap 7 detik penuh. Pembedanya confidence 0, yang
+  hanya dihasilkan jalur kegagalan; string polos `"open"` dinormalisasi ke 0,75
+  sehingga penilaian sungguhan tidak pernah tertukar.
+
+  Risikonya—memotong orang yang masih menulis—jauh lebih murah sesudah butir
+  16: Harvy mengenali ketika ia memotong dan memperbaikinya sendiri.
+
+  Terukur di sesi Telegram 30 Agustus: enam kegagalan batas, masing-masing
+  menunggu 4.001–4.012 ms, dari 7.005–7.010 ms sebelumnya. Sekitar 18 detik
+  lebih cepat sepanjang satu sesi sembilan kasus, 9 dari 9 tetap lulus.
 - **Panggil lebih jarang.** Dikerjakan 30 Agustus, lihat di bawah.
 - **Terima apa adanya.** Tujuh detik jeda pada sebagian giliran adalah harga
   untuk tidak memotong orang yang sedang mengetik, dan itu pertukaran yang sah.

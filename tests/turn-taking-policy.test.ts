@@ -7,8 +7,12 @@ import {
   guardTurnBoundary,
   idleWindowMs,
   acknowledgesPrematureReply,
+  ASSESSMENT_FAILURE_IDLE_MS,
+  INCOMPLETE_IDLE_MS,
+  OPEN_IDLE_MS,
   withPrematureAcknowledgement,
   MULTI_BUBBLE_IDLE_MS,
+  normalizeTurnBoundaryAssessment,
 } from "../src/core/turn-taking-policy.js";
 
 describe("kebijakan giliran percakapan", () => {
@@ -272,5 +276,46 @@ describe("pengakuan potong yang dimiliki kode", () => {
 
   it("membiarkan balasan kosong apa adanya", () => {
     assert.equal(withPrematureAcknowledgement("   ", "siswa"), "   ");
+  });
+});
+
+describe("jendela ketika penilaian batas giliran gagal", () => {
+  // Log sesi nyata: giliran dengan `turn_boundary_check_failed` menunggu 7.005,
+  // 7.009, dan 7.010 milidetik—bukan karena pengguna masih mengetik, melainkan
+  // karena classifier tidak menjawab tepat waktu.
+  const KEGAGALAN = {
+    state: "open" as const,
+    confidence: 0,
+    continuationLikelihood: 0.65,
+    reasonClass: "uncertain" as const,
+  };
+
+  it("memberi kegagalan jendela lebih pendek daripada open sungguhan", () => {
+    assert.equal(assessmentIdleWindowMs(KEGAGALAN, 1), ASSESSMENT_FAILURE_IDLE_MS);
+    assert.ok(ASSESSMENT_FAILURE_IDLE_MS < OPEN_IDLE_MS);
+  });
+
+  // Penjaga terpenting di sini. `open` yang benar-benar dinilai berarti model
+  // menyimpulkan pengguna masih bicara, dan itu tetap layak menunggu penuh.
+  it("tidak memendekkan open yang benar-benar dinilai", () => {
+    assert.equal(
+      assessmentIdleWindowMs(normalizeTurnBoundaryAssessment("open"), 1),
+      OPEN_IDLE_MS,
+    );
+    assert.equal(
+      assessmentIdleWindowMs({
+        state: "open",
+        confidence: 0.8,
+        continuationLikelihood: 0.8,
+        reasonClass: "narrative-opening",
+      }, 1),
+      OPEN_IDLE_MS,
+    );
+  });
+
+  it("tidak menyentuh state lain", () => {
+    assert.equal(idleWindowMs("incomplete", 1), INCOMPLETE_IDLE_MS);
+    assert.equal(idleWindowMs("urgent", 1), 0);
+    assert.equal(idleWindowMs("complete", 1), 0);
   });
 });

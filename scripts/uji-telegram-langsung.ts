@@ -614,7 +614,7 @@ async function main(): Promise<void> {
         console.log(
           `  giliran : ${String(turn.turnMetrics["bubbleCount"] ?? "-")} bubble, batas ${
             String(turn.turnMetrics["boundaryState"] ?? "-")
-          }, interupsi ${String(turn.turnMetrics["interruptionRelation"] ?? "-")}`,
+          }, interupsi ${String(turn.turnMetrics["interruptionRelation"] ?? "-")}, tunggu ${String(turn.turnMetrics["batchWaitMs"] ?? "-")}ms`,
         );
       }
       if (turn.failures.length > 0) {

@@ -48,6 +48,24 @@ export type LocalTurnBoundaryState = Extract<
 export const OPEN_IDLE_MS = 7_000;
 export const INCOMPLETE_IDLE_MS = 12_000;
 export const MULTI_BUBBLE_IDLE_MS = 4_000;
+/**
+ * Jendela ketika penilaian batas giliran gagal, bukan ketika ia menyimpulkan
+ * pengguna masih bicara.
+ *
+ * Sampai 30 Agustus 2026 keduanya mendapat `OPEN_IDLE_MS` yang sama. Itu
+ * memperlakukan kegagalan seolah bukti bahwa pengguna masih mengetik, padahal
+ * ia bukti bahwa kita tidak tahu apa-apa. Log sesi nyata mencatat akibatnya:
+ * giliran dengan `turn_boundary_check_failed` menunggu 7.005, 7.009, dan 7.010
+ * milidetik sebelum Harvy mulai bekerja—bukan karena pengguna masih mengetik,
+ * melainkan karena classifier-nya tidak menjawab tepat waktu.
+ *
+ * Angkanya disamakan dengan bantalan multi-bubble: ketidaktahuan mendapat
+ * kelonggaran yang sama dengan pesan yang paling mungkin masih berlanjut,
+ * tidak lebih. Memotong terlalu cepat juga jauh lebih murah sekarang—Harvy
+ * mengenali ketika ia memotong dan memperbaikinya sendiri.
+ */
+export const ASSESSMENT_FAILURE_IDLE_MS = MULTI_BUBBLE_IDLE_MS;
+
 
 /**
  * Proposal model tetap tidak dipercaya begitu saja. Pagar ini mempertahankan
@@ -185,9 +203,15 @@ export function assessmentIdleWindowMs(
     openMs?: number;
     incompleteMs?: number;
     multiBubbleMs?: number;
+    failureMs?: number;
   } = {},
 ): number {
   const normalized = normalizeTurnBoundaryAssessment(assessment);
+  // Confidence nol hanya dihasilkan fallback kegagalan; string polos "open"
+  // dinormalisasi ke 0,75, jadi penilaian sungguhan tidak pernah tertukar.
+  if (normalized.state === "open" && normalized.confidence === 0) {
+    return options.failureMs ?? ASSESSMENT_FAILURE_IDLE_MS;
+  }
   if (
     normalized.state === "complete" &&
     bubbleCount > 1 &&
