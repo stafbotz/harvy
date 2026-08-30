@@ -104,6 +104,8 @@ interface TurnEvidence {
   sentAt: number;
   settledAt: number;
   replies: string[];
+  /** Waktu kejadian balasan terakhir; dipakai mengukur jeda ke giliran berikutnya. */
+  lastReplyAt: number | null;
   latencyMs: number | null;
   route: Record<string, unknown> | null;
   agentRun: Record<string, unknown> | null;
@@ -176,21 +178,6 @@ export function buildCaseCommands(cases: readonly LiveTelegramCase[]): CommandPl
       push({ type: "wait", ms: testCase.interruptAfterMs ?? 3_000 }, null);
       push(
         { type: "interrupt", text: testCase.interruptWith ?? "" },
-        testCase.id,
-      );
-    } else if (testCase.kind === "follow-up") {
-      // Tidak ada `wait` antara balasan dan sambungan. Kesadaran Harvy saat
-      // memotong hanya menyala bila sambungannya tiba dalam delapan detik, dan
-      // `wait` berdurasi tetap tidak dapat menjamin itu: balasan yang datang
-      // cepat akan menyisakan jeda panjang sesudahnya. `settle` menunggu kanal
-      // `await_reply` menunggu balasan yang benar-benar terlihat, lalu `settle`
-      // menutup gilirannya. Sambungan berangkat beberapa ratus milidetik
-      // sesudahnya—di dalam jendela delapan detik.
-      push({ type: "send", text: testCase.message }, null);
-      push({ type: "await_reply", timeoutMs: 90_000 }, null);
-      push({ type: "settle" }, null);
-      push(
-        { type: "send", text: testCase.followUpAfterReply ?? "" },
         testCase.id,
       );
     } else {
@@ -387,6 +374,7 @@ function joinEvidence(
         sentAt: at,
         settledAt: Number.POSITIVE_INFINITY,
         replies: [],
+        lastReplyAt: null,
         latencyMs: null,
         route: null,
         agentRun: null,
@@ -413,6 +401,7 @@ function joinEvidence(
       if (owner) {
         const text = String(event.text ?? "").trim();
         if (text) owner.replies.push(text);
+        owner.lastReplyAt = at;
         if (event.latencyMs != null) owner.latencyMs = event.latencyMs;
         if (alias !== undefined) surfaceOwner.set(alias, owner);
       }
@@ -772,6 +761,14 @@ async function main(): Promise<void> {
             : "tidak dipakai"
         }`,
       );
+      // Jeda dari balasan giliran sebelumnya. Ini anggaran yang menentukan
+      // apakah sebuah sambungan dikenali sebagai potongan, dan sebelum baris ini
+      // ada, kasus yang lulus dan yang gagal tampak identik pada keluaran.
+      const previous = turns[turns.indexOf(turn) - 1];
+      if (previous?.lastReplyAt != null) {
+        const jeda = turn.sentAt - previous.lastReplyAt;
+        console.log(`  jeda    : ${jeda}ms sejak balasan sebelumnya`);
+      }
       console.log(`  latensi : ${turn.latencyMs ?? "-"}ms`);
       if (turn.turnMetrics) {
         console.log(

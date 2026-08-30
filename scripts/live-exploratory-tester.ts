@@ -72,8 +72,6 @@ const WHATSAPP_OBSERVATION_QUIET_MS = 750;
 const WHATSAPP_OBSERVATION_FLUSH_MAX_MS = 5_000;
 const SCRIPTED_COMMANDS_ENV = "HARVY_LIVE_EXPLORATION_COMMANDS_JSONL";
 const MAX_SCRIPTED_COMMANDS = 32;
-/** Jeda antar-polling saat menunggu balasan; cukup rapat untuk jendela delapan detik. */
-const AWAIT_REPLY_POLL_MS = 500;
 /**
  * Diam selama ini berarti balasan sudah utuh.
  *
@@ -87,7 +85,6 @@ const AWAIT_REPLY_POLL_MS = 500;
  * antara status "sedang memikirkan" dengan jawaban akhir terukur belasan detik,
  * jadi tidak ada risiko berhenti di tengah balasan.
  */
-const AWAIT_REPLY_QUIET_MS = 1_500;
 const MAX_SCRIPTED_COMMAND_BYTES = 256 * 1024;
 
 interface ExplorerSurfaceEvent {
@@ -979,49 +976,6 @@ async function runExplorer(
     if (command.type === "stop") {
       requireIdleTurn();
       return "stop";
-    }
-    if (command.type === "await_reply") {
-      // Menunggu balasan yang benar-benar terlihat, bukan durasi tetap.
-      //
-      // Latensi balasan berayun antara sembilan dan tiga puluh detik, sehingga
-      // `wait` berdurasi tetap tidak dapat menempatkan pesan berikutnya "segera
-      // sesudah Harvy menjawab". Bentuk giliran yang menuntut itu—kesadaran
-      // Harvy ketika ia memotong pengguna—karena itu tidak dapat diuji sama
-      // sekali sebelum perintah ini ada: percobaan pertama justru menggabungkan
-      // kedua pesan menjadi satu giliran, dan kasusnya diam-diam berhenti
-      // menguji apa pun.
-      const turn = requireActiveTurn();
-      const before = metrics.turns[turn - 1]?.responseEvents ?? 0;
-      const deadline = Date.now() + command.timeoutMs;
-      let observed = false;
-      // Selesai berarti kanal diam, bukan pesan pertama muncul. Harvy
-      // mengirim status "sedang memikirkan" lebih dulu, dan itu juga sebuah
-      // pesan; berhenti di situ mengirim sambungan sebelum jawabannya ada,
-      // sehingga runtime membacanya sebagai interupsi—bukan sambungan yang
-      // hendak diuji. Aturan diam bersifat bebas-isi: tester tidak perlu
-      // mengenali kalimat status Harvy untuk tahu gilirannya sudah selesai.
-      let lastCount = before;
-      let quietSince: number | null = null;
-      while (Date.now() < deadline) {
-        await driver.flushObservation();
-        await Promise.all([surfaceTail, runtimeTraceTail]);
-        const count = metrics.turns[turn - 1]?.responseEvents ?? 0;
-        if (count > lastCount) {
-          lastCount = count;
-          quietSince = Date.now();
-        } else if (quietSince !== null && Date.now() - quietSince >= AWAIT_REPLY_QUIET_MS) {
-          observed = true;
-          break;
-        }
-        await delay(AWAIT_REPLY_POLL_MS);
-      }
-      emit({
-        type: "await_reply_finished",
-        commandSequence: sequence,
-        turn,
-        observed,
-      });
-      return "continue";
     }
     const interrupt = command.type === "interrupt";
     if (interrupt) {

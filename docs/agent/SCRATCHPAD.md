@@ -1048,30 +1048,39 @@ jendela delapan detik.
 dua sesi berurutan, persis kemampuan yang butir 18 tambahkan. Tanpa itu kasus
 ini tidak dapat ditambahkan sama sekali.
 
-### Perkabelannya dikunci tes, kasus live-nya belum stabil
+### Kasus live-nya dicabut; empat penanda dicoba dan semuanya gagal
 
-Sesi nyata mendapat pengakuannya pada sebagian sesi dan tidak pada sesi lain,
-dengan bentuk giliran yang sama persis (`1 bubble`, `interupsi -`). Mengejar
-sebabnya lewat sesi live berulang tidak sepadan—satu sesi belasan menit untuk
-satu bit informasi—jadi jalurnya dipindah ke tes adapter yang deterministik.
+Kasus `sadar-memotong` beserta perintah `await_reply` sudah **dicabut**
+seluruhnya. Perilakunya tetap terjaga oleh dua tes adapter; yang hilang hanya
+pengamatannya di kanal.
 
-`tests/create-bot-flow.test.ts` kini mengirim dua pesan berurutan lewat adapter
-sungguhan dan memeriksa `runtime.prematureReply` pada keduanya: giliran pertama
-tidak pernah menjadi potongan karena belum ada balasan sebelumnya, dan sambungan
-yang isinya sudah terjawab tidak menyalakan apa pun. Keduanya lulus, jadi
-perkabelannya—`turnReceivedAt` yang sampai ke adapter, dan keputusan yang benar
-atas bentuk sambungan—terbukti.
+Sambungan harus tiba dalam delapan detik sesudah balasan, jadi penguji perlu
+tahu kapan Harvy selesai menjawab. Empat penanda dicoba dan masing-masing gagal
+karena alasan yang berbeda dan sah:
 
-Yang tersisa adalah kestabilan kasus live-nya, dan itu masalah alat ukur, bukan
-perilaku: anggaran delapan detik dibagi antara jendela diam tester, `settle`,
-dan pengiriman. Perilakunya sendiri sudah terbukti pada tiga tingkat—kebijakan
-murni, perkabelan adapter, dan dua pengamatan langsung di kanal.
+| penanda | kenapa gagal |
+|---|---|
+| `settle` saja | `flushObservation` hanya satu polling; sambungan berangkat saat giliran pertama masih berjalan dan keduanya digabung |
+| pesan pertama muncul | Harvy mengirim status lebih dulu, jadi sambungan berangkat sebelum jawaban ada |
+| kanal diam 1,5–3 detik | jeda **berpikir** Harvy juga sunyi belasan detik; jarak terukur −1.870 ms |
+| penghapusan pesan status | status dirotasi ("Memikirkan..." lalu "Memeriksa..."), jadi penghapusan terjadi di tengah giliran; jarak −3.406 ms |
 
-Satu percobaan penelusuran gagal dan layak dicatat supaya tidak diulang: log
-diagnostik yang disisipkan di adapter tidak pernah muncul, bahkan setelah
-diganti `console.error` langsung, padahal log lain di baris yang lebih bawah
-tercatat. Sebabnya tidak ditemukan dan penelusurannya dihentikan; tes adapter
-menjawab pertanyaan yang sama dengan biaya jauh lebih kecil.
+Penanda kelima berbasis ukuran teks memberi −26.222 ms dan ditinggalkan.
+
+**Sebabnya struktural, bukan kurang usaha.** Penguji sengaja bebas-isi: ia tidak
+mengenali satu kata pun dari balasan Harvy, dan itu properti yang layak dijaga.
+Tetapi tanpa membaca isi, tidak ada cara membedakan pesan sela dari jawaban
+akhir—keduanya hanya "pesan baru". Sinyal yang benar-benar tahu ada di runtime
+(`conversation_turn_completed`), dan penguji adalah proses terpisah yang tidak
+melihatnya.
+
+Menutupnya menuntut jalur baru antara runtime dan penguji. Itu pekerjaan
+tersendiri, dan sampai ada, bentuk giliran yang menuntut "kirim segera sesudah
+Harvy menjawab" tidak dapat diuji di kanal.
+
+**Keputusannya mencabut, bukan menandai sebagai diketahui-merah.** Tes yang
+melaporkan derau lebih berbahaya daripada tidak ada tes: ia melatih pembacanya
+mengabaikan kegagalan, dan kegagalan yang sungguhan ikut terlewat.
 
 ## 20. Keselamatan kini diperiksa di kanal nyata
 
