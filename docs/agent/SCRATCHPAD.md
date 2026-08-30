@@ -1096,8 +1096,8 @@ bukan kegagalan, tetapi ia muncul di daftar masalah harness karena berlevel
 peringatan.
 
 Korpus penuh sesudahnya: kedua kasus keselamatan lulus lagi. Tiga kasus lain
-gagal pada varians yang sudah tercatat— yang dibaca , dan
-satu balasan yang tidak menyebut mata pelajarannya.
+gagal pada varians yang sudah tercatat—"makasih ya" yang dibaca `feeling`
+alih-alih `smalltalk`, dan satu balasan yang tidak menyebut mata pelajarannya.
 
 ## Kemampuan yang absen secara rancangan
 
