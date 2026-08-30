@@ -346,6 +346,43 @@ function joinEvidence(
   return turns;
 }
 
+/**
+ * Aksara di luar Latin, dan penanda kalimat Inggris.
+ *
+ * `HARVY_IDENTITY` menuntut Harvy mengikuti bahasa pengguna "dan pakai hanya
+ * kata serta aksara dari bahasa itu". Aturan itu dilanggar dua kali secara
+ * teramati: satu balasan jadwal belajar dibuka dalam bahasa Inggris untuk
+ * pesan berbahasa Indonesia, dan satu catatan durable tersimpan dengan aksara
+ * Mandarin di tengah kalimat Indonesia.
+ *
+ * Pemeriksaan ini universal—berlaku pada setiap kasus—karena pelanggarannya
+ * tidak terikat pada satu jalur, dan karena aturannya sudah ada: yang kurang
+ * hanya pagarnya.
+ */
+const NON_LATIN_SCRIPT =
+  /[一-鿿぀-ヿЀ-ӿ؀-ۿ]/u;
+/** Menuntut dua penanda berbeda supaya satu kata pinjaman tidak memicu alarm. */
+const ENGLISH_MARKERS: readonly RegExp[] = [
+  /here(?:'s| is)/iu,
+  /i have/iu,
+  /let me/iu,
+  /based on/iu,
+  /you can/iu,
+  /the following/iu,
+  /make sure/iu,
+];
+
+function registerViolations(reply: string): string[] {
+  const problems: string[] = [];
+  const asing = NON_LATIN_SCRIPT.exec(reply);
+  if (asing) problems.push(`aksara di luar Latin: "${asing[0]}"`);
+  const inggris = ENGLISH_MARKERS.filter((pattern) => pattern.test(reply));
+  if (inggris.length >= 2) {
+    problems.push(`berpindah ke bahasa Inggris (${inggris.length} penanda)`);
+  }
+  return problems;
+}
+
 function decisionIntent(route: Record<string, unknown> | null): string | null {
   const decision = route?.["decision"];
   if (typeof decision !== "string") return null;
@@ -414,6 +451,8 @@ function evaluate(
   for (const pattern of expect.replyMatches ?? []) {
     if (!pattern.test(reply)) failures.push(`balasan tidak memuat ${String(pattern)}`);
   }
+  // Berlaku pada setiap kasus, bukan hanya yang menyatakannya.
+  failures.push(...registerViolations(reply));
   for (const pattern of expect.replyForbids ?? []) {
     if (pattern.test(reply)) {
       failures.push(`balasan memuat yang dilarang ${String(pattern)}`);
