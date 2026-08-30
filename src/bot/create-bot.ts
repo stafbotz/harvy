@@ -447,6 +447,21 @@ export function createBot(
   });
   const interactionContext = new TransientInteractionContextStore();
   const numberedOptions = new NumberedOptionStore();
+  /**
+   * Status "Menunggu Harvy" yang dibuat saat pesan tiba, sebelum batching.
+   *
+   * Harvy menahan giliran beberapa detik untuk memastikan pengguna selesai
+   * mengetik, dan selama itu layar dulu sunyi total—status pertama baru muncul
+   * sesudah jendela tutup. Pesan yang menggantung karena itu bisa tidak
+   * berbalas tanda apa pun sampai dua belas detik.
+   *
+   * Entrinya diambil giliran yang benar-benar berjalan, atau ditutup oleh
+   * `observeTurn` bila gilirannya batal.
+   */
+  const waitingProgress = new Map<
+    string,
+    TransientConversationProgress<SentMessageRef>
+  >();
   const interactionScope = (ownerId: string) => ({
     ownerId,
     channel: "telegram" as const,
@@ -866,6 +881,9 @@ export function createBot(
             markUserCommitted: batch.markUserCommitted,
             interruptionRelation: batch.interruptionRelation,
             turnReceivedAt: batch.firstReceivedAt,
+            ...(((waiting) => (waiting ? { progress: waiting } : {}))(
+              takeWaitingProgress(ownerId),
+            )),
           },
           batch.firstIngressSequence ?? batch.carrier.update.update_id,
           batch.explicitImmediateDanger,
@@ -878,11 +896,21 @@ export function createBot(
     undefined,
     undefined,
     logger.child("telegram.message-batcher"),
-    (metrics) => telemetry.recordTurn({
-      ...metrics,
-      subjectKind: "private",
-      channel: "telegram",
-    }),
+    (metrics) => {
+      // Giliran yang batal tidak pernah mengambil status menunggunya, jadi ia
+      // harus ditutup di sini—kalau tidak, bulannya berputar selamanya di
+      // layar pengguna.
+      const orphan = waitingProgress.get(metrics.ownerId);
+      if (orphan) {
+        waitingProgress.delete(metrics.ownerId);
+        void orphan.finish();
+      }
+      return telemetry.recordTurn({
+        ...metrics,
+        subjectKind: "private",
+        channel: "telegram",
+      });
+    },
     undefined,
     typeof conversation.classifyTurnInterruption === "function"
       ? async (activeText, incomingText, ownerId, turnId) => {
@@ -1988,6 +2016,21 @@ export function createBot(
             )
           );
           return;
+        }
+        const running = activeProgress.get(ownerId);
+        if (running) {
+          // Pesan susulan yang datang saat Harvy sudah bekerja. Hubungannya
+          // belum dinilai—menambah, mengoreksi, atau ganti topik—dan penilaian
+          // itu perlu beberapa detik. Tanpa ini layar tetap menampilkan
+          // pekerjaan lama seolah tidak terjadi apa-apa, padahal pekerjaan itu
+          // mungkin sedang dibuang.
+          running.report({ phase: "reading", detail: "new-message" });
+        } else if (!waitingProgress.has(ownerId)) {
+          const waiting = createTelegramProgress(ctx, ownerId);
+          if (waiting) {
+            waitingProgress.set(ownerId, waiting);
+            waiting.report({ phase: "waiting" });
+          }
         }
         messageBatcher.enqueue(ownerId, text, ctx, ctx.update.update_id);
         return;
@@ -7378,6 +7421,15 @@ export function createBot(
       response,
       taskListActions(remaining),
     );
+  }
+
+  /** Menyerahkan status menunggu kepada giliran yang benar-benar berjalan. */
+  function takeWaitingProgress(
+    ownerId: string,
+  ): TransientConversationProgress<SentMessageRef> | undefined {
+    const waiting = waitingProgress.get(ownerId);
+    waitingProgress.delete(ownerId);
+    return waiting;
   }
 
   async function sendTaskList(

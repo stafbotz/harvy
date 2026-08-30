@@ -4,6 +4,17 @@ import { containsSecretLikeValue } from "../security/credential-like.js";
 
 export type ConversationProgressPhase =
   | "listening"
+  /**
+   * Pesan pengguna sudah tiba, tetapi belum ada pekerjaan yang dimulai.
+   *
+   * Harvy menahan giliran beberapa detik untuk memastikan pengguna selesai
+   * mengetik. Selama itu layar dulu sunyi total—status pertama baru muncul
+   * sesudah jendela tutup, sehingga pesan yang menggantung bisa tidak berbalas
+   * tanda apa pun sampai dua belas detik. Fase ini mengisi bagian itu, dan
+   * sengaja tidak mengaku sedang membaca atau memikirkan: pada detik itu model
+   * belum dipanggil sama sekali.
+   */
+  | "waiting"
   | "thinking"
   | "searching"
   | "reading"
@@ -22,7 +33,9 @@ export type ConversationProgressDetail =
   | "personal-fit"
   | "consistency"
   | "new-context"
-  | "new-direction";
+  | "new-direction"
+  /** Pesan susulan yang datang saat pekerjaan sudah mulai, hubungannya belum dinilai. */
+  | "new-message";
 
 export const PUBLIC_PROGRESS_FOCUS_KINDS = [
   "inspect",
@@ -94,6 +107,8 @@ export class TransientConversationProgress<Reference>
   private reference: Reference | null = null;
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private updateTimer: ReturnType<typeof setTimeout> | null = null;
+  private waitingTimer: ReturnType<typeof setInterval> | null = null;
+  private waitingFrame = 0;
   private operation = Promise.resolve();
   private lastRenderedAt = 0;
   private closed = false;
@@ -123,6 +138,7 @@ export class TransientConversationProgress<Reference>
     const normalized = normalizeProgressEvent(event);
     if (sameEvent(this.latest, normalized)) return;
     this.latest = normalized;
+    if (normalized.phase !== "waiting") this.stopWaitingAnimation();
     if (this.reference === null && this.graceTimer === null) {
       this.graceTimer = setTimeout(() => {
         this.graceTimer = null;
@@ -144,6 +160,7 @@ export class TransientConversationProgress<Reference>
       return;
     }
     this.closed = true;
+    this.stopWaitingAnimation();
     if (this.graceTimer) clearTimeout(this.graceTimer);
     if (this.updateTimer) clearTimeout(this.updateTimer);
     this.graceTimer = null;
@@ -161,6 +178,35 @@ export class TransientConversationProgress<Reference>
     await this.operation;
   }
 
+  /**
+   * Fase menunggu bergerak sendiri, tidak menunggu peristiwa baru.
+   *
+   * Seluruh status lain berubah karena ada yang dilaporkan. Fase menunggu tidak
+   * punya peristiwa apa pun untuk dilaporkan—justru itu maksudnya—sehingga
+   * tanpa denyut sendiri ia akan diam sepenuhnya selama beberapa detik dan
+   * terlihat macet, persis kebalikan dari yang hendak ditunjukkannya.
+   *
+   * Iramanya mengikuti `minimumUpdateIntervalMs`, jadi ia tidak pernah
+   * menyunting lebih sering daripada batas yang sudah dipilih untuk kanal.
+   */
+  private startWaitingAnimation(): void {
+    if (this.closed || this.waitingTimer !== null) return;
+    this.waitingTimer = setInterval(() => {
+      if (this.closed || this.latest?.phase !== "waiting") {
+        this.stopWaitingAnimation();
+        return;
+      }
+      this.waitingFrame += 1;
+      if (this.reference !== null) this.enqueue(() => this.updateLatest());
+    }, this.minimumUpdateIntervalMs);
+    this.waitingTimer.unref?.();
+  }
+
+  private stopWaitingAnimation(): void {
+    if (this.waitingTimer === null) return;
+    clearInterval(this.waitingTimer);
+    this.waitingTimer = null;
+  }
   private async showLatest(): Promise<void> {
     if (this.closed || this.reference !== null || !this.latest) return;
     try {
@@ -171,9 +217,10 @@ export class TransientConversationProgress<Reference>
     if (this.closed || !this.latest) return;
     try {
       this.reference = await this.renderer.show(
-        renderConversationProgress(this.latest, this.seed),
+        renderConversationProgress(this.latest, this.seed, this.waitingFrame),
       );
       this.lastRenderedAt = this.now();
+      if (this.latest.phase === "waiting") this.startWaitingAnimation();
     } catch (error) {
       this.options.onError?.("show", error);
     }
@@ -195,7 +242,7 @@ export class TransientConversationProgress<Reference>
     try {
       await this.renderer.update(
         this.reference,
-        renderConversationProgress(this.latest, this.seed),
+        renderConversationProgress(this.latest, this.seed, this.waitingFrame),
       );
       this.lastRenderedAt = this.now();
     } catch (error) {
@@ -293,12 +340,38 @@ export function publicFocusProgressEvent(
     progressEvent("checking", "consistency", normalized);
 }
 
+/**
+ * Fase bulan untuk status menunggu.
+ *
+ * Siklus penuh, bukan separuh: menunggu tidak punya tujuan yang dapat
+ * ditunjukkan, dan indikator yang berhenti di purnama terlihat macet.
+ */
+const WAITING_FRAMES = [
+  "🌒",
+  "🌓",
+  "🌔",
+  "🌕",
+  "🌖",
+  "🌗",
+  "🌘",
+  "🌑",
+] as const;
+
 export function renderConversationProgress(
   event: ConversationProgressEvent,
   seed = "harvy",
+  frame = 0,
 ): string {
   const status = STATUS[event.phase];
   if (!status) return "";
+  if (event.phase === "waiting") {
+    // Tanpa baris catatan. Judulnya berbicara dari sudut pandang pengguna
+    // ("kamu sedang menunggu Harvy"), sedangkan catatan bernada suara Harvy
+    // akan bertentangan dengannya di dalam satu gelembung yang sama.
+    const moon = WAITING_FRAMES[frame % WAITING_FRAMES.length] ??
+      WAITING_FRAMES[0];
+    return `${moon} ${status}...`;
+  }
   const publicFocus = parsePublicProgressFocus(event.publicFocus);
   const focusedNote = publicFocus
     ? realizePublicProgressNote(event.phase, publicFocus)
@@ -312,8 +385,13 @@ export function renderConversationProgress(
 
 /** Hanya untuk membedakan surface status transient dari jawaban user-facing. */
 export function isRenderedConversationProgress(text: string): boolean {
+  const trimmed = text.trim();
+  // Fase menunggu berbentuk lain: bulan di depan judul, tanpa baris catatan.
+  // Tanpa cabang ini ia terbaca sebagai balasan sungguhan, dan setiap alat yang
+  // memisahkan status dari jawaban akan salah menghitungnya.
+  if (/^[🌑🌒🌓🌔🌕🌖🌗🌘]\sMenunggu Harvy\.\.\.$/u.test(trimmed)) return true;
   return /^(?:Memikirkan|Mencari|Membaca|Membandingkan|Menghitung|Memeriksa|Menyesuaikan|Beralih|Menyusun jawaban)\.\.\.\n💭\s/u.test(
-    text.trim(),
+    trimmed,
   );
 }
 
@@ -351,6 +429,7 @@ export function parsePublicProgressFocus(
 }
 
 const STATUS: Partial<Record<ConversationProgressPhase, string>> = {
+  waiting: "Menunggu Harvy",
   thinking: "Memikirkan",
   searching: "Mencari",
   reading: "Membaca",
@@ -393,6 +472,15 @@ const FALLBACK_NOTES: Partial<Record<
     general: [
       "Aku baca bagian yang paling relevan dulu.",
       "Aku rangkum dulu informasi yang benar-benar kepakai.",
+    ],
+    // Dipakai ketika pesan susulan datang saat Harvy sudah mulai bekerja.
+    // Hubungannya belum dinilai—menambah, mengoreksi, atau ganti topik—dan
+    // penilaian itu perlu beberapa detik. Tanpa status ini, layar tetap
+    // menampilkan pekerjaan lama seolah tidak terjadi apa-apa, padahal
+    // pekerjaan itu mungkin sedang dibuang. Yang paling ingin diketahui
+    // pengguna pada detik itu adalah pesan barunya sudah terlihat.
+    "new-message": [
+      "pesan barumu masuk, aku baca dulu",
     ],
   },
   comparing: {
@@ -510,6 +598,9 @@ function realizePublicProgressNote(
       break;
     case "listening":
     case "responding":
+    // Fase menunggu tidak punya catatan: pada detik itu belum ada pekerjaan
+    // yang dapat diringkas, dan bulannya yang menjadi tandanya.
+    case "waiting":
       return null;
   }
   return note.length <= MAX_PUBLIC_PROGRESS_NOTE_CHARACTERS ? note : null;

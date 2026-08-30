@@ -1262,6 +1262,62 @@ itu kondisi lama—sudah tercatat pada sesi sebelum perubahan ini.
 
 Sesi penuh sesudah perubahan: 13 dari 13 lulus.
 
+## 23. Status pertama muncul seketika, dengan fase bulan
+
+Dirancang bersama pemilik produk 31 Agustus 2026.
+
+**Masalahnya bukan Harvy lambat, melainkan sunyi di depan.** Harvy menahan
+giliran beberapa detik untuk memastikan pengguna selesai mengetik. Selama itu
+layar tidak menampilkan apa pun—status pertama baru dibuat sesudah jendela
+tutup, sehingga pesan yang menggantung bisa tidak berbalas tanda apa pun sampai
+dua belas detik.
+
+Status kini dibuat saat pesan tiba, sebelum batching:
+
+| | sebelum | sesudah |
+|---|---|---|
+| pesan masuk | sunyi | status dibuat |
+| 0,7 detik | sunyi | **status muncul** |
+| 2–4 detik | status baru dibuat | sudah berjalan |
+
+Jeda 0,7 detik sebelum tampil sudah ada sejak dulu, jadi balasan cepat tetap
+tidak memunculkan status yang langsung hilang lagi. Tidak ada aturan baru untuk
+itu.
+
+**Bentuknya `🌒 Menunggu Harvy...`, tanpa baris catatan.** Judulnya sengaja
+berbicara dari sudut pandang pengguna, dan itu keputusan pemilik produk yang
+awalnya saya bantah. Alasan yang membalikkan pendapat saya: pada detik itu model
+belum dipanggil sama sekali, jadi judul bernada suara Harvy ("Harvy menunggu")
+justru mengaku sedang bekerja padahal belum.
+
+Catatan `💭` sengaja tidak ada di fase ini. Versi pertama memasangkannya dengan
+kalimat bernada suara Harvy, dan keduanya bertentangan dalam satu gelembung:
+judul bilang pengguna menunggu Harvy, catatan bilang Harvy menunggu pengguna.
+Bulan menggantikannya—ia bukan kalimat siapa-siapa.
+
+**Bulannya berputar sendiri.** Seluruh status lain berubah karena ada yang
+dilaporkan; fase menunggu tidak punya peristiwa apa pun untuk dilaporkan—justru
+itu maksudnya—sehingga tanpa denyut sendiri ia diam sepenuhnya dan terlihat
+macet. Iramanya mengikuti `minimumUpdateIntervalMs`, jadi ia tidak pernah
+menyunting lebih rapat daripada batas kanal. Pada tunggu 2–4 detik pengguna
+melihat dua sampai tiga fase—bukan animasi berputar, lebih seperti napas.
+
+Siklus penuh delapan fase, bukan separuh: menunggu tidak punya tujuan yang dapat
+ditunjukkan, dan indikator yang berhenti di purnama terlihat macet.
+
+**Pesan yang menyela mendapat statusnya sendiri.** Ketika pesan susulan datang
+saat Harvy sudah bekerja, hubungannya belum dinilai dan penilaian itu perlu
+beberapa detik. Sebelumnya layar tetap menampilkan pekerjaan lama seolah tidak
+terjadi apa-apa, padahal pekerjaan itu mungkin sedang dibuang. Kini muncul
+`Membaca` dengan catatan "pesan barumu masuk, aku baca dulu", sebelum berganti
+ke `Menyesuaikan` atau `Beralih` sesuai hasil penilaiannya.
+
+Kata "Menimbang" sempat dipilih lalu ditolak pemilik produk: itu bahasa surat
+resmi, dan dipendekkan jadi "timbang" terbaca timbangan berat.
+
+Terverifikasi di kanal: bulan muncul pada seluruh giliran sesi, 12 dari 13 kasus
+lulus. Yang gagal `obrolan-biasa` pada varians extractor yang sudah tercatat.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

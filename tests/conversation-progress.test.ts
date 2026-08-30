@@ -322,3 +322,55 @@ function focusInput(
     ...overrides,
   };
 }
+
+/**
+ * Status pertama muncul sebelum ada pekerjaan apa pun.
+ *
+ * Harvy menahan giliran beberapa detik untuk memastikan pengguna selesai
+ * mengetik, dan selama itu layar dulu sunyi total—pesan yang menggantung bisa
+ * tidak berbalas tanda apa pun sampai dua belas detik.
+ */
+describe("status menunggu", () => {
+  it("menampilkan bulan di depan judul tanpa baris catatan", () => {
+    const teks = renderConversationProgress({ phase: "waiting" }, "x", 0);
+
+    assert.equal(teks, "🌒 Menunggu Harvy...");
+    // Catatan bernada suara Harvy akan bertentangan dengan judul yang
+    // berbicara dari sudut pandang pengguna, di dalam satu gelembung yang sama.
+    assert.ok(!teks.includes("💭"));
+  });
+
+  it("berputar penuh delapan fase lalu kembali", () => {
+    const frames = Array.from(
+      { length: 9 },
+      (_, index) => renderConversationProgress({ phase: "waiting" }, "x", index),
+    );
+
+    assert.equal(new Set(frames.slice(0, 8)).size, 8);
+    assert.equal(frames[8], frames[0]);
+  });
+
+  // Tanpa ini status menunggu terbaca sebagai balasan sungguhan, dan setiap
+  // alat yang memisahkan status dari jawaban akan salah menghitungnya.
+  it("dikenali sebagai status, bukan balasan", () => {
+    for (let frame = 0; frame < 8; frame += 1) {
+      assert.ok(
+        isRenderedConversationProgress(
+          renderConversationProgress({ phase: "waiting" }, "x", frame),
+        ),
+        `fase ${frame}`,
+      );
+    }
+    assert.ok(!isRenderedConversationProgress("Menunggu kabar darimu ya"));
+  });
+
+  it("memberi catatan khusus untuk pesan yang menyela pekerjaan", () => {
+    const teks = renderConversationProgress(
+      { phase: "reading", detail: "new-message" },
+      "x",
+    );
+
+    assert.match(teks, /^Membaca\.\.\./u);
+    assert.match(teks, /pesan barumu masuk/u);
+  });
+});
