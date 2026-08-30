@@ -17,8 +17,8 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = process.cwd();
 
 describe("corpus evaluasi percakapan", () => {
-  it("memuat 65 skenario sintetis lintas jalur utama", () => {
-    assert.equal(CONVERSATION_EVAL_CASES.length, 65);
+  it("memuat 71 skenario sintetis lintas jalur utama", () => {
+    assert.equal(CONVERSATION_EVAL_CASES.length, 71);
     const ids = new Set(CONVERSATION_EVAL_CASES.map((testCase) => testCase.id));
     for (const required of [
       // Cakupan semantic dan routing ditambahkan 2026-08-28. Tanpa daftar ini,

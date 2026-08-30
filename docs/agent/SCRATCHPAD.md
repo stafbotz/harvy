@@ -364,10 +364,53 @@ mendeklarasikan fungsi itu fatal baginya. Bagi pembaca manusia, blok kedua
 mungkin sekadar contoh pemakaian. Kegagalan kedua—fungsi melempar pada masukan
 sah—tidak punya keringanan seperti itu.
 
-Kesimpulan yang ditopang datanya: langkah review menghapus cacat yang benar-
-benar ada pada draft, dan satu panggilan model tambahan per giliran kode
-terbayar. Yang belum: apakah manfaatnya bertahan pada korpus yang jauh lebih
-besar, dan berapa biayanya dalam token.
+Kesimpulan pengukuran pertama: langkah review menghapus cacat yang benar-benar
+ada pada draft, dan satu panggilan model tambahan per giliran kode terbayar.
+
+**Kesimpulan lama dibalik oleh korpus yang lebih besar.** Pertanyaan terbuka di
+atas—apakah manfaatnya bertahan pada korpus yang jauh lebih besar, dan berapa
+biayanya dalam token—dijawab 30 Agustus 2026 dengan menaikkan korpus kode dari 9
+menjadi 15 kasus dan menjalankan pembandingnya tiga kali per kondisi.
+
+| | ulangan 1 | ulangan 2 | ulangan 3 | total |
+|---|---|---|---|---|
+| review menyala | 14/15 | 12/15 | 12/15 | **38 dari 45** |
+| review dimatikan | 15/15 | 14/15 | 14/15 | **43 dari 45** |
+
+Token per run: 181.019–181.166 dengan review, 143.132–146.084 tanpa. Langkah
+review menambah sekitar **25% biaya token** dan 15 panggilan model per korpus.
+
+**Arahnya konsisten pada ketiga ulangan**, jadi ini bukan ayunan. Enam kasus
+tambahan sengaja dipilih yang draft pertamanya sering salah: angka Romawi,
+tahun kabisat, pencarian biner, perataan array bersarang, selisih jam melewati
+tengah malam, dan penghitungan kata.
+
+**Bentuk kegagalannya menunjukkan mekanismenya.** Tanpa review, satu-satunya
+kegagalan berulang adalah `code-request`—`Identifier 'jumlahkanArray' has
+already been declared`—yang merupakan artefak alat ukur: pemeriksa menggabungkan
+seluruh blok kode dalam balasan, sehingga blok kedua yang mengulang deklarasi
+menjadi fatal walau bagi pembaca manusia ia sekadar contoh pemakaian.
+
+Dengan review menyala, kegagalannya berbeda bentuk: `Illegal return statement`,
+`Missing initializer in const declaration`, `potongTeks is not defined`, dan satu
+`31 !== 29` pada tahun kabisat. Itu bentuk kode yang **rusak saat ditulis
+ulang**, bukan kode yang salah sejak draft.
+
+**Kesimpulan yang ditopang datanya sekarang: langkah review merusak lebih sering
+daripada memperbaiki pada korpus ini, sambil menambah 25% biaya.** Pengukuran
+lama tetap benar untuk apa yang diukurnya—sembilan kasus, dua ulangan—tetapi
+sembilan kasus terlalu sedikit untuk menyimpulkan satu panggilan model tambahan
+di setiap giliran kode.
+
+**Mematikan langkah ini adalah keputusan produk, bukan panggilan saya.** Ia
+mengubah perilaku setiap giliran kode, dan bukti ini 45 giliran pada satu korpus
+buatan—kuat untuk membalik klaim, belum tentu cukup untuk membalik default.
+`HARVY_DISABLE_CODE_ARTIFACT_REVIEW=1` sudah tersedia bila hendak dicoba lebih
+lama.
+
+Evaluator kini melaporkan biaya token nyata dari provider (`tokens` pada JSON
+hasilnya), memakai pengukur yang sama dengan probe. Sebelum ini pertanyaan biaya
+hanya dapat dijawab dengan perkiraan karakter.
 
 Untuk menjalankan pembandingnya lagi:
 

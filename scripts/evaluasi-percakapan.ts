@@ -42,6 +42,7 @@ import { createContext, runInNewContext } from "node:vm";
 import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
+import { startTokenMeter, tokenTotals } from "./token-meter.js";
 import type { ConversationTurn } from "../src/domain/history.js";
 import {
   CONVERSATION_EVAL_CASES,
@@ -113,7 +114,10 @@ const evaluationStartedAt = Date.now();
 let completedCaseCount = 0;
 const config = loadConfig();
 const conversation = new Conversation(
-  await createInstrumentedAiClient(config, "evaluation"),
+  await (async () => {
+    startTokenMeter();
+    return await createInstrumentedAiClient(config, "evaluation");
+  })(),
   config.ai,
   config.defaultTimezone,
 );
@@ -189,6 +193,10 @@ console.log(
       providerFailures,
       executionFailures,
       notRun,
+      // Biaya token nyata dari provider, bukan perkiraan karakter. Tanpa ini
+      // pertanyaan "berapa mahal langkah review artefak kode" hanya dapat
+      // dijawab dengan tebakan.
+      tokens: tokenTotals(),
       providerCircuitOpen: providerCircuit.reason !== null,
       providerRateLimited: providerCircuit.reason?.includes("http_429") ?? false,
       results,
