@@ -45,7 +45,24 @@ const CONSENT_LABEL = "Okei, mulai.";
  * Kandidatnya dicoba berurutan; klik yang salah sasaran ditolak transport tanpa
  * mengubah state apa pun.
  */
-const CONSENT_SURFACE_CANDIDATES = ["surface-2", "surface-3", "surface-4"];
+/**
+ * Kandidat sengaja dilebihkan, dan kegagalannya kini dideteksi sebelum kasus
+ * berjalan.
+ *
+ * Onboarding gagal 1 dari 3 sesi pada 30 Agustus 2026: tombol persetujuan
+ * tidak berada di alias yang dicoba, seluruh sembilan kasus berjalan dengan
+ * pesan yang ditahan runtime, dan sesi itu terbuang percuma—sembilan giliran
+ * model yang tidak mengukur apa pun.
+ */
+const CONSENT_SURFACE_CANDIDATES = [
+  "surface-1",
+  "surface-2",
+  "surface-3",
+  "surface-4",
+  "surface-5",
+];
+/** Kalimat yang hanya muncul setelah izin benar-benar diterima. */
+const CONSENT_ACCEPTED = /oke, kita mulai/iu;
 /**
  * Batas perintah per sesi tester (`MAX_SCRIPTED_COMMANDS`).
  *
@@ -529,7 +546,22 @@ async function main(): Promise<void> {
   // Menyatukannya dengan kasus pernah melewati batas perintah tester tanpa
   // pesan yang dapat dibaca, dan ia juga membatasi berapa kasus yang muat.
   console.error("fase 1: menyetujui izin AI");
-  await runTester(journey, buildOnboardingCommands());
+  const onboarding = await runTester(journey, buildOnboardingCommands());
+  const consentAccepted = onboarding.some((event) =>
+    event.type === "surface" && CONSENT_ACCEPTED.test(String(event.text ?? ""))
+  );
+  if (!consentAccepted) {
+    // Berhenti di sini, bukan menjalankan kasus yang pasti tidak sah. Sesi yang
+    // gagal onboarding tetap membakar sembilan giliran model tanpa mengukur
+    // apa pun.
+    console.error("");
+    console.error("ONBOARDING GAGAL: tombol persetujuan tidak pernah tertekan.");
+    console.error(
+      "Kasus tidak dijalankan. Periksa alias bubble onboarding pada " +
+        "CONSENT_SURFACE_CANDIDATES.",
+    );
+    process.exit(2);
+  }
   console.error("fase 2: menjalankan kasus");
   const events = await runTester(journey, plan.lines);
   const records = readRuntimeLog(journey);

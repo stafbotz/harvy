@@ -128,10 +128,21 @@ tersimpan:
 | Indonesia dengan kata pinjaman Inggris | diam |
 | 42 baris keluaran harness nyata | nol positif palsu |
 
-**Sesi pertama dari tiga: 9 dari 9 lulus, nol pelanggaran register.** Dua sesi
-sisanya masih berjalan; satu sesi belum membedakan pagar yang bekerja dari
-pelanggaran yang kebetulan tidak muncul. Perbarui angkanya ketika keduanya
-mendarat.
+Tiga sesi selesai. Dua di antaranya menghasilkan 9 dari 9 lulus dengan **nol
+pelanggaran register** pada 18 giliran yang benar-benar berjalan.
+
+Sesi ketiga tidak terhitung: onboarding gagal, tombol persetujuan tidak pernah
+tertekan, dan kesembilan kasusnya berjalan dengan pesan yang ditahan runtime.
+Harness mendeteksinya dan mengatakannya terang-terangan, tetapi baru sesudah
+membakar sembilan giliran model yang tidak mengukur apa pun. Kini kandidat
+alias tombolnya diperluas menjadi lima dan penerimaan izin diperiksa di akhir
+fase pertama; sesi berhenti dengan kode 2 bila izin belum diterima, sebelum
+satu kasus pun dijalankan.
+
+Nol pelanggaran dari 18 giliran belum membuktikan pagarnya menangkap sesuatu—
+ia membuktikan pelanggarannya jarang. Kedua pelanggaran yang memicu pagar ini
+teramati pada giliran yang lewat Agent Runtime dengan pekerjaan panjang, dan
+korpus sembilan kasus hanya punya sedikit bentuk itu.
 
 Yang belum dijaga: perpindahan "aku" ke "Saya". Sengaja tidak dijadikan pagar
 karena `HARVY_IDENTITY` menyatakan Harvy punya dua register yang keduanya
@@ -551,9 +562,11 @@ Pengukuran sesudahnya, kasus `batalkan-task-alami`:
 |---|---|
 | sebelum perubahan | 2 dari 4 |
 | sesudah, terisolasi | 2 dari 3 |
-| sesudah, sesi penuh | 1 dari 1, dua sesi lagi berjalan |
+| sesudah, sesi penuh | 2 dari 2 |
 
-Belum cukup untuk disebut perbaikan. Bila prosa tetap tidak dipatuhi, pelajaran
+Digabung: 4 dari 5 sesudah perubahan, dibanding 2 dari 4 sebelumnya. Arahnya
+benar tetapi n-nya masih kecil, dan sesi ketiga tidak terhitung karena
+onboarding-nya gagal. Bila prosa tetap tidak dipatuhi, pelajaran
 butir 1 berlaku di sini juga: beri slot pada schema—field sasaran yang terpisah
 dari teks pertanyaan—karena parameter yang dideklarasikan diisi sedangkan prosa
 diabaikan.
