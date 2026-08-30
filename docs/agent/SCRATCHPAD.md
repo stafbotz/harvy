@@ -564,9 +564,13 @@ Yang masih kurang:
 - Tidak ada kasus keselamatan. Menambahkannya menuntut kehati-hatian: korpus
   eval sudah menutup triase, dan mengirim kalimat berisiko ke kanal nyata
   berulang kali bukan hal yang dilakukan tanpa alasan kuat.
-- Sembilan kasus menghasilkan 30 perintah dari batas 32. Kasus berikutnya tidak
-  akan muat; pemecahan per sesi sudah dijaga `MAX_TESTER_COMMANDS` dan akan
-  gagal dengan pesan yang menyebut berapa kasus yang muat.
+- ~~Sembilan kasus menghasilkan 30 perintah dari batas 32.~~ Selesai 30 Agustus
+  2026. Batas 32 itu batas **per sesi tester**, bukan batas korpus. Korpus yang
+  tidak muat kini dipecah menjadi beberapa sesi berurutan pada journey yang
+  sama, sehingga state berjalan terus—tugas yang disimpan batch pertama tetap
+  terbaca batch berikutnya. Kasus tidak pernah dipotong di tengah: `interrupt`
+  menuntut giliran yang masih aktif dan `burst` menuntut ketiga bubble-nya
+  berurutan tanpa jeda sesi. Dikunci `tests/live-telegram-batching.test.ts`.
 
 ## 10. Frekuensi tiga sinyal mutu, dari 28 giliran
 
@@ -951,6 +955,42 @@ terbukti bukan regresi—detektor memori tidak menangkap kalimat recall
 sebelumnya semuanya menggabungkan tiga bubble dengan benar.
 
 Menyimpulkan perbaikan dari satu sesi karena itu tidak sah, ke arah mana pun.
+
+## 18. Kapasitas penguji Telegram bukan lagi batas korpus
+
+Dikerjakan 30 Agustus 2026. Batas 32 perintah milik tester adalah batas **per
+sesi**, bukan batas korpus, tetapi harness memperlakukannya sebagai batas keras:
+sembilan kasus memakai 30, dan kasus kesepuluh dihentikan dengan kode 2.
+
+Dua pekerjaan yang paling dibutuhkan tertahan tepat di situ—kasus keselamatan
+dan pemeriksaan kesadaran Harvy saat memotong—sehingga batas ini menghalangi
+justru kelas yang kesalahannya paling mahal.
+
+`splitIntoBatches` memecah korpus menjadi beberapa sesi berurutan pada journey
+yang sama. State berjalan terus: tugas yang disimpan batch pertama tetap terbaca
+batch berikutnya, pola yang sudah dipakai fase onboarding.
+
+Dua hal yang wajib dijaga dan keduanya dikunci tes:
+
+- **Kasus tidak pernah dipotong di tengah.** `interrupt` menuntut giliran yang
+  masih aktif dan `burst` menuntut ketiga bubble-nya berurutan; kasus yang
+  terbelah akan tampak berjalan tetapi mengukur bentuk giliran yang berbeda.
+- **`commandSequence` dipetakan per batch.** Nomor urut tester dimulai ulang
+  tiap sesi, jadi menyatukan kejadian lebih dulu lalu memetakan sekali akan
+  menggeser seluruh atribusi pada batch kedua dan seterusnya.
+
+**Berkas ini dulu menjalankan sesi hanya karena diimpor.** Tes pertama yang
+mengimpor pembaginya langsung menyalakan runtime Telegram, memegang lock data,
+dan menggantung sampai dimatikan. Entry point kini dijaga `import.meta.url`.
+Modul yang mengerjakan sesuatu hanya karena dibaca tidak dapat diuji, dan itu
+sebabnya pembagi ini tidak terkunci tes sejak awal.
+
+Ditambah `--rencana`, yang mencetak pembagiannya tanpa menyentuh kanal.
+Pembagian yang salah sebelumnya hanya terlihat sesudah satu sesi penuh terbakar.
+
+Korpus sembilan kasus sekarang tetap satu batch—tidak ada perubahan perilaku,
+memang begitu maksudnya. Sesi Telegram sesudah perubahan 9 dari 9 lulus, yang
+membuktikan alurnya tidak rusak dan bukan lebih dari itu.
 
 ## Kemampuan yang absen secara rancangan
 

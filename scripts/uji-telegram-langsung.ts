@@ -26,6 +26,7 @@
  *   npx tsx scripts/uji-telegram-langsung.ts --kasus=simpan-task,baca-task
  *   npx tsx scripts/uji-telegram-langsung.ts --simpan-transkrip
  */
+import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -72,7 +73,7 @@ const CONSENT_ACCEPTED = /oke, kita mulai/iu;
  * keluar dengan kode 2". Onboarding kini berjalan sebagai sesi tersendiri
  * supaya sesi kasus tidak ikut membawanya, dan batas ini dijaga eksplisit.
  */
-const MAX_TESTER_COMMANDS = 32;
+export const MAX_TESTER_COMMANDS = 32;
 
 interface TesterEvent {
   type: string;
@@ -116,7 +117,7 @@ function argument(prefix: string): string | null {
   return found ? found.slice(prefix.length) : null;
 }
 
-interface CommandPlan {
+export interface CommandPlan {
   lines: string[];
   /** id kasus per nomor urut perintah, 1-based. Null untuk perintah rumah tangga. */
   caseBySequence: (string | null)[];
@@ -148,7 +149,7 @@ function buildOnboardingCommands(): string[] {
 }
 
 /** Sesi kedua: hanya kasus, pada journey yang izinnya sudah tersetujui. */
-function buildCaseCommands(cases: readonly LiveTelegramCase[]): CommandPlan {
+export function buildCaseCommands(cases: readonly LiveTelegramCase[]): CommandPlan {
   const lines: string[] = [];
   // Indeks 0 tidak terpakai: `commandSequence` milik tester dimulai dari 1.
   const caseBySequence: (string | null)[] = [null];
@@ -185,6 +186,47 @@ function buildCaseCommands(cases: readonly LiveTelegramCase[]): CommandPlan {
   }
   push({ type: "stop" }, null);
   return { lines, caseBySequence };
+}
+
+/**
+ * Memecah kasus menjadi beberapa sesi tester yang masing-masing muat.
+ *
+ * Batas 32 perintah milik tester adalah batas per sesi, bukan batas korpus.
+ * Sembilan kasus memakai 30 dari 32, sehingga kasus kesepuluh tidak muat sama
+ * sekali—dan dua kelas yang paling dibutuhkan, keselamatan dan kesadaran Harvy
+ * saat memotong, keduanya tertahan di situ.
+ *
+ * Journey-nya sama untuk semua batch, jadi state berjalan terus: tugas yang
+ * disimpan batch pertama tetap terbaca batch berikutnya. Pola ini sudah dipakai
+ * onboarding, yang memang sesi tersendiri pada journey yang sama.
+ *
+ * Kasus tidak pernah dipotong di tengah: perintah satu kasus selalu utuh dalam
+ * satu batch, karena `interrupt` menuntut giliran yang masih aktif dan `burst`
+ * menuntut ketiga bubble-nya berurutan tanpa jeda sesi.
+ */
+export function splitIntoBatches(
+  cases: readonly LiveTelegramCase[],
+): CommandPlan[] {
+  const batches: CommandPlan[] = [];
+  let pending: LiveTelegramCase[] = [];
+  const flush = (): void => {
+    if (pending.length > 0) batches.push(buildCaseCommands(pending));
+    pending = [];
+  };
+  for (const testCase of cases) {
+    const candidate = buildCaseCommands([...pending, testCase]);
+    if (candidate.lines.length > MAX_TESTER_COMMANDS && pending.length > 0) {
+      flush();
+    }
+    pending.push(testCase);
+    // Satu kasus yang sendirian pun tidak muat berarti korpusnya yang salah,
+    // bukan pembagiannya. Dilaporkan saat batch itu dijalankan.
+    if (buildCaseCommands(pending).lines.length > MAX_TESTER_COMMANDS) {
+      flush();
+    }
+  }
+  flush();
+  return batches;
 }
 
 async function runTester(
@@ -571,15 +613,36 @@ async function main(): Promise<void> {
   console.error(`journey : ${journey}`);
   console.error(`kasus   : ${cases.length}`);
 
-  const plan = buildCaseCommands(cases);
-  if (plan.lines.length > MAX_TESTER_COMMANDS) {
-    const maxCases = Math.floor((MAX_TESTER_COMMANDS - 1) / 3);
+  // Batas 32 perintah adalah batas per sesi tester, bukan batas korpus. Korpus
+  // yang tidak muat dipecah menjadi beberapa sesi berurutan pada journey yang
+  // sama, sehingga state berjalan terus dan kasus baru tidak lagi terhalang
+  // ukuran korpus.
+  const batches = splitIntoBatches(cases);
+  const tooLarge = batches.find((batch) => batch.lines.length > MAX_TESTER_COMMANDS);
+  if (tooLarge) {
+    // Hanya mungkin bila satu kasus sendirian melewati batas—korpusnya yang
+    // salah, bukan pembagiannya.
     console.error(
-      `Terlalu banyak perintah: ${plan.lines.length} melewati batas ` +
-        `${MAX_TESTER_COMMANDS}. Jalankan paling banyak ${maxCases} kasus per ` +
-        "sesi, atau pilih sebagiannya dengan --kasus=.",
+      `Satu kasus memerlukan ${tooLarge.lines.length} perintah, melewati batas ` +
+        `${MAX_TESTER_COMMANDS}. Perkecil kasusnya.`,
     );
     process.exit(2);
+  }
+  if (batches.length > 1) {
+    console.error(`batch   : ${batches.length} sesi berurutan`);
+  }
+
+  // Mencetak pembagiannya tanpa menyentuh kanal. Pembagian yang salah hanya
+  // terlihat sesudah satu sesi penuh terbakar, jadi ia harus dapat diperiksa
+  // lebih murah daripada itu.
+  if (process.argv.includes("--rencana")) {
+    for (const [index, batch] of batches.entries()) {
+      const ids = batch.caseBySequence.filter((id): id is string => id !== null);
+      console.log(
+        `batch ${index + 1}: ${batch.lines.length} perintah, ${ids.length} kasus — ${ids.join(", ")}`,
+      );
+    }
+    process.exit(0);
   }
 
   // Onboarding dijalankan sebagai sesi tersendiri pada journey yang sama.
@@ -603,7 +666,27 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   console.error("fase 2: menjalankan kasus");
-  const events = await runTester(journey, plan.lines);
+  const turns: TurnEvidence[] = [];
+  let sentTurns = 0;
+  let expectedTurns = 0;
+  let executed = 0;
+  let plannedLines = 0;
+  for (const [index, batch] of batches.entries()) {
+    if (batches.length > 1) {
+      console.error(`  batch ${index + 1} dari ${batches.length}`);
+    }
+    const events = await runTester(journey, batch.lines);
+    // `commandSequence` tester dimulai ulang tiap sesi, jadi pemetaan kasusnya
+    // wajib per batch. Menyatukan kejadian lebih dulu lalu memetakan sekali
+    // akan menggeser seluruh atribusi pada batch kedua dan seterusnya.
+    turns.push(...joinEvidence(events, readRuntimeLog(journey), batch.caseBySequence));
+    sentTurns += events.filter((event) => event.type === "sent").length;
+    executed += events.filter((event) =>
+      event.type === "sent" || event.type === "command_rejected"
+    ).length;
+    expectedTurns += batch.caseBySequence.filter((id) => id !== null).length;
+    plannedLines += batch.lines.length;
+  }
 
   // Penguji wajib menghabiskan seluruh perintahnya. Sesi 30 Agustus 2026
   // berhenti sesudah tujuh dari sembilan kasus tanpa satu baris penjelasan;
@@ -611,23 +694,16 @@ async function main(): Promise<void> {
   // kegagalan lain, sehingga terbaca seolah Harvy yang bermasalah. Sesi yang
   // tidak lengkap bukan sesi yang gagal sebagian—ia sesi yang tidak sah, dan
   // menilai Harvy darinya berarti menilai dari bukti yang tidak ada.
-  const executed = events.filter((event) =>
-    event.type === "sent" || event.type === "command_rejected"
-  ).length;
-  const expectedTurns = plan.caseBySequence.filter((id) => id !== null).length;
-  const sentTurns = events.filter((event) => event.type === "sent").length;
   if (sentTurns < expectedTurns) {
     console.error("");
     console.error(
       `SESI TIDAK LENGKAP: ${sentTurns} dari ${expectedTurns} giliran kasus terkirim ` +
-        `(${executed} perintah terpakai dari ${plan.lines.length}).`,
+        `(${executed} perintah terpakai dari ${plannedLines}).`,
     );
     console.error(
       "Penilaian di bawah hanya berlaku untuk kasus yang benar-benar berjalan.",
     );
   }
-  const records = readRuntimeLog(journey);
-  const turns = joinEvidence(events, records, plan.caseBySequence);
   const byCase = new Map<string, TurnEvidence>();
   for (const turn of turns) {
     if (turn.caseId && !byCase.has(turn.caseId)) byCase.set(turn.caseId, turn);
@@ -702,7 +778,7 @@ async function main(): Promise<void> {
     console.log("");
   }
 
-  const boundaryTimeouts = records.filter(
+  const boundaryTimeouts = readRuntimeLog(journey).filter(
     (record) => record.event === "turn_boundary_check_failed",
   ).length;
   console.log(`Ringkasan: ${cases.length - failed}/${cases.length} lulus`);
@@ -722,4 +798,12 @@ async function main(): Promise<void> {
   process.exit(failed > 0 || consentPending ? 1 : 0);
 }
 
-await main();
+// Hanya berjalan ketika dipanggil langsung.
+//
+// Sebelum penjaga ini, `import` apa pun dari berkas ini menyalakan sesi
+// Telegram sungguhan: satu tes yang mengimpor pembagi batch langsung membuka
+// runtime, memegang lock data, dan menggantung sampai dimatikan. Modul yang
+// mengerjakan sesuatu hanya karena dibaca tidak dapat diuji.
+const invokedDirectly = process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) await main();
