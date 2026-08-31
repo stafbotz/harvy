@@ -96,6 +96,14 @@ export interface TransientProgressOptions {
    * akan menyunting puluhan kali per detik untuk gerak yang tak terlihat mata.
    */
   animationIntervalMs?: number;
+  /**
+   * Baris terakhir status: lamanya giliran berjalan dan token yang terpakai.
+   *
+   * Disediakan pemanggil, bukan dihitung di sini, karena sumbernya milik
+   * adapter—jam giliran dan ledger pemakaian. Dipanggil ulang tiap denyut,
+   * jadi ia wajib murah dan tidak boleh menyentuh I/O.
+   */
+  footer?: () => string | null;
   seed?: string;
   onError?: (operation: "show" | "update" | "remove" | "typing", error: unknown) => void;
 }
@@ -131,6 +139,9 @@ const WAITING_GRACE_MS = 250;
  * operasi yang sama.
  */
 const ANIMATION_INTERVAL_MS = 1_000;
+
+/** Berapa denyut bulan sebelum kalimat di bawah judul bergeser. */
+const NOTE_ROTATION_FRAMES = 5;
 const DEFAULT_MINIMUM_UPDATE_INTERVAL_MS = 1_500;
 
 /**
@@ -260,7 +271,12 @@ export class TransientConversationProgress<Reference>
     if (this.closed || !this.latest) return;
     try {
       this.reference = await this.renderer.show(
-        renderConversationProgress(this.latest, this.seed, this.waitingFrame),
+        renderConversationProgress(
+          this.latest,
+          this.seed,
+          this.waitingFrame,
+          this.options.footer?.() ?? null,
+        ),
       );
       this.lastRenderedAt = this.now();
       this.startAnimation();
@@ -285,7 +301,12 @@ export class TransientConversationProgress<Reference>
     try {
       await this.renderer.update(
         this.reference,
-        renderConversationProgress(this.latest, this.seed, this.waitingFrame),
+        renderConversationProgress(
+          this.latest,
+          this.seed,
+          this.waitingFrame,
+          this.options.footer?.() ?? null,
+        ),
       );
       this.lastRenderedAt = this.now();
     } catch (error) {
@@ -411,39 +432,68 @@ export function renderConversationProgress(
   event: ConversationProgressEvent,
   seed = "harvy",
   frame = 0,
+  footer: string | null = null,
 ): string {
   const status = STATUS[event.phase];
   if (!status) return "";
   const moon = PROGRESS_FRAMES[frame % PROGRESS_FRAMES.length] ??
     PROGRESS_FRAMES[0];
-  if (event.phase === "waiting") {
-    // Tanpa baris catatan. Judulnya berbicara dari sudut pandang pengguna
-    // ("kamu sedang menunggu Harvy"), sedangkan catatan bernada suara Harvy
-    // akan bertentangan dengannya di dalam satu gelembung yang sama.
-    return `${moon} ${status}...`;
+  const lines: string[] = [`${moon} ${status}`];
+  if (event.phase !== "waiting") {
+    const publicFocus = parsePublicProgressFocus(event.publicFocus);
+    const focusedNote = publicFocus
+      ? realizePublicProgressNote(event.phase, publicFocus)
+      : null;
+    const notes = FALLBACK_NOTES[event.phase]?.[event.detail ?? "general"] ??
+      FALLBACK_NOTES[event.phase]?.general ?? [];
+    // Tanpa catatan pengganti ketika tidak ada yang berarti untuk disebut.
+    // Kalimat yang muat untuk apa saja tidak memberi tahu apa pun, dan judul
+    // sendirian lebih jujur daripada mengisi baris kedua demi ada isinya.
+    const note = focusedNote ??
+      notes[stableIndex(seed, event.phase, notes.length, frame)] ?? null;
+    if (note) lines.push(`💭 ${note}`);
   }
-  const publicFocus = parsePublicProgressFocus(event.publicFocus);
-  const focusedNote = publicFocus
-    ? realizePublicProgressNote(event.phase, publicFocus)
-    : null;
-  const notes = FALLBACK_NOTES[event.phase]?.[event.detail ?? "general"] ??
-    FALLBACK_NOTES[event.phase]?.general ?? [];
-  const note = focusedNote ?? notes[stableIndex(seed, event.phase, notes.length)] ??
-    "Aku cek dulu bagian yang paling penting.";
-  return `${moon} ${status}...\n💭 ${note}`;
+  if (footer) lines.push(footer);
+  return lines.join("\n");
+}
+
+/**
+ * Baris biaya di bawah status: lama berjalan dan token yang sudah terpakai.
+ *
+ * Ditulis di sini supaya kedua kanal memakai bentuk yang sama, dan supaya
+ * pembulatannya tidak berulang di dua tempat.
+ */
+export function renderProgressFooter(
+  elapsedMs: number,
+  tokens: number,
+): string | null {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return null;
+  const seconds = Math.floor(elapsedMs / 1_000);
+  const waktu = seconds >= 60
+    ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+    : `${seconds}s`;
+  // Token belum tentu ada pada detik pertama: panggilan model pertama baru
+  // melapor sesudah selesai. Menampilkan "0 tokens" akan terbaca seperti klaim
+  // bahwa tidak ada yang dikerjakan.
+  if (!Number.isFinite(tokens) || tokens <= 0) return `(${waktu})`;
+  const ringkas = tokens >= 1_000
+    ? `${(tokens / 1_000).toFixed(1)}k`
+    : String(tokens);
+  return `(${waktu} · ↓ ${ringkas} tokens)`;
 }
 
 /** Hanya untuk membedakan surface status transient dari jawaban user-facing. */
 export function isRenderedConversationProgress(text: string): boolean {
-  const trimmed = text.trim();
-  // Bulan kini mendahului seluruh fase, bukan hanya fase menunggu. Prefiksnya
-  // dibuat opsional supaya teks status dari build sebelumnya tetap dikenali.
-  const MOON = /^(?:[🌑🌒🌓🌔🌕🌖🌗🌘]\s)?/u;
-  const tanpaBulan = trimmed.replace(MOON, "");
-  if (/^Menunggu Harvy\.\.\.$/u.test(tanpaBulan)) return true;
-  return /^(?:Memikirkan|Mencari|Membaca|Membandingkan|Menghitung|Memeriksa|Menyesuaikan|Beralih|Menyusun jawaban)\.\.\.\n💭\s/u.test(
-    tanpaBulan,
+  // Judul saja sudah cukup: sejak catatan menjadi opsional dan titik-titik
+  // dihapus, bentuknya bisa satu baris, dua baris, atau tiga baris dengan
+  // footer biaya. Yang stabil hanya baris pertamanya.
+  const [pertama] = text.trim().split("\n");
+  const tanpaBulan = (pertama ?? "").replace(
+    /^[🌑🌒🌓🌔🌕🌖🌗🌘]\s/u,
+    "",
   );
+  return /^(?:Menunggu Harvy|Memikirkan|Mencari|Membaca|Membandingkan|Menghitung|Memeriksa|Menyesuaikan|Beralih|Menyusun jawaban)(?:\.\.\.)?$/u
+    .test(tanpaBulan);
 }
 
 /**
@@ -492,83 +542,77 @@ const STATUS: Partial<Record<ConversationProgressPhase, string>> = {
   composing: "Menyusun jawaban",
 };
 
+/**
+ * Catatan di bawah judul menyebut **objeknya**, bukan mengulang kata kerjanya.
+ *
+ * Versi sebelumnya membuat kedua baris mengatakan hal yang sama: judul
+ * "Memikirkan", catatan "Aku lihat dulu ini dari beberapa sisi". Satu informasi,
+ * dua baris. Hampir semuanya juga diawali "Aku", sehingga satu giliran tiga fase
+ * terbaca "Aku..., Aku..., Aku...".
+ *
+ * Catatan yang tidak menambah apa pun sengaja dihapus, bukan diganti kalimat
+ * lain: fase tanpa objek yang berarti lebih baik tampil sebagai judul saja
+ * daripada membawa kalimat yang muat untuk apa saja.
+ *
+ * Pengakuan pada `adjusting` dan `switching` tetap berbentuk kalimat penuh. Di
+ * sana suaranya memang bagian dari isinya—Harvy sedang mengakui perubahan arah,
+ * bukan melaporkan pekerjaan.
+ */
 const FALLBACK_NOTES: Partial<Record<
   ConversationProgressPhase,
   Partial<Record<ConversationProgressDetail, readonly string[]>>
 >> = {
   thinking: {
     general: [
-      "Aku lihat dulu ini dari beberapa sisi.",
-      "Aku urutin dulu hal yang paling berpengaruh.",
-      "Aku pertimbangkan dulu biar jawabannya nggak asal cepat.",
+      "dari beberapa sisi dulu",
+      "mulai dari yang paling berpengaruh",
+      "biar jawabannya nggak asal cepat",
     ],
-    // Dipakai sebelum pemahaman pesan selesai, jadi belum ada apa pun yang
-    // boleh diklaim tentang isinya. Satu kalimat netral yang benar untuk
-    // giliran apa pun—termasuk yang ternyata masuk lane keselamatan—lebih
-    // aman daripada nada "menimbang" pada pesan yang belum dibaca.
-    initial: ["Aku baca dulu pesanmu."],
     "personal-fit": [
-      "Aku lihat dulu mana yang paling cocok buat keadaanmu.",
-      "Aku bedakan dulu hal yang kelihatan bagus dan yang benar-benar pas buatmu.",
+      "mana yang paling cocok buat keadaanmu",
+      "yang kelihatan bagus dan yang benar-benar pas buatmu",
     ],
   },
   searching: {
-    general: ["Aku cari sumber yang paling relevan dulu."],
     "latest-information": [
-      "Aku cari informasi terbarunya dulu.",
-      "Aku cek sumber terbaru yang paling relevan.",
+      "informasi terbarunya",
+      "sumber terbaru yang paling relevan",
     ],
   },
   reading: {
     general: [
-      "Aku baca bagian yang paling relevan dulu.",
-      "Aku rangkum dulu informasi yang benar-benar kepakai.",
+      "bagian yang paling relevan",
+      "yang benar-benar kepakai",
     ],
-    // Dipakai ketika pesan susulan datang saat Harvy sudah mulai bekerja.
-    // Hubungannya belum dinilai—menambah, mengoreksi, atau ganti topik—dan
-    // penilaian itu perlu beberapa detik. Tanpa status ini, layar tetap
-    // menampilkan pekerjaan lama seolah tidak terjadi apa-apa, padahal
-    // pekerjaan itu mungkin sedang dibuang. Yang paling ingin diketahui
-    // pengguna pada detik itu adalah pesan barunya sudah terlihat.
     "new-message": [
-      "pesan barumu masuk, aku baca dulu",
+      "pesan barumu yang baru masuk",
     ],
   },
   comparing: {
-    general: ["Aku lihat dulu perbedaannya yang paling berarti."],
     "personal-fit": [
-      "Aku bandingkan dari hal yang paling ngaruh buat kamu.",
-      "Aku pisahkan dulu kelebihan yang benar-benar relevan buatmu.",
+      "dari hal yang paling ngaruh buat kamu",
+      "kelebihan yang benar-benar relevan buatmu",
     ],
   },
   calculating: {
-    general: ["Aku hitung dan cek lagi angkanya dulu."],
+    general: ["angkanya, lalu kucek lagi"],
   },
   checking: {
-    general: ["Aku cek dulu bagian yang paling penting."],
     consistency: [
-      "Aku pastikan dulu nggak ada bagian penting yang bertentangan.",
-      "Aku cek satu-satu biar nggak ada yang kelewat.",
+      "kalau-kalau ada bagian yang bertentangan",
+      "satu-satu biar nggak ada yang kelewat",
     ],
   },
   adjusting: {
-    general: ["Oke, aku sesuaikan dengan tambahan barumu."],
     "new-context": [
       "Oke, itu cukup ngubah pertimbangannya.",
-      "Sip, tambahan itu aku masukin ke jawaban yang sedang kususun.",
+      "Sip, tambahan itu masuk ke jawaban yang sedang kususun.",
     ],
   },
   switching: {
-    general: ["Oke, yang tadi aku tinggal dan aku ikuti arah barumu."],
     "new-direction": [
       "Oke, aku beralih ke yang baru kamu minta.",
-      "Sip, aku tinggalkan arah yang tadi dan pindah ke yang ini.",
-    ],
-  },
-  composing: {
-    general: [
-      "Aku susun biar jawabannya tetap enak diikuti.",
-      "Aku rapikan dulu jawabannya supaya nggak muter-muter.",
+      "Sip, arah yang tadi kutinggalkan dan pindah ke yang ini.",
     ],
   },
 };
@@ -709,14 +753,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function stableIndex(seed: string, phase: string, length: number): number {
+/**
+ * Memilih catatan secara stabil per pengguna, lalu bergeser seiring denyut.
+ *
+ * Sebelumnya satu kalimat dipilih lalu dipakai sepanjang fase. Satu fase dapat
+ * bertahan sebelas detik, dan kalimat yang sama terbaca belasan kali sementara
+ * hanya bulannya yang bergerak. Pergeserannya sengaja jauh lebih lambat
+ * daripada bulan—setiap beberapa denyut, bukan tiap denyut—karena teks yang
+ * berganti secepat itu terasa gelisah, bukan hidup.
+ */
+function stableIndex(
+  seed: string,
+  phase: string,
+  length: number,
+  frame = 0,
+): number {
   if (length <= 1) return 0;
   let hash = 2166136261;
   for (const character of `${seed}\u0000${phase}`) {
     hash ^= character.codePointAt(0) ?? 0;
     hash = Math.imul(hash, 16777619);
   }
-  return (hash >>> 0) % length;
+  return ((hash >>> 0) + Math.floor(frame / NOTE_ROTATION_FRAMES)) % length;
 }
 
 function sameEvent(

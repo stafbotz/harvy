@@ -663,6 +663,24 @@ export class TelemetryService implements UsageObserver {
     return this.relatedUsageLedger?.forgetActor?.(ownerId, actorAliases) ?? false;
   }
 
+  /**
+   * Total token yang sudah terpakai giliran ini, sejauh yang tercatat sekarang.
+   *
+   * Dibaca selagi giliran berjalan, jadi ia sengaja hanya melihat catatan yang
+   * belum disettle di memori—tidak menyentuh repository, tidak menunggu I/O,
+   * dan tidak boleh memperlambat surface status yang memanggilnya tiap detik.
+   *
+   * Angkanya tumbuh seiring panggilan model selesai satu per satu, sehingga
+   * pengguna melihat biayanya bertambah, bukan muncul sekaligus di akhir.
+   */
+  turnTokens(ownerId: string, turnId: string | null): number {
+    if (!turnId) return 0;
+    let total = 0;
+    for (const record of this.pendingUsage.get(ownerId) ?? []) {
+      if (record.turnId === turnId) total += record.totalTokens;
+    }
+    return total;
+  }
   async markDelivered(ownerId: string, turnId: string | null): Promise<UsageNotice | null> {
     let notice: UsageNotice | null = null;
     try {

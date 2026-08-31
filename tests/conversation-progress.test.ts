@@ -82,8 +82,8 @@ describe("status kerja percakapan", () => {
     assert.equal(shown.length, 1);
     assert.equal(updated.length, 1);
     assert.deepEqual(removed, ["status-1"]);
-    assert.match(shown[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\.\.\.\n💭 /u);
-    assert.match(updated[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Mencari\.\.\.\n💭 /u);
+    assert.match(shown[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\n💭 /u);
+    assert.match(updated[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Mencari\n💭 /u);
     assert.doesNotMatch(
       `${shown.join(" ")} ${updated.join(" ")}`,
       /token|chain[- ]?of[- ]?thought|model tier|reasoning high/iu,
@@ -95,7 +95,7 @@ describe("status kerja percakapan", () => {
     assert.equal(executionProgressEvent(execution("high")).phase, "thinking");
     assert.equal(
       renderConversationProgress({ phase: "adjusting", detail: "new-context" })
-        .includes("Menyesuaikan..."),
+        .includes("Menyesuaikan"),
       true,
     );
   });
@@ -224,7 +224,7 @@ describe("status kerja percakapan", () => {
       "fallback",
     );
 
-    assert.match(rendered, /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\.\.\.\n💭 \S/u);
+    assert.match(rendered, /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\n💭 \S/u);
     assert.doesNotMatch(rendered, /undefined|null/iu);
   });
 
@@ -334,7 +334,7 @@ describe("status menunggu", () => {
   it("menampilkan bulan di depan judul tanpa baris catatan", () => {
     const teks = renderConversationProgress({ phase: "waiting" }, "x", 0);
 
-    assert.equal(teks, "🌒 Menunggu Harvy...");
+    assert.equal(teks, "🌒 Menunggu Harvy");
     // Catatan bernada suara Harvy akan bertentangan dengan judul yang
     // berbicara dari sudut pandang pengguna, di dalam satu gelembung yang sama.
     assert.ok(!teks.includes("💭"));
@@ -370,8 +370,8 @@ describe("status menunggu", () => {
       "x",
     );
 
-    assert.match(teks, /^[🌑🌒🌓🌔🌕🌖🌗🌘] Membaca\.\.\./u);
-    assert.match(teks, /pesan barumu masuk/u);
+    assert.match(teks, /^[🌑🌒🌓🌔🌕🌖🌗🌘] Membaca/u);
+    assert.match(teks, /pesan barumu yang baru masuk/u);
   });
 });
 

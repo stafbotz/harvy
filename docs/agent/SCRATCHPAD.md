@@ -1447,6 +1447,55 @@ penuh bersih sejak diperbesar.
 
 Gerbang pengukuran ulang: `HARVY_DISABLE_SHAPE_DIRECTIVE=1`.
 
+## 25. Status: kata, tata letak, dan biaya yang berjalan
+
+Dirancang bersama pemilik produk 31 Agustus 2026, sesudah ia memakai Harvy
+langsung dan melaporkan statusnya terasa mati.
+
+**Dua barisnya dulu mengatakan hal yang sama.** Judul menyebut kata kerjanya,
+lalu catatan mengulang kata kerja itu dalam kalimat—"Memikirkan" diikuti "Aku
+lihat dulu ini dari beberapa sisi". Satu informasi, dua baris. Hampir seluruh
+catatan juga diawali "Aku", sehingga satu giliran tiga fase terbaca "Aku…,
+Aku…, Aku…".
+
+Sekarang judul menyebut **kerjanya**, catatan menyebut **objeknya**:
+
+```
+🌓 Memikirkan
+💭 mana yang paling cocok buat keadaanmu
+(12s · ↓ 1.2k tokens)
+```
+
+Titik-titik di ujung judul dihapus—bulannya sudah membuktikan ini berjalan—dan
+**catatan yang tidak menambah apa pun dihilangkan seluruhnya**, bukan diganti
+kalimat lain. Fase tanpa objek yang berarti tampil sebagai judul saja. Kalimat
+yang muat untuk apa saja tidak memberi tahu apa pun.
+
+Pengakuan pada `adjusting` dan `switching` tetap kalimat penuh: di sana suaranya
+memang bagian dari isinya—Harvy sedang mengakui perubahan arah, bukan
+melaporkan pekerjaan.
+
+**Catatannya bergeser tiap lima denyut.** Satu fase dapat bertahan sebelas
+detik, dan sebelumnya kalimatnya dipilih sekali lalu dipakai terus—hanya
+bulannya yang bergerak. Pergeseran sengaja jauh lebih lambat daripada bulan:
+teks yang berganti tiap detik terasa gelisah, bukan hidup.
+
+**Baris biaya menampilkan lama berjalan dan token yang sudah terpakai.**
+Angkanya nyata, dibaca dari catatan pemakaian giliran itu sendiri, dan tumbuh
+seiring panggilan model selesai satu per satu—pengguna melihat biayanya
+bertambah, bukan muncul sekaligus di akhir. Token tidak ditampilkan selama masih
+nol: "0 tokens" akan terbaca seperti klaim bahwa tidak ada yang dikerjakan.
+
+**Satu penemuan sepanjang jalan.** Adapter Telegram menahan pembaruan status
+pada `minimumUpdateIntervalMs: 15_000`—lima belas detik. Itu sebabnya animasi
+versi pertama tersendat parah: denyutnya disalurkan lewat penahan yang sama.
+Denyut kini menyunting langsung dan tidak melewatinya. Terbukti diterima kanal:
+satu giliran nyata mencatat delapan belas suntingan tanpa satu pun penolakan.
+
+Pendeteksi status ikut disederhanakan. Bentuknya kini bisa satu, dua, atau tiga
+baris, jadi yang diperiksa hanya baris pertamanya—dan titik-titik tetap
+diterima supaya teks status dari build sebelumnya tidak terbaca sebagai balasan.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

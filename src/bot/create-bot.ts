@@ -295,6 +295,7 @@ import {
 } from "../observability/operational-logger.js";
 import {
   initialProgressEvent,
+  renderProgressFooter,
   interruptionProgressEvent,
   publicFocusProgressEvent,
   TransientConversationProgress,
@@ -2288,6 +2289,10 @@ export function createBot(
   ): TransientConversationProgress<SentMessageRef> | null {
     const chatId = ctx.chat?.id;
     if (chatId === undefined) return null;
+    // Jam giliran dimulai di sini, bukan saat model dipanggil: yang dirasakan
+    // pengguna adalah sejak pesannya terkirim.
+    const startedAt = Date.now();
+    const ownerId = ownerOf(ctx);
     return new TransientConversationProgress<SentMessageRef>(
       {
         show: async (text) => {
@@ -2316,7 +2321,15 @@ export function createBot(
       },
       {
         seed,
+        // Perubahan fase ditahan lama karena ia jarang membawa informasi baru
+        // yang mendesak. Denyut bulan tidak melewati penahan ini—ia menyunting
+        // langsung tiap detik, dan itu terbukti diterima kanal: satu giliran
+        // nyata mencatat delapan belas suntingan tanpa satu pun penolakan.
         minimumUpdateIntervalMs: 15_000,
+        footer: () => renderProgressFooter(
+          Date.now() - startedAt,
+          telemetry.turnTokens(ownerId, currentTurnId()),
+        ),
         onError: (operation, error) => {
           logger.warn(
             "telegram_progress_operation_failed",
