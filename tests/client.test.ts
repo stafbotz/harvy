@@ -2434,3 +2434,86 @@ describe("percobaan ulang tidak bergantung jumlah kunci", () => {
     assert.equal(panggilan, 1, "400 bukan alasan mengulang");
   });
 });
+
+/**
+ * Prompt caching wajib terlihat di log.
+ *
+ * Sampai 1 September 2026 angka ini tidak pernah dicatat, padahal provider
+ * melaporkannya di tiap jawaban dan client sudah menguraikannya. Penghematan
+ * yang dirancang—aturan durable ditaruh di depan sebagai prefix stabil—jadi
+ * tidak dapat diperiksa sama sekali, dan selama berbulan-bulan diasumsikan
+ * bekerja. Pengukuran langsung menemukan sebaliknya.
+ *
+ * Kelas kesalahan yang sama dengan coba-ulang yang tidak pernah menyala:
+ * mekanisme yang tidak terlihat tidak dapat dibedakan dari yang rusak.
+ */
+describe("prompt caching tercatat", () => {
+  it("mencatat token yang dibaca dari cache provider", async () => {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "oke" }, finish_reason: "stop" }],
+          usage: {
+            prompt_tokens: 6_632,
+            completion_tokens: 12,
+            total_tokens: 6_644,
+            prompt_tokens_details: { cached_tokens: 6_500 },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    const dicatat: Record<string, unknown>[] = [];
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      logger: recordingLogger((event, fields) => {
+        if (event === "ai_request_completed") dicatat.push(fields ?? {});
+      }),
+    });
+
+    await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+    });
+
+    assert.equal(dicatat.length, 1);
+    assert.equal(dicatat[0]?.["cacheReadTokens"], 6_500);
+    assert.equal(dicatat[0]?.["inputTokens"], 6_632);
+  });
+
+  // Nol adalah kabar, bukan ketiadaan kabar: itu justru keadaan yang selama ini
+  // tidak terlihat. Menghilangkan fieldnya saat nol akan menyembunyikan persis
+  // hal yang ingin dilihat.
+  it("tetap mencatat ketika tidak ada yang ter-cache", async () => {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "oke" }, finish_reason: "stop" }],
+          usage: {
+            prompt_tokens: 6_632,
+            completion_tokens: 12,
+            total_tokens: 6_644,
+            prompt_tokens_details: { cached_tokens: 0 },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    const dicatat: Record<string, unknown>[] = [];
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-uji"]),
+      logger: recordingLogger((event, fields) => {
+        if (event === "ai_request_completed") dicatat.push(fields ?? {});
+      }),
+    });
+
+    await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+    });
+
+    assert.equal(dicatat[0]?.["cacheReadTokens"], 0);
+  });
+});

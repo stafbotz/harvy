@@ -1101,6 +1101,25 @@ export class AiClient {
             inputTokens: tokenUsage.inputTokens,
             outputTokens: tokenUsage.outputTokens,
             tokenUsageEstimated: tokenUsage.estimated,
+            // Prompt caching tidak pernah tercatat sampai 1 September 2026,
+            // padahal provider melaporkannya di tiap jawaban dan client sudah
+            // menguraikannya. Akibatnya penghematan yang dirancang—aturan
+            // durable ditaruh di depan sebagai prefix stabil—tidak dapat
+            // diperiksa sama sekali, dan selama berbulan-bulan diasumsikan
+            // bekerja. Pengukuran langsung menemukan sebaliknya: 128 dari 6.632
+            // token, sepuluh kali dari sepuluh percobaan.
+            //
+            // Ini kelas kesalahan yang sama dengan coba-ulang yang tidak pernah
+            // menyala: mekanisme yang tidak terlihat tidak dapat dibedakan dari
+            // mekanisme yang rusak. Dicatat supaya hari providernya berubah—
+            // atau Harvy pindah provider—perubahannya terlihat hari itu juga,
+            // bukan ditemukan setengah tahun kemudian secara kebetulan.
+            ...(tokenUsage.cacheReadTokens !== undefined
+              ? { cacheReadTokens: tokenUsage.cacheReadTokens }
+              : {}),
+            ...(tokenUsage.cacheWriteTokens !== undefined
+              ? { cacheWriteTokens: tokenUsage.cacheWriteTokens }
+              : {}),
             ...inputTokenCalibrationFields(request, tokenUsage),
           },
         );

@@ -1945,6 +1945,106 @@ sendiri", sehingga kalimat gagalnya jujur apa adanya. Yang tersisa dari
 rancangan itu: pembatalan bila pengguna mengirim pesan baru, dan batas agar
 provider yang benar-benar mati tidak diulang tanpa henti.
 
+## 29. Prompt caching: yang tidak dicatat tidak bisa diperbaiki
+
+Ditelusuri 1 September 2026 bersama pemilik produk, sesudah temuan bahwa
+penghematan prompt caching tidak pernah terjadi.
+
+### Struktur prompt Harvy ternyata sudah benar
+
+Dokumentasi provider menganjurkan urutan **daftar alat -> prompt sistem ->
+pesan pengguna**, dengan yang statis di depan dan yang dinamis di belakang. Itu
+persis susunan Harvy sekarang.
+
+Dua dugaan cacat sempat diajukan dan **keduanya salah**, keduanya karena
+membaca angka dari percakapan uji yang pendek alih-alih giliran produksi:
+
+**"Riwayatnya cuma 230 token, tidak sepadan diutak-atik."** Keliru lima kali
+lipat. Giliran produksi nyata membawa sekitar 1.175 token riwayat—14% dari
+permintaan pemahaman dan **33%** dari permintaan balasan.
+
+**"Harvy membuang giliran terlama saat riwayatnya penuh, tidak seperti harness
+agent yang memadatkan sekali."** Juga keliru. Kesimpulan itu diambil dari batas
+anggaran konteks (18 giliran) dengan asumsi batas itu yang mengikat. Padahal:
+
+```
+HISTORY_WINDOW     = 6    giliran mentah yang disisakan
+HISTORY_COMPACT_AT = 16   ambang mulai memadatkan
+```
+
+Giliran mentah menumpuk 6 -> 17 tanpa satu pun dibuang, lalu pemadatan berjalan
+**sekali** dan meringkas satu bongkah sampai 12 giliran menjadi episode. Itu
+pola menumpuk-lalu-memadatkan yang sama dengan harness agent, dan sudah
+mendekati optimal untuk cache: prefixnya utuh sekitar sebelas giliran, hangus
+sekali, lalu utuh lagi.
+
+Usulan "potong 3 atau potong 6 sekaligus" yang sempat diajukan menyelesaikan
+masalah yang tidak ada, dan dibatalkan.
+
+### Jeda percakapan tidak menjadi masalah
+
+Kekhawatiran bahwa masa kedaluwarsa cache tidak akan terkejar—percakapan
+pelajar lambat dan bursty, tidak seperti agent loop yang menembak tiap detik—
+diukur dan tidak terbukti:
+
+```
+p50 jeda antar giliran   37 detik
+p75                      75 detik
+jeda <= 5 menit          85% giliran
+```
+
+(Sebagian besar dari sesi uji yang bertubi-tubi; pelajar sungguhan bisa lebih
+lambat.)
+
+### Yang benar-benar salah: angkanya tidak pernah dicatat
+
+`cacheReadTokens` dan `cacheWriteTokens` sudah diurai `readCompletion` dari
+jawaban provider, lalu **dibuang** karena `ai_request_completed` tidak
+mencatatnya. Akibatnya penghematan yang dirancang tidak dapat diperiksa sama
+sekali, dan selama berbulan-bulan diasumsikan bekerja.
+
+Ini kelas kesalahan yang sama persis dengan coba-ulang yang tidak pernah
+menyala: mekanisme yang tidak terlihat tidak dapat dibedakan dari mekanisme yang
+rusak. Keduanya ditemukan di hari yang sama, dan keduanya bertahan lama karena
+lognya diam.
+
+Kini dicatat, termasuk ketika nilainya nol—nol adalah kabar, bukan ketiadaan
+kabar, dan justru itu keadaan yang selama ini tidak terlihat.
+
+### Pengukuran providernya
+
+Sepuluh permintaan, prompt sistem byte-identik, pesan pengguna berbeda tiap
+kali, ke `api.gmi-serving.com` model `MiniMaxAI/MiniMax-M3`:
+
+```
+ter-cache: 128, 128, 128, 128, 128, 128, 128, 128, 128, 128  (dari 6.632)
+```
+
+Selalu tepat 128, sepuluh dari sepuluh—bukan campur, jadi bukan pula soal
+mendarat di replika GPU yang berbeda-beda.
+
+Penjelasan "provider meng-cache seluruh permintaan, bukan prefixnya" yang
+sempat ditulis adalah **tebakan mekanisme** dan tidak dapat dibuktikan dari
+luar. Yang dapat dibuktikan hanya: tidak ada manfaat terukur untuk bentuk lalu
+lintas Harvy. Sebabnya—fitur mati, salah lapor, atau lainnya—tidak diketahui.
+
+### Mengejar provider yang membayar: buntu di kredensial
+
+- `MiniMaxAI/MiniMax-M3` di GMI: tidak ada manfaat, terukur di atas.
+- `deepseek/deepseek-v4-flash` di GMI: ditolak 403, tidak dapat diuji.
+- OpenRouter: barisnya ada di `.env` tetapi **nilainya kosong**.
+- Platform MiniMax langsung, yang dokumentasinya menyatakan passive caching
+  bekerja pada `/v1/chat/completions`: tidak ada kunci.
+
+Jadi langkah berikutnya butuh kredensial, bukan perubahan kode. Begitu ada,
+pengujiannya sekitar setengah jam—dan sekarang hasilnya akan **terlihat di log
+sejak permintaan pertama**, bukan ditemukan setengah tahun kemudian.
+
+Satu peringatan untuk pengujian itu: jangan menyimpulkan dari probe yang
+mengirim pesan sama berulang-ulang. Angkanya akan bagus karena permintaannya
+identik, bukan karena penghematannya nyata—persis cara kesimpulan keliru
+terbentuk pertama kali.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai
