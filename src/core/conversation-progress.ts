@@ -117,14 +117,20 @@ const DEFAULT_GRACE_MS = 700;
 const WAITING_GRACE_MS = 250;
 
 /**
- * Irama denyut bulan.
+ * Irama denyut bulan: satu detik.
  *
- * Punya lantainya sendiri, tidak sekadar mengikuti `minimumUpdateIntervalMs`.
- * Throttle itu boleh disetel sekecil apa pun oleh pemanggil, dan animasi yang
- * ikut mengecil akan menyunting pesan puluhan kali per detik—membakar kuota
- * kanal untuk gerak yang tidak dapat dilihat mata.
+ * Punya lantainya sendiri, tidak mengikuti `minimumUpdateIntervalMs`. Throttle
+ * itu boleh disetel sekecil apa pun oleh pemanggil, dan animasi yang ikut
+ * mengecil akan menyunting pesan puluhan kali per detik untuk gerak yang tak
+ * terlihat mata.
+ *
+ * Semula 1.500 ms dan disalurkan lewat `scheduleUpdate`, dan hasilnya tersendat:
+ * penjadwal itu menelan denyut yang datang selagi ia menunggu, sehingga
+ * fasenya melompat alih-alih mengalir. Denyut kini menyunting langsung—ia tidak
+ * pernah bertabrakan dengan perubahan fase karena keduanya berbagi antrean
+ * operasi yang sama.
  */
-const ANIMATION_INTERVAL_MS = 1_500;
+const ANIMATION_INTERVAL_MS = 1_000;
 const DEFAULT_MINIMUM_UPDATE_INTERVAL_MS = 1_500;
 
 /**
@@ -234,10 +240,7 @@ export class TransientConversationProgress<Reference>
         return;
       }
       this.waitingFrame += 1;
-      // Lewat `scheduleUpdate`, bukan langsung: penjadwal itu sudah menahan
-      // laju sunting dan menggabungkan perubahan fase dengan denyut bulan,
-      // sehingga keduanya tidak pernah menyunting dua kali dalam satu jendela.
-      this.scheduleUpdate();
+      if (this.reference !== null) this.enqueue(() => this.updateLatest());
     }, this.animationIntervalMs);
     this.waitingTimer.unref?.();
   }

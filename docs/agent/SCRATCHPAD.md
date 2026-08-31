@@ -1374,6 +1374,19 @@ Dua hal ikut diperbaiki karena perubahan ini menyingkapnya:
   perubahan fase dan denyut bulan tidak pernah menyunting dua kali dalam satu
   jendela throttle.
 
+**Denyutnya menyunting langsung, bukan lewat penjadwal.** Versi pertama
+menyalurkan denyut bulan lewat `scheduleUpdate`, dan hasilnya tersendat:
+penjadwal itu keluar lebih awal bila sudah ada pembaruan yang menunggu,
+sehingga denyut yang datang di jendela itu tertelan dan fasenya melompat
+alih-alih mengalir. Keduanya berbagi antrean operasi yang sama, jadi menyunting
+langsung tetap aman dari tabrakan.
+
+Iramanya satu detik, atas keputusan pemilik produk. Bukti dari berkas evidence
+satu giliran nyata: **18 suntingan** pada pesan status—19 karakter dua kali
+(bulan berganti, judul sama), lalu 40 karakter enam kali, lalu 56 karakter
+sebelas kali—sebelum jawabannya dikirim dan statusnya dihapus. Tidak ada
+penolakan dari kanal.
+
 **Pemeriksaan pertama saya berhenti pada "bentuknya benar".** Itu memang benar,
 sekaligus tidak membuktikan apa pun tentang geraknya—persis yang dilaporkan
 pengguna. Dua tes baru kini menjalankan animasinya dengan waktu nyata dan
