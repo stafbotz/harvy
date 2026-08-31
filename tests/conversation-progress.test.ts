@@ -9,6 +9,7 @@ import {
   parsePublicProgressFocus,
   publicFocusProgressEvent,
   renderConversationProgress,
+  renderProgressMeter,
   TransientConversationProgress,
   type SafePublicProgressFocus,
 } from "../src/core/conversation-progress.js";
@@ -82,8 +83,8 @@ describe("status kerja percakapan", () => {
     assert.equal(shown.length, 1);
     assert.equal(updated.length, 1);
     assert.deepEqual(removed, ["status-1"]);
-    assert.match(shown[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\n💭 /u);
-    assert.match(updated[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Mencari\n💭 /u);
+    assert.match(shown[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\n\S/u);
+    assert.match(updated[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Mencari\n\S/u);
     assert.doesNotMatch(
       `${shown.join(" ")} ${updated.join(" ")}`,
       /token|chain[- ]?of[- ]?thought|model tier|reasoning high/iu,
@@ -224,7 +225,7 @@ describe("status kerja percakapan", () => {
       "fallback",
     );
 
-    assert.match(rendered, /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\n💭 \S/u);
+    assert.match(rendered, /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\n\S/u);
     assert.doesNotMatch(rendered, /undefined|null/iu);
   });
 
@@ -491,5 +492,82 @@ describe("putaran bulan sepanjang giliran", () => {
     await delay(150);
 
     assert.equal(updated.length, sesudahSelesai);
+  });
+});
+
+/**
+ * Baris biaya pada judul status.
+ *
+ * Sampai 31 Agustus 2026 bagian ini tidak punya tes sama sekali, dan cacatnya
+ * lolos ke produksi: pemanggilnya membaca identitas giliran dari konteks
+ * asinkron di dalam timer denyut, tempat konteks itu tidak ada, sehingga
+ * tokennya selalu nol dan tidak pernah muncul.
+ */
+describe("baris biaya status", () => {
+  it("menyembunyikan diri pada detik pertama", () => {
+    // Sebelum satu detik tidak ada yang layak dilaporkan, dan "0s" pada status
+    // yang baru muncul hanya menambah derau.
+    assert.equal(renderProgressMeter(240, 0), null);
+    assert.equal(renderProgressMeter(999, 5_000), null);
+  });
+
+  it("menampilkan waktu saja sebelum token pertama terhitung", () => {
+    // Panggilan model pertama baru melapor sesudah selesai. "↓ 0" akan terbaca
+    // seperti klaim bahwa tidak ada yang dikerjakan.
+    assert.equal(renderProgressMeter(12_000, 0), "12s");
+  });
+
+  it("menyusun waktu dan token tanpa kurung maupun kata tokens", () => {
+    assert.equal(renderProgressMeter(225_000, 3_900), "3m 45s · ↓ 3.9k");
+    assert.equal(renderProgressMeter(12_000, 1_200), "12s · ↓ 1.2k");
+  });
+
+  it("tidak meringkas angka di bawah seribu", () => {
+    assert.equal(renderProgressMeter(3_000, 460), "3s · ↓ 460");
+  });
+
+  it("gagal aman pada angka yang tidak masuk akal", () => {
+    assert.equal(renderProgressMeter(Number.NaN, 100), null);
+    assert.equal(renderProgressMeter(-5, 100), null);
+    assert.equal(renderProgressMeter(5_000, Number.NaN), "5s");
+    assert.equal(renderProgressMeter(5_000, -100), "5s");
+  });
+
+  it("menempel di baris judul, bukan baris ketiga", () => {
+    const teks = renderConversationProgress(
+      { phase: "thinking", detail: "general" },
+      "biaya",
+      2,
+      "12s · ↓ 1.2k",
+    );
+    const lines = teks.split("\n");
+
+    assert.equal(lines.length, 2);
+    assert.match(lines[0] ?? "", /^🌔 Memikirkan · 12s · ↓ 1\.2k$/u);
+  });
+
+  it("membiarkan judul bersih ketika belum ada yang diukur", () => {
+    const teks = renderConversationProgress(
+      { phase: "waiting" },
+      "biaya",
+      0,
+      null,
+    );
+
+    assert.equal(teks, "🌒 Menunggu Harvy");
+  });
+
+  // Status transient dikenali lewat baris pertamanya supaya balasan sungguhan
+  // tidak pernah ikut terhapus. Menambahkan biaya di baris itu mengubah bentuk
+  // yang dicocokkan.
+  it("tetap dikenali sebagai status setelah biaya menempel", () => {
+    const teks = renderConversationProgress(
+      { phase: "composing" },
+      "biaya",
+      5,
+      "1m 3s · ↓ 12.6k",
+    );
+
+    assert.equal(isRenderedConversationProgress(teks), true);
   });
 });

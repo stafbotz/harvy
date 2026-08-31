@@ -179,6 +179,8 @@ export class TelemetryService implements UsageObserver {
   >();
   private readonly forgottenOwners = new Set<string>();
   private readonly pendingUsage = new Map<string, AiUsageRecord[]>();
+  /** Token berjalan per giliran, untuk baris biaya pada status transient. */
+  private readonly liveTurnTokens = new Map<string, Map<string, number>>();
   private readonly pendingEvents = new Map<string, ProductEvent[]>();
   private readonly pendingTurns = new Map<string, TurnTelemetryRecord[]>();
   private readonly openTurns = new Map<string, number>();
@@ -312,6 +314,22 @@ export class TelemetryService implements UsageObserver {
       pending.push(record);
       this.pendingUsage.set(context.ownerId, pending);
       this.accumulateTurnOutcome(record);
+      // Penghitung terpisah dari `pendingUsage`, yang dikuras `flushOwner` ke
+      // penyimpanan kapan saja. Membaca antrean itu langsung membuat angka di
+      // layar **turun** di tengah giliran begitu flush berjalan—biaya yang
+      // sudah terpakai tidak mungkin berkurang, jadi tampilan seperti itu
+      // berbohong.
+      if (record.turnId) {
+        let perTurn = this.liveTurnTokens.get(context.ownerId);
+        if (!perTurn) {
+          perTurn = new Map<string, number>();
+          this.liveTurnTokens.set(context.ownerId, perTurn);
+        }
+        perTurn.set(
+          record.turnId,
+          (perTurn.get(record.turnId) ?? 0) + record.totalTokens,
+        );
+      }
       shouldSettle = true;
       holdReservationUntilSettlement = record.billable;
       if (!holdReservationUntilSettlement) {
@@ -617,6 +635,7 @@ export class TelemetryService implements UsageObserver {
         this.forgottenOwners.add(ownerId);
         this.reservations.delete(ownerId);
         this.pendingUsage.delete(ownerId);
+        this.liveTurnTokens.delete(ownerId);
         this.pendingEvents.delete(ownerId);
         this.pendingTurns.delete(ownerId);
         this.removeOwnerTurnState(ownerId);
@@ -675,11 +694,21 @@ export class TelemetryService implements UsageObserver {
    */
   turnTokens(ownerId: string, turnId: string | null): number {
     if (!turnId) return 0;
-    let total = 0;
-    for (const record of this.pendingUsage.get(ownerId) ?? []) {
-      if (record.turnId === turnId) total += record.totalTokens;
-    }
-    return total;
+    return this.liveTurnTokens.get(ownerId)?.get(turnId) ?? 0;
+  }
+
+  /**
+   * Melupakan penghitung sebuah giliran sesudah gilirannya selesai.
+   *
+   * Tanpa ini petanya tumbuh sepanjang umur proses—satu entri per giliran yang
+   * pernah berjalan, tidak pernah dibuang.
+   */
+  releaseTurnTokens(ownerId: string, turnId: string | null): void {
+    if (!turnId) return;
+    const perTurn = this.liveTurnTokens.get(ownerId);
+    if (!perTurn) return;
+    perTurn.delete(turnId);
+    if (perTurn.size === 0) this.liveTurnTokens.delete(ownerId);
   }
   async markDelivered(ownerId: string, turnId: string | null): Promise<UsageNotice | null> {
     let notice: UsageNotice | null = null;

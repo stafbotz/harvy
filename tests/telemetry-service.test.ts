@@ -848,3 +848,101 @@ describe("TelemetryService", () => {
     );
   });
 });
+
+/**
+ * Token berjalan untuk baris biaya pada status transient.
+ *
+ * Dua cacat nyata lahir di sini dan keduanya dikunci di bawah. Yang pertama:
+ * pemanggilnya membaca identitas giliran dari konteks asinkron di dalam timer
+ * denyut animasi—tempat konteks itu tidak ada—sehingga angkanya selalu nol.
+ * Yang kedua: sumber angkanya semula antrean `pendingUsage`, yang dikuras ke
+ * penyimpanan kapan saja, sehingga biaya di layar bisa **turun** di tengah
+ * giliran.
+ */
+describe("token berjalan per giliran", () => {
+  it("menjumlahkan setiap panggilan model dalam giliran yang sama", async () => {
+    const telemetry = new TelemetryService(
+      new MemoryTelemetryRepository(),
+      options(),
+    );
+
+    await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
+    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 2);
+    await observeModelCall(telemetry, "siswa", "giliran-1", "reply", "r2");
+    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 4);
+  });
+
+  // Penjaga terpenting di blok ini. Biaya yang sudah terpakai tidak mungkin
+  // berkurang; angka yang turun di layar adalah kebohongan, dan itulah yang
+  // terjadi ketika penghitungnya membaca antrean yang dikuras flush.
+  it("tidak berkurang ketika antrean telemetry dikuras ke penyimpanan", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const telemetry = new TelemetryService(repository, options());
+
+    await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
+    const sebelum = telemetry.turnTokens("siswa", "giliran-1");
+    await telemetry.drain();
+
+    // Tanpa baris ini tesnya hampa: kalau `drain` ternyata tidak menguras
+    // apa pun, angka yang "tidak berkurang" tidak membuktikan apa-apa.
+    assert.equal(repository.usage.length, 1, "antrean benar-benar terkuras");
+    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), sebelum);
+    assert.equal(sebelum, 2);
+  });
+
+  it("memisahkan giliran dan pengguna", async () => {
+    const telemetry = new TelemetryService(
+      new MemoryTelemetryRepository(),
+      options(),
+    );
+
+    await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
+    await observeModelCall(telemetry, "siswa", "giliran-2", "understanding", "r2");
+    await observeModelCall(telemetry, "lain", "giliran-1", "understanding", "r3");
+
+    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 2);
+    assert.equal(telemetry.turnTokens("siswa", "giliran-2"), 2);
+    assert.equal(telemetry.turnTokens("lain", "giliran-1"), 2);
+  });
+
+  // Timer denyut membaca identitas giliran dari luar konteks asinkron dan
+  // mendapat null. Yang benar adalah nol yang tenang, bukan lemparan.
+  it("mengembalikan nol tanpa identitas giliran", async () => {
+    const telemetry = new TelemetryService(
+      new MemoryTelemetryRepository(),
+      options(),
+    );
+
+    await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
+
+    assert.equal(telemetry.turnTokens("siswa", null), 0);
+    assert.equal(telemetry.turnTokens("siswa", "giliran-lain"), 0);
+    assert.equal(telemetry.turnTokens("bukan-siapa-siapa", "giliran-1"), 0);
+  });
+
+  it("melepas penghitung setelah giliran selesai", async () => {
+    const telemetry = new TelemetryService(
+      new MemoryTelemetryRepository(),
+      options(),
+    );
+
+    await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
+    telemetry.releaseTurnTokens("siswa", "giliran-1");
+
+    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 0);
+    // Tanpa identitas giliran tidak ada yang boleh dihapus secara membabi buta.
+    telemetry.releaseTurnTokens("siswa", null);
+  });
+
+  it("ikut hilang ketika data pengguna dihapus", async () => {
+    const telemetry = new TelemetryService(
+      new MemoryTelemetryRepository(),
+      options(),
+    );
+
+    await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
+    await telemetry.forget("siswa");
+
+    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 0);
+  });
+});

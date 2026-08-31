@@ -1200,12 +1200,12 @@ apa pun", lalu membaca itu sebagai bukti pelanggarannya jarang. Pembacaan itu
 salah.
 
 Polanya memuat **karakter backspace (U+0008)** di empat belas tempat yang
-seharusnya ``—sisa escape yang termakan shell ketika pagar itu ditulis lewat
+seharusnya `\b`—sisa escape yang termakan shell ketika pagar itu ditulis lewat
 skrip patch. Pemeriksa perpindahan ke bahasa Inggris karena itu hanya cocok pada
 karakter kontrol yang tak pernah ada di balasan mana pun. Ia tidak jarang
 menyala; ia tidak dapat menyala.
 
-Pemeriksa aksara non-Latin tidak terkena karena polanya tidak memakai ``.
+Pemeriksa aksara non-Latin tidak terkena karena polanya tidak memakai `\b`.
 
 Kelas kesalahan ini tidak terlihat pada diff, tidak menggagalkan type-check, dan
 tidak menghasilkan pesan apa pun. Ia sudah muncul dua kali dalam satu hari—sekali
@@ -1458,12 +1458,12 @@ lihat dulu ini dari beberapa sisi". Satu informasi, dua baris. Hampir seluruh
 catatan juga diawali "Aku", sehingga satu giliran tiga fase terbaca "Aku…,
 Aku…, Aku…".
 
-Sekarang judul menyebut **kerjanya**, catatan menyebut **objeknya**:
+Sekarang judul menyebut **kerjanya**, catatan menyebut **objeknya**, dan biaya
+menempel di baris judul:
 
 ```
-🌓 Memikirkan
-💭 mana yang paling cocok buat keadaanmu
-(12s · ↓ 1.2k tokens)
+🌓 Memikirkan · 12s · ↓ 1.2k
+mana yang paling cocok buat keadaanmu
 ```
 
 Titik-titik di ujung judul dihapus—bulannya sudah membuktikan ini berjalan—dan
@@ -1471,9 +1471,40 @@ Titik-titik di ujung judul dihapus—bulannya sudah membuktikan ini berjalan—d
 kalimat lain. Fase tanpa objek yang berarti tampil sebagai judul saja. Kalimat
 yang muat untuk apa saja tidak memberi tahu apa pun.
 
+Bentuk sebelumnya menaruh biaya di baris ketiga, dengan kurung dan kata
+"tokens", dan mengawali catatan dengan 💭. Tiga baris terlalu berat untuk
+sesuatu yang hidup beberapa detik lalu hilang, dan mata mencari baris judul
+lebih dulu—di situlah biayanya sekarang. Kurung dan kata "tokens" dibuang
+karena panahnya sudah menjelaskan, sedangkan judul yang terlalu panjang patah ke
+baris berikutnya pada layar sempit dan justru terlihat berantakan.
+
+Membuang 💭 menutup satu tabrakan makna sekalian: emoji itu sudah dipakai di
+dalam **balasan** untuk menandai Harvy membawa sesuatu yang diingat, dan
+aturannya di `persona.ts` melarangnya menjadi tanda hal lain. Memakainya juga
+sebagai hiasan baris status membuat satu simbol berarti dua hal di layar yang
+sama.
+
 Pengakuan pada `adjusting` dan `switching` tetap kalimat penuh: di sana suaranya
 memang bagian dari isinya—Harvy sedang mengakui perubahan arah, bukan
 melaporkan pekerjaan.
+
+**Aturan itu semula hanya sampai separuh jalan.** Catatan cadangan sudah
+berbentuk frasa objek, tetapi catatan yang disusun dari focus model masih
+kalimat penuh berawalan "Aku"—dan justru jalur itulah yang dominan begitu
+model menyebutkan fokusnya. Sesi Telegram 31 Agustus 2026 menghitungnya: dari
+sembilan belas bingkai yang bercatatan, dua belas memakai jalur model—dan
+setiap satunya
+berbunyi "Yang perlu kubedakan dulu di sini: …" di bawah judul "Memikirkan".
+Tanpa 💭 di depannya, kalimat sepanjang itu benar-benar terbaca seperti
+balasan. Kini keduanya sebentuk:
+
+```
+🌒 Memikirkan · 13s · ↓ 1.2k
+beda antara deadline biologi dan deadline sejarah untuk membantu prioritas
+
+🌕 Mencari · 16s · ↓ 1.2k
+apa yang berubah pada harga emas hari ini, bukan tren sebelumnya
+```
 
 **Catatannya bergeser tiap lima denyut.** Satu fase dapat bertahan sebelas
 detik, dan sebelumnya kalimatnya dipilih sekali lalu dipakai terus—hanya
@@ -1483,8 +1514,113 @@ teks yang berganti tiap detik terasa gelisah, bukan hidup.
 **Baris biaya menampilkan lama berjalan dan token yang sudah terpakai.**
 Angkanya nyata, dibaca dari catatan pemakaian giliran itu sendiri, dan tumbuh
 seiring panggilan model selesai satu per satu—pengguna melihat biayanya
-bertambah, bukan muncul sekaligus di akhir. Token tidak ditampilkan selama masih
-nol: "0 tokens" akan terbaca seperti klaim bahwa tidak ada yang dikerjakan.
+bertambah, bukan muncul sekaligus di akhir. Baris ini diam seluruhnya pada detik
+pertama, dan tokennya menyusul belakangan: panggilan model pertama baru melapor
+sesudah selesai, dan "↓ 0" akan terbaca seperti klaim bahwa tidak ada yang
+dikerjakan.
+
+**Angkanya input dan output digabung, bukan output saja.** Diukur pada giliran
+nyata: `understanding` 7.744 masuk / 217 keluar, `reply` 3.474 masuk / 29
+keluar—input sekitar 97% dari totalnya, karena prompt sistem sekitar delapan
+ribu token dikirim ulang tiap giliran. Menampilkan output saja akan memberi
+angka mungil yang nyaris tidak bergerak sambil menyembunyikan biaya yang
+sebenarnya. Efek sampingnya disengaja: "makasih ya" pun menunjukkan belasan ribu
+token, dan itu memang kenyataan sistem ini—biayanya didominasi prompt tetap,
+bukan panjang pertanyaan.
+
+Token yang kena cache prompt ikut terhitung. Provider melaporkannya sebagai
+bagian dari `prompt_tokens`, dan angkanya kecil—satu probe 31 Agustus 2026
+mencatat 262 dari 9.504 prompt, di bawah tiga persen. Ia lebih murah, bukan
+tidak terpakai, jadi menghitungnya tetap jujur soal volume.
+
+### Dua cacat pada baris biaya, keduanya lolos karena tidak ada tesnya
+
+Bagian ini dikirim tanpa satu tes pun. Keduanya ditemukan dengan mengukur, bukan
+dengan membaca kode.
+
+**Identitas giliran dibaca dari tempat yang tidak memilikinya.** Baris biaya
+memanggil `currentTurnId()`, yang membaca konteks asinkron giliran. Ia dipanggil
+dari timer denyut bulan—`setInterval` yang dibuat sebelum konteks itu ada—jadi
+ia selalu mengembalikan null, `turnTokens` selalu mengembalikan nol, dan
+tokennya tidak akan pernah muncul sama sekali. Diukur langsung:
+
+```
+dibaca di dalam giliran : giliran-1
+dibaca dari timer status: null
+```
+
+Identitasnya kini ditangkap sekali saat giliran mulai dan disimpan per pengguna,
+bukan dibaca ulang tiap denyut.
+
+Terlihat juga di kanal nyata sebelum perbaikan. Satu giliran Telegram penuh,
+tiga puluh tujuh denyut, dan baris biayanya tidak pernah sekali pun menyebut
+token:
+
+```
+🌘 Memikirkan
+💭 Aku pahami dulu dua deadline besok untuk mengatur prioritasmu.
+(30s)
+…
+(37s)
+```
+
+**Sumber angkanya bisa menyusut.** `turnTokens` semula menjumlahkan antrean
+`pendingUsage`, dan antrean itu dikuras `flushOwner` ke penyimpanan kapan saja.
+Begitu flush berjalan di tengah giliran, angkanya **turun**—biaya yang sudah
+terpakai tidak mungkin berkurang, jadi tampilan seperti itu berbohong.
+Penghitungnya kini peta tersendiri yang tidak ikut terkuras, dilepas saat
+giliran selesai, dan ikut terhapus ketika data pengguna dihapus.
+
+Enam tes mengunci keduanya, termasuk satu yang membuktikan antreannya
+benar-benar terkuras—tanpa itu tes "tidak berkurang" tidak membuktikan apa pun.
+
+**Dan satu lubang ketiga, ditutup sebelum sempat menggigit.** Kedua panggilan
+telemetry yang baru itu ada di jalur yang tidak boleh gagal. Yang satu di
+`finally`, mendahului penutupan status: lemparan di sana akan menggantikan
+hasil giliran **dan** melewati `finish()`, meninggalkan status di layar
+selamanya—persis cacat yang sudah pernah dilaporkan pengguna sekali. Yang lain
+di dalam perender status. Keduanya menerima objek telemetry yang bentuknya
+tidak dijaga tipe: enam belas test double di `create-bot-flow.test.ts` hanya
+membentuk metode seperlunya, dan tidak satu pun memuat dua metode baru ini.
+Keduanya kini memanggil opsional dan menelan lemparan. Ini bukan kehati-hatian
+berlebih: pengumpulan bukti yang berjalan di dalam giliran wajib gagal aman.
+
+Rantai penuhnya juga dijalankan sekali di luar tes, memakai
+`TransientConversationProgress` yang asli beserta penahan 15 detik dan denyut
+animasinya, dengan token disuntikkan seperti panggilan model yang selesai satu
+per satu:
+
+```
+🌔 Menunggu Harvy · 2s
+🌕 Memikirkan · 6s · ↓ 8.0k
+🌗 Memikirkan · 14s · ↓ 11.5k
+🌘 Menyusun jawaban · 1m 10s · ↓ 12.6k
+```
+
+Angkanya naik dan tidak pernah turun, bulannya berganti tiap denyut walau
+fasenya tetap, dan catatannya bergeser di denyut kelima.
+
+### Terverifikasi di Telegram nyata
+
+Satu giliran `burst-satu-pikiran`, lulus, 27,7 detik:
+
+```
+🌓 Menunggu Harvy · 1s
+🌘 Memikirkan · 7s · ↓ 853
+🌗 Memikirkan · 14s · ↓ 7.8k
+🌒 Memikirkan · 25s · ↓ 15.5k
+```
+
+Waktu muncul di detik pertama tanpa token—memang belum ada yang terpakai.
+Token pertama menyusul di detik ketujuh begitu pemeriksa batas giliran melapor,
+lalu naik bertahap sampai 15,5 ribu. Bulannya berganti tiap detik sepanjang
+dua puluh lima detik itu meski fasenya tidak berubah sekali pun.
+
+Dua suntingan dari dua puluh lima ditolak kanal—detik ke-16 dan ke-17 hilang
+dari rekaman. Itu batas laju Telegram, dan jalurnya memang gagal lunak:
+`onError` mencatatnya, bingkai sebelumnya bertahan sedetik lebih lama, dan
+giliran berjalan terus. Mengulang kiriman yang ditolak justru akan memperburuk
+batas lajunya.
 
 **Jawaban dikirim dulu, status dihapus sesudahnya.** Urutan sebelumnya membuat
 layar melompat: penghapusan dan pengiriman adalah dua panggilan jaringan
@@ -1510,8 +1646,9 @@ versi pertama tersendat parah: denyutnya disalurkan lewat penahan yang sama.
 Denyut kini menyunting langsung dan tidak melewatinya. Terbukti diterima kanal:
 satu giliran nyata mencatat delapan belas suntingan tanpa satu pun penolakan.
 
-Pendeteksi status ikut disederhanakan. Bentuknya kini bisa satu, dua, atau tiga
-baris, jadi yang diperiksa hanya baris pertamanya—dan titik-titik tetap
+Pendeteksi status ikut disederhanakan. Bentuknya kini satu atau dua baris, jadi
+yang diperiksa hanya baris pertamanya, dipotong sebelum biaya—dan
+titik-titik tetap
 diterima supaya teks status dari build sebelumnya tidak terbaca sebagai balasan.
 
 ## Kemampuan yang absen secara rancangan

@@ -184,9 +184,9 @@ describe("pemindai credential pada berkas terlacak", () => {
  * terus.
  */
 describe("karakter kontrol tak terlihat di sumber", () => {
-  it("tidak ada di berkas TypeScript mana pun", () => {
+  it("tidak ada di berkas sumber maupun dokumen mana pun", () => {
     const offenders: string[] = [];
-    for (const path of sourceFiles()) {
+    for (const path of scannedFiles()) {
       const content = readFileSync(path, "utf8");
       for (const [index, character] of [...content].entries()) {
         const code = character.codePointAt(0) ?? 0;
@@ -207,12 +207,27 @@ describe("karakter kontrol tak terlihat di sumber", () => {
   });
 });
 
-function sourceFiles(): string[] {
+/**
+ * Berkas yang dipindai: sumber **dan** dokumen.
+ *
+ * Markdown ikut sejak 31 Agustus 2026. `SCRATCHPAD.md` ternyata memuat dua
+ * karakter backspace sungguhan—di dalam paragraf yang justru menjelaskan bug
+ * karakter backspace, tempat `\b` seharusnya berada. Ia bertahan berhari-hari
+ * karena pemindainya hanya melihat TypeScript.
+ *
+ * Penyebabnya selalu sama: skrip patch ditulis lewat beberapa lapis shell, dan
+ * salah satu lapisan memakan backslash-nya. Cara aman menuliskan karakter
+ * seperti ini dari skrip adalah membangunnya dari kodenya, bukan mengetik
+ * escape-nya.
+ */
+function scannedFiles(): string[] {
   const listed = execFileSync("git", ["ls-files", "-z"], {
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
   });
   return listed
     .split("\0")
-    .filter((path) => path.endsWith(".ts") || path.endsWith(".mjs"));
+    .filter((path) =>
+      path.endsWith(".ts") || path.endsWith(".mjs") || path.endsWith(".md")
+    );
 }

@@ -295,7 +295,7 @@ import {
 } from "../observability/operational-logger.js";
 import {
   initialProgressEvent,
-  renderProgressFooter,
+  renderProgressMeter,
   interruptionProgressEvent,
   publicFocusProgressEvent,
   TransientConversationProgress,
@@ -633,6 +633,18 @@ export function createBot(
     keyboard?: InlineKeyboard,
   ): Promise<void> => safeEditSafely(ctx, text, keyboard, logger);
   const activeProgress = new Map<string, ConversationProgressReporter>();
+  /**
+   * Identitas giliran yang sedang berjalan per pengguna.
+   *
+   * Baris biaya pada status perlu tahu giliran mana yang sedang dihitung, dan
+   * ia dipanggil dari timer denyut bulan—di luar konteks asinkron giliran.
+   * Diukur langsung: `currentUsageAttribution()` di dalam timer mengembalikan
+   * null, sehingga tokennya selalu terbaca nol dan tidak akan pernah muncul.
+   *
+   * Peta ini menangkapnya sekali saat giliran mulai, bukan membacanya ulang
+   * tiap denyut.
+   */
+  const activeTurnId = new Map<string, string>();
   const bot = new Bot(config.telegramBotToken);
   bot.use(async (ctx, next) => {
     const originalReply = ctx.reply.bind(ctx);
@@ -2334,13 +2346,25 @@ export function createBot(
         seed,
         // Perubahan fase ditahan lama karena ia jarang membawa informasi baru
         // yang mendesak. Denyut bulan tidak melewati penahan ini—ia menyunting
-        // langsung tiap detik, dan itu terbukti diterima kanal: satu giliran
-        // nyata mencatat delapan belas suntingan tanpa satu pun penolakan.
+        // langsung tiap detik, dan kanal menerimanya: satu giliran nyata
+        // mencatat dua puluh lima suntingan, dua di antaranya ditolak batas
+        // laju. Penolakan itu tidak diulang—`onError` mencatat, bingkai
+        // sebelumnya bertahan sedetik lebih lama, dan giliran berjalan terus.
         minimumUpdateIntervalMs: 15_000,
-        footer: () => renderProgressFooter(
-          Date.now() - startedAt,
-          telemetry.turnTokens(ownerId, currentTurnId()),
-        ),
+        // Gagal aman: baris biaya adalah hiasan, dan tidak boleh menjadi sebab
+        // status gagal tampil. Telemetry di sini bisa berupa objek yang lebih
+        // ramping daripada tipenya—test double membentuk seperlunya.
+        footer: () => {
+          try {
+            return renderProgressMeter(
+              Date.now() - startedAt,
+              telemetry.turnTokens?.(ownerId, activeTurnId.get(ownerId) ?? null) ??
+                0,
+            );
+          } catch {
+            return null;
+          }
+        },
         onError: (operation, error) => {
           logger.warn(
             "telegram_progress_operation_failed",
@@ -2411,6 +2435,8 @@ export function createBot(
       ? { ...runtime, progress }
       : runtime;
     if (progress) activeProgress.set(ownerId, progress);
+    const turnIdForMeter = currentTurnId();
+    if (turnIdForMeter) activeTurnId.set(ownerId, turnIdForMeter);
     const interruptionEvent = interruptionProgressEvent(
       runtime.interruptionRelation,
     );
@@ -2429,6 +2455,18 @@ export function createBot(
     } finally {
       if (activeProgress.get(ownerId) === progress) {
         activeProgress.delete(ownerId);
+      }
+      if (activeTurnId.get(ownerId) === turnIdForMeter) {
+        activeTurnId.delete(ownerId);
+      }
+      // Pembersihan penghitung biaya tidak boleh mendahului penutupan status.
+      // Ia berjalan di `finally`, jadi lemparan apa pun di sini akan menggantikan
+      // hasil giliran **dan** melewati `finish()`—statusnya tertinggal di layar
+      // pengguna selamanya, persis cacat yang sudah pernah dilaporkan sekali.
+      try {
+        telemetry.releaseTurnTokens?.(ownerId, turnIdForMeter ?? null);
+      } catch {
+        // Sengaja diam: ini akuntansi tampilan, bukan bagian dari jawaban.
       }
       await ownedProgress?.finish?.();
     }

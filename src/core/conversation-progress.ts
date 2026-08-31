@@ -432,13 +432,17 @@ export function renderConversationProgress(
   event: ConversationProgressEvent,
   seed = "harvy",
   frame = 0,
-  footer: string | null = null,
+  meter: string | null = null,
 ): string {
   const status = STATUS[event.phase];
   if (!status) return "";
   const moon = PROGRESS_FRAMES[frame % PROGRESS_FRAMES.length] ??
     PROGRESS_FRAMES[0];
-  const lines: string[] = [`${moon} ${status}`];
+  // Biaya menempel di baris judul, bukan baris sendiri: tiga baris untuk satu
+  // status transient terlalu berat, dan judul adalah baris yang matanya cari.
+  const lines: string[] = [
+    meter ? `${moon} ${status} · ${meter}` : `${moon} ${status}`,
+  ];
   if (event.phase !== "waiting") {
     const publicFocus = parsePublicProgressFocus(event.publicFocus);
     const focusedNote = publicFocus
@@ -451,49 +455,54 @@ export function renderConversationProgress(
     // sendirian lebih jujur daripada mengisi baris kedua demi ada isinya.
     const note = focusedNote ??
       notes[stableIndex(seed, event.phase, notes.length, frame)] ?? null;
-    if (note) lines.push(`💭 ${note}`);
+    if (note) lines.push(note);
   }
-  if (footer) lines.push(footer);
   return lines.join("\n");
 }
 
 /**
- * Baris biaya di bawah status: lama berjalan dan token yang sudah terpakai.
+ * Bagian biaya pada baris judul: lama berjalan, lalu token bila sudah ada.
  *
- * Ditulis di sini supaya kedua kanal memakai bentuk yang sama, dan supaya
- * pembulatannya tidak berulang di dua tempat.
+ * Tanpa kurung dan tanpa kata "tokens"—panah sudah menjelaskannya, dan judul
+ * yang terlalu panjang patah ke baris berikutnya pada layar sempit, yang
+ * membuat baris jangkar justru terlihat berantakan.
+ *
+ * Angkanya input **dan** output. Input sekitar 97% dari totalnya karena prompt
+ * sistem dikirim ulang tiap giliran; menampilkan output saja akan memberi angka
+ * mungil yang nyaris tak bergerak sambil menyembunyikan biaya yang sebenarnya.
  */
-export function renderProgressFooter(
+export function renderProgressMeter(
   elapsedMs: number,
   tokens: number,
 ): string | null {
-  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return null;
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 1_000) return null;
   const seconds = Math.floor(elapsedMs / 1_000);
   const waktu = seconds >= 60
     ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
     : `${seconds}s`;
   // Token belum tentu ada pada detik pertama: panggilan model pertama baru
-  // melapor sesudah selesai. Menampilkan "0 tokens" akan terbaca seperti klaim
-  // bahwa tidak ada yang dikerjakan.
-  if (!Number.isFinite(tokens) || tokens <= 0) return `(${waktu})`;
+  // melapor sesudah selesai. Menampilkan "0" akan terbaca seperti klaim bahwa
+  // tidak ada yang dikerjakan.
+  if (!Number.isFinite(tokens) || tokens <= 0) return waktu;
   const ringkas = tokens >= 1_000
     ? `${(tokens / 1_000).toFixed(1)}k`
     : String(tokens);
-  return `(${waktu} · ↓ ${ringkas} tokens)`;
+  return `${waktu} · ↓ ${ringkas}`;
 }
 
 /** Hanya untuk membedakan surface status transient dari jawaban user-facing. */
 export function isRenderedConversationProgress(text: string): boolean {
   // Judul saja sudah cukup: sejak catatan menjadi opsional dan titik-titik
-  // dihapus, bentuknya bisa satu baris, dua baris, atau tiga baris dengan
-  // footer biaya. Yang stabil hanya baris pertamanya.
+  // dihapus, bentuknya bisa satu baris atau dua baris. Baris pertamanya
+  // kini boleh membawa biaya di belakang judul, dipisah titik tengah.
   const [pertama] = text.trim().split("\n");
   const tanpaBulan = (pertama ?? "").replace(
     /^[🌑🌒🌓🌔🌕🌖🌗🌘]\s/u,
     "",
   );
+  const [judul] = tanpaBulan.split(" · ");
   return /^(?:Menunggu Harvy|Memikirkan|Mencari|Membaca|Membandingkan|Menghitung|Memeriksa|Menyesuaikan|Beralih|Menyusun jawaban)(?:\.\.\.)?$/u
-    .test(tanpaBulan);
+    .test(judul ?? "");
 }
 
 /**
@@ -627,6 +636,19 @@ const PUBLIC_FOCUS_INJECTION_PATTERN =
 const PUBLIC_FOCUS_CREDENTIAL_PATTERN =
   /\b(?:password|kata sandi|passcode|otp|api[ _-]?key|kunci api|access[ _-]?token|auth[ _-]?token|client[ _-]?secret|credential|kredensial)\b/iu;
 
+/**
+ * Menyusun catatan baris kedua dari focus yang disebut model.
+ *
+ * Berbentuk **frasa objek**, bukan kalimat—sama seperti catatan cadangan. Judul
+ * sudah menyebut kata kerjanya; mengulangnya di baris kedua membuat dua baris
+ * mengatakan satu hal. Sesi Telegram 31 Agustus 2026 memperlihatkan akibatnya:
+ * dari sembilan belas bingkai yang bercatatan, dua belas memakai jalur ini, dan
+ * setiap satunya berbunyi "Yang perlu kubedakan dulu di sini: …" di bawah judul
+ * "Memikirkan".
+ *
+ * `adjusting` dan `switching` sengaja tetap kalimat penuh: di sana Harvy sedang
+ * mengakui perubahan arah, jadi suaranya memang bagian dari isinya.
+ */
 function realizePublicProgressNote(
   phase: ConversationProgressPhase,
   focus: SafePublicProgressFocus,
@@ -636,43 +658,41 @@ function realizePublicProgressNote(
   switch (phase) {
     case "thinking":
       if (focus.kind === "distinguish" && focus.contrast) {
-        note = `Yang perlu kubedakan dulu di sini: ${focus.subject} dan ${focus.contrast}${purpose}.`;
+        note = `beda antara ${focus.subject} dan ${focus.contrast}${purpose}`;
       } else if (focus.kind === "compare" && focus.contrast) {
-        note = `Aku timbang dulu ${focus.subject} dan ${focus.contrast}${purpose}.`;
+        note = `${focus.subject} dibanding ${focus.contrast}${purpose}`;
       } else {
-        note = `Aku pahami dulu ${focus.subject}${purpose}.`;
+        note = `${focus.subject}${purpose}`;
       }
       break;
     case "searching":
       note = focus.kind === "current-information"
-        ? `Aku cari dulu apa yang berubah pada ${focus.subject}${
-            focus.contrast
-              ? ` supaya nggak tercampur dengan ${focus.contrast}`
-              : ""
-          }.`
+        ? `apa yang berubah pada ${focus.subject}${
+            focus.contrast ? `, bukan ${focus.contrast}` : ""
+          }`
         : focus.contrast
-        ? `Aku cari informasi yang relevan untuk membandingkan ${focus.subject} dan ${focus.contrast}${purpose}.`
-        : `Aku cari informasi terbaru tentang ${focus.subject}${purpose}.`;
+        ? `bahan buat membandingkan ${focus.subject} dan ${focus.contrast}${purpose}`
+        : `yang terbaru soal ${focus.subject}${purpose}`;
       break;
     case "reading":
       note = focus.contrast
-        ? `Aku baca bagian paling relevan tentang ${focus.subject} dan ${focus.contrast}${purpose}.`
-        : `Aku baca bagian tentang ${focus.subject} yang paling relevan${purpose}.`;
+        ? `bagian tentang ${focus.subject} dan ${focus.contrast}${purpose}`
+        : `bagian yang paling relevan soal ${focus.subject}${purpose}`;
       break;
     case "comparing":
       note = focus.contrast
-        ? `Aku bandingkan dulu ${focus.subject} dan ${focus.contrast}${purpose}.`
-        : `Aku bandingkan dulu ${focus.subject}${purpose}.`;
+        ? `${focus.subject} dan ${focus.contrast}${purpose}`
+        : `${focus.subject}${purpose}`;
       break;
     case "calculating":
-      note = `Aku hitung dulu ${focus.subject}${purpose}.`;
+      note = `${focus.subject}${purpose}`;
       break;
     case "checking":
       note = focus.kind === "current-information"
-        ? `Aku cek dulu apakah informasi tentang ${focus.subject} masih terbaru.`
+        ? `apakah ${focus.subject} masih terbaru`
         : focus.contrast
-        ? `Aku periksa dulu perbandingan ${focus.subject} dan ${focus.contrast}${purpose}.`
-        : `Aku periksa dulu ${focus.subject}${purpose}.`;
+        ? `perbandingan ${focus.subject} dan ${focus.contrast}${purpose}`
+        : `${focus.subject}${purpose}`;
       break;
     case "adjusting": {
       const change = focus.purpose ?? focus.contrast;
@@ -688,8 +708,8 @@ function realizePublicProgressNote(
       break;
     case "composing":
       note = focus.contrast
-        ? `Aku susun dulu perbandingan ${focus.subject} dan ${focus.contrast}${purpose}.`
-        : `Aku susun jawaban tentang ${focus.subject}${purpose} supaya tetap enak diikuti.`;
+        ? `perbandingan ${focus.subject} dan ${focus.contrast}${purpose}`
+        : `jawaban soal ${focus.subject}${purpose}`;
       break;
     case "listening":
     case "responding":
