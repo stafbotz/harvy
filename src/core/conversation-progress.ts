@@ -90,6 +90,12 @@ export interface ProgressSurfaceRenderer<Reference> {
 export interface TransientProgressOptions {
   graceMs?: number;
   minimumUpdateIntervalMs?: number;
+  /**
+   * Irama denyut bulan. Terpisah dari `minimumUpdateIntervalMs` karena throttle
+   * itu boleh disetel sekecil apa pun, sedangkan animasi yang ikut mengecil
+   * akan menyunting puluhan kali per detik untuk gerak yang tak terlihat mata.
+   */
+  animationIntervalMs?: number;
   seed?: string;
   onError?: (operation: "show" | "update" | "remove" | "typing", error: unknown) => void;
 }
@@ -109,6 +115,16 @@ const DEFAULT_GRACE_MS = 700;
  * memunculkan apa pun.
  */
 const WAITING_GRACE_MS = 250;
+
+/**
+ * Irama denyut bulan.
+ *
+ * Punya lantainya sendiri, tidak sekadar mengikuti `minimumUpdateIntervalMs`.
+ * Throttle itu boleh disetel sekecil apa pun oleh pemanggil, dan animasi yang
+ * ikut mengecil akan menyunting pesan puluhan kali per detik—membakar kuota
+ * kanal untuk gerak yang tidak dapat dilihat mata.
+ */
+const ANIMATION_INTERVAL_MS = 1_500;
 const DEFAULT_MINIMUM_UPDATE_INTERVAL_MS = 1_500;
 
 /**
@@ -128,6 +144,7 @@ export class TransientConversationProgress<Reference>
   private closed = false;
   private readonly graceMs: number;
   private readonly minimumUpdateIntervalMs: number;
+  private readonly animationIntervalMs: number;
   private readonly seed: string;
 
   constructor(
@@ -139,6 +156,10 @@ export class TransientConversationProgress<Reference>
     this.minimumUpdateIntervalMs = nonNegativeInteger(
       options.minimumUpdateIntervalMs,
       DEFAULT_MINIMUM_UPDATE_INTERVAL_MS,
+    );
+    this.animationIntervalMs = nonNegativeInteger(
+      options.animationIntervalMs,
+      ANIMATION_INTERVAL_MS,
     );
     this.seed = options.seed ?? "harvy";
   }
@@ -152,7 +173,6 @@ export class TransientConversationProgress<Reference>
     const normalized = normalizeProgressEvent(event);
     if (sameEvent(this.latest, normalized)) return;
     this.latest = normalized;
-    if (normalized.phase !== "waiting") this.stopWaitingAnimation();
     if (this.reference === null && this.graceTimer === null) {
       const grace = normalized.phase === "waiting"
         ? Math.min(this.graceMs, WAITING_GRACE_MS)
@@ -177,7 +197,7 @@ export class TransientConversationProgress<Reference>
       return;
     }
     this.closed = true;
-    this.stopWaitingAnimation();
+    this.stopAnimation();
     if (this.graceTimer) clearTimeout(this.graceTimer);
     if (this.updateTimer) clearTimeout(this.updateTimer);
     this.graceTimer = null;
@@ -196,7 +216,7 @@ export class TransientConversationProgress<Reference>
   }
 
   /**
-   * Fase menunggu bergerak sendiri, tidak menunggu peristiwa baru.
+   * Status bergerak sendiri, tidak menunggu peristiwa baru.
    *
    * Seluruh status lain berubah karena ada yang dilaporkan. Fase menunggu tidak
    * punya peristiwa apa pun untuk dilaporkan—justru itu maksudnya—sehingga
@@ -206,20 +226,23 @@ export class TransientConversationProgress<Reference>
    * Iramanya mengikuti `minimumUpdateIntervalMs`, jadi ia tidak pernah
    * menyunting lebih sering daripada batas yang sudah dipilih untuk kanal.
    */
-  private startWaitingAnimation(): void {
+  private startAnimation(): void {
     if (this.closed || this.waitingTimer !== null) return;
     this.waitingTimer = setInterval(() => {
-      if (this.closed || this.latest?.phase !== "waiting") {
-        this.stopWaitingAnimation();
+      if (this.closed) {
+        this.stopAnimation();
         return;
       }
       this.waitingFrame += 1;
-      if (this.reference !== null) this.enqueue(() => this.updateLatest());
-    }, this.minimumUpdateIntervalMs);
+      // Lewat `scheduleUpdate`, bukan langsung: penjadwal itu sudah menahan
+      // laju sunting dan menggabungkan perubahan fase dengan denyut bulan,
+      // sehingga keduanya tidak pernah menyunting dua kali dalam satu jendela.
+      this.scheduleUpdate();
+    }, this.animationIntervalMs);
     this.waitingTimer.unref?.();
   }
 
-  private stopWaitingAnimation(): void {
+  private stopAnimation(): void {
     if (this.waitingTimer === null) return;
     clearInterval(this.waitingTimer);
     this.waitingTimer = null;
@@ -237,7 +260,7 @@ export class TransientConversationProgress<Reference>
         renderConversationProgress(this.latest, this.seed, this.waitingFrame),
       );
       this.lastRenderedAt = this.now();
-      if (this.latest.phase === "waiting") this.startWaitingAnimation();
+      this.startAnimation();
     } catch (error) {
       this.options.onError?.("show", error);
     }
@@ -358,12 +381,19 @@ export function publicFocusProgressEvent(
 }
 
 /**
- * Fase bulan untuk status menunggu.
+ * Fase bulan yang berputar selama Harvy bekerja.
  *
- * Siklus penuh, bukan separuh: menunggu tidak punya tujuan yang dapat
- * ditunjukkan, dan indikator yang berhenti di purnama terlihat macet.
+ * Semula hanya untuk fase menunggu, dan itu membuatnya nyaris tak terlihat:
+ * kalimat lengkap mendapat jendela tunggu nol detik, sehingga bulannya tampil
+ * satu fase lalu langsung berganti judul. Kini ia menemani seluruh fase—judul
+ * menjelaskan apa yang dikerjakan, bulan membuktikan ada yang sedang
+ * dikerjakan.
+ *
+ * Siklus penuh, bukan separuh: pekerjaan yang belum selesai tidak punya tujuan
+ * yang dapat ditunjukkan, dan indikator yang berhenti di purnama terlihat
+ * macet.
  */
-const WAITING_FRAMES = [
+const PROGRESS_FRAMES = [
   "🌒",
   "🌓",
   "🌔",
@@ -381,12 +411,12 @@ export function renderConversationProgress(
 ): string {
   const status = STATUS[event.phase];
   if (!status) return "";
+  const moon = PROGRESS_FRAMES[frame % PROGRESS_FRAMES.length] ??
+    PROGRESS_FRAMES[0];
   if (event.phase === "waiting") {
     // Tanpa baris catatan. Judulnya berbicara dari sudut pandang pengguna
     // ("kamu sedang menunggu Harvy"), sedangkan catatan bernada suara Harvy
     // akan bertentangan dengannya di dalam satu gelembung yang sama.
-    const moon = WAITING_FRAMES[frame % WAITING_FRAMES.length] ??
-      WAITING_FRAMES[0];
     return `${moon} ${status}...`;
   }
   const publicFocus = parsePublicProgressFocus(event.publicFocus);
@@ -397,18 +427,19 @@ export function renderConversationProgress(
     FALLBACK_NOTES[event.phase]?.general ?? [];
   const note = focusedNote ?? notes[stableIndex(seed, event.phase, notes.length)] ??
     "Aku cek dulu bagian yang paling penting.";
-  return `${status}...\n💭 ${note}`;
+  return `${moon} ${status}...\n💭 ${note}`;
 }
 
 /** Hanya untuk membedakan surface status transient dari jawaban user-facing. */
 export function isRenderedConversationProgress(text: string): boolean {
   const trimmed = text.trim();
-  // Fase menunggu berbentuk lain: bulan di depan judul, tanpa baris catatan.
-  // Tanpa cabang ini ia terbaca sebagai balasan sungguhan, dan setiap alat yang
-  // memisahkan status dari jawaban akan salah menghitungnya.
-  if (/^[🌑🌒🌓🌔🌕🌖🌗🌘]\sMenunggu Harvy\.\.\.$/u.test(trimmed)) return true;
+  // Bulan kini mendahului seluruh fase, bukan hanya fase menunggu. Prefiksnya
+  // dibuat opsional supaya teks status dari build sebelumnya tetap dikenali.
+  const MOON = /^(?:[🌑🌒🌓🌔🌕🌖🌗🌘]\s)?/u;
+  const tanpaBulan = trimmed.replace(MOON, "");
+  if (/^Menunggu Harvy\.\.\.$/u.test(tanpaBulan)) return true;
   return /^(?:Memikirkan|Mencari|Membaca|Membandingkan|Menghitung|Memeriksa|Menyesuaikan|Beralih|Menyusun jawaban)\.\.\.\n💭\s/u.test(
-    trimmed,
+    tanpaBulan,
   );
 }
 

@@ -82,8 +82,8 @@ describe("status kerja percakapan", () => {
     assert.equal(shown.length, 1);
     assert.equal(updated.length, 1);
     assert.deepEqual(removed, ["status-1"]);
-    assert.match(shown[0] ?? "", /^Memikirkan\.\.\.\n💭 /u);
-    assert.match(updated[0] ?? "", /^Mencari\.\.\.\n💭 /u);
+    assert.match(shown[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\.\.\.\n💭 /u);
+    assert.match(updated[0] ?? "", /^[🌑🌒🌓🌔🌕🌖🌗🌘] Mencari\.\.\.\n💭 /u);
     assert.doesNotMatch(
       `${shown.join(" ")} ${updated.join(" ")}`,
       /token|chain[- ]?of[- ]?thought|model tier|reasoning high/iu,
@@ -95,7 +95,7 @@ describe("status kerja percakapan", () => {
     assert.equal(executionProgressEvent(execution("high")).phase, "thinking");
     assert.equal(
       renderConversationProgress({ phase: "adjusting", detail: "new-context" })
-        .startsWith("Menyesuaikan..."),
+        .includes("Menyesuaikan..."),
       true,
     );
   });
@@ -224,7 +224,7 @@ describe("status kerja percakapan", () => {
       "fallback",
     );
 
-    assert.match(rendered, /^Memikirkan\.\.\.\n💭 \S/u);
+    assert.match(rendered, /^[🌑🌒🌓🌔🌕🌖🌗🌘] Memikirkan\.\.\.\n💭 \S/u);
     assert.doesNotMatch(rendered, /undefined|null/iu);
   });
 
@@ -370,7 +370,7 @@ describe("status menunggu", () => {
       "x",
     );
 
-    assert.match(teks, /^Membaca\.\.\./u);
+    assert.match(teks, /^[🌑🌒🌓🌔🌕🌖🌗🌘] Membaca\.\.\./u);
     assert.match(teks, /pesan barumu masuk/u);
   });
 });
@@ -438,3 +438,58 @@ function perekamStatus(): {
     },
   };
 }
+
+/**
+ * Bulan harus benar-benar berputar, bukan sekadar dapat dirender.
+ *
+ * Pengguna melaporkan bulannya macet, dan pemeriksaan pertama saya berhenti
+ * pada "bentuknya benar"—yang memang benar, sekaligus tidak membuktikan apa
+ * pun tentang geraknya.
+ */
+describe("putaran bulan sepanjang giliran", () => {
+  it("mengganti fase bulan tanpa peristiwa baru", async () => {
+    const updated: string[] = [];
+    const progress = new TransientConversationProgress<string>(
+      {
+        show: async () => "status",
+        update: async (_reference, text) => {
+          updated.push(text);
+        },
+        remove: async () => undefined,
+      },
+      { graceMs: 1, minimumUpdateIntervalMs: 1, animationIntervalMs: 30 },
+    );
+
+    progress.report({ phase: "thinking", detail: "general" });
+    await delay(200);
+    await progress.finish();
+
+    // Tidak ada laporan fase baru sepanjang jeda itu; setiap perubahan berasal
+    // dari denyut animasinya sendiri.
+    assert.ok(updated.length >= 3, `hanya ${updated.length} pembaruan`);
+    const bulan = updated.map((teks) => teks.slice(0, 2));
+    assert.ok(new Set(bulan).size >= 2, "bulannya tidak berganti");
+  });
+
+  it("berhenti berputar sesudah giliran selesai", async () => {
+    const updated: string[] = [];
+    const progress = new TransientConversationProgress<string>(
+      {
+        show: async () => "status",
+        update: async (_reference, text) => {
+          updated.push(text);
+        },
+        remove: async () => undefined,
+      },
+      { graceMs: 1, minimumUpdateIntervalMs: 1, animationIntervalMs: 30 },
+    );
+
+    progress.report({ phase: "thinking", detail: "general" });
+    await delay(100);
+    await progress.finish();
+    const sesudahSelesai = updated.length;
+    await delay(150);
+
+    assert.equal(updated.length, sesudahSelesai);
+  });
+});

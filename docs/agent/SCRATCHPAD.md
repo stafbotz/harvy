@@ -1354,6 +1354,32 @@ create surface-2  chars=819  jawabannya
 delete surface-1             statusnya dihapus
 ```
 
+### Bulan menemani seluruh fase, bukan hanya fase menunggu
+
+Dilaporkan pengguna: bulannya macet. Ia tidak macet—fase menunggu memang
+pendek, dan untuk kalimat lengkap jendelanya nol detik, sehingga bulannya
+tampil satu fase lalu langsung berganti judul. Bukti operasinya jelas: satu
+`create` 19 karakter, lalu satu `edit` ke bentuk bercatatan.
+
+Atas keputusan pemilik produk, bulan kini menemani **seluruh** fase: judul
+menjelaskan apa yang dikerjakan, bulan membuktikan ada yang sedang dikerjakan.
+
+Dua hal ikut diperbaiki karena perubahan ini menyingkapnya:
+
+- **Irama animasi punya lantainya sendiri**, tidak lagi mengikuti
+  `minimumUpdateIntervalMs`. Throttle itu boleh disetel sekecil apa pun oleh
+  pemanggil—satu tes memakai 1 ms—dan animasi yang ikut mengecil akan menyunting
+  pesan puluhan kali per detik untuk gerak yang tak terlihat mata.
+- **Denyutnya lewat `scheduleUpdate`, bukan menyunting langsung**, supaya
+  perubahan fase dan denyut bulan tidak pernah menyunting dua kali dalam satu
+  jendela throttle.
+
+**Pemeriksaan pertama saya berhenti pada "bentuknya benar".** Itu memang benar,
+sekaligus tidak membuktikan apa pun tentang geraknya—persis yang dilaporkan
+pengguna. Dua tes baru kini menjalankan animasinya dengan waktu nyata dan
+menuntut fase bulannya benar-benar berganti tanpa satu pun laporan fase baru,
+lalu berhenti sesudah giliran selesai.
+
 ## 24. Panjang balasan kini dijaga dua arah
 
 `depthDirective` menjaga satu sisi sejak lama: pesan panjang tidak boleh dijawab
