@@ -93,8 +93,9 @@ const PENDING_AMBIENT_QUIET_MS = 900;
 const PENDING_AMBIENT_MAX_AGE_MS = 15_000;
 const PENDING_AMBIENT_MAX_NEWER_TURNS = 4;
 
+/** Sama seperti kanal pribadi: tanpa istilah mesin, tanpa menyuruh mengulang. */
 const GROUP_AI_FAILURE_REPLY =
-  "Aku lagi nggak bisa memproses percakapan dengan benar. Coba panggil aku lagi sebentar ya.";
+  "Maaf ya, dari tadi gagal terus. Nanti panggil aku lagi ya.";
 const GROUP_SUPPORT_FALLBACK_REPLY =
   "Aku ingin menanggapi ini dengan hati-hati. Jangan tulis nama lengkap, alamat, nomor, atau detail pribadi lain di grup. Kamu bisa meminta bantuan praktis dengan informasi sesedikit yang diperlukan.";
 const GROUP_DANGER_FALLBACK_REPLY =

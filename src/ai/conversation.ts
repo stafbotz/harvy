@@ -541,6 +541,9 @@ export class Conversation {
       ...(runtime.signal ? { signal: runtime.signal } : {}),
       contextManifest,
       usage: this.usage(runtime.ownerId, modelRoute.tier, "understanding"),
+      // Percobaan ulang bisa menambah puluhan detik. Tanpa tanda apa pun,
+      // layar diam pada judul yang sama sepanjang itu dan terbaca macet.
+      onRetry: () => runtime.progress?.report({ phase: "retrying" }),
       messages: [
         {
           role: "system",
@@ -1168,6 +1171,9 @@ export class Conversation {
       ),
       ...(runtime.signal ? { signal: runtime.signal } : {}),
       ...(runtime.images?.length ? { imageInputs: runtime.images } : {}),
+      // Percobaan ulang bisa menambah puluhan detik. Tanpa tanda apa pun,
+      // layar diam pada judul yang sama sepanjang itu dan terbaca macet.
+      onRetry: () => runtime.progress?.report({ phase: "retrying" }),
       messages: [
         { role: "system", content: system },
         ...(runtime.images?.length

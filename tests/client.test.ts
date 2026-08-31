@@ -2179,6 +2179,12 @@ function recordingLogger(
     event: string,
     fields: Record<string, unknown> | undefined,
   ) => void,
+  // Opsional supaya pemanggil lama tidak ikut menerima peristiwa warn dan
+  // assertion mereka tidak berubah.
+  onWarn: (
+    event: string,
+    fields: Record<string, unknown> | undefined,
+  ) => void = () => {},
 ): OperationalLogger {
   const logger: OperationalLogger = {
     child(): OperationalLogger {
@@ -2204,7 +2210,9 @@ function recordingLogger(
     info(event, _message, fields): void {
       onInfo(event, fields);
     },
-    warn(): void {},
+    warn(event, _message, fields): void {
+      onWarn(event, fields);
+    },
     error(): void {},
     fatal(): void {},
   };
@@ -2277,3 +2285,152 @@ function chatResponse(content: string): Response {
     { status: 200, headers: { "content-type": "application/json" } },
   );
 }
+
+/**
+ * Percobaan ulang untuk kegagalan sementara.
+ *
+ * Sampai 31 Agustus 2026 anggaran percobaan hanya diturunkan dari banyaknya
+ * kunci API. Produksi memakai satu kunci, jadi anggarannya selalu 1 dan
+ * percobaan kedua tidak pernah terjadi—meski timeout sudah dikenali layak-ulang
+ * dan lognya sudah disiapkan. Log satu hari penuh: 23 kegagalan layak-ulang,
+ * nol `ai_request_retrying`. Setiap cegukan provider langsung menjadi "maaf" di
+ * layar pengguna.
+ */
+describe("percobaan ulang tidak bergantung jumlah kunci", () => {
+  const jawabanBaik = () =>
+    new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "oke" }, finish_reason: "stop" }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  it("mengulang timeout walau hanya ada satu kunci", async () => {
+    let panggilan = 0;
+    globalThis.fetch = async () => {
+      panggilan += 1;
+      if (panggilan === 1) {
+        const error = new Error("dibatalkan");
+        error.name = "AbortError";
+        throw error;
+      }
+      return jawabanBaik();
+    };
+
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-tunggal"]),
+    });
+
+    const hasil = await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+    });
+
+    assert.equal(panggilan, 2, "timeout pertama wajib dicoba ulang");
+    assert.equal(hasil, "oke");
+  });
+
+  // Percobaan kedua memakai anggaran waktu lebih panjang. Timeout pertama
+  // biasanya berarti provider sedang lambat, bukan mati; mengulang dengan
+  // anggaran yang sama akan gagal karena alasan yang sama persis.
+  it("memberi percobaan kedua waktu lebih panjang", async () => {
+    let panggilan = 0;
+    globalThis.fetch = async () => {
+      panggilan += 1;
+      if (panggilan === 1) {
+        const error = new Error("dibatalkan");
+        error.name = "AbortError";
+        throw error;
+      }
+      return jawabanBaik();
+    };
+
+    const anggaran: number[] = [];
+    const catat = (
+      event: string,
+      fields: Record<string, unknown> | undefined,
+    ): void => {
+      const timeoutMs = fields?.["timeoutMs"];
+      if (
+        (event === "ai_request_retrying" ||
+          event === "ai_request_completed") &&
+        typeof timeoutMs === "number"
+      ) {
+        anggaran.push(timeoutMs);
+      }
+    };
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-tunggal"]),
+      timeoutMs: 1_000,
+      logger: recordingLogger(catat, catat),
+    });
+
+    await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+    });
+
+    assert.equal(panggilan, 2);
+    assert.equal(anggaran.length, 2, "kedua percobaan wajib tercatat");
+    assert.equal(anggaran[0], 1_000, "percobaan pertama memakai anggaran biasa");
+    assert.ok(
+      (anggaran[1] ?? 0) > (anggaran[0] ?? 0),
+      `percobaan kedua wajib lebih sabar: ${anggaran.join(" -> ")}`,
+    );
+  });
+
+  // Penjaga arah sebaliknya. Classifier batas giliran menyetel `maxAttempts: 1`
+  // dengan sengaja: deadline-nya pendek, pengguna sedang menunggu, dan
+  // kegagalannya sudah gagal-aman. Mengulangnya menambah tunggu tanpa guna.
+  it("menghormati maxAttempts eksplisit", async () => {
+    let panggilan = 0;
+    globalThis.fetch = async () => {
+      panggilan += 1;
+      const error = new Error("dibatalkan");
+      error.name = "AbortError";
+      throw error;
+    };
+
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-tunggal"]),
+    });
+
+    await assert.rejects(() =>
+      client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxAttempts: 1,
+      })
+    );
+
+    assert.equal(panggilan, 1, "maxAttempts eksplisit tidak boleh diulang");
+  });
+
+  it("tidak mengulang galat yang bukan sementara", async () => {
+    let panggilan = 0;
+    globalThis.fetch = async () => {
+      panggilan += 1;
+      return new Response(JSON.stringify({ error: "ditolak" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-tunggal"]),
+    });
+
+    await assert.rejects(() =>
+      client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+      })
+    );
+
+    assert.equal(panggilan, 1, "400 bukan alasan mengulang");
+  });
+});

@@ -823,11 +823,30 @@ const SHORT_MESSAGE_CHARS = 20;
 /**
  * Prefix stabil untuk semua balasan privat Harvy.
  *
- * Provider OpenAI-compatible yang dipakai Harvy melakukan prompt caching dari
- * awal request. Karena itu, aturan durable harus berada sebelum intent, gaya,
- * konteks, receipt, dan waktu yang berubah di setiap giliran. Nilai ini juga
- * diekspor agar acceptance provider dapat mengukur prompt Harvy yang nyata,
- * bukan hanya fixture generik.
+ * **Penghematan yang dituju belum pernah terjadi pada provider sekarang.**
+ * Diukur langsung ke GMI/MiniMax-M3 pada 31 Agustus 2026: ia meng-cache
+ * seluruh permintaan, bukan awalannya.
+ *
+ * ```
+ * sistem sama, pesan pengguna sama   6.583 / 6.584 ter-cache
+ * sistem sama, pesan pengguna beda       128 / 6.594 ter-cache
+ * sistem beda di ekor, pesan sama        128 / 6.593 ter-cache
+ * ```
+ *
+ * Pesan pengguna tidak pernah sama dua kali di pemakaian nyata, jadi syaratnya
+ * tidak pernah terpenuhi. Angka tinggi hanya muncul saat probe mengulang pesan
+ * yang sama persis—dan itu sempat terbaca sebagai bukti bahwa penghematan ini
+ * bekerja.
+ *
+ * Susunannya sengaja dipertahankan. Ia tidak merugikan, dan langsung berguna
+ * bila Harvy pindah ke provider yang benar-benar meng-cache dari awal request.
+ * Yang tidak boleh dipertahankan adalah klaimnya: siapa pun yang membaca ini
+ * dan percaya penghematannya berjalan akan berhenti mencari kelambatan di
+ * tempat yang benar. Kelambatan nyata Harvy ada pada latensi provider yang
+ * bervariasi—permintaan identik terukur 2.239 ms dan 8.561 ms berurutan.
+ *
+ * Nilai ini juga diekspor agar acceptance provider dapat mengukur prompt Harvy
+ * yang nyata, bukan hanya fixture generik.
  */
 export const HARVY_REPLY_CACHE_SPINE = [
   HARVY_IDENTITY,

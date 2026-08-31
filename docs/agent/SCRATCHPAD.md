@@ -1748,6 +1748,203 @@ menurunkannya dari tabel. Daftar terpisah pasti melenceng—dan taruhannya bukan
 kosmetik: judul yang tidak dikenali membuat status lama tertinggal di layar
 pengguna sebagai balasan palsu.
 
+## 27. "Menunggu Harvy" tidak pernah tampil, kali ketiga
+
+Dilaporkan dari pemakaian nyata 31 Agustus 2026: kirim "halo", yang muncul
+langsung "Memikirkan"—tanpa waktu, tanpa token, tanpa pengakuan sama sekali.
+Ketiadaan waktu dan token itu justru buktinya: berarti yang terlihat adalah
+render **pertama**, dan pengakuan yang seharusnya mendahuluinya tidak pernah
+dikirim.
+
+Direproduksi persis di luar kanal sebelum apa pun diubah:
+
+```
+progress.report({ phase: "waiting" });
+setTimeout(() => progress.report({ phase: "thinking" }), 5);
+
+SHOW: 🌒 Memikirkan      <- pengakuannya hilang
+EDIT: 🌓 Memikirkan
+```
+
+**Sebabnya.** `report()` menyimpan fase terbaru, tetapi render pertamanya
+ditunda jeda tampil. Untuk pesan pendek seperti "halo", jendela tunggu batas
+gilirannya nol detik, jadi giliran mulai dan melapor `thinking` dalam hitungan
+milidetik—jauh di dalam jeda itu. Ketika render pertama akhirnya jalan, yang
+dibacanya sudah `thinking`. Pengakuannya ditimpa sebelum sempat terkirim sekali
+pun.
+
+**Perbaikannya.** Pengakuan menunggu ditahan dan menang sekali pada render
+pertama, walau fasenya sudah maju. Jeda 250 ms tetap—ia menjaga janji lain, yaitu
+balasan deterministik di bawah 250 ms tidak memunculkan apa pun—karena yang salah
+bukan jedanya, melainkan **isi** yang dirender sesudah jeda itu.
+
+Penahanan ini khusus fase menunggu. Fase kerja tetap merender yang terbaru:
+mereka melaporkan pekerjaan yang sedang berjalan, dan di sana yang paling baru
+memang yang paling benar. Menahan fase kerja akan menampilkan pekerjaan yang
+sudah lewat.
+
+Sesudahnya:
+
+```
+SHOW: 🌒 Menunggu Harvy
+EDIT: 🌓 Memikirkan
+EDIT: 🌔 Memikirkan
+```
+
+Terverifikasi di Telegram nyata sesudahnya, giliran `obrolan-biasa` lulus:
+
+```
+🌒 Menunggu Harvy
+🌓 Menunggu Harvy · 1s
+🌔 Memikirkan · 2s · ↑ 809 · ↓ 27
+🌖 Menyusun · 4s · ↑ 7.5k · ↓ 175
+```
+
+Pengakuannya tampil lebih dulu, waktunya menyusul di detik pertama, dan
+tokennya di detik kedua begitu panggilan model pertama melapor.
+
+### Kenapa ini kembali tiga kali
+
+Tiga kegagalan, tiga sebab berbeda, satu gejala yang sama:
+
+1. Jeda tampil 700 ms melawan jendela batas giliran nol detik.
+2. Denyut bulan disalurkan lewat penahan 15 detik, sehingga tersendat.
+3. Fase terbaru menimpa pengakuan sebelum render pertama.
+
+Tiap perbaikan sebelumnya menutup gejalanya dengan tes yang sempit—menguji
+fungsinya, bukan urutannya. Yang tidak pernah ada adalah tes yang menjalankan
+**urutan produksi**: lapor menunggu, lalu lapor kerja beberapa milidetik
+kemudian, lalu periksa apa yang benar-benar terkirim pertama. Tiga tes itu kini
+ada, dan yang ketiga menjaga arah sebaliknya supaya perbaikan ini tidak menahan
+fase kerja.
+
+## 28. Coba-ulang yang tidak pernah menyala
+
+Dilaporkan dari pemakaian nyata 31 Agustus 2026: Harvy hampir selalu menjawab
+"maaf, aku lagi nggak bisa mikir sekarang". Investigasi menemukan satu penyebab
+utama dan beberapa temuan lain.
+
+**Errornya `AbortError`—timeout, bukan penolakan provider.** Kalau panggilan
+pemahaman gagal, seluruh giliran gagal.
+
+**Dan timeout tidak pernah diulang sekali pun.** Anggaran percobaan diturunkan
+dari banyaknya kunci API:
+
+```ts
+const keyAttempts = Math.min(request.maxAttempts ?? provider.keys.size,
+                             provider.keys.size);      // = 1
+const keyRotationAvailable = attempt + 1 < keyAttempts; // 1 < 1 -> false
+```
+
+Produksi memakai satu kunci, jadi anggarannya selalu 1. Timeout **sudah**
+dikenali layak-ulang oleh `isRetryable`, lognya **sudah** disiapkan, tetapi
+percobaan kedua tidak pernah terjadi. Log satu hari penuh: 23 kegagalan
+layak-ulang, **nol** `ai_request_retrying`.
+
+Timeout bukan masalah kunci. Mengulang ke kunci yang sama sudah cukup, karena
+penyebabnya provider yang sesekali lambat.
+
+### Jatahnya khusus timeout, bukan seluruh kelas layak-ulang
+
+Percobaan pertama menaikkan anggaran umum, dan empat tes lama langsung merah:
+5xx dan rate limit punya jalur fallback sendiri yang ikut berubah perilakunya.
+Yang terukur bermasalah hanya timeout, jadi jatahnya dipersempit ke sana.
+`maxAttempts` eksplisit tetap dihormati—classifier batas giliran memang ingin
+satu percobaan karena deadline-nya pendek dan kegagalannya sudah gagal-aman.
+
+Percobaan kedua diberi anggaran **1,5 kali lebih panjang**. Timeout pertama
+biasanya berarti provider sedang lambat, bukan mati; mengulang dengan anggaran
+yang sama akan gagal karena alasan yang sama persis.
+
+### Lambatnya dari provider, bukan dari ukuran prompt
+
+Diukur langsung, permintaan identik berurutan: **2.239 ms dan 8.561 ms**.
+Memotong prompt ke 27% ukurannya tidak memotong latensi sebanding:
+
+```
+6.629 token -> 8.561 ms, 2.239 ms
+3.620 token -> 7.447 ms, 3.909 ms
+1.789 token -> 5.655 ms, 3.092 ms
+```
+
+Sebaran di dalam satu ukuran lebih besar daripada beda antar ukuran. Durasi
+giliran nyata hari itu: 6,7 detik sampai 57,7 detik.
+
+Akibatnya anggaran waktu duduk persis di plafon kenyataan: turn-boundary 3.500
+ms melawan 2.832 ms sukses terlambat, understanding 30.000 ms melawan 28.781 ms.
+Sisa ruang 4–20% melawan variasi empat kali lipat.
+
+### Prompt caching tidak pernah kena di produksi
+
+`HARVY_REPLY_CACHE_SPINE` memaksa urutan prompt di seluruh Harvy dan dijaga tes
+yang mewajibkan >4.096 byte, dengan komentar bahwa provider melakukan caching
+dari awal request. Premis itu salah untuk provider sekarang:
+
+```
+sistem sama, pesan pengguna sama   6.583 / 6.584 ter-cache
+sistem sama, pesan pengguna beda       128 / 6.594 ter-cache
+sistem beda di ekor, pesan sama        128 / 6.593 ter-cache
+```
+
+GMI meng-cache seluruh permintaan, bukan awalannya. Pesan pengguna tidak pernah
+sama dua kali, jadi syaratnya tidak pernah terpenuhi.
+
+Susunannya dipertahankan—tidak merugikan, dan langsung berguna bila pindah
+provider. Klaimnya yang dikoreksi. Angka tinggi hanya muncul saat probe
+mengulang pesan yang sama persis, dan itu sempat terbaca sebagai bukti bahwa
+penghematannya bekerja. Satu hipotesis sempat dikejar sampai kodenya diubah—
+stempel waktu berketelitian detik di ekor prompt pemahaman—lalu diukur dan
+**tidak mengubah apa pun**, jadi dikembalikan.
+
+### Kalimat gagalnya
+
+Tiga hal yang salah pada kalimat lama, ketiganya diperbaiki.
+
+**Ia menjadikan pengguna tombol coba-ulang.** "Coba kirim lagi" meminta pengguna
+mengetik ulang sesuatu yang Harvy sudah simpan—pesannya sudah masuk riwayat
+sebelum kalimat itu dikirim.
+
+**Ia menyebut isi perut.** "Sambungan ke otakku" dan "nggak bisa mikir" meminta
+pengguna memahami mesin yang tak pernah ia lihat, dan yang kedua terdengar
+seperti alasan.
+
+**Satu kalimat untuk semua keadaan.** Bedanya kini dibawa saran tindakannya—
+"nanti coba tanya lagi" versus "coba beberapa menit lagi"—bukan penjelasan
+mekanisme. Varian per pengguna menjaga agar tidak terdengar seperti rekaman;
+sepertiga giliran pernah berakhir di sini dalam satu hari.
+
+Kalimatnya milik kode, bukan model. Bukan kemalasan: kalimat ini muncul justru
+ketika model tidak bisa dipakai, jadi memintanya menulis permintaan maaf akan
+melingkar. Dan model tidak tahu apakah tugas pengguna tersimpan—karangan seperti
+"tenang, tugasnya sudah aku catat" adalah kebohongan yang membuat pengguna
+berhenti mengulang.
+
+Baris "tugasnya sudah tercatat" sempat dirancang lalu dibatalkan: tidak ada
+jalur yang membutuhkannya. Ketika penyimpanan tugas berhasil tetapi kalimatnya
+gagal, kode **tidak mengirim pesan gagal sama sekali**—ia meneruskan pencatatan
+dan membalas normal. Sudah lebih baik daripada meminta maaf sambil menjelaskan
+apa yang selamat.
+
+### Status "Mencoba lagi"
+
+Satu percobaan ulang menambah puluhan detik. Tanpa tanda apa pun layar diam pada
+judul yang sama sepanjang itu dan terbaca macet—keluhan yang persis pernah
+dilaporkan. `ChatRequest` kini membawa `onRetry`, dan pemahaman serta balasan
+memakainya untuk melaporkan fase `retrying`. Callback itu dibungkus try/catch:
+kosmetik tidak boleh menjadi sebab permintaan gagal.
+
+Judulnya menunjukkan usaha, bukan mekanismenya—tidak menyebut berapa kali atau
+apa yang gagal.
+
+### Yang belum dikerjakan
+
+Percobaan ulang **tertunda**—Harvy menyimpan pesannya, menunggu setengah menit,
+lalu mencoba sekali lagi di luar giliran—dibahas dan disetujui arahnya tetapi
+belum dibangun. Dua percobaan di dalam giliran sudah memenuhi "Harvy mencoba
+sendiri", sehingga kalimat gagalnya jujur apa adanya. Yang tersisa dari
+rancangan itu: pembatalan bila pengguna mengirim pesan baru, dan batas agar
+provider yang benar-benar mati tidak diulang tanpa henti.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

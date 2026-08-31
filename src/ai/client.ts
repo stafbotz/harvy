@@ -171,6 +171,16 @@ export interface ChatRequest {
   timeoutMs?: number;
   /** Batasi rotasi kunci untuk keputusan UX yang punya jalur mundur lokal. */
   maxAttempts?: number;
+  /**
+   * Dipanggil ketika permintaan gagal sementara dan akan diulang.
+   *
+   * Satu percobaan ulang bisa menambah puluhan detik. Tanpa tanda apa pun,
+   * layar pengguna diam pada judul yang sama sepanjang itu dan terbaca
+   * macet—keluhan yang persis pernah dilaporkan. Callback ini murni
+   * kosmetik dan wajib gagal aman: lemparan di dalamnya tidak boleh
+   * menjatuhkan permintaannya.
+   */
+  onRetry?: () => void;
   /** Trusted caller may forbid provider fallback for exact-bound stages. */
   fallbackPolicy?: "configured" | "disabled";
   /** Pembatalan lifecycle dari pemilik request, terpisah dari timeout. */
@@ -782,23 +792,55 @@ export class AiClient {
         provider.keys.size,
       ),
     );
+    // Kegagalan sementara tidak boleh bergantung pada jumlah kunci.
+    //
+    // Sampai 31 Agustus 2026 anggaran percobaan **hanya** diturunkan dari
+    // banyaknya kunci API. Produksi memakai satu kunci, sehingga anggarannya
+    // selalu 1 dan `attempt + 1 < keyAttempts` tidak pernah benar: timeout
+    // dikenali layak-ulang, lognya sudah disiapkan, tetapi tidak pernah ada
+    // percobaan kedua. Log satu hari penuh mencatat 23 kegagalan layak-ulang
+    // dan **nol** `ai_request_retrying`.
+    //
+    // Timeout bukan masalah kunci. Provider yang dipakai Harvy berlatensi
+    // sangat bervariasi—permintaan identik terukur 2.239 ms dan 8.561 ms
+    // berurutan—jadi satu cegukan langsung menjadi "maaf" di layar pengguna.
+    // Mengulang ke kunci yang sama sudah cukup.
+    //
+    // Jatahnya **hanya** untuk timeout, bukan seluruh kelas layak-ulang.
+    // Menaikkan anggaran umum ikut mengubah perilaku fallback pada 5xx dan
+    // rate limit—jalur yang punya penjaganya sendiri dan tidak sedang
+    // bermasalah. Percobaan pertama melakukan itu dan empat tes lama langsung
+    // merah.
+    //
+    // `maxAttempts` eksplisit tetap dihormati: pemanggil seperti classifier
+    // batas giliran memang ingin satu percobaan, karena ia berdeadline pendek
+    // dan kegagalannya sudah gagal-aman.
+    let timeoutRetries = request.maxAttempts === undefined
+      ? TRANSIENT_ATTEMPTS - 1
+      : 0;
     // Missing finish metadata kadang terjadi pada respons HTTP 200 yang valid
     // secara transport. Setelah seluruh key mendapat giliran, permintaan umum
     // memperoleh satu recovery bounded. `maxAttempts` eksplisit tetap keras
     // untuk classifier berdeadline pendek seperti turn boundary.
     let incompleteRecoveryAttempts = request.maxAttempts === undefined ? 1 : 0;
+    let attemptRequest = request;
 
     for (let attempt = 0;; attempt += 1) {
       try {
         return await this.send(
           provider,
-          request,
+          attemptRequest,
           state,
         );
       } catch (error) {
         const keyRotationAvailable = attempt + 1 < keyAttempts;
+        const timedOut = error instanceof Error &&
+          error.name === "AbortError";
+        const timeoutRetryAvailable = timedOut && timeoutRetries > 0;
+        if (timeoutRetryAvailable) timeoutRetries -= 1;
+        const attemptsLeft = keyRotationAvailable || timeoutRetryAvailable;
         const boundedIncompleteRecovery =
-          !keyRotationAvailable &&
+          !attemptsLeft &&
           incompleteRecoveryAttempts > 0 &&
           isMissingTerminalMarker(error);
         if (boundedIncompleteRecovery) incompleteRecoveryAttempts -= 1;
@@ -809,13 +851,13 @@ export class AiClient {
             preferFallbackOnTransportFailure &&
             isProviderWideFailure(error)
           ) &&
-          (keyRotationAvailable || boundedIncompleteRecovery);
+          (attemptsLeft || boundedIncompleteRecovery);
         if (retrying) {
           this.logger.warn(
             "ai_request_retrying",
             "Permintaan model gagal sementara dan akan dicoba lagi.",
             {
-              ...this.safeRequestFields(provider, request),
+              ...this.safeRequestFields(provider, attemptRequest),
               attempt: attempt + 1,
               maxAttempts: keyAttempts +
                 (request.maxAttempts === undefined ? 1 : 0),
@@ -824,6 +866,12 @@ export class AiClient {
               status: error instanceof AiError ? error.status : undefined,
             },
           );
+          try {
+            request.onRetry?.();
+          } catch {
+            // Kosmetik tidak boleh menjadi sebab permintaan gagal.
+          }
+          attemptRequest = this.morePatientOnTimeout(attemptRequest, error);
           continue;
         }
         throw error;
@@ -1252,6 +1300,40 @@ export class AiClient {
 
   private now(): number {
     return this.options.now?.() ?? Date.now();
+  }
+
+  /**
+   * Menyalin request dengan anggaran waktu lebih panjang, khusus sesudah timeout.
+   *
+   * Anggaran efektifnya dibaca ulang, bukan diambil dari `request.timeoutMs`:
+   * pemanggil terpenting—pemahaman pesan dan balasan—tidak menyetelnya sama
+   * sekali dan mewarisi deadline rencana eksekusi. Tanpa ini percobaan kedua
+   * memakai anggaran yang sama persis dan gagal karena alasan yang sama.
+   *
+   * `execution.deadlineMs` ikut dinaikkan karena `assertExecutionRequest`
+   * menolak timeout yang melampaui deadline rencananya.
+   */
+  private morePatientOnTimeout(
+    request: ChatRequest,
+    error: unknown,
+  ): ChatRequest {
+    const timedOut = error instanceof Error && error.name === "AbortError";
+    if (!timedOut) return request;
+    const timeoutMs = Math.round(
+      this.requestTimeoutMs(request) * RETRY_PATIENCE,
+    );
+    return {
+      ...request,
+      timeoutMs,
+      ...(request.execution
+        ? {
+            execution: {
+              ...request.execution,
+              deadlineMs: Math.max(request.execution.deadlineMs, timeoutMs),
+            },
+          }
+        : {}),
+    };
   }
 
   private requestTimeoutMs(request: ChatRequest): number {
@@ -2297,6 +2379,26 @@ function isUnsupportedOption(error: unknown): boolean {
     (error.status === 400 || error.status === 404 || error.status === 422)
   );
 }
+
+/**
+ * Total percobaan untuk kegagalan sementara ketika pemanggil tidak menentukan.
+ *
+ * Dua, bukan lebih: percobaan ketiga membuat pengguna menunggu terlalu lama
+ * untuk kabar yang kemungkinan besar tetap buruk.
+ */
+const TRANSIENT_ATTEMPTS = 2;
+
+/**
+ * Percobaan ulang sesudah timeout diberi waktu lebih panjang, bukan sama.
+ *
+ * Timeout pertama biasanya berarti provider sedang lambat, bukan mati. Diukur
+ * pada permintaan yang berhasil: 1.826 ms sampai 28.781 ms untuk pemanggilan
+ * yang sama. Mengulang dengan anggaran yang sama akan gagal karena alasan yang
+ * sama persis; memberi lebih sabar justru menangkap yang tinggal sedikit lagi
+ * selesai.
+ */
+const RETRY_PATIENCE = 1.5;
+
 
 /**
  * Timeout, pembatasan laju, galat server, dan respons 2xx tanpa terminal marker

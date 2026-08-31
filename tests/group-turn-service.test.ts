@@ -673,7 +673,7 @@ describe("giliran grup", () => {
     );
     assert.equal(runtime.replies.length, 1);
     assert.notEqual(runtime.replies[0], unsafeReply);
-    assert.match(runtime.replies[0] ?? "", /nggak bisa memproses/iu);
+    assert.match(runtime.replies[0] ?? "", /gagal terus/iu);
   });
 
   it("meregenerasi fact correction dengan tier balasan, bukan mengirim kandidat planner", async () => {

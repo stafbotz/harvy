@@ -16,6 +16,7 @@ import {
   isMemoryPortraitGrounded,
 } from "../ai/memory-portrait.js";
 import {
+  AiError,
   ByokProviderError,
   type ChatImageMediaType,
 } from "../ai/client.js";
@@ -338,8 +339,58 @@ interface ForgottenMemoryBatch {
   }>;
 }
 
-const AI_FAILURE_MESSAGE =
-  "Maaf, aku lagi nggak bisa mikir sekarang — sambungan ke otakku lagi bermasalah. Coba kirim lagi sebentar lagi, ya.";
+/**
+ * Kalimat ketika Harvy gagal menyelesaikan giliran.
+ *
+ * Dirancang bersama pemilik produk 31 Agustus 2026, mengganti satu kalimat
+ * tetap yang berbunyi "aku lagi nggak bisa mikir sekarang — sambungan ke otakku
+ * lagi bermasalah. Coba kirim lagi sebentar lagi, ya."
+ *
+ * Tiga hal yang salah pada kalimat itu, dan ketiganya diperbaiki di sini.
+ *
+ * **Ia menjadikan pengguna tombol coba-ulang.** "Coba kirim lagi" meminta
+ * pengguna mengetik ulang sesuatu yang Harvy sudah simpan—pesannya sudah masuk
+ * riwayat sebelum kalimat ini dikirim. Sekarang Harvy yang mencoba lagi.
+ *
+ * **Ia menyebut isi perut.** "Sambungan ke otakku" dan "nggak bisa mikir"
+ * meminta pengguna memahami mesin yang tidak pernah ia lihat, dan "nggak bisa
+ * mikir" terdengar seperti alasan. Yang benar-benar terjadi cuma dua: lambat,
+ * atau layanannya sedang terganggu.
+ *
+ * **Satu kalimat untuk semua keadaan.** Timeout, jaringan putus, server error,
+ * dan jawaban tak terbaca semuanya mendapat teks yang sama, padahal tindakan
+ * yang masuk akal bagi pengguna berbeda. Bedanya kini dibawa oleh **saran
+ * tindakannya**—"aku ulang bentar" versus "coba beberapa menit lagi"—bukan oleh
+ * penjelasan mekanisme.
+ *
+ * Kalimatnya dipilih kode, bukan model, dan itu bukan kemalasan. Kalimat ini
+ * muncul justru ketika model tidak bisa dipakai, jadi memintanya menulis
+ * permintaan maaf akan melingkar. Lebih penting lagi: model tidak tahu apakah
+ * tugas pengguna tersimpan atau tidak, dan karangan seperti "tenang, tugasnya
+ * sudah aku catat" adalah kebohongan yang membuat pengguna berhenti mengulang.
+ * Kode tahu faktanya.
+ *
+ * Baris "tugasnya sudah tercatat" sempat dirancang lalu dibatalkan: tidak ada
+ * jalur yang membutuhkannya. Ketika penyimpanan tugas berhasil tetapi
+ * kalimatnya gagal, kode tidak mengirim pesan gagal sama sekali—ia meneruskan
+ * pencatatan dan membalas normal, yang lebih baik daripada meminta maaf sambil
+ * menjelaskan apa yang selamat.
+ *
+ * Variannya ada supaya kalimat ini tidak terdengar seperti rekaman—sepertiga
+ * giliran pernah berakhir di sini dalam satu hari. Yang divariasikan hanya rasa;
+ * baris yang menyatakan fakta tetap berbunyi sama persis.
+ */
+const AI_FAILURE_GIVEN_UP = [
+  "Maaf ya, dari tadi gagal terus. Nanti coba tanya lagi ya.",
+  "Maaf, belum berhasil juga nih. Coba lagi nanti ya.",
+  "Belum berhasil juga, maaf ya. Coba lagi nanti.",
+] as const;
+
+const AI_FAILURE_DISRUPTED = [
+  "Lagi ada gangguan nih, bukan dari pesanmu. Coba beberapa menit lagi ya.",
+  "Lagi ada gangguan dari sananya, bukan gara-gara pesanmu. Coba beberapa menit lagi.",
+] as const;
+
 function usageLimitMessage(error: UsageLimitError): string {
   if (error.reason === "wallet_disabled") {
     return "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Kamu bisa mengaktifkannya dari pengaturan funding, memakai provider sendiri, atau menunggu pembaruan kapasitas.";
@@ -357,12 +408,54 @@ function usageLimitMessage(error: UsageLimitError): string {
     "Memory, percakapan, dan pekerjaanmu tetap tersimpan.",
   ].join("\n\n");
 }
-function aiFailureMessage(error: unknown, fallback = AI_FAILURE_MESSAGE): string {
+function aiFailureMessage(
+  error: unknown,
+  fallback?: string,
+  options: { seed?: string } = {},
+): string {
   if (error instanceof UsageLimitError) return usageLimitMessage(error);
   if (error instanceof ByokProviderError) {
     return "Provider BYOK-mu belum dapat menyelesaikan pekerjaan ini. Kamu bisa memilih model BYOK yang lebih kuat, memasang provider lain, atau memakai compute Harvy secara eksplisit. Harvy tidak mengalihkan biaya diam-diam.";
   }
-  return fallback;
+  if (fallback !== undefined) return fallback;
+  // Bedanya dibawa saran tindakannya, bukan penjelasan mekanisme: gangguan
+  // layanan tidak akan sembuh dengan mencoba lagi sekarang, sedangkan kelambatan
+  // biasa bisa.
+  const varian = serviceDisrupted(error)
+    ? AI_FAILURE_DISRUPTED
+    : AI_FAILURE_GIVEN_UP;
+  return varian[stableVariantIndex(options.seed ?? "", varian.length)] ??
+    varian[0];
+}
+
+/**
+ * Gangguan dari sisi layanan, bukan sekadar lambat.
+ *
+ * Timeout berarti Harvy kehabisan waktu—mencoba lagi sebentar kemudian masuk
+ * akal. Status 5xx, rate limit, dan kegagalan jaringan berarti masalahnya di
+ * luar sana, dan menyuruh pengguna mencoba sekarang cuma membuang waktunya.
+ */
+function serviceDisrupted(error: unknown): boolean {
+  if (error instanceof AiError && error.status !== undefined) {
+    return error.status >= 500 || error.status === 429;
+  }
+  return error instanceof TypeError;
+}
+
+/**
+ * Varian stabil per pengguna, tetapi tidak seragam antar pengguna.
+ *
+ * Stabil supaya orang yang sama tidak melihat kalimat berganti-ganti dalam satu
+ * percakapan, dan berbeda antar orang supaya kalimatnya tidak terasa seperti
+ * satu rekaman yang dipakai semua orang.
+ */
+function stableVariantIndex(seed: string, length: number): number {
+  if (length <= 0) return 0;
+  let hash = 0;
+  for (const character of seed) {
+    hash = (hash * 31 + character.codePointAt(0)!) % 2_147_483_647;
+  }
+  return hash % length;
 }
 const SESSION_KIND_OF: Partial<Record<string, SessionKind>> = {
   clarify: "clarify",
@@ -2756,7 +2849,9 @@ export function createBot(
         if (!userAlreadyAppended) {
           await appendUserHistory(ownerId, text, runtime);
         }
-        const response = aiFailureMessage(readResult.error);
+        const response = aiFailureMessage(readResult.error, undefined, {
+          seed: ownerId,
+        });
         if (!(await runtimeIsCurrent(runtime))) {
           await telemetry.discardUndelivered?.(ownerId, currentTurnId());
           return;
@@ -3806,7 +3901,9 @@ export function createBot(
             remembered,
           );
         } else if (route.kind !== "save-task") {
-          const failure = aiFailureMessage(error);
+          const failure = aiFailureMessage(error, undefined, {
+            seed: ownerId,
+          });
           await ctx.reply(failure);
           await history.append(ownerId, "harvy", failure);
           return;
@@ -5267,7 +5364,7 @@ export function createBot(
         waiting.revision ?? undefined,
       );
       logger.error("agent_resume_failed", "Run agent gagal dilanjutkan.", error);
-      const failure = aiFailureMessage(error);
+      const failure = aiFailureMessage(error, undefined, { seed: ownerId });
       await ctx.reply(failure);
       await history.append(ownerId, "harvy", failure);
       return;

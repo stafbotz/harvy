@@ -330,8 +330,14 @@ export interface WhatsAppPrivateConversationOptions {
   operationalLogRetentionDays: number;
 }
 
+/**
+ * Sama seperti Telegram: tanpa "nggak bisa mikir", tanpa "sambungan ke
+ * otakku", dan tanpa menyuruh pengguna mengirim ulang sesuatu yang sudah
+ * Harvy pegang. Harvy sendiri yang sudah mencoba dua kali sebelum kalimat ini
+ * muncul.
+ */
 const AI_FAILURE_MESSAGE =
-  "Maaf, aku lagi nggak bisa mikir sekarang — sambungan ke otakku lagi bermasalah. Coba kirim lagi sebentar lagi, ya.";
+  "Maaf ya, dari tadi gagal terus. Nanti coba tanya lagi ya.";
 const MAX_PRIVATE_REPLY_CHARACTERS = 12_000;
 
 interface ComposedPrivateReply {

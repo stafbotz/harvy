@@ -658,3 +658,101 @@ describe("fase status untuk katalog capability nyata", () => {
     assert.ok(renderConversationProgress(event).length > 0);
   });
 });
+
+/**
+ * Pengakuan pertama tidak boleh tertimpa sebelum sempat tampil.
+ *
+ * Ini kegagalan yang kembali tiga kali, dan tiap kali penyebabnya berbeda:
+ * mula-mula jeda 700 ms melawan jendela tunggu nol detik, lalu denyut yang
+ * disalurkan lewat penahan, lalu ini—`report` menyimpan fase terbaru sementara
+ * render-nya ditunda, sehingga giliran yang mulai dalam hitungan milidetik
+ * menimpa "Menunggu Harvy" sebelum ia pernah dikirim sekali pun.
+ *
+ * Dilaporkan dari pemakaian nyata: kirim "halo", yang muncul langsung
+ * "Memikirkan"—tanpa waktu, tanpa token, tanpa pengakuan.
+ */
+describe("pengakuan pertama menang atas fase yang sudah maju", () => {
+  const renderer = (shown: string[], updated: string[]) => ({
+    show: async (text: string) => {
+      shown.push(text);
+      return "status-1";
+    },
+    update: async (_reference: string, text: string) => {
+      updated.push(text);
+    },
+    remove: async () => undefined,
+  });
+
+  it("menampilkan Menunggu Harvy walau giliran mulai dalam milidetik", async () => {
+    const shown: string[] = [];
+    const updated: string[] = [];
+    const progress = new TransientConversationProgress(
+      renderer(shown, updated),
+      {
+        graceMs: 20,
+        minimumUpdateIntervalMs: 15_000,
+        animationIntervalMs: 40,
+        seed: "s",
+      },
+    );
+
+    progress.report({ phase: "waiting" });
+    // Persis urutan produksi untuk pesan pendek: jendela tunggunya nol detik,
+    // jadi `thinking` datang jauh di dalam jeda tampil.
+    progress.report({ phase: "thinking", detail: "initial" });
+    await delay(400);
+    await progress.finish();
+
+    assert.match(shown[0] ?? "", /Menunggu Harvy/u);
+  });
+
+  // Ditahan sekali, bukan seterusnya. Sesudah pengakuannya tampil, layar wajib
+  // menyusul ke pekerjaan yang benar-benar berjalan.
+  it("menyusul ke fase sungguhan sesudah pengakuannya tampil", async () => {
+    const shown: string[] = [];
+    const updated: string[] = [];
+    const progress = new TransientConversationProgress(
+      renderer(shown, updated),
+      {
+        graceMs: 20,
+        minimumUpdateIntervalMs: 15_000,
+        animationIntervalMs: 40,
+        seed: "s",
+      },
+    );
+
+    progress.report({ phase: "waiting" });
+    progress.report({ phase: "thinking", detail: "initial" });
+    await delay(400);
+    await progress.finish();
+
+    assert.ok(updated.length > 0, "status wajib diperbarui sesudah pengakuan");
+    assert.match(updated.at(-1) ?? "", /Memikirkan/u);
+    assert.doesNotMatch(updated.at(-1) ?? "", /Menunggu Harvy/u);
+  });
+
+  // Penjaga arah sebaliknya: penahanan ini khusus pengakuan menunggu. Fase kerja
+  // melaporkan pekerjaan yang sedang berjalan, dan di sana yang terbaru memang
+  // yang paling benar—menahan fase lama akan menampilkan pekerjaan yang sudah
+  // lewat.
+  it("tidak menahan fase kerja yang bukan pengakuan", async () => {
+    const shown: string[] = [];
+    const updated: string[] = [];
+    const progress = new TransientConversationProgress(
+      renderer(shown, updated),
+      {
+        graceMs: 20,
+        minimumUpdateIntervalMs: 15_000,
+        animationIntervalMs: 40,
+        seed: "s",
+      },
+    );
+
+    progress.report({ phase: "thinking", detail: "initial" });
+    progress.report({ phase: "reading", detail: "general" });
+    await delay(400);
+    await progress.finish();
+
+    assert.match(shown[0] ?? "", /Membaca/u);
+  });
+});

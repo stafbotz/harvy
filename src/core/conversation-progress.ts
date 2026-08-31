@@ -23,6 +23,15 @@ export type TurnStagePhase =
    */
   | "waiting"
   | "thinking"
+  /**
+   * Percobaan ulang sesudah panggilan model gagal sementara.
+   *
+   * Satu percobaan ulang bisa menambah puluhan detik. Tanpa fase ini
+   * layar diam pada judul yang sama sepanjang itu dan terbaca macet.
+   * Ia menunjukkan usaha, bukan mekanismenya: tidak menyebut berapa kali
+   * atau apa yang gagal.
+   */
+  | "retrying"
   | "checking"
   | "adjusting"
   | "switching"
@@ -172,6 +181,8 @@ const DEFAULT_MINIMUM_UPDATE_INTERVAL_MS = 1_500;
 export class TransientConversationProgress<Reference>
   implements ConversationProgressLifecycle {
   private latest: ConversationProgressEvent | null = null;
+  /** Pengakuan pertama yang wajib tampil sekali walau fasenya sudah maju. */
+  private pendingFirst: ConversationProgressEvent | null = null;
   private reference: Reference | null = null;
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private updateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -215,6 +226,20 @@ export class TransientConversationProgress<Reference>
       const grace = normalized.phase === "waiting"
         ? Math.min(this.graceMs, WAITING_GRACE_MS)
         : this.graceMs;
+      // Pengakuan "Menunggu Harvy" ditahan supaya tidak tertimpa sebelum sempat
+      // tampil sekali pun.
+      //
+      // `report` menyimpan fase terbaru, tetapi render-nya ditunda oleh jeda di
+      // atas. Untuk pesan pendek seperti "halo" jendela tunggunya nol detik,
+      // sehingga giliran mulai dan melapor `thinking` dalam hitungan milidetik—
+      // jauh di dalam jeda itu. Ketika render pertama akhirnya jalan, `latest`
+      // sudah menjadi `thinking`, dan pengguna tidak pernah melihat pengakuan
+      // yang justru menjadi seluruh alasan fase ini ada.
+      //
+      // Hanya fase menunggu yang ditahan begini. Fase lain tetap merender yang
+      // terbaru: mereka melaporkan pekerjaan yang sedang berjalan, dan yang
+      // paling baru memang yang paling benar.
+      if (normalized.phase === "waiting") this.pendingFirst = normalized;
       this.graceTimer = setTimeout(() => {
         this.graceTimer = null;
         this.enqueue(() => this.showLatest());
@@ -291,9 +316,12 @@ export class TransientConversationProgress<Reference>
     }
     if (this.closed || !this.latest) return;
     try {
+      // Pengakuan pertama menang atas fase terbaru di sini, sekali saja.
+      const perdana = this.pendingFirst ?? this.latest;
+      this.pendingFirst = null;
       this.reference = await this.renderer.show(
         renderConversationProgress(
-          this.latest,
+          perdana,
           this.seed,
           this.waitingFrame,
           this.options.footer?.() ?? null,
@@ -588,6 +616,7 @@ const TURN_STAGE_STATUS: Record<
 > = {
   waiting: "Menunggu Harvy",
   thinking: "Memikirkan",
+  retrying: "Mencoba lagi",
   checking: "Memeriksa",
   adjusting: "Menyesuaikan",
   switching: "Beralih",
@@ -789,6 +818,9 @@ function realizePublicProgressNote(
         ? `perbandingan ${focus.subject} dan ${focus.contrast}${purpose}`
         : `jawaban soal ${focus.subject}${purpose}`;
       break;
+    // Percobaan ulang tidak punya objek baru untuk disebut: yang dikerjakan
+    // sama persis dengan tadi. Judulnya sendiri sudah lengkap.
+    case "retrying":
     case "listening":
     case "responding":
     // Fase menunggu tidak punya catatan: pada detik itu belum ada pekerjaan

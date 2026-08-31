@@ -2076,8 +2076,14 @@ describe("alur adapter Telegram", () => {
 
     assert.equal(triageCalls, 1);
     assert.equal(reviews, 0);
+    // Kalimat gagalnya kini berbunyi apa adanya tanpa istilah mesin, dan
+    // varian per pengguna membuatnya tidak boleh dicocokkan persis.
     assert.ok(
-      harness.sent.some((text) => text.includes("sambungan ke otakku")),
+      harness.sent.some((text) => /gagal terus|belum berhasil/iu.test(text)),
+    );
+    assert.ok(
+      !harness.sent.some((text) => /mikir|otak|sambungan/iu.test(text)),
+      "kalimat gagal tidak boleh menyebut isi perut",
     );
   });
 
