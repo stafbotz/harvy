@@ -1486,6 +1486,24 @@ seiring panggilan model selesai satu per satu—pengguna melihat biayanya
 bertambah, bukan muncul sekaligus di akhir. Token tidak ditampilkan selama masih
 nol: "0 tokens" akan terbaca seperti klaim bahwa tidak ada yang dikerjakan.
 
+**Jawaban dikirim dulu, status dihapus sesudahnya.** Urutan sebelumnya membuat
+layar melompat: penghapusan dan pengiriman adalah dua panggilan jaringan
+terpisah, sehingga ada jeda beberapa ratus milidetik ketika statusnya sudah
+hilang dan jawabannya belum datang—layar kosong sebentar, lalu terisi.
+
+Pilihan yang lebih mulus ada dan ditolak: **menyunting status menjadi
+jawabannya**, tanpa penghapusan maupun pesan baru sama sekali. Harganya
+notifikasi—status dikirim dengan notifikasi dimatikan supaya tidak menggetarkan
+HP untuk sesuatu yang beberapa detik kemudian hilang, dan jawaban yang menempati
+pesan itu mewarisi sifat tersebut. Pengguna yang menutup Telegram sambil
+menunggu tidak akan tahu jawabannya datang. Dua hal kecil lain ikut hilang:
+waktu pesan tetap tercatat saat status dibuat sehingga jawabannya terlihat lebih
+tua, dan balasan berbulir hanya dapat memakai pesan itu untuk gelembung
+pertamanya.
+
+Pemanggilan ganda di jalur balasan berbulir ikut dihapus—pembungkus `ctx.reply`
+kini menanganinya, dan di sana urutannya sudah benar.
+
 **Satu penemuan sepanjang jalan.** Adapter Telegram menahan pembaruan status
 pada `minimumUpdateIntervalMs: 15_000`—lima belas detik. Itu sebabnya animasi
 versi pertama tersendat parah: denyutnya disalurkan lewat penahan yang sama.

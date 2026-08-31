@@ -637,8 +637,19 @@ export function createBot(
   bot.use(async (ctx, next) => {
     const originalReply = ctx.reply.bind(ctx);
     ctx.reply = (async (...args: Parameters<Context["reply"]>) => {
-      await activeProgress.get(ownerOf(ctx))?.responding?.();
+      // Kirim dulu, hapus status sesudahnya.
+      //
+      // Urutan sebaliknya membuat layar melompat: penghapusan dan pengiriman
+      // adalah dua panggilan jaringan terpisah, sehingga ada jeda beberapa
+      // ratus milidetik ketika statusnya sudah hilang dan jawabannya belum
+      // datang. Dengan urutan ini pengguna melihat jawabannya muncul selagi
+      // status masih ada, lalu status lenyap.
+      //
+      // Bila pengiriman gagal, statusnya tertinggal sebentar dan ditutup jalur
+      // pembersih giliran—lebih baik daripada layar kosong.
+      const progress = activeProgress.get(ownerOf(ctx));
       const sent = await originalReply(...args);
+      await progress?.responding?.();
       const turnId = currentUsageAttribution()?.turnId ?? null;
       if (turnId) await noteTurnResponse(ownerOf(ctx), turnId);
       return sent;
@@ -5737,7 +5748,6 @@ export function createBot(
       if (!(await runtimeIsCurrent(runtime))) {
         throw new ReplyInterruptedError(delivered.join("\n\n"));
       }
-      if (index === 0) await runtime.progress?.responding?.();
       const last = index === bubbles.length - 1;
       const deliveredBubble = last
         ? withMemoryNotes(bubble, notesToDeliver)
