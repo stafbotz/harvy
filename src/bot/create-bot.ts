@@ -2359,7 +2359,7 @@ export function createBot(
             return renderProgressMeter(
               Date.now() - startedAt,
               telemetry.turnTokens?.(ownerId, activeTurnId.get(ownerId) ?? null) ??
-                0,
+                { input: 0, output: 0 },
             );
           } catch {
             return null;

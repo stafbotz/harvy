@@ -35,6 +35,12 @@ export interface TelemetryOptions {
   fundingAuthority?: EconomyFundingAuthority;
 }
 
+/** Token berjalan sebuah giliran, dipisah masuk dan keluar. */
+export interface TurnTokens {
+  input: number;
+  output: number;
+}
+
 export interface UsageSummary {
   inputTokens: number;
   outputTokens: number;
@@ -180,7 +186,7 @@ export class TelemetryService implements UsageObserver {
   private readonly forgottenOwners = new Set<string>();
   private readonly pendingUsage = new Map<string, AiUsageRecord[]>();
   /** Token berjalan per giliran, untuk baris biaya pada status transient. */
-  private readonly liveTurnTokens = new Map<string, Map<string, number>>();
+  private readonly liveTurnTokens = new Map<string, Map<string, TurnTokens>>();
   private readonly pendingEvents = new Map<string, ProductEvent[]>();
   private readonly pendingTurns = new Map<string, TurnTelemetryRecord[]>();
   private readonly openTurns = new Map<string, number>();
@@ -322,13 +328,14 @@ export class TelemetryService implements UsageObserver {
       if (record.turnId) {
         let perTurn = this.liveTurnTokens.get(context.ownerId);
         if (!perTurn) {
-          perTurn = new Map<string, number>();
+          perTurn = new Map<string, TurnTokens>();
           this.liveTurnTokens.set(context.ownerId, perTurn);
         }
-        perTurn.set(
-          record.turnId,
-          (perTurn.get(record.turnId) ?? 0) + record.totalTokens,
-        );
+        const berjalan = perTurn.get(record.turnId) ?? { input: 0, output: 0 };
+        perTurn.set(record.turnId, {
+          input: berjalan.input + record.inputTokens,
+          output: berjalan.output + record.outputTokens,
+        });
       }
       shouldSettle = true;
       holdReservationUntilSettlement = record.billable;
@@ -683,18 +690,17 @@ export class TelemetryService implements UsageObserver {
   }
 
   /**
-   * Total token yang sudah terpakai giliran ini, sejauh yang tercatat sekarang.
+   * Token berjalan giliran ini, dipisah masuk dan keluar.
    *
-   * Dibaca selagi giliran berjalan, jadi ia sengaja hanya melihat catatan yang
-   * belum disettle di memori—tidak menyentuh repository, tidak menunggu I/O,
-   * dan tidak boleh memperlambat surface status yang memanggilnya tiap detik.
-   *
-   * Angkanya tumbuh seiring panggilan model selesai satu per satu, sehingga
-   * pengguna melihat biayanya bertambah, bukan muncul sekaligus di akhir.
+   * Dipisah karena keduanya bercerita hal yang berbeda dan timpangnya ekstrem:
+   * diukur pada giliran nyata, input sekitar 97% dari totalnya karena prompt
+   * sistem dikirim ulang tiap panggilan. Angka gabungan terbaca seolah Harvy
+   * menulis panjang sekali, padahal ia menulis dua ratusan token.
    */
-  turnTokens(ownerId: string, turnId: string | null): number {
-    if (!turnId) return 0;
-    return this.liveTurnTokens.get(ownerId)?.get(turnId) ?? 0;
+  turnTokens(ownerId: string, turnId: string | null): TurnTokens {
+    if (!turnId) return { input: 0, output: 0 };
+    return this.liveTurnTokens.get(ownerId)?.get(turnId) ??
+      { input: 0, output: 0 };
   }
 
   /**

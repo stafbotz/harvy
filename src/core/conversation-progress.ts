@@ -1,8 +1,15 @@
 import type { ExecutionPlan } from "./execution-policy.js";
 import type { TurnInterruptionRelation } from "./turn-taking-policy.js";
 import { containsSecretLikeValue } from "../security/credential-like.js";
+import { capabilityWork } from "../harness/capabilities.js";
+import type { CapabilityWork } from "../harness/capabilities.js";
 
-export type ConversationProgressPhase =
+/**
+ * Tahap giliran Harvy sendiri—bukan kerja alat.
+ *
+ * Sepenuhnya milik kode. Model tidak dapat memilih maupun menambahnya.
+ */
+export type TurnStagePhase =
   | "listening"
   /**
    * Pesan pengguna sudah tiba, tetapi belum ada pekerjaan yang dimulai.
@@ -16,15 +23,29 @@ export type ConversationProgressPhase =
    */
   | "waiting"
   | "thinking"
-  | "searching"
-  | "reading"
-  | "comparing"
-  | "calculating"
   | "checking"
   | "adjusting"
   | "switching"
   | "composing"
   | "responding";
+
+/**
+ * Kerja alat, dinyatakan capability-nya sendiri.
+ *
+ * Sengaja identik dengan `CapabilityWork` supaya tidak ada dua sumber
+ * kebenaran: menambah kerja baru di katalog langsung membuat compiler menuntut
+ * judulnya di sini.
+ */
+export type ToolWorkPhase = CapabilityWork;
+
+/**
+ * Gabungan keduanya.
+ *
+ * Dulu satu enum datar, dan satu fungsi dipaksa melayani dua hal berbeda—di
+ * sambungan itulah keranjang sampah "Memeriksa" lahir. Dipisah, masing-masing
+ * bisa lengkap sendiri dan compiler bisa memaksa keduanya.
+ */
+export type ConversationProgressPhase = TurnStagePhase | ToolWorkPhase;
 
 export type ConversationProgressDetail =
   | "general"
@@ -346,29 +367,37 @@ export function executionProgressEvent(
   return progressEvent("composing", "general", publicFocus);
 }
 
+/**
+ * Fase untuk sebuah capability, dibaca dari deklarasinya.
+ *
+ * Dulu ini mencocokkan potongan kata di dalam id-nya pakai regex, dan itu salah
+ * secara mendasar: id adalah nama, bukan janji. Mengganti nama sebuah capability
+ * diam-diam mengubah judulnya, dan capability baru dengan nama yang tidak memuat
+ * kata ajaib jatuh ke keranjang tanpa peringatan. Diukur 31 Agustus 2026: 25
+ * dari 37 capability jatuh ke sana.
+ *
+ * `working` di sini hanya untuk id yang tidak ada di katalog sama sekali—itu
+ * kesalahan pemanggil, bukan jenis kerja. Setiap capability nyata menyatakan
+ * miliknya sendiri, dan satu tes memeriksa itu atas katalog sungguhan.
+ */
 export function capabilityProgressEvent(
   capabilityId: string,
   publicFocus?: SafePublicProgressFocus | null,
 ): ConversationProgressEvent {
-  const normalized = capabilityId.toLocaleLowerCase("en-US");
-  if (/(?:search|browse|web|lookup)/u.test(normalized)) {
-    return progressEvent(
-      "searching",
-      "latest-information",
-      publicFocus,
-    );
-  }
-  if (/(?:compare|parallel|delegate)/u.test(normalized)) {
-    return progressEvent("comparing", "personal-fit", publicFocus);
-  }
-  if (/(?:calculate|math|compute)/u.test(normalized)) {
-    return progressEvent("calculating", "general", publicFocus);
-  }
-  if (/(?:read|list|get|agenda|status)/u.test(normalized)) {
-    return progressEvent("reading", "general", publicFocus);
-  }
-  return progressEvent("checking", "consistency", publicFocus);
+  const work = capabilityWork(capabilityId) ?? "working";
+  return progressEvent(work, WORK_DETAIL[work], publicFocus);
 }
+
+const WORK_DETAIL: Record<ToolWorkPhase, ConversationProgressDetail> = {
+  reading: "general",
+  searching: "latest-information",
+  comparing: "personal-fit",
+  writing: "general",
+  running: "general",
+  saving: "general",
+  sending: "general",
+  working: "general",
+};
 
 export function interruptionProgressEvent(
   relation: TurnInterruptionRelation | null | undefined,
@@ -463,46 +492,57 @@ export function renderConversationProgress(
 /**
  * Bagian biaya pada baris judul: lama berjalan, lalu token bila sudah ada.
  *
- * Tanpa kurung dan tanpa kata "tokens"—panah sudah menjelaskannya, dan judul
+ * Tanpa kurung dan tanpa kata "tokens"—panahnya sudah menjelaskan, dan judul
  * yang terlalu panjang patah ke baris berikutnya pada layar sempit, yang
  * membuat baris jangkar justru terlihat berantakan.
  *
- * Angkanya input **dan** output. Input sekitar 97% dari totalnya karena prompt
- * sistem dikirim ulang tiap giliran; menampilkan output saja akan memberi angka
- * mungil yang nyaris tak bergerak sambil menyembunyikan biaya yang sebenarnya.
+ * Arah panahnya dari kursi pengguna, bukan kursi model: pertanyaanku **naik**
+ * ke Harvy, jawabannya **turun** ke aku. Versi pertama memakainya terbalik
+ * karena berpikir dari sisi model, dan itu tidak masuk akal bagi orang yang
+ * membacanya—ia tidak melihat modelnya.
+ *
+ * Keduanya ditampilkan, bukan digabung. Timpangnya ekstrem: input sekitar 97%
+ * dari totalnya karena prompt sistem dikirim ulang tiap panggilan. Satu angka
+ * gabungan terbaca seolah Harvy menulis panjang sekali; dipisah, ia jujur bahwa
+ * yang mahal bukan jawabannya.
  */
 export function renderProgressMeter(
   elapsedMs: number,
-  tokens: number,
+  tokens: { input: number; output: number },
 ): string | null {
   if (!Number.isFinite(elapsedMs) || elapsedMs < 1_000) return null;
   const seconds = Math.floor(elapsedMs / 1_000);
   const waktu = seconds >= 60
     ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
     : `${seconds}s`;
+  const masuk = ringkasToken(tokens.input);
+  const keluar = ringkasToken(tokens.output);
   // Token belum tentu ada pada detik pertama: panggilan model pertama baru
   // melapor sesudah selesai. Menampilkan "0" akan terbaca seperti klaim bahwa
   // tidak ada yang dikerjakan.
-  if (!Number.isFinite(tokens) || tokens <= 0) return waktu;
-  const ringkas = tokens >= 1_000
-    ? `${(tokens / 1_000).toFixed(1)}k`
-    : String(tokens);
-  return `${waktu} · ↓ ${ringkas}`;
+  if (masuk === null && keluar === null) return waktu;
+  const bagian = [waktu];
+  if (masuk !== null) bagian.push(`↑ ${masuk}`);
+  if (keluar !== null) bagian.push(`↓ ${keluar}`);
+  return bagian.join(" · ");
+}
+
+function ringkasToken(value: number): string | null {
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value >= 1_000 ? `${(value / 1_000).toFixed(1)}k` : String(value);
 }
 
 /** Hanya untuk membedakan surface status transient dari jawaban user-facing. */
 export function isRenderedConversationProgress(text: string): boolean {
   // Judul saja sudah cukup: sejak catatan menjadi opsional dan titik-titik
-  // dihapus, bentuknya bisa satu baris atau dua baris. Baris pertamanya
-  // kini boleh membawa biaya di belakang judul, dipisah titik tengah.
+  // dihapus, bentuknya bisa satu baris atau dua baris. Baris pertamanya kini
+  // boleh membawa biaya di belakang judul, dipisah titik tengah.
   const [pertama] = text.trim().split("\n");
-  const tanpaBulan = (pertama ?? "").replace(
-    /^[🌑🌒🌓🌔🌕🌖🌗🌘]\s/u,
-    "",
-  );
+  const tanpaBulan = (pertama ?? "").replace(/^[🌑🌒🌓🌔🌕🌖🌗🌘]\s/u, "");
   const [judul] = tanpaBulan.split(" · ");
-  return /^(?:Menunggu Harvy|Memikirkan|Mencari|Membaca|Membandingkan|Menghitung|Memeriksa|Menyesuaikan|Beralih|Menyusun jawaban)(?:\.\.\.)?$/u
-    .test(judul ?? "");
+  // Titik-titik tetap diterima supaya teks status dari build sebelumnya tidak
+  // terbaca sebagai balasan dan tertinggal di layar.
+  return KNOWN_TITLES.has((judul ?? "").replace(/\.\.\.$/u, ""));
 }
 
 /**
@@ -538,18 +578,53 @@ export function parsePublicProgressFocus(
   return Object.freeze({ kind, subject, contrast, purpose });
 }
 
-const STATUS: Partial<Record<ConversationProgressPhase, string>> = {
+/**
+ * Judul tahap giliran. `Record` penuh, bukan `Partial`: menambah tahap tanpa
+ * judulnya menggagalkan type-check, bukan menghasilkan status kosong di layar.
+ */
+const TURN_STAGE_STATUS: Record<
+  Exclude<TurnStagePhase, "listening" | "responding">,
+  string
+> = {
   waiting: "Menunggu Harvy",
   thinking: "Memikirkan",
-  searching: "Mencari",
-  reading: "Membaca",
-  comparing: "Membandingkan",
-  calculating: "Menghitung",
   checking: "Memeriksa",
   adjusting: "Menyesuaikan",
   switching: "Beralih",
-  composing: "Menyusun jawaban",
+  composing: "Menyusun",
 };
+
+/**
+ * Judul kerja alat, satu untuk tiap nilai `CapabilityWork`.
+ *
+ * Juga `Record` penuh: menambah jenis kerja di katalog capability langsung
+ * membuat compiler menuntut judulnya di sini.
+ */
+const TOOL_WORK_STATUS: Record<ToolWorkPhase, string> = {
+  reading: "Membaca",
+  searching: "Mencari",
+  comparing: "Membandingkan",
+  writing: "Menulis",
+  running: "Menjalankan",
+  saving: "Menyimpan",
+  sending: "Mengirim",
+  working: "Mengerjakan",
+};
+
+const STATUS: Partial<Record<ConversationProgressPhase, string>> = {
+  ...TURN_STAGE_STATUS,
+  ...TOOL_WORK_STATUS,
+};
+
+/**
+ * Diturunkan dari tabel judul, bukan ditulis ulang.
+ *
+ * Daftar yang dihafal terpisah akan melenceng: judul `composing` pernah berubah
+ * dari "Menyusun jawaban" menjadi "Menyusun" sementara daftar di sini tidak
+ * ikut, dan akibatnya status lama gagal dikenali lalu tertinggal di layar
+ * pengguna sebagai balasan palsu.
+ */
+const KNOWN_TITLES: ReadonlySet<string> = new Set(Object.values(STATUS));
 
 /**
  * Catatan di bawah judul menyebut **objeknya**, bukan mengulang kata kerjanya.
@@ -602,9 +677,6 @@ const FALLBACK_NOTES: Partial<Record<
       "dari hal yang paling ngaruh buat kamu",
       "kelebihan yang benar-benar relevan buatmu",
     ],
-  },
-  calculating: {
-    general: ["angkanya, lalu kucek lagi"],
   },
   checking: {
     consistency: [
@@ -684,7 +756,13 @@ function realizePublicProgressNote(
         ? `${focus.subject} dan ${focus.contrast}${purpose}`
         : `${focus.subject}${purpose}`;
       break;
-    case "calculating":
+    // Lima kerja alat berikut judulnya sudah menyebut kerjanya dengan jelas
+    // ("Menulis", "Menjalankan", …), jadi catatannya cukup objeknya.
+    case "writing":
+    case "running":
+    case "saving":
+    case "sending":
+    case "working":
       note = `${focus.subject}${purpose}`;
       break;
     case "checking":

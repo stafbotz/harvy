@@ -1,3 +1,7 @@
+  // Sampai 31 Agustus 2026 tes ini memakai `web.search`—capability yang sudah
+  // **dicabut** dari katalog. Ia tetap hijau karena pemetaan lama menebak fase
+  // dari potongan kata di dalam id-nya, jadi nama yang tidak dimiliki siapa pun
+  // pun tetap menghasilkan "Mencari". Itu bug yang sama persis dari sisi lain.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -14,6 +18,10 @@ import {
   type SafePublicProgressFocus,
 } from "../src/core/conversation-progress.js";
 import type { ExecutionPlan } from "../src/core/execution-policy.js";
+import {
+  allCapabilityDefinitions,
+  CAPABILITY_WORK_KINDS,
+} from "../src/harness/capabilities.js";
 
 describe("status kerja percakapan", () => {
   it("membedakan status transient dari jawaban akhir", () => {
@@ -192,13 +200,13 @@ describe("status kerja percakapan", () => {
       "harga emas hari ini",
       "tren sebelumnya",
     );
-    const event = capabilityProgressEvent("web.search", publicFocus);
+    const event = capabilityProgressEvent("history.search", publicFocus);
 
     assert.equal(event.phase, "searching");
     assert.match(renderConversationProgress(event), /harga emas hari ini/iu);
 
     const comparison = capabilityProgressEvent(
-      "web.search",
+      "history.search",
       focus("compare", "laptop A", "laptop B", "kebutuhan kuliahmu"),
     );
     const renderedComparison = renderConversationProgress(comparison);
@@ -504,33 +512,48 @@ describe("putaran bulan sepanjang giliran", () => {
  * tokennya selalu nol dan tidak pernah muncul.
  */
 describe("baris biaya status", () => {
+  const t = (input: number, output: number) => ({ input, output });
+
   it("menyembunyikan diri pada detik pertama", () => {
     // Sebelum satu detik tidak ada yang layak dilaporkan, dan "0s" pada status
     // yang baru muncul hanya menambah derau.
-    assert.equal(renderProgressMeter(240, 0), null);
-    assert.equal(renderProgressMeter(999, 5_000), null);
+    assert.equal(renderProgressMeter(240, t(0, 0)), null);
+    assert.equal(renderProgressMeter(999, t(5_000, 200)), null);
   });
 
   it("menampilkan waktu saja sebelum token pertama terhitung", () => {
-    // Panggilan model pertama baru melapor sesudah selesai. "↓ 0" akan terbaca
+    // Panggilan model pertama baru melapor sesudah selesai. "↑ 0" akan terbaca
     // seperti klaim bahwa tidak ada yang dikerjakan.
-    assert.equal(renderProgressMeter(12_000, 0), "12s");
+    assert.equal(renderProgressMeter(12_000, t(0, 0)), "12s");
   });
 
-  it("menyusun waktu dan token tanpa kurung maupun kata tokens", () => {
-    assert.equal(renderProgressMeter(225_000, 3_900), "3m 45s · ↓ 3.9k");
-    assert.equal(renderProgressMeter(12_000, 1_200), "12s · ↓ 1.2k");
+  // Arahnya dari kursi pengguna: pertanyaanku naik, jawabannya turun. Versi
+  // pertama memakainya terbalik karena berpikir dari sisi model.
+  it("menaikkan input dan menurunkan output, input lebih dulu", () => {
+    assert.equal(
+      renderProgressMeter(225_000, t(12_400, 250)),
+      "3m 45s · ↑ 12.4k · ↓ 250",
+    );
+    assert.equal(renderProgressMeter(12_000, t(7_700, 220)), "12s · ↑ 7.7k · ↓ 220");
+  });
+
+  // Output menyusul beberapa ratus milidetik sesudah input pada panggilan yang
+  // sama; menahan seluruh barisnya sampai keduanya ada membuat angkanya
+  // tersendat tanpa alasan.
+  it("menampilkan sisi yang sudah ada tanpa menunggu sisi lain", () => {
+    assert.equal(renderProgressMeter(3_000, t(850, 0)), "3s · ↑ 850");
+    assert.equal(renderProgressMeter(3_000, t(0, 29)), "3s · ↓ 29");
   });
 
   it("tidak meringkas angka di bawah seribu", () => {
-    assert.equal(renderProgressMeter(3_000, 460), "3s · ↓ 460");
+    assert.equal(renderProgressMeter(3_000, t(460, 12)), "3s · ↑ 460 · ↓ 12");
   });
 
   it("gagal aman pada angka yang tidak masuk akal", () => {
-    assert.equal(renderProgressMeter(Number.NaN, 100), null);
-    assert.equal(renderProgressMeter(-5, 100), null);
-    assert.equal(renderProgressMeter(5_000, Number.NaN), "5s");
-    assert.equal(renderProgressMeter(5_000, -100), "5s");
+    assert.equal(renderProgressMeter(Number.NaN, t(100, 10)), null);
+    assert.equal(renderProgressMeter(-5, t(100, 10)), null);
+    assert.equal(renderProgressMeter(5_000, t(Number.NaN, Number.NaN)), "5s");
+    assert.equal(renderProgressMeter(5_000, t(-100, -10)), "5s");
   });
 
   it("menempel di baris judul, bukan baris ketiga", () => {
@@ -538,23 +561,19 @@ describe("baris biaya status", () => {
       { phase: "thinking", detail: "general" },
       "biaya",
       2,
-      "12s · ↓ 1.2k",
+      "12s · ↑ 7.7k · ↓ 220",
     );
     const lines = teks.split("\n");
 
     assert.equal(lines.length, 2);
-    assert.match(lines[0] ?? "", /^🌔 Memikirkan · 12s · ↓ 1\.2k$/u);
+    assert.match(lines[0] ?? "", /^🌔 Memikirkan · 12s · ↑ 7\.7k · ↓ 220$/u);
   });
 
   it("membiarkan judul bersih ketika belum ada yang diukur", () => {
-    const teks = renderConversationProgress(
-      { phase: "waiting" },
-      "biaya",
-      0,
-      null,
+    assert.equal(
+      renderConversationProgress({ phase: "waiting" }, "biaya", 0, null),
+      "🌒 Menunggu Harvy",
     );
-
-    assert.equal(teks, "🌒 Menunggu Harvy");
   });
 
   // Status transient dikenali lewat baris pertamanya supaya balasan sungguhan
@@ -565,9 +584,77 @@ describe("baris biaya status", () => {
       { phase: "composing" },
       "biaya",
       5,
-      "1m 3s · ↓ 12.6k",
+      "1m 3s · ↑ 12.4k · ↓ 250",
     );
 
     assert.equal(isRenderedConversationProgress(teks), true);
+  });
+});
+
+/**
+ * Penjaga atas katalog capability yang sungguhan.
+ *
+ * Ketiadaan tes seperti inilah alasan 25 dari 37 capability bisa melenceng ke
+ * keranjang "Memeriksa" tanpa ada yang tahu—termasuk `git.commit`,
+ * `terminal.run`, dan `github.pr.create`. Pemetaannya ditulis sekali melawan
+ * daftar id waktu itu, lalu katalognya jalan terus dan pemetaannya tidak ikut.
+ *
+ * Tes ini berjalan atas katalog nyata, bukan contoh: capability yang ditambah
+ * besok ikut diperiksa tanpa siapa pun perlu ingat menambahkannya ke sini.
+ */
+describe("fase status untuk katalog capability nyata", () => {
+  it("memberi setiap capability judul dari deklarasinya sendiri", () => {
+    const tanpaJudul: string[] = [];
+    for (const definition of allCapabilityDefinitions()) {
+      const event = capabilityProgressEvent(definition.id);
+      const rendered = renderConversationProgress(event);
+      if (event.phase !== definition.work || rendered.length === 0) {
+        tanpaJudul.push(`${definition.id} -> ${event.phase}`);
+      }
+    }
+
+    assert.deepEqual(tanpaJudul, []);
+  });
+
+  // Penjaga terpenting di blok ini. `working` adalah pilihan yang sah bagi
+  // capability yang kerjanya memang umum—tetapi ia tidak boleh menjadi tempat
+  // jatuh diam-diam bagi capability yang lupa menyatakan kerjanya.
+  it("tidak memakai satu fase untuk sebagian besar katalog", () => {
+    const hitung = new Map<string, number>();
+    for (const definition of allCapabilityDefinitions()) {
+      hitung.set(definition.work, (hitung.get(definition.work) ?? 0) + 1);
+    }
+    const total = allCapabilityDefinitions().length;
+    const terbesar = Math.max(...hitung.values());
+
+    assert.ok(total > 0, "katalog tidak boleh kosong");
+    assert.ok(
+      terbesar <= total * 0.5,
+      `satu fase memuat ${terbesar} dari ${total} capability: ${
+        JSON.stringify(Object.fromEntries(hitung))
+      }`,
+    );
+  });
+
+  // Judul yang tidak pernah muncul menipu orang yang membaca kodenya nanti.
+  // "Menghitung" pernah begitu selama berbulan-bulan: tak satu pun capability
+  // menghitung apa pun, jadi judulnya mati tanpa ada yang menyadarinya.
+  it("tidak menyimpan judul kerja alat yang tak terpakai", () => {
+    const dipakai = new Set(
+      allCapabilityDefinitions().map((definition) => definition.work),
+    );
+    const mati = CAPABILITY_WORK_KINDS.filter((kind) => !dipakai.has(kind));
+
+    assert.deepEqual(mati, []);
+  });
+
+  // Id di luar katalog berarti pemanggilnya keliru, bukan jenis kerja baru.
+  // Yang penting: ia tidak boleh melempar dan tidak boleh menghasilkan status
+  // kosong yang membuat adapter mengirim pesan hampa.
+  it("gagal aman pada id yang tidak ada di katalog", () => {
+    const event = capabilityProgressEvent("tidak.ada.di.katalog");
+
+    assert.equal(event.phase, "working");
+    assert.ok(renderConversationProgress(event).length > 0);
   });
 });

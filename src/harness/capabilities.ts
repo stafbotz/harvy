@@ -13,6 +13,52 @@ export type CapabilityEffect =
 export type CapabilityConfirmation = "none" | "contextual" | "always";
 export type CapabilityIdempotency = "read-only" | "keyed" | "reconcile";
 
+/**
+ * Kerja macam apa yang dilakukan capability ini, dinyatakan bukan ditebak.
+ *
+ * Facet ini sekeluarga dengan `effect` dan `idempotency`: fakta yang dinyatakan
+ * capability tentang dirinya sendiri, diperiksa tipe, ikut versi.
+ *
+ * Sampai 31 Agustus 2026 status transient menebaknya dengan mencocokkan
+ * potongan kata di dalam **id** capability. Id adalah nama, bukan janji: tidak
+ * ada yang menjamin namanya menggambarkan kerjanya. Hasilnya 25 dari 37
+ * capability jatuh ke keranjang "Memeriksa"—termasuk `git.commit`,
+ * `terminal.run`, dan `github.pr.create`—dan pengguna melihat Harvy menulis
+ * "Memeriksa" sementara ia sedang commit kode. Satu fase lain, "Menghitung",
+ * tidak pernah muncul sama sekali karena tak satu pun id memuat kata yang
+ * dicari.
+ *
+ * Keduanya bukan dua bug melainkan satu: pemetaannya ditulis sekali melawan
+ * daftar id waktu itu, lalu katalognya jalan terus dan pemetaannya tidak ikut.
+ * Karena field ini **wajib**, capability baru tidak bisa lupa—compiler yang
+ * menanyakannya saat capability ditulis, bukan pengguna yang menemukannya di
+ * layar berbulan-bulan kemudian.
+ *
+ * `working` tetap ada, tapi ia pilihan yang dinyatakan, bukan tempat jatuh:
+ * capability yang memilihnya memang berkata kerjanya umum.
+ */
+export type CapabilityWork =
+  | "reading"
+  | "searching"
+  | "comparing"
+  | "writing"
+  | "running"
+  | "saving"
+  | "sending"
+  | "working";
+
+/** Nilai `CapabilityWork` sebagai daftar, untuk pemeriksaan menyeluruh di tes. */
+export const CAPABILITY_WORK_KINDS = [
+  "reading",
+  "searching",
+  "comparing",
+  "writing",
+  "running",
+  "saving",
+  "sending",
+  "working",
+] as const satisfies readonly CapabilityWork[];
+
 export interface CapabilityDefinition {
   id: string;
   version: string;
@@ -21,6 +67,8 @@ export interface CapabilityDefinition {
   effect: CapabilityEffect;
   confirmation: CapabilityConfirmation;
   idempotency: CapabilityIdempotency;
+  /** Kerja macam apa ini, untuk status transient. Wajib: lihat CapabilityWork. */
+  work: CapabilityWork;
   spaces: readonly ("private" | "group" | "workspace")[];
   channels: readonly AgentChannel[];
   /** Hanya relevan untuk workspace; snapshot bukan pengganti revalidasi ACL. */
@@ -386,6 +434,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "menjawab, menjelaskan, membantu berpikir, dan menemani dari pesan serta konteks yang diberikan",
     effect: "none",
+    work: "working",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private", "group", "workspace"],
@@ -400,6 +449,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "menanggapi panggilan dan memilih diam atau berkontribusi dalam grup tanpa memakai data dari ruang lain",
     effect: "none",
+    work: "working",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["group"],
@@ -413,6 +463,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "memakai memori yang terpisah per pengguna privat atau per anggota dalam satu grup, dengan kontrol lihat dan hapus",
     effect: "write",
+    work: "saving",
     confirmation: "contextual",
     idempotency: "keyed",
     spaces: ["private", "group"],
@@ -425,6 +476,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Tugas",
     description: "mencatat dan mengelola tugas pengguna setelah intent divalidasi",
     effect: "write",
+    work: "saving",
     confirmation: "contextual",
     idempotency: "keyed",
     spaces: ["private"],
@@ -437,6 +489,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Pengingat",
     description: "menjadwalkan pengingat tugas dan check-in sesuai jam tenang",
     effect: "external",
+    work: "saving",
     confirmation: "contextual",
     idempotency: "keyed",
     spaces: ["private"],
@@ -449,6 +502,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Sesi terpandu",
     description: "menjalankan sesi fokus, tutor, atau menyimak yang dikendalikan pengguna",
     effect: "write",
+    work: "working",
     confirmation: "contextual",
     idempotency: "keyed",
     spaces: ["private"],
@@ -462,6 +516,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "membaca paling banyak 20 tugas aktif milik pengguna pada ruang privat ini",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -476,6 +531,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "membaca satu tugas berdasarkan ID dari state Harvy milik pengguna ini",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -490,6 +546,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "membaca status sesi fokus, tutor, atau rencana yang masih aktif",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -504,6 +561,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "membaca jam deterministik, zona waktu, dan jam tenang pengguna saat ini",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -518,6 +576,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "membaca tenggat, pengingat tugas, dan check-in Harvy untuk 1–31 hari atau satu tanggal lokal; bukan kalender Google atau Outlook",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -532,6 +591,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "mencari percakapan lama pengguna sendiri di ruang privat ini berdasarkan kata kunci; bukan pencarian web atau aplikasi luar",
     effect: "read",
+    work: "searching",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -546,6 +606,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "membaca catatan durable yang Harvy simpan tentang pengguna pada ruang privat ini",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -560,6 +621,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "menyimpan satu catatan durable tentang pengguna; jenis sensitif dan credential tidak dapat disimpan lewat jalur ini",
     effect: "write",
+    work: "saving",
     confirmation: "contextual",
     idempotency: "keyed",
     spaces: ["private"],
@@ -574,6 +636,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "menjalankan perintah terstruktur aman pada workspace virtual kosong tanpa shell host, network, environment, atau berkas Harvy",
     effect: "none",
+    work: "running",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -588,6 +651,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "mendelegasikan paling banyak tiga subpekerjaan independen read-only ke worker cheap atau efficient dalam scope yang sama",
     effect: "none",
+    work: "comparing",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -602,6 +666,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "meminta satu strong worker, heavy executor, verifier, atau challenger secara langsung melalui WorkBrief terstruktur tanpa reasoning privat",
     effect: "none",
+    work: "working",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["private"],
@@ -615,6 +680,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Struktur project",
     description: "membaca struktur project terpilih secara iteratif dan berbatas",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["workspace"],
@@ -629,6 +695,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Baca file project",
     description: "membaca rentang file teks dari snapshot project yang terikat run",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["workspace"],
@@ -643,6 +710,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Cari dalam project",
     description: "mencari teks berbatas tanpa memasukkan seluruh repository ke konteks",
     effect: "read",
+    work: "searching",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["workspace"],
@@ -657,6 +725,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Simbol project",
     description: "memetakan deklarasi simbol dari snapshot project secara baca-saja",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["workspace"],
@@ -671,6 +740,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Referensi simbol",
     description: "mencari penggunaan identifier dalam project secara baca-saja",
     effect: "read",
+    work: "searching",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["workspace"],
@@ -685,6 +755,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Diff project",
     description: "membandingkan working snapshot dengan immutable base snapshot",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["workspace"],
@@ -699,6 +770,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Patch project",
     description: "menerapkan patch teks terstruktur dengan hash precondition melalui single writer",
     effect: "write",
+    work: "writing",
     confirmation: "contextual",
     idempotency: "keyed",
     spaces: ["workspace"],
@@ -713,6 +785,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Eksekusi coding terisolasi",
     description: "menjalankan argv di SandboxRunner disposable dengan network off dan quota",
     effect: "write",
+    work: "running",
     confirmation: "contextual",
     idempotency: "keyed",
     spaces: ["workspace"],
@@ -727,6 +800,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Test project terisolasi",
     description: "menjalankan validator test/lint/typecheck/build di sandbox terikat snapshot",
     effect: "read",
+    work: "running",
     confirmation: "none",
     idempotency: "keyed",
     spaces: ["workspace"],
@@ -741,6 +815,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Ambil dependency terkontrol",
     description: "mengambil artifact dependency dari lockfile melalui broker egress terpisah",
     effect: "external",
+    work: "working",
     confirmation: "contextual",
     idempotency: "keyed",
     spaces: ["workspace"],
@@ -755,6 +830,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Status git lokal",
     description: "membaca status git lokal yang terikat project tanpa remote credential",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["workspace"],
@@ -769,6 +845,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Diff git lokal",
     description: "membaca diff git lokal tanpa menghubungi remote",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["workspace"],
@@ -783,6 +860,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Log git lokal",
     description: "membaca histori git lokal project secara berbatas",
     effect: "read",
+    work: "reading",
     confirmation: "none",
     idempotency: "read-only",
     spaces: ["workspace"],
@@ -797,6 +875,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Commit git lokal",
     description: "membuat commit lokal dengan identitas bot transparan tanpa melakukan push",
     effect: "write",
+    work: "saving",
     confirmation: "always",
     idempotency: "reconcile",
     spaces: ["workspace"],
@@ -811,6 +890,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Buat branch GitHub",
     description: "membuat branch harvy/* melalui GitHub App untuk exact base commit",
     effect: "external",
+    work: "sending",
     confirmation: "always",
     idempotency: "reconcile",
     spaces: ["workspace"],
@@ -825,6 +905,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Push exact commit",
     description: "mendorong exact commit ke branch harvy/* melalui broker tanpa credential sandbox",
     effect: "external",
+    work: "sending",
     confirmation: "always",
     idempotency: "reconcile",
     spaces: ["workspace"],
@@ -840,6 +921,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     description:
       "mendorong exact commit yang mengubah .github/workflows melalui approval terpisah",
     effect: "external",
+    work: "sending",
     confirmation: "always",
     idempotency: "reconcile",
     spaces: ["workspace"],
@@ -854,6 +936,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Buat draft pull request",
     description: "membuka draft PR untuk branch dan commit yang sudah disetujui persis",
     effect: "external",
+    work: "sending",
     confirmation: "always",
     idempotency: "reconcile",
     spaces: ["workspace"],
@@ -868,6 +951,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Aksi aplikasi luar",
     description: "mengirim pesan atau mengubah kalender, email, dan aplikasi lain",
     effect: "external",
+    work: "sending",
     confirmation: "always",
     idempotency: "reconcile",
     spaces: ["private", "group", "workspace"],
@@ -882,6 +966,7 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
     title: "Memori lintas ruang",
     description: "menggabungkan identitas atau memori antar-kanal dan antar-grup",
     effect: "read",
+    work: "reading",
     confirmation: "always",
     idempotency: "read-only",
     spaces: ["private", "group", "workspace"],
@@ -892,6 +977,25 @@ const HARVY_CAPABILITIES: readonly CapabilityDefinition[] = [
       "Dilarang tanpa account linking terverifikasi dan persetujuan eksplisit.",
   },
 ];
+
+/**
+ * Kerja yang dinyatakan sebuah capability, dicari lewat id-nya.
+ *
+ * Menggantikan pencocokan regex atas nama capability. `null` berarti id-nya
+ * memang tidak ada di katalog—bukan "tidak tahu harus menyebutnya apa".
+ */
+export function capabilityWork(id: string): CapabilityWork | null {
+  return WORK_BY_ID.get(id) ?? null;
+}
+
+/** Daftar seluruh capability terpasang, untuk pemeriksaan menyeluruh di tes. */
+export function allCapabilityDefinitions(): readonly CapabilityDefinition[] {
+  return HARVY_CAPABILITIES;
+}
+
+const WORK_BY_ID = new Map<string, CapabilityWork>(
+  HARVY_CAPABILITIES.map((definition) => [definition.id, definition.work]),
+);
 
 function validateDefinition(definition: CapabilityDefinition): void {
   if (!/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u.test(definition.id)) {

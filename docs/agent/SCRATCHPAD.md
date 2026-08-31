@@ -1462,7 +1462,7 @@ Sekarang judul menyebut **kerjanya**, catatan menyebut **objeknya**, dan biaya
 menempel di baris judul:
 
 ```
-🌓 Memikirkan · 12s · ↓ 1.2k
+🌓 Memikirkan · 12s · ↑ 7.7k · ↓ 220
 mana yang paling cocok buat keadaanmu
 ```
 
@@ -1592,9 +1592,9 @@ per satu:
 
 ```
 🌔 Menunggu Harvy · 2s
-🌕 Memikirkan · 6s · ↓ 8.0k
-🌗 Memikirkan · 14s · ↓ 11.5k
-🌘 Menyusun jawaban · 1m 10s · ↓ 12.6k
+🌕 Memikirkan · 6s · ↑ 7.7k · ↓ 217
+🌗 Membaca · 14s · ↑ 11.2k · ↓ 246
+🌘 Menyusun · 1m 10s · ↑ 12.4k · ↓ 250
 ```
 
 Angkanya naik dan tidak pernah turun, bulannya berganti tiap denyut walau
@@ -1650,6 +1650,103 @@ Pendeteksi status ikut disederhanakan. Bentuknya kini satu atau dua baris, jadi
 yang diperiksa hanya baris pertamanya, dipotong sebelum biaya—dan
 titik-titik tetap
 diterima supaya teks status dari build sebelumnya tidak terbaca sebagai balasan.
+
+## 26. Judul status berhenti menebak dari nama capability
+
+Dirancang bersama pemilik produk 31 Agustus 2026, sesudah ia melihat bentuk
+statusnya dan berkata bagian ini "kurang efisien dan pintar". Instingnya benar,
+dan penyebabnya lebih dalam daripada tabel yang kurang lengkap.
+
+**Kode menebak dari nama, padahal katalognya sudah menyatakan jawabannya.**
+Setiap capability mendeklarasikan `effect`, `idempotency`, `title`—kontrak yang
+diperiksa tipe, punya versi, dan dipakai untuk izin serta konfirmasi. Lalu
+`capabilityProgressEvent` mengabaikan semuanya dan mencocokkan potongan kata di
+dalam **id**-nya dengan regex.
+
+Id adalah nama, bukan janji. Tidak ada yang menjamin nama capability
+menggambarkan kerjanya. Diukur atas katalog nyata:
+
+```
+checking   25 dari 37   git.commit, terminal.run, github.pr.create,
+                        sandbox.exec, workspace.apply_patch, memory.remember, …
+reading     8
+comparing   2
+searching   2
+```
+
+Dua pertiga katalog jatuh ke keranjang "Memeriksa", dan pengguna melihat Harvy
+menulis "Memeriksa" sementara ia sedang commit kode atau menyimpan ingatan.
+Sementara itu "Menghitung" tidak pernah muncul sama sekali—tak satu pun id
+memuat kata yang dicari regex-nya.
+
+Itu bukan dua bug. Itu satu bug: pemetaannya ditulis sekali melawan daftar id
+waktu itu, lalu katalognya jalan terus dan pemetaannya tidak ikut.
+
+### Yang berubah
+
+**Capability menyatakan kerjanya sendiri.** Field `work` wajib di
+`CapabilityDefinition`, sebaris di sebelah `effect` dan `title`. Wajib, bukan
+opsional, karena itulah bedanya antara "lebih jarang salah" dan "tidak bisa
+salah": compiler yang menanyakannya saat capability ditulis, bukan pengguna yang
+menemukannya di layar berbulan-bulan kemudian.
+
+Diturunkan dari `effect` saja tidak cukup, dan itu sempat dikira jawabannya.
+`terminal.run` ber-`effect: "none"` karena tidak meninggalkan jejak permanen,
+padahal ia justru yang paling jelas "Menjalankan". `effect` menjawab "apakah ini
+mengubah sesuatu", bukan "ini kerja macam apa"—dua pertanyaan berbeda.
+
+**Enum fasenya dipisah dua.** `TurnStagePhase` adalah tahap giliran Harvy
+sendiri, sepenuhnya milik kode; `ToolWorkPhase` identik dengan `CapabilityWork`
+supaya tidak ada dua sumber kebenaran. Dulu satu enum datar, dan satu fungsi
+dipaksa melayani dua hal berbeda—di sambungan itulah keranjang sampahnya lahir.
+
+Kedua tabel judul memakai `Record` penuh, bukan `Partial`. Menambah tahap atau
+jenis kerja tanpa judulnya menggagalkan type-check, bukan menghasilkan status
+kosong di layar.
+
+**Sebaran sesudahnya**, seluruh 37 capability, tidak ada yang jatuh ke default:
+
+```
+Membaca 14   Mengerjakan 5   Menyimpan 5   Mengirim 5
+Mencari  3   Menjalankan 3   Membandingkan 1   Menulis 1
+```
+
+"Mengerjakan" tetap ada tetapi statusnya berubah total: pilihan yang dinyatakan,
+bukan tempat jatuh. Capability yang memilihnya memang berkata kerjanya umum.
+
+**"Mengirim" lahir dari memetakan katalognya.** Lima capability GitHub dan
+`external.act` tidak cocok satu pun kata yang sudah ada—bukan menulis, bukan
+menjalankan, dan menyebutnya "Menyimpan" menyesatkan karena push ke GitHub itu
+keluar dari mesin. Justru kelas ini yang paling perlu jujur: di situlah
+credential dan dunia luar terlibat.
+
+**"Menghitung" dihapus.** Judul yang tidak pernah muncul menipu orang yang
+membaca kodenya nanti. Kalau suatu hari ada capability hitung, judulnya
+ditambahkan bersamanya.
+
+### Penjaganya
+
+Ketiadaan tes atas katalog nyata adalah alasan 68% bisa melenceng tanpa ada yang
+tahu. Empat tes kini berjalan atas katalog sungguhan, bukan contoh:
+
+- setiap capability menghasilkan fase yang sama dengan deklarasinya, dan judul
+  yang tidak kosong
+- tidak ada satu fase pun yang memuat lebih dari separuh katalog—penjaga
+  langsung terhadap kembalinya keranjang sampah
+- tidak ada judul kerja alat yang tak terpakai, supaya "Menghitung" berikutnya
+  tidak diam-diam mati lagi
+- id di luar katalog gagal aman, tidak melempar dan tidak menghasilkan status
+  kosong
+
+Satu tes lama ikut tersingkap: ia memanggil `capabilityProgressEvent`
+`"web.search"`—capability yang **sudah dicabut** dari katalog. Ia tetap hijau
+selama ini karena regex-nya menebak dari nama, jadi id yang tidak dimiliki siapa
+pun tetap menghasilkan "Mencari". Bug yang sama persis, dilihat dari sisi tes.
+
+Pendeteksi status juga berhenti menghafal daftar judulnya sendiri dan kini
+menurunkannya dari tabel. Daftar terpisah pasti melenceng—dan taruhannya bukan
+kosmetik: judul yang tidak dikenali membuat status lama tertinggal di layar
+pengguna sebagai balasan palsu.
 
 ## Kemampuan yang absen secara rancangan
 

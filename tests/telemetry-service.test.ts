@@ -867,9 +867,9 @@ describe("token berjalan per giliran", () => {
     );
 
     await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
-    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 2);
+    assert.deepEqual(telemetry.turnTokens("siswa", "giliran-1"), { input: 1, output: 1 });
     await observeModelCall(telemetry, "siswa", "giliran-1", "reply", "r2");
-    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 4);
+    assert.deepEqual(telemetry.turnTokens("siswa", "giliran-1"), { input: 2, output: 2 });
   });
 
   // Penjaga terpenting di blok ini. Biaya yang sudah terpakai tidak mungkin
@@ -886,8 +886,8 @@ describe("token berjalan per giliran", () => {
     // Tanpa baris ini tesnya hampa: kalau `drain` ternyata tidak menguras
     // apa pun, angka yang "tidak berkurang" tidak membuktikan apa-apa.
     assert.equal(repository.usage.length, 1, "antrean benar-benar terkuras");
-    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), sebelum);
-    assert.equal(sebelum, 2);
+    assert.deepEqual(telemetry.turnTokens("siswa", "giliran-1"), sebelum);
+    assert.deepEqual(sebelum, { input: 1, output: 1 });
   });
 
   it("memisahkan giliran dan pengguna", async () => {
@@ -900,9 +900,9 @@ describe("token berjalan per giliran", () => {
     await observeModelCall(telemetry, "siswa", "giliran-2", "understanding", "r2");
     await observeModelCall(telemetry, "lain", "giliran-1", "understanding", "r3");
 
-    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 2);
-    assert.equal(telemetry.turnTokens("siswa", "giliran-2"), 2);
-    assert.equal(telemetry.turnTokens("lain", "giliran-1"), 2);
+    assert.deepEqual(telemetry.turnTokens("siswa", "giliran-1"), { input: 1, output: 1 });
+    assert.deepEqual(telemetry.turnTokens("siswa", "giliran-2"), { input: 1, output: 1 });
+    assert.deepEqual(telemetry.turnTokens("lain", "giliran-1"), { input: 1, output: 1 });
   });
 
   // Timer denyut membaca identitas giliran dari luar konteks asinkron dan
@@ -915,9 +915,9 @@ describe("token berjalan per giliran", () => {
 
     await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
 
-    assert.equal(telemetry.turnTokens("siswa", null), 0);
-    assert.equal(telemetry.turnTokens("siswa", "giliran-lain"), 0);
-    assert.equal(telemetry.turnTokens("bukan-siapa-siapa", "giliran-1"), 0);
+    assert.deepEqual(telemetry.turnTokens("siswa", null), { input: 0, output: 0 });
+    assert.deepEqual(telemetry.turnTokens("siswa", "giliran-lain"), { input: 0, output: 0 });
+    assert.deepEqual(telemetry.turnTokens("bukan-siapa-siapa", "giliran-1"), { input: 0, output: 0 });
   });
 
   it("melepas penghitung setelah giliran selesai", async () => {
@@ -929,7 +929,7 @@ describe("token berjalan per giliran", () => {
     await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
     telemetry.releaseTurnTokens("siswa", "giliran-1");
 
-    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 0);
+    assert.deepEqual(telemetry.turnTokens("siswa", "giliran-1"), { input: 0, output: 0 });
     // Tanpa identitas giliran tidak ada yang boleh dihapus secara membabi buta.
     telemetry.releaseTurnTokens("siswa", null);
   });
@@ -943,6 +943,6 @@ describe("token berjalan per giliran", () => {
     await observeModelCall(telemetry, "siswa", "giliran-1", "understanding", "r1");
     await telemetry.forget("siswa");
 
-    assert.equal(telemetry.turnTokens("siswa", "giliran-1"), 0);
+    assert.deepEqual(telemetry.turnTokens("siswa", "giliran-1"), { input: 0, output: 0 });
   });
 });
