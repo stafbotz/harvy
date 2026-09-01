@@ -12,6 +12,8 @@ import {
 } from "../src/ai/conversation.js";
 import {
   casualChatTypography,
+  nameIntroduction,
+  parseIntroduction,
   HARVY_REPLY_CACHE_SPINE,
   replyPrompt,
 } from "../src/ai/persona.js";
@@ -2291,9 +2293,148 @@ describe("ketikan chat untuk balasan obrolan", () => {
     assert.equal(casualChatTypography(panjang), panjang);
   });
 
+  // Model gemar memakai tanda hubung panjang; orang yang mengetik di chat
+  // hampir tidak pernah. Ia penanda paling kuat bahwa kalimat ditulis mesin,
+  // dan arahan prompt untuk menghindarinya sudah dicoba lalu diabaikan.
+  it("mengganti tanda hubung panjang dengan koma", () => {
+    assert.equal(
+      casualChatTypography("Wah, kuis dadakan — itu bikin deg-degan."),
+      "wah, kuis dadakan, itu bikin deg-degan",
+    );
+    assert.equal(
+      casualChatTypography("Trigonometri susah–tapi bisa kok."),
+      "trigonometri susah, tapi bisa kok",
+    );
+  });
+
+  // Diganti koma, bukan dihapus: em dash hampir selalu berdiri di tempat jeda,
+  // dan membuangnya menyambung dua klausa tanpa napas. Tetapi koma ganda juga
+  // salah bila kalimatnya sudah berkoma sebelum jeda.
+  it("tidak menghasilkan koma ganda", () => {
+    assert.equal(
+      casualChatTypography("Oke, aku catat ya — nanti aku ingetin."),
+      "oke, aku catat ya, nanti aku ingetin",
+    );
+  });
+
+  it("tidak menyentuh tanda hubung biasa di dalam kata", () => {
+    assert.equal(
+      casualChatTypography("Latihan soal terus-menerus itu kunci."),
+      "latihan soal terus-menerus itu kunci",
+    );
+  });
+
   it("gagal aman pada teks kosong", () => {
     assert.equal(casualChatTypography(""), "");
     assert.equal(casualChatTypography("   "), "   ");
+  });
+});
+
+/**
+ * Sapaan kontak pertama ditulis Harvy, bukan naskah tetap.
+ *
+ * Naskah tetap membuat perkenalan terasa seperti pendaftaran layanan: kalimat
+ * sama untuk semua orang, kapitalisasi sempurna, dan satu paragraf berisi lima
+ * kemampuan—padahal komentar berkas onboarding sendiri menyatakan daftar fitur
+ * justru yang ingin dihindari.
+ *
+ * Kesan pertama tidak punya kesempatan kedua, jadi penyaringnya ketat dan
+ * kegagalan apa pun jatuh ke naskah tetap.
+ */
+describe("penyaring sapaan perkenalan", () => {
+  it("menerima sapaan pendek yang menyebut Harvy", () => {
+    assert.equal(
+      parseIntroduction("haii, aku harvy 👋"),
+      "haii, aku harvy 👋",
+    );
+  });
+
+  it("membuang tanda kutip yang ikut terbawa", () => {
+    assert.equal(parseIntroduction('"halo, aku Harvy."'), "halo, aku Harvy.");
+  });
+
+  // Penjaga terpenting. Sapaan yang lupa menyebut namanya bukan perkenalan.
+  it("menolak yang tidak menyebut Harvy", () => {
+    assert.equal(parseIntroduction("haii! apa kabar?"), null);
+  });
+
+  it("menolak yang terlalu panjang", () => {
+    assert.equal(
+      parseIntroduction(`halo aku Harvy. ${"panjang sekali ".repeat(20)}`),
+      null,
+    );
+  });
+
+  it("menolak yang berstruktur atau bertautan", () => {
+    for (
+      const text of [
+        "halo aku Harvy\n- bisa bantu tugas\n- bisa bantu belajar",
+        "halo aku Harvy\n1. tugas\n2. belajar",
+        "halo aku Harvy, baca dulu https://harvy.id/terms",
+      ]
+    ) {
+      assert.equal(parseIntroduction(text), null, text.slice(0, 24));
+    }
+  });
+
+  // Urusan syarat, privasi, memori, dan pernyataan AI disampaikan gelembung
+  // lain. Sapaan yang ikut menyebutnya membuat keduanya berbicara dua kali,
+  // dan yang dikarang model tidak boleh menjadi pernyataan hukum.
+  it("menolak yang menyerobot isi gelembung persetujuan", () => {
+    for (
+      const text of [
+        "halo aku Harvy, baca syarat dan ketentuannya dulu ya",
+        "halo aku Harvy, aku bakal inget hal tentang kamu di memori",
+        "halo aku Harvy, aku AI yang siap bantu",
+      ]
+    ) {
+      assert.equal(parseIntroduction(text), null, text.slice(0, 24));
+    }
+  });
+
+  it("menolak yang balik bertanya", () => {
+    assert.equal(parseIntroduction("halo nadia, aku harvy. lagi apa?"), null);
+  });
+
+  it("menolak yang kosong", () => {
+    assert.equal(parseIntroduction("   "), null);
+  });
+});
+
+/**
+ * Identitas sapaan dijamin kode, bukan prompt.
+ *
+ * Empat rumusan prompt diuji pada model sungguhan dan tetap gagal: diberi nama
+ * orangnya, model memakai nama itu lalu lupa namanya sendiri. Yang wajib
+ * terjadi tidak boleh bergantung pada kepatuhan model.
+ */
+describe("jahitan nama pada sapaan", () => {
+  it("tidak menyentuh sapaan yang sudah menyebut Harvy", () => {
+    const sudah = "halo nadia, aku harvy. senang kamu mampir";
+    assert.equal(nameIntroduction(sudah, true), sudah);
+  });
+
+  it("menjahit namanya pada ketikan santai", () => {
+    assert.equal(
+      nameIntroduction("halo nadia, senang kamu mampir", true),
+      "halo nadia, senang kamu mampir, aku harvy",
+    );
+  });
+
+  it("menjahit namanya pada ketikan rapi", () => {
+    assert.equal(
+      nameIntroduction("Halo Nadia, senang kamu datang.", false),
+      "Halo Nadia, senang kamu datang. Aku Harvy.",
+    );
+  });
+
+  // Emoji penutup ikut pindah ke belakang; kalau tidak, namanya terjepit di
+  // tengah dan hasilnya "senang kamu mampir 🙂 aku harvy".
+  it("memindahkan emoji penutup ke belakang", () => {
+    assert.equal(
+      nameIntroduction("halo nadia, senang kamu mampir 🙂", true),
+      "halo nadia, senang kamu mampir, aku harvy 🙂",
+    );
   });
 });
 

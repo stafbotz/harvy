@@ -154,6 +154,7 @@ export type AiRequestOperation =
   | "group-reply"
   | "project-intent-extraction"
   | "private-operation-presentation"
+  | "private-introduction"
   | "private-checkin-presentation";
 
 export interface ChatRequest {

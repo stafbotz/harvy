@@ -20,12 +20,25 @@ export function introBubbles(
   firstName: string | null,
   heldMessage: boolean,
   termsUrl: string,
+  /**
+   * Sapaan yang ditulis Harvy sendiri, bila berhasil dibuat.
+   *
+   * Naskah tetap membuat perkenalan terasa seperti pendaftaran layanan:
+   * kalimat sama untuk semua orang, dan satu paragraf berisi lima
+   * kemampuan—padahal komentar berkas ini sendiri sudah menyatakan daftar
+   * fitur adalah yang ingin dihindari.
+   *
+   * Null berarti pembuatannya gagal atau tidak lolos penyaring, dan
+   * naskah tetap di bawah dipakai. Kesan pertama tidak boleh bergantung
+   * pada provider yang sedang sehat.
+   */
+  composed: string | null = null,
 ): string[] {
   const name = usableName(firstName);
   const greeting = name ? `Haloo ${name}, aku Harvy.` : "Haloo, aku Harvy.";
 
   const consent = [
-    "Sebelum mulai, jadilah pengguna yang bertanggung jawab dan bijaksana ya. Aku punya persyaratan dan layanan, semacam janji di antara kita biar obrolan kita tetap aman dan nyaman.",
+    "Sebelum mulai, jadilah pengguna yang bertanggung jawab dan bijaksana ya. Aku punya syarat dan ketentuan, semacam janji di antara kita biar obrolan kita tetap aman dan nyaman.",
     "",
     "Pesan atau gambar yang kamu kirim bakal diproses oleh AI. Kalau ada hal yang berguna buat obrolan berikutnya, aku bisa otomatis mengingatnya. Aku bakal bilang setelah benar-benar menyimpan atau memperbaruinya, dan kamu bisa melihat, mengoreksi, atau menghapusnya kapan aja.",
   ];
@@ -46,6 +59,13 @@ export function introBubbles(
     "",
     `Penjelasan lengkapnya bisa kamu baca di sini: ${termsUrl}`,
   );
+
+  if (composed) {
+    // Sapaan Harvy menggantikan salam **dan** paragraf kemampuannya
+    // sekaligus. Menempelkan keduanya membuat perkenalan diucapkan dua
+    // kali dengan dua suara berbeda.
+    return ["👋", composed, consent.join("\n")];
+  }
 
   return [
     "👋",

@@ -7,6 +7,9 @@ import {
 } from "grammy";
 import { randomUUID } from "node:crypto";
 import { EMPTY_CONTEXT, type HarvyContext } from "../ai/context.js";
+// Diperiksa kode, bukan model: cara mengetik bukan isi pesan, jadi
+// mencerminkannya tidak menyentuh batas "belum boleh membaca pesannya".
+import { usesCasualTyping } from "../ai/persona.js";
 import type { Conversation, ConversationRuntime } from "../ai/conversation.js";
 import type { OperationPresentationBrief } from
   "../ai/operation-presentation.js";
@@ -2089,7 +2092,32 @@ export function createBot(
       return;
     }
 
-    const bubbles = introBubbles(ctx.from?.first_name ?? null, held.has(ownerId), config.termsUrl);
+    // Sapaannya ditulis Harvy, bukan naskah tetap. Isi pesan penggunanya
+    // tidak ikut: pemeriksaan bahaya boleh membacanya sebelum persetujuan,
+    // tetapi pengecualian itu khusus keselamatan. Yang diteruskan hanya nama
+    // panggilan dan apakah orangnya mengetik santai—diperiksa kode, bukan
+    // model.
+    //
+    // Gagal aman sampai ke pemanggilannya. Perkenalan adalah hiasan di
+    // depan kontrak, bukan kontraknya—dan lemparan di sini akan menahan
+    // seluruh onboarding, sehingga orang baru tidak pernah dapat tombol
+    // persetujuannya sama sekali.
+    let composed: string | null = null;
+    try {
+      composed = await conversation.composeIntroduction?.(
+        ctx.from?.first_name ?? null,
+        usesCasualTyping(text),
+        { ownerId },
+      ) ?? null;
+    } catch {
+      composed = null;
+    }
+    const bubbles = introBubbles(
+      ctx.from?.first_name ?? null,
+      held.has(ownerId),
+      config.termsUrl,
+      composed,
+    );
 
     for (const [index, bubble] of bubbles.entries()) {
       const last = index === bubbles.length - 1;

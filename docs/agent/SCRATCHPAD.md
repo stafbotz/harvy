@@ -2541,6 +2541,45 @@ sebagai gangguan layanan, jadi yang tampil bukan "dari tadi gagal terus"—yang
 berarti Harvy kelamaan—melainkan "lagi ada gangguan nih, bukan dari pesanmu".
 Pembedaan yang dirancang di butir 28 terbukti pada kegagalan nyata pertamanya.
 
+## 37. Sapaan pertama ditulis Harvy, dan namanya dijamin kode
+
+Onboarding lama mengirim naskah tetap: kalimat sama untuk setiap orang,
+kapitalisasi sempurna, dan satu paragraf berisi daftar kemampuan—padahal
+komentar berkas onboarding sendiri menyebut daftar fitur justru yang ingin
+dihindari. Pemilik produk membacanya sebagai "baku banget" dan "first
+impression aneh": orang yang menyapa disambut formulir pendaftaran.
+
+Sekarang gelembung sapaan dikarang model tiap kali (`composeIntroduction`),
+menyesuaikan nama dan gaya ketik lawan bicaranya. Isi pesan pengguna **tidak**
+dikirim: yang masuk hanya nama depan dan satu boolean gaya ketik yang dihitung
+kode. Pembacaan pra-persetujuan tetap terbatas pada keselamatan.
+
+Empat rumusan prompt gagal pada satu hal yang sama, diukur pada model sungguhan:
+diberi `<nama>` orangnya, model memakai nama itu dan lupa namanya sendiri.
+Menaikkan tekanan tidak menolong—versi ber-"WAJIB" beserta ancaman bahwa
+sapaannya akan dibuang tetap menghasilkan empat dari enam tanpa kata "Harvy".
+Yang menolong adalah memindahkannya ke kode: `nameIntroduction()` menjahit
+identitasnya bila hilang, dan emoji penutup ikut digeser supaya namanya tidak
+terjepit di tengah. Ini kali keempat pelajaran yang sama terbukti hari ini.
+
+Dua bocoran lain yang hanya terlihat dengan menjalankan model, bukan dari
+membaca prompt:
+
+- kata dari instruksi disalin mentah ke sapaan ("ketukan hangat untukmu",
+  empat kali). Metafora internal tidak boleh ada di prompt yang keluarannya
+  pendek—model memperlakukannya sebagai contoh kalimat.
+- contoh bersudut pandang orang ketiga menghasilkan "senang **dia** mampir"
+  yang dikirim kepada orangnya sendiri.
+
+Larangan bertanya juga dipindah ke penyaring. Ia sudah ada di prompt, dan
+"gimana?" tetap lolos selama hanya di sana.
+
+Sesudah keduanya: 12 dari 12 percobaan diterima, hangat, dan mengikuti gaya
+ketik lawan bicara. Kegagalan apa pun—model mati, lambat, keluaran ditolak
+penyaring, bahkan method-nya tidak ada pada test double—jatuh ke naskah tetap;
+panggilannya dibungkus supaya sapaan tidak pernah bisa menahan tombol
+persetujuan. Lima tes `create-bot-flow` sempat merah persis karena itu.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

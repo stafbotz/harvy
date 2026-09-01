@@ -62,6 +62,10 @@ import {
 import {
   depthDirective,
   casualChatTypography,
+  INTRODUCTION_PROMPT,
+  introductionInput,
+  nameIntroduction,
+  parseIntroduction,
   shapeDirective,
   usesCasualTyping,
   dueDateInput,
@@ -439,6 +443,11 @@ const MEMORY_PORTRAIT_MAX_TOKENS = 2_048;
  * Ia menggantikan giliran mentah yang dibuang, jadi ringkasan yang panjang
  * menghapus alasan pemadatan itu sendiri.
  */
+/** Sapaan pertama itu satu-dua baris; anggaran besar hanya mengundang paragraf. */
+const INTRODUCTION_MAX_TOKENS = 96;
+/** Pendek: orang yang baru menyapa sedang menunggu, dan diam kalah cepat. */
+const INTRODUCTION_DEADLINE_MS = 6_000;
+
 const EPISODE_SUMMARY_MAX_TOKENS = 768;
 
 /**
@@ -1457,6 +1466,78 @@ export class Conversation {
     return modelIdentityQuestion
       ? prependCapybaraIdentity(reply)
       : reply;
+  }
+
+  /**
+   * Menulis sapaan kontak pertama, atau menyerah dengan tenang.
+   *
+   * Mengembalikan null bila apa pun meleset—provider gagal, lambat, atau
+   * bentuknya tidak lolos penyaring. Pemanggil memakai sapaan tetap, dan kesan
+   * pertama tidak pernah bergantung pada provider yang sedang sehat.
+   *
+   * Deadline sengaja pendek. Orang yang baru menyapa sedang menunggu, dan
+   * sapaan yang datang delapan detik kemudian sudah kalah oleh diamnya.
+   */
+  async composeIntroduction(
+    name: string | null,
+    casualTyping: boolean,
+    runtime: ConversationRuntime = {},
+  ): Promise<string | null> {
+    try {
+      const modelRoute = resolveModelRoute("everyday_conversation", this.routing);
+      const execution = this.execution(
+        modelRoute.tier,
+        "conversationalist",
+        "conversation",
+        INTRODUCTION_MAX_TOKENS,
+        INTRODUCTION_DEADLINE_MS,
+        {
+          modelId: modelRoute.modelId,
+          cognitiveRole: modelRoute.role,
+          difficulty: "mechanical",
+          stakes: "low",
+          uncertainty: "low",
+          allowTools: false,
+          allowDelegation: false,
+          allowEscalation: false,
+        },
+      );
+      const raw = await this.client.complete({
+        model: modelRoute.modelId,
+        temperature: 0.7,
+        maxTokens: INTRODUCTION_MAX_TOKENS,
+        timeoutMs: INTRODUCTION_DEADLINE_MS,
+        maxAttempts: 1,
+        execution,
+        validateResponse: (content) => parseIntroduction(content) !== null,
+        ...(runtime.signal ? { signal: runtime.signal } : {}),
+        operation: "private-introduction",
+        usage: this.usage(runtime.ownerId, modelRoute.tier, "presentation"),
+        messages: [
+          { role: "system", content: INTRODUCTION_PROMPT },
+          {
+            role: "user",
+            content: introductionInput(name, casualTyping),
+          },
+        ],
+      });
+      const intro = parseIntroduction(nameIntroduction(raw, casualTyping));
+      if (!intro) {
+        this.logger.warn(
+          "introduction_invalid",
+          "Sapaan perkenalan tidak lolos penyaring; sapaan tetap dipakai.",
+        );
+        return null;
+      }
+      return casualTyping ? casualChatTypography(intro) : intro;
+    } catch (error) {
+      this.logger.warn(
+        "introduction_failed",
+        "Sapaan perkenalan gagal dibuat; sapaan tetap dipakai.",
+        { errorType: error instanceof Error ? error.name : "unknown" },
+      );
+      return null;
+    }
   }
 
   /**
