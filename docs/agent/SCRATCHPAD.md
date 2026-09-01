@@ -2101,6 +2101,74 @@ percakapan pemilik produk sendiri.
 Transkripnya tidak masuk Git: `data/ngobrol/` diabaikan karena isinya
 percakapan sungguhan.
 
+## 31. Sesi eksplorasi pertama, dan cacat yang cuma bisa ditemukan begitu
+
+Sesi bebas pertama dengan `ngobrol-harvy.ts`, 1 September 2026. Enam giliran,
+pesan disusun sendiri, tiap pesan berikutnya menanggapi balasan yang benar-benar
+datang.
+
+### Cacat yang ditemukan: pencatatan cache tidak pernah sampai ke berkas
+
+Butir 29 menutup dengan "cacheReadTokens kini dicatat", dan tesnya lulus. Sesi
+nyata memperlihatkan angkanya **tetap tidak muncul**: nol dari enam belas
+permintaan, hanya `fieldsOmitted` yang naik.
+
+Sebabnya daftar-izin di `sanitizeObject`. Field yang tidak terdaftar dibuang
+tanpa suara dan hanya menaikkan penghitung. `cachereadtokens` tidak ada di sana.
+
+**Dan tesnya lulus karena logger palsu di tes tidak melewati penyaring itu sama
+sekali.** Ia membuktikan field-nya *diteruskan*, bukan *tercatat*. Dua hal yang
+berbeda, dan bedanya baru terlihat ketika berkas lognya benar-benar dibaca.
+
+Ini pola ketiga hari itu, sesudah coba-ulang yang tidak pernah menyala dan cache
+spine yang tidak pernah kena: **mekanisme yang tidak terlihat tidak dapat
+dibedakan dari mekanisme yang rusak.** Kali ini yang tidak terlihat justru alat
+untuk melihat.
+
+Diperbaiki, dan diverifikasi dengan menyalakan ulang sesi lalu membaca berkas
+lognya: `turn-boundary input 982 | cacheRead 128`.
+
+Satu pertanyaan baru terbuka: `turn-boundary` melaporkan 128, sedangkan
+`understanding` dan `reply` tidak melaporkan apa pun. Provider tampaknya
+mengembalikan `prompt_tokens_details` hanya untuk sebagian bentuk permintaan.
+Belum ditelusuri.
+
+### Yang bekerja baik
+
+- **Batas giliran pada semburan.** Empat pecahan—"oh iya", "bab nya tuh", "eh
+  bentar", "pokoknya yg ada sin cos tan"—digabung jadi satu giliran dan dijawab
+  utuh sebagai trigonometri.
+- **Koreksi.** "eh salah deng, ulangannya lusa bukan besok" ditangkap bersih dan
+  rencananya disesuaikan.
+- **Recall pendek.** "btw tadi gua bilang bab apa ya" dijawab satu kalimat tepat.
+- **Muatan emosi.** "gua ngerasa bego banget" dijawab "Hei, bukan bego" lebih
+  dulu, baru rencana.
+- **Balasan berbulir sudah ada.** Satu giliran dikirim sebagai tiga gelembung
+  terpisah. Ini sempat terdaftar sebagai pembahasan terbuka; ternyata sudah
+  berjalan.
+- **Status baru terkonfirmasi di produksi**: `🌑 Menyusun · 16s · ↑ 7.8k · ↓ 213`
+  dengan catatan objek di bawahnya.
+
+### Yang perlu diperbaiki, belum dikerjakan
+
+**Register bergeser ke "gua".** Persona Harvy memakai "aku", tetapi begitu
+pengguna memakai slang, Harvy ikut: "gua bantu", "gua mau tau", "gua kasih".
+Konsisten sepanjang sesi. Peniruan register mungkin disengaja sebagai kehangatan,
+tetapi belum pernah diputuskan dan tidak dijaga apa pun.
+
+**Balasan substantif pertama masih dinding.** Pesan panik satu baris dijawab dua
+daftar berbutir, tiga pertanyaan bernomor, dan penutup—sebelum satu pun bantuan
+diberikan. Kerja panjang-balasan adaptif tampaknya tidak menjangkau bentuk ini;
+`shapeDirective` hanya menyala untuk pesan sangat pendek. Balasan berikutnya
+dalam sesi yang sama justru pendek dan enak, jadi masalahnya khusus pembuka.
+
+**Kata "contekan" dipakai dua kali** untuk menawarkan ringkasan rumus. Dalam
+konteks sekolah kata itu berkonotasi curang. Kemungkinan besar maksudnya catatan
+ringkas, tetapi pilihan katanya berisiko.
+
+**Harvy salah ketik "MTD"** ketika maksudnya "MTK". Selip model, dicatat sebagai
+pengamatan, bukan cacat kode.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

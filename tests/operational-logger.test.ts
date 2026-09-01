@@ -197,6 +197,56 @@ describe("log operasional", () => {
     });
   });
 
+  /**
+   * Token prompt caching wajib lolos penyaring, bukan cuma diteruskan.
+   *
+   * Percobaan pertama menambahkannya di `ai_request_completed` dan tesnya lulus—
+   * tetapi tes itu memakai logger palsu yang tidak melewati sanitasi sama
+   * sekali. Sesi Telegram sungguhan 1 September 2026 memperlihatkan angkanya
+   * tetap tidak muncul: nol dari enam belas permintaan, hanya `fieldsOmitted`
+   * yang naik. Daftar-izin membuang field yang tidak dikenalnya tanpa suara.
+   *
+   * Jadi tes yang benar untuk daftar-izin harus menulis lewat sistem log
+   * sungguhan dan membaca kembali berkasnya.
+   */
+  it("mengizinkan token cache prompt melewati penyaring", async () => {
+    await withTempDirectory(async (directory) => {
+      const system = await createOperationalLogSystem(options(directory));
+      system.logger.info("cache_probe", "Token cache dicatat.", {
+        inputTokens: 6_632,
+        cacheReadTokens: 6_500,
+        cacheWriteTokens: 132,
+      });
+      await system.flush();
+
+      const record = (await readRecords(directory)).find(
+        (candidate) => candidate["event"] === "cache_probe",
+      );
+      const data = record?.["data"] as Record<string, unknown>;
+      assert.equal(data["cacheReadTokens"], 6_500);
+      assert.equal(data["cacheWriteTokens"], 132);
+      assert.equal(data["fieldsOmitted"], undefined);
+    });
+  });
+
+  // Nol adalah kabar, bukan ketiadaan kabar: justru itu keadaan yang selama ini
+  // tidak terlihat.
+  it("mencatat token cache bernilai nol apa adanya", async () => {
+    await withTempDirectory(async (directory) => {
+      const system = await createOperationalLogSystem(options(directory));
+      system.logger.info("cache_probe_nol", "Tidak ada yang ter-cache.", {
+        cacheReadTokens: 0,
+      });
+      await system.flush();
+
+      const record = (await readRecords(directory)).find(
+        (candidate) => candidate["event"] === "cache_probe_nol",
+      );
+      const data = record?.["data"] as Record<string, unknown>;
+      assert.equal(data["cacheReadTokens"], 0);
+    });
+  });
+
   it("mengizinkan counter context manifest tanpa membuka isi konteks", async () => {
     await withTempDirectory(async (directory) => {
       const system = await createOperationalLogSystem(options(directory));

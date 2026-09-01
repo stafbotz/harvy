@@ -313,6 +313,12 @@ const ALLOWED_DATA_KEYS = new Set([
   "clarificationneeded",
   "capdeleted",
   "charactercount",
+  // Token yang dibaca dan ditulis cache prompt. Tanpa keduanya di daftar ini,
+  // `ai_request_completed` membuangnya diam-diam dan hanya menaikkan
+  // `fieldsOmitted`—persis yang terjadi pada percobaan pertama, dan tesnya
+  // lolos karena logger palsu di tes tidak melewati penyaring ini sama sekali.
+  "cachereadtokens",
+  "cachewritetokens",
   "code",
   "confidencebucket",
   "count",
