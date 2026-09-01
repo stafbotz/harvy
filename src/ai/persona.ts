@@ -1197,6 +1197,77 @@ export function depthDirective(message: string): string {
 }
 
 /**
+ * Batas panjang balasan yang masih diperlakukan sebagai obrolan.
+ *
+ * Di atas ini balasan hampir selalu penjelasan, dan penjelasan justru lebih
+ * mudah dibaca dengan ketikan rapi.
+ */
+const CASUAL_TYPOGRAPHY_MAX_CHARS = 400;
+/**
+ * Apakah pengguna sendiri mengetik santai.
+ *
+ * Ketikan chat Harvy adalah **cermin**, bukan gaya tetap. Versi pertama
+ * menerapkannya pada setiap giliran obrolan, dan itu salah arah: pesan yang
+ * ditulis rapi—"Bagaimana ritme kerja yang sehat?"—dibalas dengan huruf kecil
+ * dan tanpa titik, padahal penulisnya jelas sedang menulis rapi. Empat tes lama
+ * menangkapnya.
+ *
+ * Tiga penanda, satu saja cukup: kalimat dimulai huruf kecil, tidak ditutup
+ * tanda baca, atau memuat singkatan sehari-hari. Ketiganya jarang muncul pada
+ * orang yang sedang menulis rapi, dan hampir selalu muncul pada yang tidak.
+ */
+export function usesCasualTyping(message: string): boolean {
+  const text = message.trim();
+  if (!text) return false;
+  if (/^\p{Ll}/u.test(text)) return true;
+  if (!/[.!?]$/u.test(text)) return true;
+  return CASUAL_SPELLINGS.test(text);
+}
+
+/** Pemendekan ejaan sehari-hari, bukan partikel santai seperti "sih" atau "kok". */
+const CASUAL_SPELLINGS =
+  /\b(?:yg|bgt|td|bsk|blm|udah|gak|ga|dgn|jd|klo|tp|emg|gua|gue|lu|nggak)\b/iu;
+
+/**
+ * Merapikan ketikan balasan obrolan menjadi ketikan chat, bukan ketikan surat.
+ *
+ * Diminta pemilik produk 1 September 2026 sesudah melihat Harvy membalas
+ * "eh btw td gua liat nilai ulangan gua jelek bgt" dengan "Wah, emang berapa,
+ * F? Tadi ulangan yang mana nih, fisika atau yang lain?"—nadanya sudah nyambung,
+ * ketikannya masih rapi sempurna.
+ *
+ * Arahan prompt saja tidak cukup, dan itu diukur: sesudah `shapeDirective`
+ * diberi instruksi ketikan santai, jumlah kapital bergerak 29 menjadi 28 dan
+ * titik 27 menjadi 28. Praktis tidak berubah. Kosakatanya ikut santai, tetapi
+ * kapitalisasi dan titik tidak—pola yang sama dengan pengakuan-memotong, yang
+ * baru terjadi sesudah kalimatnya dimiliki kode.
+ *
+ * Yang diubah hanya dua hal yang paling terlihat: huruf awal kalimat dan titik
+ * di ujung. Isi, kata, dan tanda tanya tidak disentuh.
+ *
+ * **Tidak berlaku untuk penjelasan.** Balasan berisi pagar kode, butir,
+ * penomoran, atau yang panjang dibiarkan apa adanya: di sana ketikan rapi
+ * membantu membaca, dan itulah beda obrolan dari penjelasan.
+ */
+export function casualChatTypography(reply: string): string {
+  const text = reply.trim();
+  if (!text || text.length > CASUAL_TYPOGRAPHY_MAX_CHARS) return reply;
+  // Penjelasan dan artefak dibiarkan utuh.
+  if (/```|^\s*[-*•]\s|^\s*\d+[.)]\s/mu.test(text)) return reply;
+
+  const lowered = text.replace(
+    // Huruf pertama teks, atau huruf pertama sesudah akhir kalimat.
+    /(^|[.!?]\s+)(\p{Lu})(\p{Ll})/gu,
+    (whole, lead: string, first: string, second: string) =>
+      `${lead}${first.toLocaleLowerCase("id-ID")}${second}`,
+  );
+
+  // Titik tunggal di ujung dibuang; elipsis, tanya, dan seru dibiarkan karena
+  // ketiganya membawa nada, bukan sekadar menutup kalimat.
+  return lowered.replace(/(?<![.!?])\.$/u, "");
+}
+
+/**
  * Menjaga bentuk balasan tetap seukuran yang dibawa pengguna.
  *
  * `depthDirective` menutup satu sisi—pesan panjang yang dijawab dua baris—dan
@@ -1255,9 +1326,14 @@ export function shapeDirective(message: string): string {
     "  banyak balasan lebih baik tanpa sama sekali.",
     "- Ikuti bahasa pengguna. Kalau ia menyapamu santai, balas santai; kalau ia",
     "  menulis rapi, ikut rapi. Ini disengaja, bukan kebetulan—Harvy menemani,",
-    "  jadi ia menyesuaikan diri. Tapi jangan menyalin singkatan atau typo-nya:",
-    "  yang ditiru nadanya, bukan cara mengetiknya, karena penjelasanmu tetap",
-    "  harus mudah dibaca.",
+    "  jadi ia menyesuaikan diri.",
+    "- Ketik seperti orang mengetik di chat, bukan menulis surat. Kalimat boleh",
+    "  dimulai huruf kecil, dan titik di akhir kalimat terakhir tidak perlu.",
+    "  Singkatan sehari-hari boleh: yg, aja, udah, gak, bgt, td, klo, emg.",
+    "- Tapi jangan sampai susah dibaca. Jangan mengarang singkatan sendiri,",
+    "  jangan meniru typo pengguna, dan begitu kamu menjelaskan materi—rumus,",
+    "  langkah, definisi—tulis rapi lagi. Yang santai itu obrolannya, bukan",
+    "  penjelasannya.",
     "",
     "Jangan menyebut atau mengutip catatan ini. Pengguna tidak melihatnya.",
     "Pesannya mulai di bawah:",

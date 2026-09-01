@@ -11,6 +11,7 @@ import {
   parseWaitDecision,
 } from "../src/ai/conversation.js";
 import {
+  casualChatTypography,
   HARVY_REPLY_CACHE_SPINE,
   replyPrompt,
 } from "../src/ai/persona.js";
@@ -1708,7 +1709,9 @@ describe("balasan percakapan", () => {
     assert.match(system, /📍 boleh dipakai secara opsional/iu);
     assert.match(system, /Jangan pakai 💭 sebagai\s+tanda write/iu);
     assert.match(system, /Emoji tidak wajib/iu);
-    assert.equal(reply, "Iya, aku inget betapa pentingnya Rani buat kamu.");
+    // Pesannya ditulis santai ("harvy inget aku cinta banget sama Rani"),
+    // jadi ketikan balasannya ikut turun. Isinya yang dijaga di sini.
+    assert.equal(reply, "iya, aku inget betapa pentingnya Rani buat kamu");
   });
 
   it("memberi receipt penghapusan hanya setelah primary memory benar-benar dicabut", async () => {
@@ -1799,7 +1802,10 @@ describe("balasan percakapan", () => {
       system,
       /📍 menandai catatan yang baru disimpan atau diperbarui,[\s\S]*hanya sah bila prompt ini memuat hasil write code-owned/iu,
     );
-    assert.equal(reply, "💭 Aku masih inget kamu pernah mempertimbangkan UI.");
+    // Pesan pengguna ditulis santai, jadi titik penutupnya ikut dibuang.
+    // Huruf awalnya tetap besar karena emoji di depan bukan batas kalimat—
+    // pembeda yang wajar, dan dibiarkan apa adanya.
+    assert.equal(reply, "💭 Aku masih inget kamu pernah mempertimbangkan UI");
   });
 
   it("menjaga tutor aktif pada tier besar dan membawa state ke prompt", async () => {
@@ -2228,6 +2234,66 @@ describe("peringkasan episode bertahan pada kegagalan acak", () => {
     await conversation.summarizeEpisode(TURNS);
 
     assert.equal(calls, 1);
+  });
+});
+
+/**
+ * Ketikan chat untuk giliran obrolan.
+ *
+ * Diminta pemilik produk 1 September 2026: nada Harvy sudah nyambung, tetapi
+ * ketikannya masih rapi sempurna—huruf besar di awal kalimat, titik lengkap,
+ * sementara penggunanya menulis "td" dan "bgt".
+ *
+ * Arahan prompt saja tidak cukup dan itu diukur: sesudah instruksi ketikan
+ * santai ditambahkan, kapital bergerak 29 menjadi 28 dan titik 27 menjadi 28.
+ * Praktis tidak berubah. Pola yang sama dengan pengakuan-memotong—yang wajib
+ * terjadi dimiliki kode.
+ */
+describe("ketikan chat untuk balasan obrolan", () => {
+  it("menurunkan huruf awal kalimat dan membuang titik penutup", () => {
+    assert.equal(
+      casualChatTypography("Wah, belum siap ya. Babnya udah sampe mana."),
+      "wah, belum siap ya. babnya udah sampe mana",
+    );
+  });
+
+  // Huruf kapital tunggal hampir selalu inisial atau nilai—"F" untuk nilai,
+  // bukan awal kata. Menurunkannya mengubah arti.
+  it("tidak menyentuh huruf kapital tunggal", () => {
+    assert.equal(
+      casualChatTypography("Emang berapa, F?"),
+      "emang berapa, F?",
+    );
+  });
+
+  it("membiarkan tanya, seru, dan elipsis", () => {
+    assert.equal(casualChatTypography("Iya! Semangat!"), "iya! semangat!");
+    assert.equal(casualChatTypography("Hmm... gimana ya."), "hmm... gimana ya");
+    assert.equal(casualChatTypography("Udah dicoba?"), "udah dicoba?");
+  });
+
+  // Penjaga terpenting di blok ini. Yang santai adalah obrolannya, bukan
+  // penjelasannya: di penjelasan materi ketikan rapi justru membantu membaca.
+  it("tidak menyentuh penjelasan berstruktur", () => {
+    for (
+      const text of [
+        "Berikut langkahnya:\n- pertama\n- kedua",
+        "Urutannya:\n1. pahami dulu\n2. latihan soal",
+        "Contohnya:\n```js\nconst a = 1;\n```",
+      ]
+    ) {
+      assert.equal(casualChatTypography(text), text, text.slice(0, 20));
+    }
+  });
+
+  it("membiarkan balasan panjang apa adanya", () => {
+    const panjang = `${"Trigonometri itu soal perbandingan sisi segitiga. ".repeat(10)}`;
+    assert.equal(casualChatTypography(panjang), panjang);
+  });
+
+  it("gagal aman pada teks kosong", () => {
+    assert.equal(casualChatTypography(""), "");
+    assert.equal(casualChatTypography("   "), "   ");
   });
 });
 

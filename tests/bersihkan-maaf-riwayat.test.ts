@@ -85,6 +85,22 @@ describe("pembersih kalimat gagal riwayat", () => {
     assert.match(alasan ?? "", /nextSequence/u);
   });
 
+  // Di atas nomor terbesar saja tidak cukup. Menomori ulang giliran ke bawah
+  // sambil menahan nextSequence lama membuat giliran berikutnya lahir dengan
+  // lubang, dan `save()` menolak seluruh riwayat—Harvy gagal menulis tiap
+  // giliran meski membacanya berhasil. Terjadi nyata: 228 lalu 244.
+  it("menolak nextSequence yang tidak tepat menyambung giliran terakhir", () => {
+    const alasan = verify({
+      histories: [{
+        turns: [turn(1, "user", "a"), turn(2, "harvy", "b")],
+        episodes: [],
+        nextSequence: 18,
+      }],
+    });
+
+    assert.match(alasan ?? "", /tidak menyambung/u);
+  });
+
   it("meloloskan riwayat yang sah", () => {
     assert.equal(
       verify({

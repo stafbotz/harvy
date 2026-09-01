@@ -97,9 +97,15 @@ export function verify(store: Store): string | null {
     if (first && first.sequence !== through + 1) {
       return `giliran pertama ${first.sequence}, seharusnya ${through + 1}`;
     }
-    const greatest = Math.max(through, turns.at(-1)?.sequence ?? 0);
+    const last = turns.at(-1);
+    const greatest = Math.max(through, last?.sequence ?? 0);
     if ((history.nextSequence ?? 0) <= greatest) {
       return `nextSequence ${history.nextSequence} tidak di atas ${greatest}`;
+    }
+    // Di atas saja tidak cukup: ia harus **tepat** menyambung, atau
+    // giliran berikutnya lahir dengan lubang dan `save()` menolaknya.
+    if (last && history.nextSequence !== last.sequence + 1) {
+      return `nextSequence ${history.nextSequence} tidak menyambung ${last.sequence}`;
     }
   }
   return null;
@@ -145,7 +151,15 @@ async function main(): Promise<void> {
       ...turn,
       sequence: sequence++,
     }));
-    history.nextSequence = Math.max(history.nextSequence ?? 1, sequence);
+    // Persis satu di atas giliran terakhir, BUKAN nilai lama yang lebih
+    // tinggi. Menahan angka lama membuat giliran berikutnya lahir dengan
+    // nomor jauh di atas yang terakhir—lubang lagi, dan `save()` menolak
+    // seluruh riwayat. Itu terjadi: 228 lalu 244, dan Harvy gagal menulis
+    // tiap giliran meski membacanya sudah berhasil.
+    //
+    // Menurunkannya aman: nomor yang dilepas milik giliran yang sudah
+    // dibuang, dan episode hanya menunjuk nomor di bawah ekor ini.
+    history.nextSequence = sequence;
   }
 
   console.log(`kalimat gagal ditemukan : ${found}`);

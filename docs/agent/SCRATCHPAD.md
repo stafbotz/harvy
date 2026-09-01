@@ -2342,6 +2342,84 @@ termasuk hal-hal yang justru ingin dihentikan.
 Dan menghapus sebuah kalimat dari kode tidak menghapusnya dari perilaku, selama
 kalimat itu masih tersimpan sebagai contoh.
 
+## 34. Ketikan chat: arahan prompt tidak cukup, lagi
+
+Pemilik produk 1 September 2026, sesudah butir 32: nadanya sudah nyambung,
+ketikannya belum. Buktinya satu balasan:
+
+```
+pengguna : eh btw td gua liat nilai ulangan gua jelek bgt
+Harvy    : Wah, emang berapa, F? Tadi ulangan yang mana nih, fisika atau yang lain?
+```
+
+Kata-katanya santai, tetapi huruf besar di awal kalimat, koma lengkap, tanpa
+satu pun singkatan—sementara penggunanya menulis "td" dan "bgt".
+
+### Arahan prompt diukur dan hampir tidak berpengaruh
+
+`shapeDirective` diberi instruksi ketikan santai: kalimat boleh diawali huruf
+kecil, titik penutup tidak perlu, singkatan sehari-hari boleh. Hasilnya, korpus
+dan varian yang sama:
+
+```
+                kapital  titik  singkatan
+sebelum              29     27          5
+sesudah arahan       28     28          4
+```
+
+Praktis tidak bergerak. Kosakatanya ikut santai; kapitalisasi dan titik tidak.
+Pola yang sama dengan pengakuan-memotong—0 dari 5 lewat prompt, 3 dari 3 sesudah
+dimiliki kode.
+
+### Dipindahkan ke kode
+
+`casualChatTypography` menurunkan huruf awal kalimat dan membuang titik penutup
+tunggal. Yang lain tidak disentuh: kata, tanda tanya, seru, dan elipsis tetap.
+
+```
+                kapital  titik  singkatan  char rata-rata
+sesudah kode          4      9         11             169
+```
+
+Keempat kasus obrolan turun ke nol kapital. Empat yang tersisa ada di kasus
+kontrol yang meminta daftar—bukti transformnya memang tidak menyentuh
+penjelasan.
+
+### Tiga penjaga, dan dua lahir dari kesalahan
+
+**Hanya berlaku bila penggunanya sendiri mengetik santai.** Versi pertama
+menerapkannya pada setiap giliran obrolan, dan empat tes lama menangkapnya:
+pesan yang ditulis rapi—"Bagaimana ritme kerja yang sehat?"—dibalas huruf kecil
+tanpa titik. Itu melawan tujuannya sendiri, yang justru mencerminkan lawan
+bicara. `usesCasualTyping` memakai tiga penanda: awal huruf kecil, tanpa tanda
+baca penutup, atau memuat singkatan sehari-hari.
+
+**Tidak menyentuh penjelasan.** Balasan berisi pagar kode, butir, penomoran,
+atau lebih dari 400 karakter dibiarkan utuh. Di sana ketikan rapi membantu
+membaca, dan itulah beda obrolan dari penjelasan.
+
+**Tidak berlaku ketika identitas Capybara ditempel.** Kalimat itu milik kode dan
+ditulis rapi; menurunkan bagian model sesudahnya membuat satu balasan memakai
+dua register. Ditemukan oleh tes identitas, yang menolak "Fotosintesis" berubah
+menjadi "fotosintesis" tepat di bawah kalimat formal.
+
+### Terbukti mencerminkan, bukan sekadar menurunkan
+
+```
+pesan santai : eh btw td gua liat nilai ulangan gua jelek bgt
+Harvy        : eh, nilai ulangan yang mana nih F? yang kimia atau yang lain?
+
+pesan rapi   : Bagaimana cara belajar trigonometri yang efektif?
+Harvy        : Buat trigonometri, biasanya banyak yang stuck di menghafal rumus
+               tanpa ngerti konsep. Jadi mending mulai dari segitiga siku-sikunya...
+```
+
+Yang santai dapat ketikan santai; yang rapi tetap rapi dan tetap berstruktur.
+
+Satu hal yang belum ditangani: pada pesan rapi itu Harvy tetap memakai "gua" dan
+"lo". Register kata masih mengikuti kebiasaan model, sedangkan yang kini dimiliki
+kode baru tipografinya.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

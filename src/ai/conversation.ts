@@ -61,7 +61,9 @@ import {
 } from "./agent.js";
 import {
   depthDirective,
+  casualChatTypography,
   shapeDirective,
+  usesCasualTyping,
   dueDateInput,
   dueDatePrompt,
   HARVY_REPLY_CACHE_SPINE,
@@ -1135,8 +1137,16 @@ export class Conversation {
     // Giliran safety sengaja tidak mendapat arahan bentuk. Di sana panjang dan
     // pertanyaan punya pertimbangannya sendiri—menanyakan keadaan seseorang dua
     // kali bisa jadi hal yang paling benar untuk dilakukan.
-    const depth = depthDirective(message) ||
-      (triage.level === "biasa" ? shapeDirective(message) : "");
+    const shape = triage.level === "biasa" ? shapeDirective(message) : "";
+    const depth = depthDirective(message) || shape;
+    // Ketikan santai hanya untuk giliran yang memang diperlakukan sebagai
+    // obrolan. Giliran panjang dan giliran safety punya pertimbangannya
+    // sendiri, dan penjelasan justru lebih mudah dibaca dengan ketikan rapi.
+    // Cermin, bukan gaya tetap: hanya ikut santai bila penggunanya memang
+    // mengetik santai. Menerapkannya pada pesan yang ditulis rapi justru
+    // melawan tujuannya, yaitu menyesuaikan diri dengan lawan bicara.
+    const casualTyping = depth === shape && shape.length > 0 &&
+      usesCasualTyping(message);
     const execution = this.execution(
       tier,
       cognitiveRole === "orchestrator" ? "synthesizer" : "conversationalist",
@@ -1434,6 +1444,15 @@ export class Conversation {
     // pengukuran provider nyata—sedangkan kode tahu persis kapan itu terjadi.
     if (runtime.prematureReply) {
       reply = withPrematureAcknowledgement(reply, runtime.ownerId ?? "harvy");
+    }
+    // Sejajar dengan pengakuan di atas: arahan prompt untuk ketikan santai
+    // diukur dan hampir tidak berpengaruh—kapital 29 menjadi 28, titik 27
+    // menjadi 28. Yang wajib terjadi dimiliki kode.
+    // Tidak berlaku ketika identitas Capybara ikut ditempel: kalimat itu
+    // milik kode dan ditulis rapi, jadi menurunkan bagian model sesudahnya
+    // membuat satu balasan memakai dua register sekaligus.
+    if (casualTyping && !modelIdentityQuestion) {
+      reply = casualChatTypography(reply);
     }
     return modelIdentityQuestion
       ? prependCapybaraIdentity(reply)

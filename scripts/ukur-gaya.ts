@@ -91,10 +91,33 @@ interface Shape {
   numbered: number;
   arrows: number;
   emoji: number;
+  /** Kalimat yang diawali huruf besar; ketikan chat jarang begitu. */
+  capitals: number;
+  /** Kalimat yang ditutup titik; ketikan chat biasanya tidak. */
+  periods: number;
+  /** Singkatan lazim seperti "bgt", "yg", "udah". */
+  abbreviations: number;
 }
+
+/**
+ * Singkatan ketikan sehari-hari, bukan partikel santai.
+ *
+ * "nih", "sih", "kok" sudah dipakai Harvy sejak lama—yang membedakan ketikan
+ * chat dari ketikan rapi adalah pemendekan ejaan, bukan partikelnya.
+ */
+const ABBREVIATIONS = [
+  "bgt", "yg", "td", "bsk", "blm", "udah", "gak", "ga", "dgn", "jd", "klo",
+  "tp", "aja", "gitu", "emg", "kayak",
+] as const;
 
 export function measureShape(reply: string): Shape {
   const lines = reply.split("\n");
+  // Potong per kalimat: akhir tanda baca atau pergantian baris.
+  const sentences = reply
+    .split(/(?<=[.!?])\s+|\n+/u)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const words = reply.toLowerCase().match(/[a-z]+/gu) ?? [];
   return {
     characters: reply.length,
     lines: lines.length,
@@ -104,6 +127,11 @@ export function measureShape(reply: string): Shape {
     arrows: (reply.match(/→|->/gu) ?? []).length,
     // Rentang emoji utama; cukup untuk menghitung, tidak perlu sempurna.
     emoji: (reply.match(/\p{Extended_Pictographic}/gu) ?? []).length,
+    capitals: sentences.filter((sentence) => /^\p{Lu}/u.test(sentence)).length,
+    periods: sentences.filter((sentence) => /\.$/u.test(sentence)).length,
+    abbreviations: words.filter((word) =>
+      (ABBREVIATIONS as readonly string[]).includes(word)
+    ).length,
   };
 }
 
@@ -131,7 +159,8 @@ async function main(): Promise<void> {
   console.log(
     `${"kasus".padEnd(16)}${"char".padStart(6)}${"baris".padStart(6)}` +
       `${"tanya".padStart(6)}${"butir".padStart(6)}${"nomor".padStart(6)}` +
-      `${"panah".padStart(6)}${"emoji".padStart(6)}`,
+      `${"panah".padStart(6)}${"emoji".padStart(6)}` +
+      `${"kapital".padStart(8)}${"titik".padStart(6)}${"singkat".padStart(8)}`,
   );
   const rows: Shape[] = [];
   // Varian dipilih per putaran, bukan tetap. Dua putaran dengan pesan sama
@@ -157,7 +186,9 @@ async function main(): Promise<void> {
         `${String(shape.lines).padStart(6)}${String(shape.questions).padStart(6)}` +
         `${String(shape.bullets).padStart(6)}${String(shape.numbered).padStart(6)}` +
         `${String(shape.arrows).padStart(6)}${String(shape.emoji).padStart(6)}` +
-        (opener.structureOk ? "   (struktur boleh)" : ""),
+        `${String(shape.capitals).padStart(8)}${String(shape.periods).padStart(6)}` +
+        `${String(shape.abbreviations).padStart(8)}` +
+        (opener.structureOk ? "  (struktur boleh)" : ""),
     );
   }
   if (rows.length === 0) return;
@@ -167,6 +198,8 @@ async function main(): Promise<void> {
     `\ntotal: ${sum((r) => r.questions)} pertanyaan, ` +
       `${sum((r) => r.bullets)} butir, ${sum((r) => r.numbered)} nomor, ` +
       `${sum((r) => r.arrows)} panah, ${sum((r) => r.emoji)} emoji, ` +
+      `${sum((r) => r.capitals)} kapital, ${sum((r) => r.periods)} titik, ` +
+      `${sum((r) => r.abbreviations)} singkatan, ` +
       `${Math.round(sum((r) => r.characters) / rows.length)} char rata-rata`,
   );
 }
