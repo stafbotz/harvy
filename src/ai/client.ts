@@ -818,6 +818,9 @@ export class AiClient {
     let timeoutRetries = request.maxAttempts === undefined
       ? TRANSIENT_ATTEMPTS - 1
       : 0;
+    let rateLimitRetries = request.maxAttempts === undefined
+      ? RATE_LIMIT_ATTEMPTS - 1
+      : 0;
     // Missing finish metadata kadang terjadi pada respons HTTP 200 yang valid
     // secara transport. Setelah seluruh key mendapat giliran, permintaan umum
     // memperoleh satu recovery bounded. `maxAttempts` eksplisit tetap keras
@@ -838,7 +841,21 @@ export class AiClient {
           error.name === "AbortError";
         const timeoutRetryAvailable = timedOut && timeoutRetries > 0;
         if (timeoutRetryAvailable) timeoutRetries -= 1;
-        const attemptsLeft = keyRotationAvailable || timeoutRetryAvailable;
+        // Batas laju dijatah terpisah dari timeout, dan diulang dengan jeda.
+        //
+        // 429 bukan provider yang lambat melainkan provider yang menyuruh
+        // berhenti sebentar. Mengulanginya seketika justru mengetuk lebih
+        // sering dan memperburuk keadaan; timeout sebaliknya, di sana
+        // menunggu tidak menolong.
+        //
+        // 429 tidak termasuk `isProviderWideFailure`, jadi jatah ini tidak
+        // pernah mendahului jalur fallback—yang memang punya penjaganya
+        // sendiri untuk 408 dan 5xx.
+        const rateLimited = error instanceof AiError && error.status === 429;
+        const rateLimitRetryAvailable = rateLimited && rateLimitRetries > 0;
+        if (rateLimitRetryAvailable) rateLimitRetries -= 1;
+        const attemptsLeft = keyRotationAvailable || timeoutRetryAvailable ||
+          rateLimitRetryAvailable;
         const boundedIncompleteRecovery =
           !attemptsLeft &&
           incompleteRecoveryAttempts > 0 &&
@@ -870,6 +887,10 @@ export class AiClient {
             request.onRetry?.();
           } catch {
             // Kosmetik tidak boleh menjadi sebab permintaan gagal.
+          }
+          if (rateLimitRetryAvailable) {
+            await pauseBeforeRetry(RATE_LIMIT_BACKOFF_MS, request.signal);
+            if (request.signal?.aborted) throw error;
           }
           attemptRequest = this.morePatientOnTimeout(attemptRequest, error);
           continue;
@@ -2406,6 +2427,51 @@ function isUnsupportedOption(error: unknown): boolean {
  * untuk kabar yang kemungkinan besar tetap buruk.
  */
 const TRANSIENT_ATTEMPTS = 2;
+
+/**
+ * Total percobaan ketika provider menolak karena batas laju.
+ *
+ * Terpisah dari jatah timeout karena penyebabnya berlawanan: timeout berarti
+ * provider lambat dan layak dicoba lagi segera, sedangkan 429 berarti kita
+ * mengetuk terlalu sering dan justru perlu berhenti sebentar.
+ *
+ * Ditemukan dari pemakaian nyata 1 September 2026: satu 429 pada pemahaman
+ * pesan langsung menjatuhkan giliran tanpa satu percobaan pun, karena jatah
+ * yang ada sengaja dipersempit ke timeout saja.
+ */
+const RATE_LIMIT_ATTEMPTS = 2;
+
+/**
+ * Jeda sebelum mencoba lagi sesudah 429.
+ *
+ * Satu detik: cukup lama untuk melepas jendela batas laju yang paling sempit,
+ * cukup singkat untuk tidak terasa seperti Harvy menghilang. Mengulang tanpa
+ * jeda akan menambah ketukan pada provider yang justru sedang menyuruh diam.
+ */
+const RATE_LIMIT_BACKOFF_MS = 1_000;
+
+/**
+ * Menunggu sebelum percobaan berikutnya, tetapi menyerah bila giliran dibatalkan.
+ *
+ * Tanpa memperhatikan signal, pembatalan pengguna akan tetap membayar jeda ini
+ * sebelum akhirnya dibuang—penundaan yang tidak menolong siapa pun.
+ */
+function pauseBeforeRetry(
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    }
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+}
+
 
 /**
  * Percobaan ulang sesudah timeout diberi waktu lebih panjang, bukan sama.

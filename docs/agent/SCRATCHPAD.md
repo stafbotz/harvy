@@ -2493,6 +2493,54 @@ Sekali hidup tetap hidup: penahanan berhenti permanen begitu model menjawab,
 supaya giliran yang sudah terbukti berjalan tidak kembali terlihat menunggu
 hanya karena pembacaan sesaat nol. Belum diuji di kanal nyata.
 
+## 36. Batas laju provider jatuh ke lantai, karena penyempitan kemarin
+
+Ditangkap pengintai log dari pemakaian nyata 1 September 2026:
+
+```
+22:00:20  turn-boundary   berhasil   2.334 ms
+22:00:22  understanding   GAGAL      HTTP 429
+22:00:24  risk-triage     berhasil   1.416 ms
+22:00:25  message_understanding_failed
+```
+
+Tidak ada satu pun `ai_request_retrying`. 429 langsung menyerah.
+
+Penyebabnya keputusan di butir 28. Perbaikan coba-ulang di sana mula-mula
+melebarkan jatah ke seluruh kelas layak-ulang, empat tes fallback langsung
+merah, lalu jatahnya dipersempit ke timeout saja dengan alasan "5xx dan rate
+limit punya jalur fallback sendiri".
+
+Alasan itu **hanya separuh benar**. `isProviderWideFailure` mencakup 408, 5xx,
+abort, dan kegagalan jaringan—**bukan 429**. Jadi rate limit tidak pernah
+menyentuh jalur fallback, dan sesudah penyempitan itu ia juga tidak menyentuh
+jalur coba-ulang. Ia jatuh ke lantai tanpa penangkap apa pun.
+
+Dan jalur fallback itu sendiri hanya berguna bila ada provider cadangan, yang
+konfigurasi sekarang tidak punya.
+
+### Jatah terpisah, bukan jatah yang dilebarkan
+
+429 diberi jatahnya sendiri, dan **dengan jeda satu detik**. Penyebabnya
+berlawanan dengan timeout: timeout berarti provider lambat dan layak dicoba lagi
+segera; 429 berarti kita mengetuk terlalu sering, dan mengulang seketika justru
+memperburuknya.
+
+Jedanya menghormati pembatalan giliran—tanpa itu, pengguna yang menyela tetap
+membayar satu detik sebelum pekerjaannya dibuang.
+
+`maxAttempts` eksplisit tetap dihormati tanpa jeda sama sekali: classifier
+berdeadline pendek akan kehabisan seluruh anggarannya bila menunggu satu detik.
+
+Empat tes fallback tetap hijau, karena 429 memang tidak pernah lewat sana.
+
+### Yang bekerja seperti dirancang
+
+Kalimat gagalnya membedakan dengan benar. HTTP 429 dikenali `serviceDisrupted`
+sebagai gangguan layanan, jadi yang tampil bukan "dari tadi gagal terus"—yang
+berarti Harvy kelamaan—melainkan "lagi ada gangguan nih, bukan dari pesanmu".
+Pembedaan yang dirancang di butir 28 terbukti pada kegagalan nyata pertamanya.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

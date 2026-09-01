@@ -2517,3 +2517,130 @@ describe("prompt caching tercatat", () => {
     assert.equal(dicatat[0]?.["cacheReadTokens"], 0);
   });
 });
+
+/**
+ * Batas laju provider dicoba ulang, dengan jeda.
+ *
+ * Ditemukan dari pemakaian nyata 1 September 2026: satu HTTP 429 pada pemahaman
+ * pesan langsung menjatuhkan giliran tanpa satu percobaan pun. Penyebabnya
+ * keputusan sebelumnya—jatah coba-ulang sengaja dipersempit ke timeout saja,
+ * karena melebarkannya ke seluruh kelas layak-ulang membuat empat tes fallback
+ * merah.
+ *
+ * Alasan penyempitan itu ternyata hanya berlaku untuk 408 dan 5xx, yang memang
+ * termasuk `isProviderWideFailure` dan punya jalur fallback sendiri. 429 tidak,
+ * jadi ia jatuh ke lantai tanpa penangkap apa pun.
+ *
+ * Diulang dengan jeda, bukan seketika: 429 berarti kita mengetuk terlalu sering,
+ * dan mengulang segera justru memperburuknya.
+ */
+describe("batas laju provider dicoba ulang dengan jeda", () => {
+  const tolak429 = () =>
+    new Response(JSON.stringify({ error: "rate limit" }), {
+      status: 429,
+      headers: { "content-type": "application/json" },
+    });
+  const jawabanBaik = () =>
+    new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "oke" }, finish_reason: "stop" }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  it("mengulang 429 dan berhasil pada percobaan kedua", async () => {
+    let panggilan = 0;
+    globalThis.fetch = async () => {
+      panggilan += 1;
+      return panggilan === 1 ? tolak429() : jawabanBaik();
+    };
+
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-tunggal"]),
+    });
+
+    const hasil = await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+    });
+
+    assert.equal(panggilan, 2);
+    assert.equal(hasil, "oke");
+  });
+
+  // Penjaga jeda. Tanpa menunggu, mengulang 429 menambah ketukan pada provider
+  // yang justru sedang menyuruh berhenti.
+  it("menunggu sebelum mencoba lagi", async () => {
+    let panggilan = 0;
+    const waktu: number[] = [];
+    globalThis.fetch = async () => {
+      panggilan += 1;
+      waktu.push(Date.now());
+      return panggilan === 1 ? tolak429() : jawabanBaik();
+    };
+
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-tunggal"]),
+    });
+
+    await client.complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+    });
+
+    assert.equal(waktu.length, 2);
+    assert.ok(
+      (waktu[1] ?? 0) - (waktu[0] ?? 0) >= 500,
+      `jeda terlalu pendek: ${(waktu[1] ?? 0) - (waktu[0] ?? 0)} ms`,
+    );
+  });
+
+  it("menyerah sesudah jatahnya habis", async () => {
+    let panggilan = 0;
+    globalThis.fetch = async () => {
+      panggilan += 1;
+      return tolak429();
+    };
+
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-tunggal"]),
+    });
+
+    await assert.rejects(() =>
+      client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+      })
+    );
+
+    assert.equal(panggilan, 2);
+  });
+
+  // Classifier berdeadline pendek menyetel `maxAttempts: 1` dengan sengaja;
+  // menunggu satu detik di sana menghabiskan seluruh anggarannya.
+  it("menghormati maxAttempts eksplisit tanpa menunggu", async () => {
+    let panggilan = 0;
+    globalThis.fetch = async () => {
+      panggilan += 1;
+      return tolak429();
+    };
+
+    const client = new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-tunggal"]),
+    });
+
+    await assert.rejects(() =>
+      client.complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxAttempts: 1,
+      })
+    );
+
+    assert.equal(panggilan, 1);
+  });
+});
