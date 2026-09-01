@@ -438,6 +438,15 @@ const MEMORY_PORTRAIT_MAX_TOKENS = 2_048;
  * menghapus alasan pemadatan itu sendiri.
  */
 const EPISODE_SUMMARY_MAX_TOKENS = 768;
+
+/**
+ * Percobaan peringkasan episode sebelum pemadatan menyerah.
+ *
+ * Tiga, karena kegagalannya acak dengan laju sekitar sepertiga per
+ * permintaan. Lebih dari itu membayar token untuk perbaikan yang makin
+ * tipis; kurang dari itu membiarkan riwayat menumpuk seperti sebelumnya.
+ */
+const EPISODE_SUMMARY_ATTEMPTS = 3;
 const GENERAL_MODEL_DEADLINE_MS = 30_000;
 const OPERATION_PRESENTATION_MAX_TOKENS = 256;
 const OPERATION_PRESENTATION_DEADLINE_MS = 3_000;
@@ -1597,7 +1606,52 @@ export class Conversation {
    * Mengekstrak satu episode v2 tanpa membaca atau merangkum ulang episode lama.
    * Metadata provenance dibuat oleh `HistoryService`, bukan oleh model.
    */
+  /**
+   * Meringkas satu bongkah percakapan lama menjadi episode.
+   *
+   * Dicoba beberapa kali karena kegagalannya **acak, bukan rusak**. Diukur pada
+   * data nyata 1 September 2026: enam permintaan identik ke sumber yang sama
+   * memberi empat lolos dan dua gagal. Yang gagal mengembalikan JSON sah tetapi
+   * hampir kosong—sembilan array tanpa klaim—dan parser menolaknya karena
+   * sumbernya jelas punya isi.
+   *
+   * Kegagalan validasi bukan kelas yang diulang `AiClient`: ia hanya mengulang
+   * timeout, 5xx, rate limit, dan gangguan jaringan. Jadi satu keluaran buruk
+   * membatalkan seluruh pemadatan, dan tidak ada satu giliran pun yang dibuang.
+   *
+   * Akibatnya terlihat di produksi: giliran mentah menumpuk sampai tiga puluh
+   * dua padahal ambangnya enam belas dan sisa yang dituju enam. Riwayat yang
+   * tidak pernah menyusut itu membawa belasan kalimat gagal lama ikut ke setiap
+   * prompt, dan model mulai menirunya—pengguna melihat kalimat maaf pada giliran
+   * yang justru berhasil.
+   *
+   * Tiga percobaan menurunkan peluang gagal dari sekitar sepertiga menjadi
+   * sekitar tiga persen, dan harganya murah: keluarannya seratus dua puluhan
+   * token.
+   */
   async summarizeEpisode(
+    turns: StoredConversationTurn[],
+    ownerId?: string,
+  ): Promise<EpisodeSummaryDraft> {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < EPISODE_SUMMARY_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.summarizeEpisodeOnce(turns, ownerId);
+      } catch (error) {
+        lastError = error;
+        this.logger.warn(
+          "episode_summary_attempt_failed",
+          "Peringkasan episode gagal dan akan dicoba lagi.",
+          { attempt: attempt + 1, maxAttempts: EPISODE_SUMMARY_ATTEMPTS },
+        );
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("Peringkasan episode gagal.");
+  }
+
+  private async summarizeEpisodeOnce(
     turns: StoredConversationTurn[],
     ownerId?: string,
   ): Promise<EpisodeSummaryDraft> {

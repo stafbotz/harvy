@@ -2249,6 +2249,77 @@ sama pada beberapa kalimat berbeda. Kemungkinan jalur triase non-`biasa`, tempat
 arahan bentuk memang sengaja tidak berlaku—di sana panjang dan pertanyaan punya
 pertimbangannya sendiri.
 
+## 33. Harvy meniru kalimat gagalnya sendiri
+
+Dilaporkan 1 September 2026: Harvy tetap menjawab "Maaf, aku lagi nggak bisa
+mikir sekarang" padahal teks itu sudah dihapus dari kode dan `npm run dev`
+berjalan dari sumber.
+
+Log gilirannya memperlihatkan hal yang mustahil bila kode yang mengirimnya:
+**empat panggilan model, nol kegagalan, giliran tuntas.** Tidak ada jalur
+kegagalan yang tersentuh.
+
+### Rantai sebabnya
+
+Kalimat gagal dicatat ke riwayat percakapan sebagai ucapan Harvy:
+
+```ts
+await ctx.reply(failure);
+await history.append(ownerId, "harvy", failure);
+```
+
+Riwayat ikut dikirim ke model tiap giliran. Jadi model membaca **lima belas**
+contoh dirinya sendiri berkata begitu, lalu menirunya—pada giliran yang justru
+berhasil. Teksnya tidak dikirim kode; model yang mengarangnya, karena kita
+sendiri yang mengajarinya.
+
+Menghapus teks dari kode tidak menyelesaikan apa pun.
+
+### Dan bug kedua yang membuatnya awet
+
+Riwayat lama seharusnya dipadatkan menjadi episode dan giliran mentahnya dibuang
+sampai sisa enam. Tetapi pemadatannya gagal terus, dan giliran mentah menumpuk
+sampai **tiga puluh dua**—termasuk lima belas kalimat maaf itu, yang karenanya
+tidak pernah bisa hilang sendiri.
+
+Diukur pada data nyata: enam permintaan identik ke sumber yang sama memberi
+**empat lolos dan dua gagal**. Kegagalannya **acak, bukan rusak**. Yang gagal
+mengembalikan JSON sah tetapi hampir kosong—sembilan array tanpa klaim—dan
+parser menolaknya karena sumbernya jelas punya isi.
+
+Hipotesis pertama, keluaran terpotong oleh anggaran 768 token, **diukur dan
+salah**: `finish_reason` selalu `stop`, keluarannya 47–126 token.
+
+Yang menentukan: kegagalan validasi bukan kelas yang diulang `AiClient`—ia hanya
+mengulang timeout, 5xx, rate limit, dan gangguan jaringan. Jadi satu keluaran
+buruk membatalkan seluruh pemadatan, dan tidak satu giliran pun dibuang.
+
+### Perbaikannya
+
+**Kalimat gagal berhenti ditulis ke riwayat**, tiga tempat. Ia artefak
+pengiriman, bukan isi percakapan—sama seperti status transient, yang juga tidak
+pernah dicatat.
+
+**Peringkasan episode dicoba sampai tiga kali.** Sepertiga gagal per percobaan
+menjadi sekitar tiga persen, dan harganya murah: keluarannya seratus dua puluhan
+token. Diverifikasi pada data nyata sesudah perbaikan: tiga pemadatan berturut
+berhasil, satu di antaranya memang butuh percobaan kedua.
+
+**Bekas lima belas entri lama dibersihkan** lewat
+`scripts/bersihkan-maaf-riwayat.ts`, yang hanya membuang ucapan Harvy yang
+memuat frasa kegagalan—pesan pengguna tidak tersentuh—dan mencadangkan berkasnya
+lebih dulu. Harvy wajib dimatikan saat itu: penyimpanannya satu proses.
+
+### Pelajarannya
+
+Ini kelas kesalahan yang belum pernah muncul di catatan ini: **keluaran Harvy
+yang disimpan menjadi contoh bagi Harvy berikutnya.** Riwayat bukan arsip pasif;
+ia bahan ajar. Apa pun yang ditulis ke sana sebagai ucapan Harvy akan ditiru,
+termasuk hal-hal yang justru ingin dihentikan.
+
+Dan menghapus sebuah kalimat dari kode tidak menghapusnya dari perilaku, selama
+kalimat itu masih tersimpan sebagai contoh.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

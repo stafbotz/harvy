@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { StoredConversationTurn } from "../src/domain/history.js";
 import { ASSESSMENT_FAILURE_IDLE_MS } from "../src/core/turn-taking-policy.js";
 import { describe, it } from "node:test";
 import type { AiClient, ChatRequest } from "../src/ai/client.js";
@@ -2115,6 +2116,121 @@ function tutorSession(): ActiveSession {
 }
 
 /** Klien palsu yang mencatat permintaan tanpa menyentuh jaringan. */
+/**
+ * Peringkasan episode dicoba beberapa kali.
+ *
+ * Kegagalannya acak, bukan rusak: enam permintaan identik ke sumber yang sama
+ * memberi empat lolos dan dua gagal pada data nyata 1 September 2026. Yang gagal
+ * mengembalikan JSON sah tetapi hampir kosong, dan parser menolaknya karena
+ * sumbernya jelas punya isi.
+ *
+ * Kegagalan validasi bukan kelas yang diulang `AiClient`—ia hanya mengulang
+ * timeout dan gangguan transport—sehingga satu keluaran buruk membatalkan
+ * seluruh pemadatan. Akibatnya terlihat di produksi: giliran mentah menumpuk
+ * sampai tiga puluh dua padahal sisa yang dituju enam, dan riwayat yang tidak
+ * pernah menyusut membawa kalimat gagal lama ikut ke setiap prompt.
+ */
+describe("peringkasan episode bertahan pada kegagalan acak", () => {
+  const TURNS: StoredConversationTurn[] = [
+    {
+      sequence: 1,
+      role: "user",
+      text:
+        "besok aku ada ulangan trigonometri dan aku belum belajar sama sekali. " +
+        "materinya sin cos tan, sudut istimewa, sama identitas dasar. aku " +
+        "bingung mulai dari mana karena catatanku juga nggak lengkap, yang " +
+        "bab awal ketinggalan di sekolah. gurunya bilang soalnya campur dari " +
+        "bab dua sampai bab tujuh, jadi aku takut yang lama malah keluar dan " +
+        "aku sama sekali nggak inget rumusnya",
+      at: "2026-09-01T10:00:00.000Z",
+    },
+    {
+      sequence: 2,
+      role: "harvy",
+      text: "Mulai dari sudut istimewa dulu, itu yang paling sering keluar.",
+      at: "2026-09-01T10:00:05.000Z",
+    },
+  ];
+
+  const VALID = JSON.stringify({
+    topics: [{ text: "persiapan ulangan trigonometri", sourceSequences: [1] }],
+    facts: [{ text: "ulangan trigonometri besok", sourceSequences: [1] }],
+    goals: [],
+    decisions: [],
+    corrections: [],
+    commitments: [],
+    unresolved: [],
+    temporalAnchors: [],
+    uncertainties: [],
+  });
+
+  const EMPTY = JSON.stringify({
+    topics: [],
+    facts: [],
+    goals: [],
+    decisions: [],
+    corrections: [],
+    commitments: [],
+    unresolved: [],
+    temporalAnchors: [],
+    uncertainties: [],
+  });
+
+  const clientReturning = (replies: string[]): AiClient => {
+    let index = 0;
+    return {
+      async complete(): Promise<string> {
+        const reply = replies[Math.min(index, replies.length - 1)]!;
+        index += 1;
+        return reply;
+      },
+    } as unknown as AiClient;
+  };
+
+  it("mencoba lagi ketika model mengembalikan episode kosong", async () => {
+    const conversation = new Conversation(
+      clientReturning([EMPTY, VALID]),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const episode = await conversation.summarizeEpisode(TURNS);
+
+    assert.equal(episode.facts.length, 1);
+  });
+
+  // Penjaga terpenting di sini. Tanpa batas, pemadatan yang benar-benar tidak
+  // dapat diselesaikan akan mengulang tanpa henti dan membakar token.
+  it("menyerah sesudah batas percobaan, bukan mengulang selamanya", async () => {
+    let calls = 0;
+    const client = {
+      async complete(): Promise<string> {
+        calls += 1;
+        return EMPTY;
+      },
+    } as unknown as AiClient;
+    const conversation = new Conversation(client, ROUTING, "Asia/Jakarta");
+
+    await assert.rejects(() => conversation.summarizeEpisode(TURNS));
+    assert.equal(calls, 3);
+  });
+
+  it("tidak mengulang ketika percobaan pertama sudah sah", async () => {
+    let calls = 0;
+    const client = {
+      async complete(): Promise<string> {
+        calls += 1;
+        return VALID;
+      },
+    } as unknown as AiClient;
+    const conversation = new Conversation(client, ROUTING, "Asia/Jakarta");
+
+    await conversation.summarizeEpisode(TURNS);
+
+    assert.equal(calls, 1);
+  });
+});
+
 function recorder(sink: ChatRequest[], reply: string): AiClient {
   return {
     async complete(request: ChatRequest): Promise<string> {

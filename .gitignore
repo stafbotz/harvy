@@ -45,3 +45,8 @@ Harvy-MVP-v0.1.0.zip
 # Transkrip percakapan langsung dari scripts/ngobrol-harvy.ts.
 # Isinya percakapan sungguhan dengan Harvy dan tidak boleh masuk Git.
 data/ngobrol/
+
+# Cadangan riwayat dari scripts/bersihkan-maaf-riwayat.ts. Pola `data/*.json`
+# tidak menangkapnya karena namanya berakhiran stempel waktu, dan satu commit
+# sempat membawanya masuk sebelum pola ini ada.
+data/*.cadangan-*

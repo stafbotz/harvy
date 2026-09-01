@@ -2857,7 +2857,17 @@ export function createBot(
           return;
         }
         await ctx.reply(response);
-        await history.append(ownerId, "harvy", response);
+        // Kalimat gagal sengaja TIDAK masuk riwayat percakapan.
+        //
+        // Sampai 1 September 2026 ia dicatat sebagai ucapan Harvy, dan itu
+        // berbalik menyerangnya: riwayat ikut dikirim ke model tiap giliran,
+        // jadi model membaca lima belas contoh dirinya sendiri berkata "aku
+        // lagi nggak bisa mikir" lalu menirunya pada giliran yang justru
+        // berhasil. Pengguna melihat kalimat maaf yang sudah dihapus dari
+        // kode, pada giliran yang tidak mencatat satu pun kegagalan.
+        //
+        // Kalimat ini artefak pengiriman, bukan isi percakapan—sama seperti
+        // status transient, yang juga tidak pernah dicatat.
         return;
       }
     } else if (!understanding && triage.level !== "biasa") {
@@ -3905,7 +3915,7 @@ export function createBot(
             seed: ownerId,
           });
           await ctx.reply(failure);
-          await history.append(ownerId, "harvy", failure);
+          // Kalimat gagal tidak masuk riwayat; lihat alasannya di jalur pemahaman.
           return;
         }
         // Untuk tugas, pencatatannya tetap diteruskan. Kehilangan kalimat
@@ -5366,7 +5376,7 @@ export function createBot(
       logger.error("agent_resume_failed", "Run agent gagal dilanjutkan.", error);
       const failure = aiFailureMessage(error, undefined, { seed: ownerId });
       await ctx.reply(failure);
-      await history.append(ownerId, "harvy", failure);
+      // Kalimat gagal tidak masuk riwayat; lihat alasannya di jalur pemahaman.
       return;
     }
 
