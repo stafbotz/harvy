@@ -21,6 +21,17 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
+/**
+ * Pengecil perkiraan masukan yang sedang terbang.
+ *
+ * Diukur pada 376 panggilan nyata: perkiraan cenderung berlebih—median +5%
+ * untuk `understanding` dan +1% untuk `reply`. Ditampilkan apa adanya,
+ * penghitung di layar akan turun begitu angka nyatanya tiba. Dikecilkan 10%,
+ * ia hampir selalu berada di bawah hasil nyata, jadi bergerak naik lalu
+ * mendarat—tidak pernah mundur.
+ */
+const IN_FLIGHT_ESTIMATE_SCALE = 0.9;
+
 export interface TierPrice {
   inputPerMillionUsd: number;
   outputPerMillionUsd: number;
@@ -39,6 +50,15 @@ export interface TelemetryOptions {
 export interface TurnTokens {
   input: number;
   output: number;
+  /**
+   * Perkiraan masukan panggilan yang masih terbang, belum dilaporkan provider.
+   *
+   * Tanpa ini penghitung biaya diam beberapa detik pertama—justru ketika
+   * pekerjaan paling mahal sedang berjalan—dan itu terbaca seperti Harvy tidak
+   * mengerjakan apa-apa. Sengaja dipisah dari `input` supaya pemanggil dapat
+   * membedakan angka pasti dari tebakan.
+   */
+  pendingInput: number;
 }
 
 export interface UsageSummary {
@@ -187,6 +207,12 @@ export class TelemetryService implements UsageObserver {
   private readonly pendingUsage = new Map<string, AiUsageRecord[]>();
   /** Token berjalan per giliran, untuk baris biaya pada status transient. */
   private readonly liveTurnTokens = new Map<string, Map<string, TurnTokens>>();
+  /** Perkiraan masukan per permintaan yang masih terbang, dikunci requestId. */
+  private readonly inFlightEstimates = new Map<string, {
+    ownerId: string;
+    turnId: string;
+    estimate: number;
+  }>();
   private readonly pendingEvents = new Map<string, ProductEvent[]>();
   private readonly pendingTurns = new Map<string, TurnTelemetryRecord[]>();
   private readonly openTurns = new Map<string, number>();
@@ -215,6 +241,22 @@ export class TelemetryService implements UsageObserver {
 
   async beforeRequest(context: AiUsageContext) {
     return this.exclusive(context.ownerId, async () => {
+      // Perkiraan dicatat sebelum permintaan terbang supaya penghitung biaya
+      // pada status tidak diam beberapa detik pertama. Sengaja dikecilkan:
+      // diukur pada 376 panggilan nyata, perkiraan `understanding` cenderung
+      // berlebih 5% dan `reply` 1%. Ditampilkan apa adanya, angkanya akan
+      // **turun** begitu hasil nyatanya datang—dan biaya yang sudah terpakai
+      // tidak mungkin berkurang. Dikecilkan, ia hampir selalu naik lalu
+      // mendarat.
+      if (context.turnId) {
+        this.inFlightEstimates.set(context.requestId, {
+          ownerId: context.ownerId,
+          turnId: context.turnId,
+          estimate: Math.round(
+            context.inputTokenEstimate * IN_FLIGHT_ESTIMATE_SCALE,
+          ),
+        });
+      }
       if (this.forgottenOwners.has(context.ownerId)) {
         throw new TelemetryOwnerBlockedError();
       }
@@ -319,6 +361,7 @@ export class TelemetryService implements UsageObserver {
       const pending = this.pendingUsage.get(context.ownerId) ?? [];
       pending.push(record);
       this.pendingUsage.set(context.ownerId, pending);
+      this.inFlightEstimates.delete(context.requestId);
       this.accumulateTurnOutcome(record);
       // Penghitung terpisah dari `pendingUsage`, yang dikuras `flushOwner` ke
       // penyimpanan kapan saja. Membaca antrean itu langsung membuat angka di
@@ -331,10 +374,12 @@ export class TelemetryService implements UsageObserver {
           perTurn = new Map<string, TurnTokens>();
           this.liveTurnTokens.set(context.ownerId, perTurn);
         }
-        const berjalan = perTurn.get(record.turnId) ?? { input: 0, output: 0 };
+        const berjalan = perTurn.get(record.turnId) ??
+          { input: 0, output: 0, pendingInput: 0 };
         perTurn.set(record.turnId, {
           input: berjalan.input + record.inputTokens,
           output: berjalan.output + record.outputTokens,
+          pendingInput: 0,
         });
       }
       shouldSettle = true;
@@ -643,6 +688,11 @@ export class TelemetryService implements UsageObserver {
         this.reservations.delete(ownerId);
         this.pendingUsage.delete(ownerId);
         this.liveTurnTokens.delete(ownerId);
+        for (const [requestId, flight] of this.inFlightEstimates) {
+          if (flight.ownerId === ownerId) {
+            this.inFlightEstimates.delete(requestId);
+          }
+        }
         this.pendingEvents.delete(ownerId);
         this.pendingTurns.delete(ownerId);
         this.removeOwnerTurnState(ownerId);
@@ -698,9 +748,16 @@ export class TelemetryService implements UsageObserver {
    * menulis panjang sekali, padahal ia menulis dua ratusan token.
    */
   turnTokens(ownerId: string, turnId: string | null): TurnTokens {
-    if (!turnId) return { input: 0, output: 0 };
-    return this.liveTurnTokens.get(ownerId)?.get(turnId) ??
-      { input: 0, output: 0 };
+    if (!turnId) return { input: 0, output: 0, pendingInput: 0 };
+    const settled = this.liveTurnTokens.get(ownerId)?.get(turnId) ??
+      { input: 0, output: 0, pendingInput: 0 };
+    let pending = 0;
+    for (const flight of this.inFlightEstimates.values()) {
+      if (flight.ownerId === ownerId && flight.turnId === turnId) {
+        pending += flight.estimate;
+      }
+    }
+    return { ...settled, pendingInput: pending };
   }
 
   /**
@@ -711,6 +768,15 @@ export class TelemetryService implements UsageObserver {
    */
   releaseTurnTokens(ownerId: string, turnId: string | null): void {
     if (!turnId) return;
+    // Permintaan yang tidak pernah melapor—dibatalkan, atau observernya
+    // dilewati—akan menahan perkiraannya selamanya bila tidak dibersihkan di
+    // sini. Angka yang menggelembung tanpa sebab lebih buruk daripada angka
+    // yang muncul terlambat.
+    for (const [requestId, flight] of this.inFlightEstimates) {
+      if (flight.ownerId === ownerId && flight.turnId === turnId) {
+        this.inFlightEstimates.delete(requestId);
+      }
+    }
     const perTurn = this.liveTurnTokens.get(ownerId);
     if (!perTurn) return;
     perTurn.delete(turnId);

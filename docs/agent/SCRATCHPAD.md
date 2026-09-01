@@ -2420,6 +2420,79 @@ Satu hal yang belum ditangani: pada pesan rapi itu Harvy tetap memakai "gua" dan
 "lo". Register kata masih mengikuti kebiasaan model, sedangkan yang kini dimiliki
 kode baru tipografinya.
 
+## 35. Penghitung biaya yang diam, dan judul yang mengklaim terlalu cepat
+
+Dilaporkan pemilik produk 1 September 2026: statusnya sudah berubah ke
+"Memikirkan" tetapi penghitung tokennya tidak bertambah. Alasannya: *"kalau
+status menunggu Harvy-nya sudah hilang berarti request ke model sudah
+terpanggil."*
+
+Penalarannya masuk akal dan mata rantai yang putus ada di satu tempat: **judul
+berpindah saat giliran dimulai, bukan saat model menjawab.** Permintaannya
+memang sudah terbang, tetapi provider baru melaporkan pemakaian **di dalam
+jawabannya**. Selama jawabannya belum sampai, tidak ada angka yang pasti.
+
+Dan untuk pesan pendek batas gilirannya diputus lokal tanpa model, jadi
+benar-benar belum ada satu panggilan pun yang melapor sampai `understanding`
+kembali—dua sampai enam detik menatap angka yang tidak bergerak.
+
+### Dua perbaikan yang saling melengkapi
+
+**Perkiraan ikut dihitung.** Client sudah menghitung `inputTokenEstimate`
+sebelum permintaan terbang; angka itu kini masuk ke penghitung sebagai bagian
+yang belum pasti, dan lenyap begitu angka nyatanya tiba.
+
+Perkiraannya **sengaja dikecilkan 10%**. Diukur pada 376 panggilan nyata:
+
+```
+understanding  n=127  meleset median  +5%   rentang  -8%..+12%
+reply          n=104  meleset median  +1%   rentang  -5%..+57%
+turn-boundary  n= 91  meleset median -13%   rentang -36%.. -2%
+risk-triage    n= 10  meleset median -15%   rentang -21%.. -8%
+```
+
+Perkiraan cenderung **berlebih**. Ditampilkan apa adanya, penghitung akan
+**turun** begitu hasil nyatanya datang—dan itu melanggar aturan yang sudah
+dipegang sejak butir 25: biaya yang sudah terpakai tidak mungkin berkurang.
+Dikecilkan, ia hampir selalu berada di bawah hasil nyata, jadi naik lalu
+mendarat.
+
+**Judul ditahan sampai model menjawab.** Selera pemilik produk, dan alasannya
+tepat: *"memang masih menunggu si modelnya Harvy."* Dari kursi pengguna,
+permintaan yang terbang tanpa jawaban memang belum membuktikan apa pun—
+providernya bisa lambat, bisa mati.
+
+Perpindahan judulnya kini **berarti sesuatu**: model sudah bersuara. Dan
+perkiraan tidak dihitung sebagai bukti—ia tebakan kita sendiri, bukan kabar dari
+sana.
+
+Hasilnya:
+
+```
+🌒 Menunggu Harvy
+🌓 Menunggu Harvy · 1s
+🌕 Menunggu Harvy · 2s · ↑ 7.0k        permintaan terbang, angka mulai jalan
+🌖 Memikirkan · 4s · ↑ 7.8k · ↓ 217    model menjawab, judul berpindah
+🌘 Memikirkan · 5s · ↑ 10.9k · ↓ 217   panggilan berikutnya terbang
+🌑 Menyusun · 6s · ↑ 11.2k · ↓ 246
+```
+
+Angkanya naik terus dan tidak pernah mundur.
+
+### Kebocoran yang ditutup lebih dulu
+
+Perkiraan yang tidak pernah dibersihkan akan menggelembungkan angka selamanya.
+Tiga jalan keluar dijaga: permintaan selesai, permintaan **gagal**—`afterRequest`
+tetap dipanggil dengan `succeeded: false`, jadi jalur ini kena—dan giliran yang
+berakhir tanpa laporan sama sekali. Data pengguna yang dihapus juga membawa
+serta perkiraannya.
+
+### Yang masih terbuka
+
+Sekali hidup tetap hidup: penahanan berhenti permanen begitu model menjawab,
+supaya giliran yang sudah terbukti berjalan tidak kembali terlihat menunggu
+hanya karena pembacaan sesaat nol. Belum diuji di kanal nyata.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

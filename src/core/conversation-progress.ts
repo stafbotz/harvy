@@ -134,6 +134,18 @@ export interface TransientProgressOptions {
    * jadi ia wajib murah dan tidak boleh menyentuh I/O.
    */
   footer?: () => string | null;
+  /**
+   * Menahan judul di fase menunggu selama model belum menjawab sekali pun.
+   *
+   * "Memikirkan" muncul saat giliran dimulai, bukan saat model menjawab—jadi
+   * selama permintaan pertama masih terbang, judulnya mengklaim kerja yang
+   * belum terbukti terjadi. Dari kursi pengguna, yang benar adalah masih
+   * menunggu: providernya bisa saja lambat, atau mati.
+   *
+   * Mengembalikan true begitu ada bukti model menjawab. Perkiraan biaya tidak
+   * dihitung sebagai bukti—ia tebakan kita sendiri, bukan kabar dari sana.
+   */
+  modelAnswered?: () => boolean;
   seed?: string;
   onError?: (operation: "show" | "update" | "remove" | "typing", error: unknown) => void;
 }
@@ -183,6 +195,8 @@ export class TransientConversationProgress<Reference>
   private latest: ConversationProgressEvent | null = null;
   /** Pengakuan pertama yang wajib tampil sekali walau fasenya sudah maju. */
   private pendingFirst: ConversationProgressEvent | null = null;
+  /** Sekali benar, tidak pernah kembali: giliran yang hidup tetap hidup. */
+  private modelHasAnswered = false;
   private reference: Reference | null = null;
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private updateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -319,9 +333,10 @@ export class TransientConversationProgress<Reference>
       // Pengakuan pertama menang atas fase terbaru di sini, sekali saja.
       const perdana = this.pendingFirst ?? this.latest;
       this.pendingFirst = null;
+      const shown = this.holdWaiting(perdana);
       this.reference = await this.renderer.show(
         renderConversationProgress(
-          perdana,
+          shown,
           this.seed,
           this.waitingFrame,
           this.options.footer?.() ?? null,
@@ -351,7 +366,7 @@ export class TransientConversationProgress<Reference>
       await this.renderer.update(
         this.reference,
         renderConversationProgress(
-          this.latest,
+          this.holdWaiting(this.latest),
           this.seed,
           this.waitingFrame,
           this.options.footer?.() ?? null,
@@ -361,6 +376,23 @@ export class TransientConversationProgress<Reference>
     } catch (error) {
       this.options.onError?.("update", error);
     }
+  }
+
+  /**
+   * Menahan judul di fase menunggu sampai model benar-benar menjawab.
+   *
+   * Sekali model menjawab, penahanannya berhenti untuk seterusnya: giliran
+   * yang sudah terbukti hidup tidak boleh kembali terlihat seperti menunggu.
+   */
+  private holdWaiting(
+    event: ConversationProgressEvent,
+  ): ConversationProgressEvent {
+    if (this.modelHasAnswered || event.phase === "waiting") return event;
+    if (this.options.modelAnswered?.() !== false) {
+      this.modelHasAnswered = true;
+      return event;
+    }
+    return { phase: "waiting" };
   }
 
   private enqueue(operation: () => Promise<void>): void {
@@ -536,14 +568,18 @@ export function renderConversationProgress(
  */
 export function renderProgressMeter(
   elapsedMs: number,
-  tokens: { input: number; output: number },
+  tokens: { input: number; output: number; pendingInput?: number },
 ): string | null {
   if (!Number.isFinite(elapsedMs) || elapsedMs < 1_000) return null;
   const seconds = Math.floor(elapsedMs / 1_000);
   const waktu = seconds >= 60
     ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
     : `${seconds}s`;
-  const masuk = ringkasToken(tokens.input);
+  // Perkiraan permintaan yang masih terbang ikut dihitung, supaya angkanya
+  // bergerak sejak detik pertama alih-alih diam sampai provider melapor.
+  // Perkiraannya sudah dikecilkan di telemetry, jadi ia hampir selalu naik
+  // lalu mendarat, bukan mundur.
+  const masuk = ringkasToken(tokens.input + (tokens.pendingInput ?? 0));
   const keluar = ringkasToken(tokens.output);
   // Token belum tentu ada pada detik pertama: panggilan model pertama baru
   // melapor sesudah selesai. Menampilkan "0" akan terbaca seperti klaim bahwa

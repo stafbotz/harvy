@@ -756,3 +756,154 @@ describe("pengakuan pertama menang atas fase yang sudah maju", () => {
     assert.match(shown[0] ?? "", /Membaca/u);
   });
 });
+
+/**
+ * Judul ditahan di fase menunggu sampai model benar-benar menjawab.
+ *
+ * Dilaporkan pemilik produk 1 September 2026: statusnya sudah berubah ke
+ * "Memikirkan" tetapi penghitung tokennya tidak bertambah. Penyebabnya
+ * semantik—"Memikirkan" dilaporkan saat giliran **dimulai**, bukan saat model
+ * menjawab, sehingga judulnya mengklaim kerja yang belum terbukti terjadi.
+ *
+ * Dari kursi pengguna yang benar adalah masih menunggu: providernya bisa saja
+ * lambat, atau mati. Perpindahan judulnya kini berarti sesuatu—model sudah
+ * bersuara.
+ */
+describe("judul ditahan sampai model menjawab", () => {
+  const renderer = (shown: string[], updated: string[]) => ({
+    show: async (text: string) => {
+      shown.push(text);
+      return "status-1";
+    },
+    update: async (_reference: string, text: string) => {
+      updated.push(text);
+    },
+    remove: async () => undefined,
+  });
+
+  it("tetap menunggu selama model belum menjawab", async () => {
+    const shown: string[] = [];
+    const updated: string[] = [];
+    const progress = new TransientConversationProgress(
+      renderer(shown, updated),
+      {
+        graceMs: 20,
+        minimumUpdateIntervalMs: 15_000,
+        animationIntervalMs: 40,
+        seed: "s",
+        modelAnswered: () => false,
+      },
+    );
+
+    progress.report({ phase: "waiting" });
+    progress.report({ phase: "thinking", detail: "initial" });
+    await delay(300);
+    await progress.finish();
+
+    for (const text of [...shown, ...updated]) {
+      assert.match(text, /Menunggu Harvy/u, text);
+    }
+  });
+
+  it("berpindah ke fase kerja begitu model menjawab", async () => {
+    const shown: string[] = [];
+    const updated: string[] = [];
+    let answered = false;
+    const progress = new TransientConversationProgress(
+      renderer(shown, updated),
+      {
+        graceMs: 20,
+        minimumUpdateIntervalMs: 15_000,
+        animationIntervalMs: 40,
+        seed: "s",
+        modelAnswered: () => answered,
+      },
+    );
+
+    progress.report({ phase: "waiting" });
+    progress.report({ phase: "thinking", detail: "initial" });
+    await delay(120);
+    answered = true;
+    await delay(200);
+    await progress.finish();
+
+    assert.match(updated.at(-1) ?? "", /Memikirkan/u);
+  });
+
+  // Sekali hidup tetap hidup. Giliran yang sudah terbukti berjalan tidak boleh
+  // kembali terlihat seperti menunggu hanya karena pembacaan token sesaat nol.
+  it("tidak kembali menunggu sesudah model pernah menjawab", async () => {
+    const shown: string[] = [];
+    const updated: string[] = [];
+    let answered = true;
+    const progress = new TransientConversationProgress(
+      renderer(shown, updated),
+      {
+        graceMs: 20,
+        minimumUpdateIntervalMs: 15_000,
+        animationIntervalMs: 40,
+        seed: "s",
+        modelAnswered: () => answered,
+      },
+    );
+
+    progress.report({ phase: "thinking", detail: "initial" });
+    await delay(100);
+    answered = false;
+    progress.report({ phase: "composing" });
+    await delay(200);
+    await progress.finish();
+
+    assert.doesNotMatch(updated.at(-1) ?? "", /Menunggu Harvy/u);
+  });
+
+  it("tidak menahan apa pun ketika pemanggil tidak memberi penanda", async () => {
+    const shown: string[] = [];
+    const updated: string[] = [];
+    const progress = new TransientConversationProgress(
+      renderer(shown, updated),
+      {
+        graceMs: 20,
+        minimumUpdateIntervalMs: 15_000,
+        animationIntervalMs: 40,
+        seed: "s",
+      },
+    );
+
+    progress.report({ phase: "thinking", detail: "initial" });
+    await delay(150);
+    await progress.finish();
+
+    assert.match(shown[0] ?? "", /Memikirkan/u);
+  });
+});
+
+/**
+ * Perkiraan biaya permintaan yang masih terbang.
+ *
+ * Tanpa ini penghitung diam beberapa detik pertama—justru ketika pekerjaan
+ * paling mahal sedang berjalan—dan itu terbaca seperti Harvy tidak mengerjakan
+ * apa-apa.
+ */
+describe("perkiraan biaya ikut dihitung", () => {
+  it("menambahkan perkiraan yang masih terbang ke sisi masuk", () => {
+    assert.equal(
+      renderProgressMeter(3_000, { input: 0, output: 0, pendingInput: 7_000 }),
+      "3s · ↑ 7.0k",
+    );
+  });
+
+  it("menjumlahkannya dengan yang sudah pasti", () => {
+    assert.equal(
+      renderProgressMeter(3_000, { input: 800, output: 30, pendingInput: 7_000 }),
+      "3s · ↑ 7.8k · ↓ 30",
+    );
+  });
+
+  it("bekerja tanpa field perkiraan sama sekali", () => {
+    assert.equal(
+      renderProgressMeter(3_000, { input: 800, output: 30 }),
+      "3s · ↑ 800 · ↓ 30",
+    );
+  });
+});

@@ -738,6 +738,10 @@ export function createBot(
    * tiap denyut.
    */
   const activeTurnId = new Map<string, string>();
+  /** Token giliran berjalan; gagal aman karena ini hiasan, bukan jawaban. */
+  const turnTokensFor = (ownerId: string) =>
+    telemetry.turnTokens?.(ownerId, activeTurnId.get(ownerId) ?? null) ??
+      { input: 0, output: 0, pendingInput: 0 };
   const bot = new Bot(config.telegramBotToken);
   bot.use(async (ctx, next) => {
     const originalReply = ctx.reply.bind(ctx);
@@ -753,7 +757,18 @@ export function createBot(
       // Bila pengiriman gagal, statusnya tertinggal sebentar dan ditutup jalur
       // pembersih giliran—lebih baik daripada layar kosong.
       const progress = activeProgress.get(ownerOf(ctx));
+      const startedAt = Date.now();
       const sent = await originalReply(...args);
+      // Menandai kapan pengguna benar-benar melihat jawabannya.
+      //
+      // Rincian waktu giliran memperlihatkan 1,6 detik berlalu antara
+      // model selesai menulis dan giliran dinyatakan tuntas—60% dari
+      // seluruh waktu bukan-model. Tanpa penanda ini tidak ada cara
+      // mengetahui apakah detik-detik itu dihabiskan sebelum atau sesudah
+      // jawabannya sampai, dan bedanya menentukan apakah ia terasa lambat.
+      logger.info("telegram_reply_sent", "Balasan terkirim ke kanal.", {
+        durationMs: Date.now() - startedAt,
+      });
       await progress?.responding?.();
       const turnId = currentUsageAttribution()?.turnId ?? null;
       if (turnId) await noteTurnResponse(ownerOf(ctx), turnId);
@@ -2451,11 +2466,21 @@ export function createBot(
           try {
             return renderProgressMeter(
               Date.now() - startedAt,
-              telemetry.turnTokens?.(ownerId, activeTurnId.get(ownerId) ?? null) ??
-                { input: 0, output: 0 },
+              turnTokensFor(ownerId),
             );
           } catch {
             return null;
+          }
+        },
+        // Judul ditahan di "Menunggu Harvy" selama belum ada satu pun
+        // token yang benar-benar dilaporkan provider. Perkiraan tidak
+        // dihitung: ia tebakan kita sendiri, bukan bukti model menjawab.
+        modelAnswered: () => {
+          try {
+            const tokens = turnTokensFor(ownerId);
+            return tokens.input > 0 || tokens.output > 0;
+          } catch {
+            return true;
           }
         },
         onError: (operation, error) => {
