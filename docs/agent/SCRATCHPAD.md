@@ -2169,6 +2169,86 @@ ringkas, tetapi pilihan katanya berisiko.
 **Harvy salah ketik "MTD"** ketika maksudnya "MTK". Selip model, dicatat sebagai
 pengamatan, bukan cacat kode.
 
+## 32. Formalitas Harvy ada di tipografinya, bukan kosakatanya
+
+Pemilik produk 1 September 2026: gaya mengetik Harvy terlalu formal, dan ia
+justru memuji cara agent mengetik pada sesi eksplorasi.
+
+Diagnosisnya bukan yang diduga. Kosakata Harvy sudah santai—"waduh", "gua",
+"banget", "pusing sendiri". Yang formal **bentuknya**:
+
+```
+pengguna : anjir bsk ulangan mtk gua blm belajar sama sekali
+Harvy    : Waduh, besok ulangan MTK belum belajar sama sekali — panik mode on ya 😅
+           Oke, sini gua bantu. Sebelum bikin rencana, gua perlu tahu satu hal dulu:
+           MTK-nya bab apa? Soalnya beda bab, cara ngulangnya beda banget. Contoh:
+           - Aljabar / persamaan → banyak latihan soal
+           ...
+           1. Bab apa yang diujikan
+           2. Jam berapa ulangan dimulai besok
+```
+
+Kapitalisasi sempurna, tanda hubung panjang, butir, panah, penomoran, tiga
+pertanyaan sekaligus. Harvy menulis seperti dokumen rapi yang kata-katanya gaul.
+
+### Register yang ikut pengguna adalah fitur, bukan kebocoran
+
+Sesi eksplorasi mencatat Harvy beralih ke "gua" mengikuti lawan bicaranya, dan
+itu sempat dilaporkan sebagai cacat. Pemilik produk meluruskan: Harvy memang
+diharapkan "nyambung"—teman yang sefrekuensi. Kini dinyatakan begitu di
+`shapeDirective`, dengan satu batas: yang ditiru **nadanya, bukan cara
+mengetiknya**. Menyalin singkatan dan typo pengguna membuat penjelasan materi
+justru susah dibaca.
+
+### Aturan sebenarnya bukan "selalu santai", tetapi ikut mode
+
+Ngobrol, menemani, menanggapi perasaan → gaya chat, pendek, tanpa struktur.
+Menjelaskan materi atau menyusun rencana → struktur itu **fitur**. Yang salah
+adalah memakai mode kedua untuk situasi mode pertama.
+
+Karena itu korpus pengukuran memuat satu kasus kontrol yang meminta daftar
+secara eksplisit: bila strukturnya ikut hilang di sana, arahannya kebablasan.
+
+### Yang ditambahkan
+
+Larangan panah, tanda hubung panjang, dan penanda tebal; pembatasan emoji; dan
+pernyataan eksplisit soal mengikuti bahasa pengguna. Larangan butir, penomoran,
+dan lebih dari satu pertanyaan sudah ada sejak 31 Agustus.
+
+### Alat ukurnya, dan cacat yang ia derita sendiri
+
+`scripts/ukur-gaya.ts` menghitung yang dapat dihitung—pertanyaan, butir, nomor,
+panah, emoji, panjang—bukan kesan.
+
+Dua putaran pertama dengan kalimat sama persis mengembalikan angka **identik**:
+469, 715, 998. Itu bukan kestabilan melainkan cache jawaban provider. Alat ukur
+yang mengulang kalimat yang sama mengukur cache, bukan perilaku—penyakit yang
+sama persis dengan korpus tetap `uji-telegram-langsung.ts`, dan ironisnya
+ditemukan di alat yang dibuat untuk menyelidiki itu. Kini tiap kasus punya tiga
+varian yang dipilih per putaran.
+
+### Buktinya, dan batas klaimnya
+
+Kontras bersih pada kalimat identik, arahan nyala melawan arahan dimatikan lewat
+`HARVY_DISABLE_SHAPE_DIRECTIVE`:
+
+```
+                 dengan arahan   tanpa arahan
+pertanyaan             4              8
+butir (percakapan)     0              2
+char rata-rata       384            347
+```
+
+Arahannya bekerja: pertanyaan separuh, butir hilang. Yang **belum** terbukti
+adalah apakah tambahan hari ini lebih baik daripada versi kemarin—baseline-nya
+hanya satu putaran, dan varians antar-putaran besar. Tambahan itu terpasang atas
+dasar penalaran, bukan pengukuran, dan itu perlu diakui apa adanya.
+
+Satu pengamatan yang belum dijelaskan: kasus emosional mengembalikan panjang yang
+sama pada beberapa kalimat berbeda. Kemungkinan jalur triase non-`biasa`, tempat
+arahan bentuk memang sengaja tidak berlaku—di sana panjang dan pertanyaan punya
+pertimbangannya sendiri.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai
