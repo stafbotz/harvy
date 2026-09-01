@@ -41,3 +41,7 @@ Harvy-MVP-v0.1.0.zip
 # tidak masuk Git hanya karena namanya berbeda.
 .probe-*.json
 *.probe-session.json
+
+# Transkrip percakapan langsung dari scripts/ngobrol-harvy.ts.
+# Isinya percakapan sungguhan dengan Harvy dan tidak boleh masuk Git.
+data/ngobrol/

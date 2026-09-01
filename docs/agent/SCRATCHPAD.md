@@ -2045,6 +2045,62 @@ mengirim pesan sama berulang-ulang. Angkanya akan bagus karena permintaannya
 identik, bukan karena penghematannya nyata—persis cara kesimpulan keliru
 terbentuk pertama kali.
 
+## 30. Pengujian yang bukan pemutaran ulang
+
+Diminta pemilik produk 1 September 2026: "pesan pengguna tidak selalu sama, jadi
+pengujiannya harus mewakili produksi."
+
+`uji-telegram-langsung.ts` memutar korpus tetap—tiga belas kalimat yang sama
+dikirim ulang tiap run. Itu membuktikan Harvy sanggup menangani tiga belas
+bentuk itu, dan tiap run mengukur ulang tiga belas bentuk yang sama.
+
+Ada akibat yang lebih halus dan baru terlihat sesudah butir 29: karena pesannya
+identik tiap run, itu justru **satu-satunya keadaan di mana cache provider
+kena**—6.583 dari 6.584 token, melawan 128 ketika pesannya berbeda. Jadi angka
+latensi dan biaya dari pengujian korpus datang dari jalur yang tidak mewakili
+produksi sama sekali.
+
+### Yang dibangun
+
+`scripts/ngobrol-harvy.ts`. Mesinnya sudah ada—`live-exploratory-tester.ts`
+menerima perintah JSON dari stdin bila `HARVY_LIVE_EXPLORATION_COMMANDS_JSONL`
+absen. Yang belum ada hanyalah cara menyetirnya sedikit demi sedikit, karena
+penyusun pesan berikutnya perlu **membaca balasan sebelumnya** dulu. Tanpa itu
+percakapannya tetap skrip, cuma skrip yang lebih panjang.
+
+Penyetir menyalakan tester sekali, mengawasi satu berkas antrean, dan
+meneruskan tiap baris baru ke stdin anak. Transkripnya ditulis terpisah dengan
+status transient disaring—satu giliran dapat menyunting statusnya dua puluh lima
+kali, dan menuliskan semuanya menenggelamkan balasan yang sedang dibaca.
+
+Terbukti jalan pada percakapan nyata: pesan bebas dikirim, Harvy membalas
+kontekstual, dan koreksi di giliran berikutnya ditangkap secara spesifik.
+
+### Dua hal yang menghabiskan waktu, kini tercatat di kodenya
+
+**Setiap perintah butuh `settle` sesudahnya.** Tester menolak perintah
+berikutnya selama giliran masih berjalan.
+
+**Tombol dirujuk lewat alias surface**, yang muncul di transkrip sebagai
+`[surface-3]`—bukan nomor tebakan.
+
+### Batasnya, disebut supaya tidak disalahpahami
+
+**Bukan pengganti suite fixture.** Penilaiannya datang dari yang membaca, tidak
+berjalan di CI, dan berbeda tiap run. Fixture menangkap regresi; ini menemukan
+yang tidak terpikir dibuatkan fixture. Keduanya perlu.
+
+**Dan penulis pesannya bukan pelajar.** Ini tetap AI mengetik untuk AI. Pelajar
+sungguhan menulis dengan typo, singkatan, pikiran setengah jadi, muatan emosi,
+dan pesan terpecah beberapa kali kirim. Bentuk-bentuk itu dapat **sengaja
+ditiru**—dan memang harus, karena di situlah Harvy paling sering tersandung—
+tetapi meniru bukan sebaran aslinya. Hasilnya "bervariasi dan tak terskrip",
+bukan "mewakili pengguna nyata". Bahan yang paling dekat ke nyata tetap
+percakapan pemilik produk sendiri.
+
+Transkripnya tidak masuk Git: `data/ngobrol/` diabaikan karena isinya
+percakapan sungguhan.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai
