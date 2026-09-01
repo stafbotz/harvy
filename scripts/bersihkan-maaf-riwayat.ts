@@ -44,15 +44,65 @@ interface Turn {
   at: string;
 }
 
+interface Episode {
+  source?: { kind?: string; throughSequence?: number };
+}
+
 interface History {
   turns?: Turn[];
-  episodes?: unknown[];
+  episodes?: Episode[];
+  nextSequence?: number;
   [key: string]: unknown;
+}
+
+/**
+ * Nomor urut terakhir yang sudah tertutup episode.
+ *
+ * Giliran mentah pertama wajib tepat satu di atas angka ini—`readHistoryV2`
+ * menolak seluruh basis data bila tidak.
+ */
+function latestEpisodeThrough(history: History): number {
+  let through = 0;
+  for (const episode of history.episodes ?? []) {
+    if (episode.source?.kind === "turn-range") {
+      through = Math.max(through, episode.source.throughSequence ?? 0);
+    }
+  }
+  return through;
 }
 
 interface Store {
   histories?: History[];
   [key: string]: unknown;
+}
+
+/**
+ * Memeriksa invarian yang dituntut `readHistoryV2` sebelum berkasnya ditulis.
+ *
+ * Sengaja mengulang syaratnya di sini, bukan mengimpor pembacanya: yang perlu
+ * dijaga adalah kontraknya, dan menuliskannya ulang membuat kontrak itu terbaca
+ * oleh siapa pun yang menyunting skrip ini. Mengembalikan alasan kegagalan
+ * pertama, atau null bila sah.
+ */
+export function verify(store: Store): string | null {
+  for (const history of store.histories ?? []) {
+    const turns = history.turns ?? [];
+    for (let index = 1; index < turns.length; index += 1) {
+      if (turns[index]!.sequence !== turns[index - 1]!.sequence + 1) {
+        return `nomor urut berlubang di sekitar ${turns[index]!.sequence}`;
+      }
+    }
+    const through = latestEpisodeThrough(history);
+    const first = turns[0];
+    if (first && first.sequence !== through + 1) {
+      return `giliran pertama ${first.sequence}, seharusnya ${through + 1}`;
+    }
+    const greatest = Math.max(through, turns.at(-1)?.sequence ?? 0);
+    if ((history.nextSequence ?? 0) <= greatest) {
+      return `nextSequence ${history.nextSequence} tidak di atas ${greatest}`;
+    }
+  }
+  return null;
 }
 
 export function isFailureTurn(turn: Turn): boolean {
@@ -76,7 +126,26 @@ async function main(): Promise<void> {
       return !failure;
     });
     kept += remaining.length;
-    if (apply) history.turns = remaining;
+    if (!apply) continue;
+
+    // Nomor urut WAJIB dinomori ulang berurutan tanpa lubang.
+    //
+    // Versi pertama skrip ini hanya membuang giliran dan meninggalkan lubang di
+    // nomor urutnya. `readHistoryV2` menolak seluruh basis data karena itu—ia
+    // menuntut `turn.sequence === previous.sequence + 1`, giliran pertama tepat
+    // di atas episode terakhir, dan `nextSequence` di atas semuanya. Akibatnya
+    // setiap giliran gagal dengan "Isi basis data riwayat v2 tidak sah", dan
+    // Harvy praktis mati sampai berkasnya dikembalikan.
+    //
+    // Menomori ulang aman: episode hanya menunjuk giliran yang sudah dipadatkan
+    // dan berada di bawah `latestEpisodeThrough`, sedangkan yang dinomori ulang
+    // hanya ekor mentah di atasnya.
+    let sequence = latestEpisodeThrough(history) + 1;
+    history.turns = remaining.map((turn) => ({
+      ...turn,
+      sequence: sequence++,
+    }));
+    history.nextSequence = Math.max(history.nextSequence ?? 1, sequence);
   }
 
   console.log(`kalimat gagal ditemukan : ${found}`);
@@ -84,6 +153,20 @@ async function main(): Promise<void> {
 
   if (!apply) {
     console.log("\n(mode periksa; tambahkan --kerjakan untuk benar-benar membuang)");
+    return;
+  }
+
+  // Hasilnya diperiksa sebelum ditulis, bukan sesudah.
+  //
+  // Versi pertama skrip ini menulis berkas yang ditolak `readHistoryV2`, dan
+  // akibatnya baru terlihat sebagai giliran yang gagal satu per satu di kanal—
+  // bukan sebagai galat di sini. Skrip yang menyentuh data pengguna wajib
+  // membuktikan hasilnya masih sah sebelum menyentuh berkas aslinya.
+  const invalid = verify(store);
+  if (invalid) {
+    console.error(`\nDIBATALKAN: hasilnya tidak sah — ${invalid}`);
+    console.error("Berkas asli tidak disentuh.");
+    process.exitCode = 1;
     return;
   }
 

@@ -2310,6 +2310,28 @@ berhasil, satu di antaranya memang butuh percobaan kedua.
 memuat frasa kegagalan—pesan pengguna tidak tersentuh—dan mencadangkan berkasnya
 lebih dulu. Harvy wajib dimatikan saat itu: penyimpanannya satu proses.
 
+### Pembersihnya sendiri merusak riwayat
+
+Versi pertama `bersihkan-maaf-riwayat.ts` hanya membuang giliran dan
+meninggalkan lubang di nomor urutnya. `readHistoryV2` menolak seluruh basis
+data karena itu—ia menuntut tiga hal sekaligus: giliran berurutan tanpa lubang,
+giliran pertama tepat satu di atas episode terakhir, dan `nextSequence` di atas
+nomor terbesar.
+
+Akibatnya tidak muncul sebagai galat di skripnya, melainkan sebagai **enam
+giliran berturut yang gagal** di kanal—dan pengintai log tidak menangkapnya
+karena tidak ada satu pun kegagalan model: kegagalannya di
+`FileHistoryRepository.readDatabase`, bukan di provider.
+
+Pembersihnya kini menomori ulang ekor mentahnya. Itu aman karena episode hanya
+menunjuk giliran yang sudah dipadatkan, yang berada di bawah nomor yang
+dinomori ulang.
+
+Dan ia memeriksa hasilnya **sebelum** menyentuh berkas asli, bukan sesudah.
+Skrip yang menyentuh data pengguna wajib membuktikan hasilnya masih sah lebih
+dulu; tujuh tes mengunci ketiga invarian itu, termasuk penjaga bahwa pesan
+pengguna tidak pernah ikut terbuang.
+
 ### Pelajarannya
 
 Ini kelas kesalahan yang belum pernah muncul di catatan ini: **keluaran Harvy
