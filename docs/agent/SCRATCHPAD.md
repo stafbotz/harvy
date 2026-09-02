@@ -2666,6 +2666,76 @@ mendahului datanya, bukan salah rancangan.
 di jalur tulis memori. Tidak terjangkau hari ini karena `understand.ts:491`
 memvalidasi kind terhadap `MEMORY_KINDS` sebelum apa pun sampai ke sana.
 
+## 39. Anatomi lambatnya Harvy: yang dibayar per panggilan, bukan per token
+
+Regresi dua peubah atas 206 panggilan model di log produksi 27 Agustus sampai
+1 September 2026:
+
+```
+biaya tetap per panggilan : ~2.101 ms
+per 1.000 token masukan   : ~285 ms
+per token keluaran        : ~4,4 ms
+```
+
+Konsekuensinya menentukan seluruh arah kerja kecepatan: **setiap panggilan
+memungut 2,1 detik sebelum menghitung apa pun.** Karena itu jumlah panggilan di
+jalur kritis menentukan kecepatan sama besarnya dengan ukuran promptnya.
+
+Terapan pada Harvy hari ini:
+
+| panggilan | perkiraan |
+|---|---|
+| pass inti (1.100 in, 50 out) | ~2.635 ms |
+| pass penuh (7.400 in, 180 out) | ~5.004 ms |
+| balasan (3.300 in, 150 out) | ~3.703 ms |
+
+Pemecahan dua tahap (butir 38) karena itu memotong ~2,4 detik dari giliran
+ringan, bukan hanya token.
+
+Anggaran satu giliran sederhana:
+
+| bagian | waktu | berpikir? |
+|---|---|---|
+| menunggu giliran dianggap selesai | 0–12 detik | tidak |
+| pass inti | ~2,6 detik | ya |
+| menyusun balasan | ~3,7 detik | ya |
+| overhead di luar model | ~2,7 detik | tidak |
+
+Sebaran `batchWaitMs` atas 84 giliran nyata: 36% di bawah 1 detik (bubble
+tunggal yang jelas selesai, jendela nol), 28% **di atas 6 detik** (jendela
+`OPEN_IDLE_MS` 7 detik atau `INCOMPLETE_IDLE_MS` 12 detik). Selama jendela itu
+Harvy diam total.
+
+### Empat tuas, dengan besarannya
+
+1. **Overhead 2,7 detik di luar model** belum pernah dibedah, dan ia lebih besar
+   daripada biaya tetap satu panggilan model. Nol yang dikorbankan.
+2. **Satu panggilan untuk giliran ringan.** Jawaban atas "halo" tidak memakai
+   hasil klasifikasinya. Menjawab dulu dan mengklasifikasi belakangan
+   menghapus satu biaya tetap penuh, ~2,6 detik.
+3. **Pakai jendela tunggu yang kosong** untuk pass inti spekulatif. Gratis dalam
+   waktu; menolong justru 28% giliran yang sekarang paling lama.
+4. **Jawab dulu, catat kemudian.** Ekstraksi memori dan tugas berjalan di
+   `create-bot.ts:~3.500`, sedangkan balasannya baru disusun di `:3887`. Untuk
+   sebagian besar giliran, pekerjaan mencatat itu tidak mengubah satu kata pun
+   dari jawabannya, tetapi menahannya.
+
+### Streaming bukan jawabannya
+
+Harvy nol streaming, dan itu terlihat seperti tuas besar. Ternyata bukan:
+balasan Harvy pendek dan generasinya hanya 4,4 ms per token, jadi streaming
+memotong sekitar 0,7 detik saja. Diukur sebelum dikerjakan, bukan sesudah.
+
+### Panggilan spekulatif paralel sudah terbukti di repositori ini
+
+`create-bot.ts:2781` menembakkan `requestRiskTriage()` **tanpa** `await` dan baru
+menagihnya di `:2882`. Jadi pola "mulai lebih awal, tagih belakangan" bukan
+barang baru di sini, dan memperluasnya ke balasan adalah bentuk yang sama.
+
+Kuncinya satu: memecah panggilan menurunkan biaya dan menaikkan mutu, tetapi
+hanya **memparalelkan** yang menurunkan waktu. Pecahan yang dijalankan berurutan
+justru menambah 2,1 detik per pecahan.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai
