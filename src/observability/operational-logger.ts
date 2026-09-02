@@ -302,6 +302,40 @@ const PRIVATE_IDENTIFIER_KEYS = new Set([
 ]);
 
 const ALLOWED_DATA_KEYS = new Set([
+  // Hasil HTTP dan bentuk balasan provider. Keduanya dibuang diam-diam sampai
+  // 2 September 2026, dan tanpanya kegagalan provider hanya terbaca sebagai
+  // `succeeded: false`—diagnosis batas laju kemarin berjalan buta karena ini.
+  "httpstatus",
+  "responseoutcome",
+  "finishedat",
+  // Peran dan usaha model yang benar-benar dipakai, bukan yang diminta.
+  // Perbedaan keduanya satu-satunya cara melihat tier turun diam-diam.
+  "modelrole",
+  "requestedeffort",
+  "effectiveeffort",
+  "verbosity",
+  // Manifest retrieval memori: route mana diminta, berapa yang kembali, berapa
+  // disaring, dan berapa karakter akhirnya masuk prompt. Semuanya angka dan
+  // boolean, tanpa satu pun potongan isi.
+  //
+  // Sebelum ini seluruh 12 field-nya dibuang allow-list dan yang tercatat cuma
+  // `fieldsOmitted: 12`. Subsistem memori—enam route, fusi RRF, penyaringan—
+  // karena itu tidak dapat diamati sama sekali di produksi: tidak ada cara tahu
+  // route mana kosong, mana gagal, atau apakah embedding provider terpasang.
+  // Ini kejadian kedua setelah `cacheReadTokens`; allow-list yang membisukan
+  // diam-diam menyembunyikan justru telemetri yang paling diperlukan.
+  "episodicrequested",
+  "semanticrequested",
+  "graphrequested",
+  "semanticprovideravailable",
+  "episodicresultcount",
+  "semanticresultcount",
+  "graphresultcount",
+  "graphused",
+  "suppressedcount",
+  "selectedcount",
+  "selectedcharacters",
+  "failedroutecount",
   "accountcount",
   "accountid",
   "aimode",

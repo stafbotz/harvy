@@ -847,9 +847,23 @@ describe("log operasional", () => {
         "../src/observability/process-diagnostics.js",
         import.meta.url,
       ).href;
+      // Anak proses mewarisi loader induknya.
+      //
+      // Tanpa ini ia dijalankan `node` polos, yang tidak dapat memuat
+      // `src/observability/*.js`—berkas itu hanya ada sebagai `.ts` sampai
+      // dikompilasi. Tesnya lulus di `npm test` (berjalan dari `dist/`) dan
+      // merah di `npm run test:file`, yaitu loop utama yang justru
+      // direkomendasikan AGENTS.md. Lebih buruk lagi, assertion `status === 1`
+      // ikut lulus karena ERR_MODULE_NOT_FOUND juga keluar dengan kode 1,
+      // sehingga yang terbaca hanya "records kosong" tanpa petunjuk sebab.
+      const loaderArgs = process.execArgv.filter((arg, index, all) =>
+        arg === "--require" || arg === "--import" ||
+        all[index - 1] === "--require" || all[index - 1] === "--import"
+      );
       const child = spawnSync(
         process.execPath,
         [
+          ...loaderArgs,
           "--input-type=module",
           "--eval",
           `
