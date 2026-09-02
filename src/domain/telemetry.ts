@@ -12,6 +12,8 @@ export type UsageTier = "cheap" | "efficient" | "ambitious";
 export type AiPurpose =
   | "turn-boundary"
   | "understanding"
+  /** Pass inti dua-tahap; dipisah agar penghematannya terukur. */
+  | "understanding-core"
   | "due-date"
   | "risk-triage"
   | "memory-privacy"

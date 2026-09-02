@@ -201,6 +201,157 @@ const MAX_MEMORY_RETRACTIONS_PER_MESSAGE = 4;
 /** Memori yang lebih panjang dari ini hampir pasti kalimat percakapan. */
 const MEMORY_MAX_CHARS = 200;
 
+/**
+ * Hasil pass pemahaman inti.
+ *
+ * `escalate` bukan milik model sendirian. Model mengusulkannya lewat
+ * `perluPassPenuh`, dan kode menambahkan syaratnya sendiri di
+ * `understandingNeedsFullPass`.
+ */
+export interface CoreUnderstanding {
+  intent: ConversationIntent;
+  riskHint: RiskHint;
+  needsStepByStep: boolean;
+  complexity: "mechanical" | "normal" | "deep";
+  /** Usulan model, belum digabung dengan syarat kode. */
+  proposesFullPass: boolean;
+}
+
+export function parseCoreUnderstanding(raw: string): CoreUnderstanding | null {
+  const payload = extractJson(raw);
+  if (!payload) return null;
+  if (containsPrivateReasoningField(payload)) return null;
+  const intent = readIntent(payload["intent"]);
+  if (!intent) return null;
+  const riskHint = parseRiskHint(payload["riskHint"], false);
+  if (!riskHint) return null;
+  const complexityRaw = payload["complexity"];
+  const complexity =
+    complexityRaw === "mechanical" || complexityRaw === "deep"
+      ? complexityRaw
+      : "normal";
+  return {
+    intent,
+    riskHint,
+    needsStepByStep: payload["needsStepByStep"] === true,
+    complexity,
+    // Bentuk yang tidak terbaca dihitung sebagai "perlu", bukan "tidak".
+    // Satu-satunya arah yang aman saat ragu adalah membayar pass penuh.
+    proposesFullPass: payload["perluPassPenuh"] !== false,
+  };
+}
+
+/**
+ * Intent yang boleh selesai dengan kontrak inti saja.
+ *
+ * Empat intent lain—task, memory, control, history—seluruh isinya justru ada
+ * di field yang tidak diminta kontrak inti, jadi menjalankannya tanpa pass
+ * penuh berarti membuang maksud penggunanya. `request` ikut dikecualikan
+ * karena ia yang paling sering membawa pekerjaan durable.
+ */
+const LIGHT_INTENTS: ReadonlySet<ConversationIntent> = new Set([
+  "smalltalk",
+  "feeling",
+  "question",
+]);
+
+/**
+ * Petunjuk tekstual bahwa giliran ini menyimpan sesuatu yang lebih dalam.
+ *
+ * Jaring kedua di bawah penilaian model, bukan penggantinya. Model yang
+ * menjawab `perluPassPenuh: false` untuk pesan yang jelas menyebut waktu atau
+ * menyebutkan diri penggunanya tetap dinaikkan oleh daftar ini.
+ *
+ * Sengaja longgar dan sengaja murah: satu kesalahan menaikkan hanya berbiaya
+ * pass penuh yang toh dibayar setiap giliran sampai hari ini.
+ */
+const DEEPER_TURN_CUES =
+  /\b(?:ingat|inget|catat|hapus|lupakan|lupain|jangan lupa|ingetin|ingatkan|besok|lusa|kemarin|nanti|jam|pukul|tanggal|senin|selasa|rabu|kamis|jumat|sabtu|minggu|deadline|tenggat|ulangan|ujian|uts|uas|tugas|pr|jadwal|agenda|namaku|nama ?ku|aku kelas|kelas \d|sekolah|kampus|jurusan|langganan|paket|saldo|hapus data|ekspor|zona waktu|sesi)\b/iu;
+
+/**
+ * Penyaring gratis yang berjalan SEBELUM model dipanggil sama sekali.
+ *
+ * Pengukuran 2 September 2026 pada korpus evaluasi menunjukkan rancangan
+ * pertama justru nyaris tidak menghemat: hanya 25% giliran selesai murah,
+ * sedangkan 75% sisanya membayar pass inti LALU pass penuh. Titik impasnya
+ * adalah rasio biaya kedua kontrak, sekitar 20% giliran ringan, dan korpus
+ * itu nyaris tepat di garisnya.
+ *
+ * Petunjuk teks tidak berbiaya apa pun, jadi memeriksanya sesudah memanggil
+ * model adalah urutan yang salah. Giliran yang sudah jelas berat dari
+ * bentuknya langsung ke kontrak penuh dan tidak pernah membayar dua kali—
+ * jalur itu kembali persis seperti sebelum pemecahan ini, tanpa kemunduran.
+ */
+export function turnLikelyNeedsFullPass(
+  message: string,
+  options: { hasActiveSession?: boolean } = {},
+): boolean {
+  // Sesi aktif menjadikan `sessionSignal` bermakna, dan itu hanya ada di
+  // kontrak penuh. Tanpanya "udah selesai" tidak pernah menutup sesi.
+  if (options.hasActiveSession === true) return true;
+  return DEEPER_TURN_CUES.test(message);
+}
+
+/**
+ * Apakah kontrak penuh tetap wajib dijalankan.
+ *
+ * Gagal ke arah "wajib". Setiap syarat di sini menaikkan, tidak ada yang
+ * menurunkan, sehingga menambah syarat baru tidak pernah bisa membuat Harvy
+ * melewatkan sesuatu yang sebelumnya ia tangkap.
+ */
+export function understandingNeedsFullPass(
+  core: CoreUnderstanding,
+  message: string,
+  options: { hasActiveSession?: boolean } = {},
+): boolean {
+  if (turnLikelyNeedsFullPass(message, options)) return true;
+  if (core.proposesFullPass) return true;
+  if (!LIGHT_INTENTS.has(core.intent)) return true;
+  // Giliran bertanda safety mendapat sinyal terkaya yang tersedia. Kontrak inti
+  // memang membawa riskHint, tetapi bukan `suggestedActions` dan `actionGoal`
+  // yang dipakai jalur pendampingan.
+  if (core.riskHint.level !== "none") return true;
+  // `deep` diarahkan `selectConversationModelRole` ke peran orchestrate. Tanpa
+  // routingAssessment, jalur mundurnya hanya bisa mencapai peran itu lewat
+  // needsStepByStep atau panjang pesan, sehingga penalaran berlapis yang
+  // ringkas akan turun kelas diam-diam.
+  if (core.complexity === "deep") return true;
+  return false;
+}
+
+/**
+ * Membentuk `Understanding` lengkap dari kontrak inti.
+ *
+ * Field yang tidak ditanyakan diisi kosong, bukan ditebak. `routingAssessment`
+ * sengaja `null`: `selectConversationModelRole` sudah punya jalur mundur yang
+ * memetakan smalltalk dan feeling ke peran percakapan, question ke specialized,
+ * dan tetap menaikkan ke orchestrate lewat `needsStepByStep`. Mengarang
+ * assessment berkeyakinan tinggi justru akan menimpa jalur itu dengan tebakan.
+ */
+export function understandingFromCore(
+  core: CoreUnderstanding,
+): Understanding {
+  return {
+    intent: core.intent,
+    taskAction: null,
+    memoryAction: null,
+    memoryTarget: null,
+    riskHint: core.riskHint,
+    safetySensitive: core.riskHint.level !== "none",
+    needsStepByStep: core.needsStepByStep,
+    routingAssessment: null,
+    publicFocus: null,
+    task: null,
+    memories: [],
+    memoryRetractions: [],
+    suggestedActions: [],
+    actionGoal: null,
+    controlAction: null,
+    sessionSignal: null,
+    semanticOperation: null,
+  };
+}
+
 export function parseUnderstanding(raw: string): Understanding | null {
   const payload = extractJson(raw);
   if (!payload) return null;

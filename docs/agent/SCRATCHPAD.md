@@ -2580,6 +2580,92 @@ penyaring, bahkan method-nya tidak ada pada test double—jatuh ke naskah tetap;
 panggilannya dibungkus supaya sapaan tidak pernah bisa menahan tombol
 persetujuan. Lima tes `create-bot-flow` sempat merah persis karena itu.
 
+## 38. Pemahaman memakan 64% token Harvy, dan itu tidak terlihat
+
+Log produksi 27 Agustus sampai 1 September 2026, dipilah per purpose:
+
+| purpose | n | input | output | cacheRead | ms |
+|---|---|---|---|---|---|
+| understanding | 63 | 7.499 | 182 | 0 | 4.639 |
+| reply | 57 | 3.372 | 42 | 0 | 4.033 |
+| turn-boundary | 49 | 837 | 27 | 119 | 1.830 |
+
+Pass pemahaman memakan 2,2 kali lipat token balasan yang sebenarnya, berjalan
+di setiap giliran, dan menghabiskan 64% dari seluruh token masukan yang pernah
+dipakai Harvy—untuk menghasilkan 182 token JSON. Rasio baca:ucap seluruh sistem
+40:1.
+
+Sebabnya satu berkas: `understandingPrompt` berukuran 29.513 karakter, dikirim
+utuh pada setiap pesan termasuk "halo", meminta model memikirkan empat belas hal
+sekaligus. Blok terbesarnya `semanticOperation` (5.244), `memories` (3.670),
+bentuk JSON (3.528), contoh (2.559), `routingAssessment` (2.200).
+
+Tata letaknya sudah benar: waktu ada di baris terakhir, prefiks stabil 99,6%.
+Providernya yang tidak meng-cache-nya sama sekali.
+
+Kerja percepatan 1 September menghapus panggilan **termurah** (turn-boundary,
+837 token) dan membiarkan yang termahal utuh. Itu terlewat karena tidak ada yang
+memilah biaya per purpose sebelum ini.
+
+### Pemecahan dua tahap, dan kesalahan urutan yang pertama
+
+Kontrak inti 3.253 karakter menanyakan lima hal—intent, riskHint,
+needsStepByStep, complexity, dan apakah kontrak penuh perlu—lalu kontrak penuh
+hanya dibayar giliran yang memerlukannya.
+
+Rancangan pertama menjalankan pass inti lebih dulu untuk semua giliran, dan
+pengukuran pada korpus evaluasi memperlihatkan hematnya hanya **4%**: 75%
+giliran membayar pass inti LALU pass penuh. Titik impasnya adalah rasio biaya
+kedua kontrak, sekitar 20% giliran ringan, dan korpus itu duduk tepat di
+garisnya dengan 25%.
+
+Yang memperbaikinya bukan prompt melainkan urutan. `DEEPER_TURN_CUES` tidak
+berbiaya apa pun, jadi memeriksanya sesudah memanggil model adalah urutan yang
+salah. Sesudah penyaring gratis dipindah ke depan dan masukan pass inti
+dirampingkan (ringkasan dan daftar memori tidak mengubah satu pun dari lima
+field itu), korpus memberi **15%**, dan giliran sederhana sungguhan lewat
+`probe-chat` turun dari ~10.900 menjadi 3.830 token, **65%**.
+
+Selisih antara 15% dan 65% adalah selisih antara korpus yang sengaja padat fitur
+dan lalu lintas sungguhan. Karena itu `understanding_pass_chosen` dicatat: hanya
+pemakaian nyata yang dapat menjawab campurannya.
+
+Arah gagalnya seragam. Setiap syarat menaikkan, tidak ada yang menurunkan; field
+`perluPassPenuh` yang hilang dihitung sebagai "perlu"; kontrak inti yang tidak
+terbaca jatuh ke kontrak penuh, bukan menyerah. Salah menaikkan hanya berbiaya
+satu pass yang toh selama ini selalu dibayar. Salah menurunkan membuat Harvy
+diam-diam berhenti mencatat sesuatu tentang penggunanya, dan itu tidak terlihat
+oleh siapa pun.
+
+Diuji pada model sungguhan: "aku suka banget belajar sambil dengerin musik"—
+sebuah preferensi tanpa satu pun kata petunjuk—tetap naik ke kontrak penuh.
+
+### Enam route memori, lima kosong
+
+| route | isi | sebab |
+|---|---|---|
+| episodic | 5 episode | jalan |
+| graph | 1 entitas | nyaris kosong |
+| semantic | selalu `[]` | `MEMORY_EMBEDDING_MODEL` tidak diset; `searchSemantic` pulang lebih awal |
+| personalization | 0 | lihat di bawah |
+| procedural | 0 | hanya diisi `observeAgentRun`, dan chat biasa tidak memicunya |
+| errorLessons | 0 | sama |
+
+`user_model_fact` nol **bukan** bug. Pipanya diuji langsung dan bekerja; satu-
+satunya memori tersimpan berjenis `personal`, dan `categoryForMemory` memang
+mengembalikan `null` untuknya. Data sensitif sengaja tidak dipromosikan ke
+penyimpanan turunan.
+
+Sekitar 3.900 baris mesin memori melayani 5 episode dan 1 catatan. Fusinya
+menggabungkan enam sumber padahal satu yang berisi. Itu tanda mesin dibangun
+mendahului datanya, bukan salah rancangan.
+
+### Sisi tajam yang belum berbahaya
+
+`expiryFor` dengan kind di luar union menghasilkan `Invalid Date` yang melempar
+di jalur tulis memori. Tidak terjangkau hari ini karena `understand.ts:491`
+memvalidasi kind terhadap `MEMORY_KINDS` sebelum apa pun sampai ke sana.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

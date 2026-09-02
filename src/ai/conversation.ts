@@ -78,6 +78,7 @@ import {
   TURN_BOUNDARY_PROMPT,
   TURN_INTERRUPTION_PROMPT,
   understandingInput,
+  UNDERSTANDING_CORE_PROMPT,
   understandingPrompt,
 } from "./persona.js";
 import {
@@ -109,6 +110,11 @@ import {
 import {
   parseDueDate,
   parseUnderstanding,
+  parseCoreUnderstanding,
+  understandingNeedsFullPass,
+  turnLikelyNeedsFullPass,
+  understandingFromCore,
+  type CoreUnderstanding,
   type Understanding,
 } from "./understand.js";
 import {
@@ -377,6 +383,8 @@ const CODE_ARTIFACT_REVIEW_PROMPT = [
 // Skrip itu pernah tertinggal di 400 setelah angka di sini dinaikkan, sehingga
 // alat diagnostiknya sendiri mereproduksi cacat yang ia dibuat untuk mencari.
 export const UNDERSTANDING_MAX_TOKENS = 2048;
+/** Kontrak inti hanya lima field; 2048 token jadi jauh lebih besar dari perlu. */
+export const UNDERSTANDING_CORE_MAX_TOKENS = 256;
 export const TURN_BOUNDARY_MAX_TOKENS = 128;
 /**
  * Batas waktu classifier batas giliran.
@@ -529,12 +537,126 @@ export class Conversation {
     private readonly executionPolicy: ExecutionPolicy = DEFAULT_EXECUTION_POLICY,
   ) {}
 
+  /**
+   * Mencatat jalur yang ditempuh pass pemahaman.
+   *
+   * Penghematan pemecahan dua tahap sepenuhnya bergantung pada berapa banyak
+   * giliran nyata yang selesai murah, dan angka itu tidak dapat diambil dari
+   * korpus evaluasi: korpus sengaja padat fitur, dan pengukuran 2 September
+   * 2026 di sana memberi 15% sementara giliran sederhana sungguhan turun 65%.
+   * Hanya lalu lintas asli yang dapat menjawabnya.
+   *
+   * Gagal aman. Pengumpulan bukti tidak boleh pernah menjatuhkan giliran.
+   */
+  private logUnderstandingPath(path: string, intent: string | null): void {
+    try {
+      this.logger.info(
+        "understanding_pass_chosen",
+        "Jalur pass pemahaman dipilih.",
+        { understandingPath: path, ...(intent ? { intent } : {}) },
+      );
+    } catch {
+      // sengaja diam
+    }
+  }
+
+  /**
+   * Pass inti yang murah, dijalankan sebelum kontrak penuh.
+   *
+   * Mengembalikan `null` bila bentuknya tidak sah; pemanggilnya lalu jatuh ke
+   * kontrak penuh, bukan menyerah. Kegagalan di sini tidak boleh pernah
+   * menghilangkan pemahaman—hanya menghilangkan penghematannya.
+   */
+  private async understandCore(
+    message: string,
+    context: HarvyContext,
+    runtime: ConversationRuntime,
+  ): Promise<CoreUnderstanding | null> {
+    const modelRoute = resolveModelRoute("mechanical", this.routing);
+    // Konteks seperlunya, bukan konteks penuh.
+    //
+    // Kontrak inti hanya menilai maksud, risiko, dan kedalaman. Ringkasan
+    // episode dan daftar memori tidak mengubah satu pun dari ketiganya,
+    // sedangkan keduanya bagian terbesar dari masukan. Dua giliran terakhir
+    // cukup untuk menangkap rujukan seperti "yang tadi itu". Titik impas
+    // penghematan adalah rasio biaya kedua kontrak, jadi setiap token yang
+    // dibuang di sini menurunkan ambang untung seluruh rancangan.
+    const { context: boundedContext, manifest: contextManifest } =
+      compileHarvyContext({
+        summary: null,
+        turns: context.turns.slice(-2),
+        memories: [],
+      });
+    const execution = this.execution(
+      modelRoute.tier,
+      "extractor",
+      "mechanical",
+      UNDERSTANDING_CORE_MAX_TOKENS,
+      GENERAL_MODEL_DEADLINE_MS,
+      {
+        modelId: modelRoute.modelId,
+        cognitiveRole: modelRoute.role,
+        difficulty: "mechanical",
+      },
+    );
+    try {
+      const raw = await this.client.complete({
+        model: modelRoute.modelId,
+        temperature: 0,
+        maxTokens: UNDERSTANDING_CORE_MAX_TOKENS,
+        execution,
+        json: true,
+        validateResponse: (content) => parseCoreUnderstanding(content) !== null,
+        ...(runtime.signal ? { signal: runtime.signal } : {}),
+        contextManifest,
+        usage: this.usage(runtime.ownerId, modelRoute.tier, "understanding-core"),
+        onRetry: () => runtime.progress?.report({ phase: "retrying" }),
+        messages: [
+          { role: "system", content: UNDERSTANDING_CORE_PROMPT },
+          {
+            role: "user",
+            content: understandingInput(
+              message,
+              boundedContext,
+              runtime.session,
+              runtime.interruptionRelation,
+            ),
+          },
+        ],
+      });
+      return parseCoreUnderstanding(raw);
+    } catch {
+      // Batal, timeout, atau provider tumbang. Semuanya berarti "tidak tahu",
+      // dan pemanggilnya menanganinya dengan menjalankan kontrak penuh.
+      return null;
+    }
+  }
+
   /** Mengembalikan `null` bila model gagal menghasilkan bentuk yang sah. */
   async understand(
     message: string,
     context: HarvyContext = EMPTY_CONTEXT,
     runtime: ConversationRuntime = {},
   ): Promise<Understanding | null> {
+    // Dua tahap, dengan penyaring gratis di paling depan.
+    //
+    // Kontrak inti 813 token menjawab yang cukup untuk giliran ringan; kontrak
+    // penuh 7.378 token hanya dibayar giliran yang memerlukannya. Giliran yang
+    // sudah jelas berat dari bentuk teksnya melewati pass inti sama sekali,
+    // sehingga jalur itu tidak pernah membayar dua kali dan tidak mundur dari
+    // keadaan sebelum pemecahan ini. Setiap percabangan gagal ke arah penuh.
+    const hasActiveSession = Boolean(runtime.session);
+    let path = "direct-full";
+    if (!turnLikelyNeedsFullPass(message, { hasActiveSession })) {
+      const core = await this.understandCore(message, context, runtime);
+      path = core ? "core-escalated" : "core-unreadable";
+      if (core && !understandingNeedsFullPass(core, message, { hasActiveSession })) {
+        this.logUnderstandingPath("core-only", core.intent);
+        return understandingFromCore(core);
+      }
+    }
+    this.logUnderstandingPath(path, null);
+
     const modelRoute = resolveModelRoute("mechanical", this.routing);
     const timeZone = runtime.timeZone ?? this.defaultTimeZone;
     const { context: boundedContext, manifest: contextManifest } =

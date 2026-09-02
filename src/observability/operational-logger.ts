@@ -302,6 +302,10 @@ const PRIVATE_IDENTIFIER_KEYS = new Set([
 ]);
 
 const ALLOWED_DATA_KEYS = new Set([
+  // Jalur yang ditempuh pass pemahaman. Tanpa ini, penghematan pemecahan
+  // dua tahap hanya dapat diperkirakan dari korpus evaluasi—yang sengaja
+  // padat fitur dan bukan wakil lalu lintas sungguhan.
+  "understandingpath",
   // Hasil HTTP dan bentuk balasan provider. Keduanya dibuang diam-diam sampai
   // 2 September 2026, dan tanpanya kegagalan provider hanya terbaca sebagai
   // `succeeded: false`—diagnosis batas laju kemarin berjalan buta karena ini.
