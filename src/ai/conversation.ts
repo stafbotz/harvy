@@ -1,3 +1,4 @@
+import type { RiskHint } from "../core/safety-policy.js";
 import type {
   ConversationTurn,
   EpisodeSummaryDraft,
@@ -240,6 +241,16 @@ export interface ConversationRuntime {
    * sambungannya mengubah jawaban. Ditetapkan adapter, bukan model.
    */
   prematureReply?: boolean;
+  /**
+   * Dipanggil segera setelah pass inti memberi sinyal risikonya, sebelum
+   * kontrak penuh dijalankan.
+   *
+   * Triase keselamatan hanya butuh teks, jadi ia dapat berjalan berbarengan
+   * dengan kontrak penuh alih-alih mengantre di belakangnya. Sinyal ini
+   * tetap usulan: adapter yang memutuskan apakah triase dijalankan, dan
+   * `resolveRiskAssessment` tetap yang memutuskan hasil akhirnya.
+   */
+  onCoreRisk?: (hint: RiskHint) => void;
   /**
    * Pass inti yang sudah dimulai lebih awal oleh adapter, saat penggunanya
    * masih mungkin mengetik. Hanya dipakai bila teksnya persis sama; adapter
@@ -692,6 +703,16 @@ export class Conversation {
       const core = primed
         ? await primed.catch(() => null)
         : await this.understandCore(message, context, runtime);
+      // Sinyal risiko diteruskan sebelum kontrak penuh dijalankan, supaya
+      // triase dapat berangkat berbarengan alih-alih menunggu gilirannya.
+      // Gagal aman: pengumpulan sinyal tidak boleh menjatuhkan giliran.
+      if (core) {
+        try {
+          runtime.onCoreRisk?.(core.riskHint);
+        } catch {
+          // sengaja diam
+        }
+      }
       path = core ? "core-escalated" : "core-unreadable";
       if (core && !understandingNeedsFullPass(core, message, { hasActiveSession })) {
         this.logUnderstandingPath("core-only", core.intent);

@@ -2832,6 +2832,51 @@ Bagian AbortError pada `ai_request_failed` per hari: 0% (20–22 Agustus), lalu
 1 September itulah yang menurunkannya. Dicatat supaya tidak dikejar ulang
 sebagai masalah baru.
 
+## 42. Perbandingan kecepatan, dan kasus yang justru jadi lebih lambat
+
+Terukur langsung (`probe-chat`, pipa nyata): satu giliran sederhana turun dari
+10.871 menjadi 3.695 token, **66% lebih murah**. Prompt memahaminya sendiri
+29.513 → 3.253 karakter, 89% lebih kecil.
+
+Kecepatan dihitung dari model latensi hasil regresi 206 panggilan nyata
+(tetap 2.101 ms + 285 ms per 1.000 token masukan + 4,4 ms per token keluaran),
+**bukan** diukur ulang dari lalu lintas produksi sesudah perubahan:
+
+| kasus | sebelum | sesudah | |
+|---|---|---|---|
+| pass memahami saja | 4.639 ms | 2.710 ms | 42% |
+| giliran sederhana, tanpa jeda mengetik | 8.672 ms | 6.743 ms | 22% |
+| giliran sederhana, ada jeda mengetik | 8.672 ms | 4.033 ms | 53% |
+
+### Satu kasus menjadi lebih lambat, dan itu memang harganya
+
+| giliran yang naik ke kontrak penuh | sesudah | |
+|---|---|---|
+| kena `DEEPER_TURN_CUES` | 5.002 ms | tidak berubah |
+| tidak kena, ada jeda mengetik | 5.002 ms | tidak berubah |
+| tidak kena, tanpa jeda mengetik | 7.712 ms | **+2.710 ms** |
+
+Bentuknya: pesan tanpa jeda, bersih dari kata petunjuk, tetapi memuat hal yang
+layak diingat. Contoh nyata dari uji langsung: "aku suka banget belajar sambil
+dengerin musik". Penyaring gratis dan penghangatan menekan seberapa sering harga
+ini dibayar; keduanya tidak menghapusnya.
+
+Titik impas seluruh rancangan tetap rasio biaya kedua kontrak. Angka nyatanya
+hanya dapat datang dari `understanding_pass_chosen` pada pemakaian sungguhan,
+bukan dari korpus evaluasi yang sengaja padat fitur.
+
+### Triase keselamatan berangkat lebih awal
+
+Pass inti menyebutkan risikonya sebelum kontrak penuh berjalan, dan triase hanya
+membutuhkan teks. `runtime.onCoreRisk` meneruskan sinyal itu sehingga triase
+dapat berangkat berbarengan dengan kontrak penuh alih-alih mengantre di
+belakangnya, ~1,8 detik yang tadinya berurutan.
+
+Hanya mempercepat, tidak pernah memutuskan: hasilnya tetap melewati
+`resolveRiskAssessment` yang sama, dan bila `triageRequired` ternyata false
+hasilnya sekadar tidak terpakai. Kalau pass inti dilewati, sinyalnya tidak
+pernah dikirim.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

@@ -148,6 +148,7 @@ import {
   safetyEffectPermissions,
   withImmediateDangerHint,
   withExplicitSupportHint,
+  type RiskHint,
 } from "../core/safety-policy.js";
 import {
   ActiveSessionError,
@@ -2863,6 +2864,22 @@ export function createBot(
     const earlyRisk = immediateDanger || urgentBoundary
       ? requestRiskTriage()
       : undefined;
+    // Triase yang diberangkatkan oleh sinyal pass inti.
+    //
+    // Pass inti sudah menyebutkan risikonya sebelum kontrak penuh berjalan,
+    // dan triase hanya membutuhkan teks. Tanpa ini keduanya mengantre:
+    // kontrak penuh ~5 detik lalu triase ~1,8 detik, padahal keduanya dapat
+    // berangkat bersamaan. Paralelisme di dalam satu giliran terukur 1,00x
+    // sebelum perubahan ini, yakni tidak ada tumpang tindih sama sekali.
+    //
+    // Hanya mempercepat, tidak pernah memutuskan: hasilnya tetap melewati
+    // `resolveRiskAssessment` yang sama, dan bila `triageRequired` ternyata
+    // false hasilnya sekadar tidak terpakai.
+    let coreSignalledRisk: Promise<RiskTriage | null> | undefined;
+    const startTriageOnCoreRisk = (hint: RiskHint): void => {
+      if (hint.level === "none" || earlyRisk || coreSignalledRisk) return;
+      coreSignalledRisk = requestRiskTriage();
+    };
     // Hanya cabang compiler yang benar-benar memanggil model; dua cabang lain
     // menjawab dari state lokal dan selesai sebelum grace period habis. Lane
     // keselamatan lokal sengaja tetap sunyi supaya jawaban safety tidak
@@ -2882,6 +2899,7 @@ export function createBot(
           // Hasil pass inti yang sudah dihangatkan selama jendela tunggu,
           // dan hanya bila teksnya persis sama dengan yang kini diproses.
           primedCore: takePrimedUnderstanding(ownerId, text),
+          onCoreRisk: startTriageOnCoreRisk,
           // The semantic compiler may see bounded active-session state so it
           // can decide relevance; the session itself is not assumed relevant
           // merely because it exists.
@@ -2965,7 +2983,7 @@ export function createBot(
     // keadaan tanpa bukti kuat ke `unavailable` + jalur percakapan biasa.
     const triageRequired = understanding === null || riskHint.level !== "none";
     const risk = triageRequired
-      ? await (earlyRisk ?? requestRiskTriage())
+      ? await (earlyRisk ?? coreSignalledRisk ?? requestRiskTriage())
       : undefined;
     if (!(await runtimeIsCurrent(runtime))) {
       await telemetry.discardUndelivered?.(ownerId, currentTurnId());
@@ -3002,7 +3020,6 @@ export function createBot(
         },
       );
     });
-
 
     if ("error" in readResult) {
       logger.error(

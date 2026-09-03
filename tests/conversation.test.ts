@@ -18,6 +18,7 @@ import {
   replyPrompt,
 } from "../src/ai/persona.js";
 import { CALM_TRIAGE } from "../src/ai/safety.js";
+import type { RiskHint } from "../src/core/safety-policy.js";
 import type { Understanding } from "../src/ai/understand.js";
 import {
   parseCoreUnderstanding,
@@ -2524,6 +2525,72 @@ describe("pemahaman dua tahap", () => {
 
     assert.equal(core?.proposesFullPass, true);
     assert.equal(core?.complexity, "normal");
+  });
+
+  // Triase keselamatan hanya butuh teks, jadi ia dapat berangkat begitu pass
+  // inti menyebut risikonya—berbarengan dengan kontrak penuh, bukan mengantre
+  // di belakangnya. Sinyal ini tidak pernah memutuskan apa pun; adapter yang
+  // memilih menjalankan triase, dan `resolveRiskAssessment` yang memutuskan.
+  it("meneruskan sinyal risiko inti sebelum kontrak penuh berjalan", async () => {
+    const requests: ChatRequest[] = [];
+    const seen: RiskHint[] = [];
+    const conversation = new Conversation(
+      recorder(requests, inti({
+        intent: "feeling",
+        riskHint: { level: "possible", category: "acute_distress", confidence: 0.4 },
+      })),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.understand("lagi berat banget rasanya", undefined, {
+      onCoreRisk: (hint) => {
+        // Dicatat bersama jumlah permintaan saat itu: sinyalnya wajib tiba
+        // ketika kontrak penuh belum dikirim, atau ia tidak menghemat apa pun.
+        seen.push(hint);
+        assert.equal(fullUnderstandingRequest(requests), undefined);
+      },
+    });
+
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]?.level, "possible");
+    assert.ok(fullUnderstandingRequest(requests));
+  });
+
+  it("tidak meneruskan sinyal ketika pass inti dilewati", async () => {
+    const requests: ChatRequest[] = [];
+    let dipanggil = 0;
+    const conversation = new Conversation(
+      recorder(requests, inti()),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.understand("besok ada ulangan", undefined, {
+      onCoreRisk: () => {
+        dipanggil += 1;
+      },
+    });
+
+    assert.equal(dipanggil, 0);
+  });
+
+  // Pengumpulan sinyal tidak boleh pernah menjadi sebab giliran gagal.
+  it("tidak menjatuhkan giliran ketika penerima sinyal melempar", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, inti()),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const parsed = await conversation.understand("halo", undefined, {
+      onCoreRisk: () => {
+        throw new Error("penerima sinyal rusak");
+      },
+    });
+
+    assert.equal(parsed?.intent, "smalltalk");
   });
 });
 
