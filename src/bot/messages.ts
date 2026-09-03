@@ -594,3 +594,42 @@ function normalizeMarkup(text: string): string {
 }
 
 const TELEGRAM_SAFE_MESSAGE_CHARS = 4_000;
+
+/**
+ * Kalimat pencegahan penyalahgunaan. Lihat ADR-045 keputusan 8.
+ *
+ * Tiga aturan yang membentuk seluruhnya:
+ *
+ * Menyebut perbuatannya, tidak pernah mengulang kata-katanya. Membacakan
+ * kembali makian seorang anak mempermalukan tanpa menambah apa pun yang belum
+ * ia tahu.
+ *
+ * Konkret, bukan samar. Draf pertama berbunyi "yang barusan itu nggak usah"
+ * dan "aku berhenti sebentar"; pemilik produk menolaknya karena anak yang
+ * sedang kesal harus menebak Harvy sedang membicarakan apa, dan berhenti apa.
+ * Kehati-hatian tidak boleh berubah menjadi ketidakjelasan.
+ *
+ * Memisahkan pertanyaannya dari perilakunya, supaya tidak ada yang
+ * menyimpulkan Harvy menolak dirinya bertanya.
+ */
+export const ABUSE_WARNING_FIRST =
+  "Kalau kamu kesel boleh cerita, tapi jangan ngatain aku. Yuk lanjut, tadi sampai mana?";
+
+/** Konsekuensinya disebut di sini supaya penangguhan tidak datang mengejutkan. */
+export const ABUSE_WARNING_SECOND =
+  "Aku masih mau bantu. Tapi kalau kamu ngatain aku lagi, aku berhenti bales beberapa jam.";
+
+export function abuseSuspensionNotice(untilLabel: string): string {
+  return `Aku berhenti bales sampai ${untilLabel}. Bukan karena pertanyaanmu, tapi karena kamu ngatain aku beberapa kali. Habis itu kita lanjut biasa.`;
+}
+
+/**
+ * "Paling lama sehari" adalah plafon peninjauan, dan menyebutnya penting:
+ * tanpa itu "nanti" terdengar seperti "tidak tahu kapan".
+ */
+export const ABUSE_REVIEW_HOLD_NOTICE =
+  "Aku berhenti bales dulu. Kamu coba bikin aku ngelanggar aturanku, dan itu aku kirim ke pengelola Harvy buat diperiksa. Paling lama sehari, terus normal lagi.";
+
+/** Tidak mengungkit. Ia sudah menjalaninya. */
+export const ABUSE_ACCESS_RESTORED =
+  "Udah normal lagi. Mau lanjut dari mana?";

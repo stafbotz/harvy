@@ -57,6 +57,8 @@ import {
 } from "./core/group-turn-service.js";
 import { InsightService } from "./core/insight-service.js";
 import { MemoryService } from "./core/memory-service.js";
+import { AbuseService } from "./core/abuse-service.js";
+import { FileAbuseRepository } from "./storage/file-abuse-repository.js";
 import { MemoryKnowledgeService } from "./core/memory-knowledge-service.js";
 import { MemoryContextCompiler } from "./core/memory-context-compiler.js";
 import { LongTermMemoryService } from "./core/long-term-memory-service.js";
@@ -440,6 +442,47 @@ logger.info(
   "Retensi telemetry dan pemulihan penghapusan tertunda selesai.",
 );
 
+// Bot-nya baru lahir sesudah layanan ini, sedangkan laporannya dikirim jauh
+// kemudian. Rujukan yang diisi belakangan memutus lingkaran itu tanpa
+// memaksa salah satunya pindah.
+let telegramForReports: { api: { sendMessage: (chatId: string, text: string) => Promise<unknown> } } | null = null;
+
+// Pencegahan penyalahgunaan. Lihat ADR-045.
+//
+// Laporan hanya dikirim bila alamat pengelola benar-benar ada. Tanpa itu,
+// kalimat "aku kirim ke pengelola Harvy" menjadi gertakan, dan gertakan yang
+// ketahuan mengosongkan seluruh peringatan Harvy yang lain—termasuk yang
+// tentang keselamatan. Penangguhannya sendiri tetap berjalan.
+const abuse = new AbuseService(
+  new FileAbuseRepository(config.abuseFile),
+  () => Date.now(),
+  logger.child("core.abuse"),
+  config.ai.operatorChatId
+    ? async (report) => {
+        const sampai = new Date(
+          report.action.kind === "suspend" ||
+            report.action.kind === "hold-for-review"
+            ? report.action.untilMs
+            : Date.now(),
+        ).toISOString();
+        // Isi pesan penggunanya tidak pernah ikut untuk makian: angkanya
+        // sudah cukup untuk memutuskan apa pun. Percobaan menembus batas
+        // berbeda—pengelola tidak dapat menilainya tanpa melihat.
+        await telegramForReports?.api.sendMessage(
+          config.ai.operatorChatId!,
+          [
+            report.action.kind === "hold-for-review"
+              ? "Akses ditahan menunggu peninjauanmu."
+              : "Akses ditangguhkan sementara.",
+            `Kategori: ${report.category}`,
+            `Peringatan tercatat: ${report.warningCount}`,
+            `Sampai: ${sampai}`,
+          ].join("\n"),
+        );
+      }
+    : undefined,
+);
+
 const bot = createBot(
   config,
   tasks,
@@ -457,7 +500,9 @@ const bot = createBot(
   codingRuntime,
   economy,
   usageDashboard,
+  abuse,
 );
+telegramForReports = bot;
 let whatsapp: BaileysAccountManager | null = null;
 const whatsappPrivate = config.whatsapp.enabled && config.whatsapp.privateEnabled
   ? new WhatsAppPrivateConversation(

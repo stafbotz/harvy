@@ -14,6 +14,8 @@ export type AiPurpose =
   | "understanding"
   /** Pass inti dua-tahap; dipisah agar penghematannya terukur. */
   | "understanding-core"
+  /** Penilaian penyalahgunaan di latar; tidak menahan percakapan. */
+  | "abuse-review"
   | "due-date"
   | "risk-triage"
   | "memory-privacy"

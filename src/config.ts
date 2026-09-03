@@ -82,6 +82,8 @@ export interface AiConfig {
   memoryEmbeddingLocalModel: string | null;
   /** Tempat bobot model lokal disimpan; bertahan lintas pemasangan ulang. */
   memoryEmbeddingCacheFolder: string;
+  /** Chat pengelola untuk laporan penangguhan; null berarti tidak dikirim. */
+  operatorChatId: string | null;
   rollingTokenLimit: number;
   prices: Record<ModelTier, TierPrice>;
 }
@@ -124,6 +126,8 @@ export interface AppConfig {
   memoryFolder: string;
   /** Riwayat percakapan yang sudah dipadatkan. Berisi kata-kata pengguna. */
   historyFile: string;
+  /** Catatan peringatan dan penangguhan; hanya angka, bukan kutipan. */
+  abuseFile: string;
   /** Cold archive, learned procedures, outbox, dan derived embedding index. */
   longTermMemoryFile: string;
   /** Status kenalan dan persetujuan per pengguna. */
@@ -202,6 +206,9 @@ export function loadConfig(): RuntimeAppConfig {
     memoryFile: resolve(process.env.MEMORY_FILE ?? "./data/memories.json"),
     memoryFolder: resolve(process.env.MEMORY_FOLDER ?? "./data/memori"),
     historyFile: resolve(process.env.HISTORY_FILE ?? "./data/history.json"),
+    abuseFile: resolve(
+      process.env.ABUSE_FILE ?? "./data/abuse.json",
+    ),
     longTermMemoryFile: resolve(
       process.env.LONG_TERM_MEMORY_FILE ?? "./data/long-term-memory.sqlite",
     ),
@@ -565,6 +572,16 @@ export function loadAiConfig(): AiConfig {
     : memoryEmbeddingLocalRaw || DEFAULT_LOCAL_EMBEDDING_MODEL;
   // Cache bobot model tinggal di luar `node_modules`, supaya pemasangan
   // ulang pustaka tidak memaksa unduhan ratusan megabita sekali lagi.
+  /**
+   * Chat pengelola Harvy, tujuan laporan penangguhan.
+   *
+   * Tanpa ini Harvy tidak punya cara menghubungi siapa pun, dan kalimat
+   * "aku kirim ke pengelola Harvy" menjadi gertakan. Karena itu laporannya
+   * hanya dikirim bila alamatnya ada; penangguhannya sendiri tetap berjalan.
+   */
+  const operatorChatId =
+    process.env.HARVY_OPERATOR_CHAT_ID?.trim() || null;
+
   const memoryEmbeddingCacheFolder = resolve(
     process.env.MEMORY_EMBEDDING_CACHE_FOLDER ?? "./data/model-cache",
   );
@@ -649,6 +666,7 @@ export function loadAiConfig(): AiConfig {
       memoryEmbeddingModel,
       memoryEmbeddingLocalModel,
       memoryEmbeddingCacheFolder,
+      operatorChatId,
       rollingTokenLimit,
       prices,
     };
@@ -712,6 +730,7 @@ export function loadAiConfig(): AiConfig {
     memoryEmbeddingModel,
     memoryEmbeddingLocalModel,
     memoryEmbeddingCacheFolder,
+    operatorChatId,
     rollingTokenLimit,
     prices,
   };

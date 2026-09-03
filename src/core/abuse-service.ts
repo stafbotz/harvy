@@ -128,6 +128,29 @@ export class AbuseService {
     return action;
   }
 
+  /**
+   * Mengambil hak mengirim sapaan "sudah normal lagi", sekali saja.
+   *
+   * Mengembalikan true hanya pada panggilan pertama sesudah sebuah
+   * penangguhan berakhir. Sapaannya menyusul pada pesan berikutnya dari
+   * penggunanya, bukan dikirim mendadak saat ia tidak sedang melihat.
+   */
+  async takeRestorationNotice(ownerId: string): Promise<boolean> {
+    const nowMs = this.now();
+    const record = await this.repository.load(ownerId);
+    if (activeSuspension(record, nowMs)) return false;
+    const terakhir = [...record.suspensions]
+      .sort((a, b) => b.untilMs - a.untilMs)[0];
+    if (!terakhir || terakhir.restoreNoticed) return false;
+    await this.repository.save({
+      ...record,
+      suspensions: record.suspensions.map((item) =>
+        item === terakhir ? { ...item, restoreNoticed: true } : item
+      ),
+    });
+    return true;
+  }
+
   /** Data ini ikut terhapus bersama data penggunanya; lihat Pasal 2. */
   async forget(ownerId: string): Promise<void> {
     await this.repository.forget(ownerId);

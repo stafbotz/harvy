@@ -43,6 +43,13 @@ export interface AbuseSuspension {
   untilMs: number;
   /** True bila ini penahanan menunggu pengelola, bukan penangguhan bertimer. */
   review: boolean;
+  /**
+   * Sapaan "sudah normal lagi" sudah dikirim untuk penangguhan ini.
+   *
+   * Disimpan supaya ia terkirim tepat sekali. Mengulanginya tiap pesan akan
+   * berubah menjadi pengingat hukuman, dan itu menghukum dua kali.
+   */
+  restoreNoticed?: boolean;
 }
 
 export interface AbuseRecord {

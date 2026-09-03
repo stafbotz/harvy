@@ -1,3 +1,9 @@
+import {
+  ABUSE_REVIEW_PROMPT,
+  abuseReviewInput,
+  parseAbuseReview,
+  type AbuseReview,
+} from "./abuse-review.js";
 import type { RiskHint } from "../core/safety-policy.js";
 import type {
   ConversationTurn,
@@ -402,6 +408,8 @@ const CODE_ARTIFACT_REVIEW_PROMPT = [
 export const UNDERSTANDING_MAX_TOKENS = 2048;
 /** Kontrak inti hanya lima field; 2048 token jadi jauh lebih besar dari perlu. */
 export const UNDERSTANDING_CORE_MAX_TOKENS = 256;
+/** Penilaian penyalahgunaan hanya tiga field. */
+export const ABUSE_REVIEW_MAX_TOKENS = 200;
 export const TURN_BOUNDARY_MAX_TOKENS = 128;
 /**
  * Batas waktu classifier batas giliran.
@@ -574,6 +582,56 @@ export class Conversation {
       );
     } catch {
       // sengaja diam
+    }
+  }
+
+  /**
+   * Menilai apakah satu pesan menyerang Harvy, di latar. Lihat ADR-045.
+   *
+   * Berjalan sesudah balasannya terkirim, sehingga tidak menahan percakapan
+   * sedikit pun—itu syarat dari pemilik produk, dan itu pula yang membuat
+   * pemakaian model di sini sepadan meski ia dipanggil pada setiap giliran.
+   *
+   * Mengembalikan `null` untuk apa pun yang tidak lolos, termasuk keluaran yang
+   * buktinya tidak benar-benar ada di pesan aslinya. Pemeriksaan itu ada di
+   * `parseAbuseReview`, bukan dipercayakan kepada modelnya.
+   */
+  async reviewAbuse(
+    message: string,
+    runtime: ConversationRuntime = {},
+  ): Promise<AbuseReview | null> {
+    const modelRoute = resolveModelRoute("mechanical", this.routing);
+    const execution = this.execution(
+      modelRoute.tier,
+      "extractor",
+      "mechanical",
+      ABUSE_REVIEW_MAX_TOKENS,
+      GENERAL_MODEL_DEADLINE_MS,
+      {
+        modelId: modelRoute.modelId,
+        cognitiveRole: modelRoute.role,
+        difficulty: "mechanical",
+      },
+    );
+    try {
+      const raw = await this.client.complete({
+        model: modelRoute.modelId,
+        temperature: 0,
+        maxTokens: ABUSE_REVIEW_MAX_TOKENS,
+        execution,
+        json: true,
+        ...(runtime.signal ? { signal: runtime.signal } : {}),
+        usage: this.usage(runtime.ownerId, modelRoute.tier, "abuse-review"),
+        messages: [
+          { role: "system", content: ABUSE_REVIEW_PROMPT },
+          { role: "user", content: abuseReviewInput(message) },
+        ],
+      });
+      return parseAbuseReview(raw, message);
+    } catch {
+      // Penilaian yang gagal berarti tidak ada yang terjadi. Kendali
+      // penyalahgunaan gagal ke arah tidak menghukum.
+      return null;
     }
   }
 

@@ -137,6 +137,7 @@ function routing(): AiConfig {
     memoryEmbeddingModel: null,
     memoryEmbeddingLocalModel: null,
     memoryEmbeddingCacheFolder: "./data/model-cache",
+    operatorChatId: null,
     rollingTokenLimit: 1_000_000,
     prices: {
       cheap: { inputPerMillionUsd: 0, outputPerMillionUsd: 0 },

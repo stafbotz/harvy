@@ -253,6 +253,15 @@ import {
 import { ActionOfferStore } from "./action-offers.js";
 import { MessageBatcher } from "./message-batcher.js";
 import { DeferredTurnRetry } from "../core/deferred-turn-retry.js";
+import type { AbuseService } from "../core/abuse-service.js";
+import type { AbuseAction } from "../domain/abuse.js";
+import {
+  ABUSE_ACCESS_RESTORED,
+  ABUSE_REVIEW_HOLD_NOTICE,
+  ABUSE_WARNING_FIRST,
+  ABUSE_WARNING_SECOND,
+  abuseSuspensionNotice,
+} from "./messages.js";
 import {
   CONSENT_ACCEPTED,
   CONSENT_ACCEPTED_EMOJI,
@@ -577,6 +586,8 @@ export function createBot(
   > | null = null,
   economy: EconomyService | null = null,
   usageDashboard: Pick<UserUsageSummaryService, "summary"> | null = null,
+  /** Null mempertahankan perilaku lama: tidak ada penangguhan sama sekali. */
+  abuse: AbuseService | null = null,
 ): HarvyBot {
   const commandOptions: TelegramCommandOptions = Object.freeze({
     codingRuntime: codingRuntime !== null,
@@ -2642,6 +2653,110 @@ export function createBot(
     });
   }
 
+  /** "jam 5 sore" milik zona waktu penggunanya, bukan stempel waktu mesin. */
+  async function suspensionUntilLabel(
+    ownerId: string,
+    action: AbuseAction,
+  ): Promise<string> {
+    if (action.kind !== "suspend") return "";
+    const zone = await timeZoneFor(ownerId);
+    return new Intl.DateTimeFormat("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: zone,
+    }).format(new Date(action.untilMs));
+  }
+
+  /**
+   * Kalimat yang menyertai satu tindakan, atau null bila tidak ada yang
+   * perlu dikatakan.
+   *
+   * Pemberitahuan penangguhan dikirim sekali, tepat pada giliran yang
+   * memutuskannya. Sesudah itu gerbangnya yang bekerja, dan Harvy diam.
+   */
+  function abuseActionNotice(
+    action: AbuseAction,
+    untilLabel: string,
+  ): string | null {
+    switch (action.kind) {
+      case "warn":
+        return action.warningNumber === 1
+          ? ABUSE_WARNING_FIRST
+          : ABUSE_WARNING_SECOND;
+      case "suspend":
+        return abuseSuspensionNotice(untilLabel);
+      case "hold-for-review":
+        return ABUSE_REVIEW_HOLD_NOTICE;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Apakah giliran ini boleh berjalan meski pemiliknya sedang ditangguhkan.
+   *
+   * Keselamatan selalu menang, dan itu menuntut lebih dari penanda lokal.
+   * `hasExplicitImmediateDangerSignal` hanya cocok pada kalimat yang sangat
+   * eksplisit; anak yang menulis "aku ngerasa pengen ilang aja" tidak
+   * tertangkap olehnya. Karena itu giliran dari pengguna tertangguh tetap
+   * membayar satu pass inti—813 token, dan latensinya tidak dirasakan siapa
+   * pun karena orangnya memang sedang tidak dilayani—semata untuk membaca
+   * sinyal risikonya.
+   *
+   * Gagal ke arah melayani: pass inti yang tidak terbaca membuat gilirannya
+   * diteruskan seperti biasa. Lebih baik menjawab orang yang sedang
+   * ditangguhkan daripada mengabaikan orang yang sedang tidak baik-baik saja.
+   */
+  async function suspendedTurnMayProceed(
+    ownerId: string,
+    text: string,
+    explicitImmediateDanger: boolean,
+  ): Promise<boolean> {
+    if (!abuse) return true;
+    if (explicitImmediateDanger) return true;
+    if (await abuse.allowsTurn(ownerId, false)) return true;
+    try {
+      const core = await conversation.prewarmUnderstanding?.(text, { ownerId });
+      // Tidak terbaca berarti tidak tahu, dan tidak tahu berarti dilayani.
+      if (!core) return true;
+      return core.riskHint.level !== "none";
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Menilai giliran yang sudah selesai, di latar.
+   *
+   * Dijalankan sesudah balasannya terkirim sehingga tidak menahan percakapan
+   * sedikit pun. Kegagalan apa pun di sini berakhir diam: kendali
+   * penyalahgunaan yang rusak tidak boleh menjadi sebab giliran gagal.
+   */
+  function reviewTurnForAbuse(
+    ctx: Context,
+    ownerId: string,
+    text: string,
+    distress: boolean,
+  ): void {
+    if (!abuse) return;
+    void (async () => {
+      const review = await conversation.reviewAbuse?.(text, { ownerId });
+      if (!review) return;
+      const action = await abuse.observe(ownerId, {
+        category: review.category === "menembus-batas"
+          ? "probing"
+          : "directed-abuse",
+        distress,
+        grounded: true,
+      });
+      const notice = abuseActionNotice(
+        action,
+        await suspensionUntilLabel(ownerId, action),
+      );
+      if (notice) await ctx.reply(notice);
+    })().catch(() => undefined);
+  }
+
   async function handleFreeText(
     ctx: Context,
     ownerId: string,
@@ -2705,6 +2820,19 @@ export function createBot(
     if (interruptionEvent) progress?.report(interruptionEvent);
 
     try {
+      // Gerbang penangguhan. Keselamatan selalu menang, jadi giliran
+      // bersinyal risiko tetap lewat walau pemiliknya sedang ditangguhkan.
+      if (
+        !isDeferredRetry &&
+        !(await suspendedTurnMayProceed(ownerId, text, explicitImmediateDanger))
+      ) {
+        return;
+      }
+      // Sapaan pulih menyusul pada pesan pertamanya, bukan dikirim mendadak
+      // saat ia tidak sedang melihat. Tidak mengungkit; ia sudah menjalaninya.
+      if (!isDeferredRetry && await abuse?.takeRestorationNotice(ownerId)) {
+        await ctx.reply(ABUSE_ACCESS_RESTORED);
+      }
       await handleFreeTextTurn(
         ctx,
         ownerId,
@@ -2715,6 +2843,10 @@ export function createBot(
         urgentBoundary,
         isDeferredRetry,
       );
+      // Penilaian berjalan sesudah balasannya terkirim, tidak menahan apa pun.
+      if (!isDeferredRetry) {
+        reviewTurnForAbuse(ctx, ownerId, text, explicitImmediateDanger);
+      }
     } finally {
       if (activeProgress.get(ownerId) === progress) {
         activeProgress.delete(ownerId);

@@ -6260,6 +6260,7 @@ function config(): AppConfig {
     memoryFile: "unused",
     memoryFolder: "unused",
     historyFile: "unused",
+    abuseFile: "./data/abuse.json",
     longTermMemoryFile: "unused",
     profileFile: "unused",
     sessionFile: "unused",
