@@ -2923,6 +2923,28 @@ keselamatan hanya bersuara saat gagal, dan kini tulis memori tidak bersuara sama
 sekali. Setiap kali, yang hilang justru satu-satunya angka yang dapat menjawab
 pertanyaan yang sedang diajukan.
 
+## Menunggu pengukuran dari pemakaian nyata
+
+Empat pertanyaan yang alat ukurnya sudah terpasang 2–3 September 2026 tetapi
+datanya belum ada. Semuanya menunggu Harvy dipakai wajar beberapa hari, bukan
+menunggu kode.
+
+| pertanyaan | sumbernya | dipasang di |
+|---|---|---|
+| berapa persen giliran selesai lewat kontrak inti | `understanding_pass_chosen` | butir 38 |
+| apakah ambang keselamatan terlalu sensitif | `safety_decision` | butir 41 |
+| apakah Harvy benar-benar belajar, atau menolak diam-diam | `memory_write_outcome` | butir 43 |
+| kecepatan nyata sesudah perubahan | `conversation_turn_completed` + `ai_request_completed` | butir 40, 42 |
+
+Angka yang beredar sekarang untuk tiga yang pertama berasal dari korpus evaluasi
+dan hitungan model latensi, **bukan** dari lalu lintas sungguhan. Korpus itu
+sengaja padat fitur dan bukan wakil obrolan asli, jadi selisihnya bisa besar:
+korpus memberi 15% penghematan sedangkan giliran sederhana nyata memberi 65%.
+
+Jangan mengambil keputusan ambang—menaikkan atau menurunkan sensitivitas
+keselamatan, mengubah `DEEPER_TURN_CUES`, mengubah batas memori—sebelum data ini
+ada. Menyetel dari perkiraan hanya menukar satu tebakan dengan tebakan lain.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai
