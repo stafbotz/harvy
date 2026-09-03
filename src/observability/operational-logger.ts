@@ -302,6 +302,18 @@ const PRIVATE_IDENTIFIER_KEYS = new Set([
 ]);
 
 const ALLOWED_DATA_KEYS = new Set([
+  // Keputusan routing keselamatan. Enum dan boolean saja; ringkasan triase
+  // sengaja tidak pernah dicatat karena ia memparafrasakan ucapan pengguna.
+  // Tanpa keenam field ini, jalur keselamatan hanya mengeluarkan bunyi saat
+  // gagal, dan pertanyaan "apakah ambangnya terlalu sensitif" tidak dapat
+  // dijawab dengan apa pun selain perasaan.
+  "hintlevel",
+  "hintcategory",
+  "triageran",
+  "triagelevel",
+  "responselevel",
+  "disposition",
+  "certain",
   // Jalur yang ditempuh pass pemahaman. Tanpa ini, penghematan pemecahan
   // dua tahap hanya dapat diperkirakan dari korpus evaluasi—yang sengaja
   // padat fitur dan bukan wakil lalu lintas sungguhan.

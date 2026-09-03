@@ -51,6 +51,7 @@ import type {
   ExtractedTask,
   ControlAction,
   Understanding,
+  CoreUnderstanding,
 } from "../ai/understand.js";
 import { imageConversationUnderstanding } from "../ai/understand.js";
 import type { AppConfig } from "../config.js";
@@ -516,6 +517,43 @@ export async function bestEffortTyping(
   }
 }
 
+/**
+ * Apakah kegagalan ini sebenarnya pembatalan oleh pemanggilnya.
+ *
+ * Nama galat saja TIDAK cukup, dan itu jebakan yang nyaris terpasang di sini.
+ * Timeout internal client memakai `controller.abort()` biasa, sehingga ia pun
+ * muncul sebagai AbortError. Menilai dari namanya saja akan melabeli timeout
+ * sebagai pembatalan dan menyembunyikan kegagalan yang sungguhan—kebalikan
+ * dari yang ingin dicapai.
+ *
+ * Yang membedakan hanya satu: apakah sinyal pemanggilnya memang sudah
+ * dibatalkan. Itu pula yang dipakai `AiClient` sebelum memilih antara
+ * `ai_request_cancelled` dan `ai_request_failed`.
+ */
+function isCancellation(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): boolean {
+  return signal?.aborted === true && error instanceof Error &&
+    error.name === "AbortError";
+}
+
+/**
+ * Menjalankan pengumpulan bukti tanpa pernah menjatuhkan gilirannya.
+ *
+ * Satu helper log yang melakukan iterasi langsung atas `result.trace` pernah
+ * melempar pada hasil `needs_input` tanpa jejak dan menjatuhkan seluruh giliran:
+ * checkpoint tidak tersimpan, dan penggunanya kehilangan pertanyaan lanjutannya.
+ * Observability tidak boleh pernah menjadi sebab giliran gagal.
+ */
+function logSafely(emit: () => void): void {
+  try {
+    emit();
+  } catch {
+    // Sengaja diam. Tidak ada tempat aman untuk melaporkan kegagalan pelaporan.
+  }
+}
+
 export function createBot(
   config: AppConfig,
   tasks: TaskService,
@@ -956,6 +994,35 @@ export function createBot(
       firstIngressUpdateId > value.acceptAnswersAfterUpdateId;
   }
 
+  /**
+   * Pass inti yang sudah dimulai selagi penggunanya masih mungkin mengetik.
+   *
+   * Satu entri per pemilik, dikunci teks persis. Bubble berikutnya mengubah
+   * teksnya, dan entri lama tidak akan pernah cocok lagi sehingga terbuang
+   * sendiri saat ditimpa. Tidak ada timer, tidak ada pembersih: umurnya
+   * sependek satu giliran.
+   */
+  const primedUnderstanding = new Map<
+    string,
+    { text: string; promise: Promise<CoreUnderstanding | null> }
+  >();
+
+  /**
+   * Mengambil hasil hangat hanya bila ia benar-benar milik teks ini.
+   *
+   * Ketidakcocokan bukan kesalahan: itu bentuk normal ketika penggunanya
+   * menyambung kalimatnya. Yang salah adalah memakainya.
+   */
+  function takePrimedUnderstanding(
+    ownerId: string,
+    text: string,
+  ): Promise<CoreUnderstanding | null> | null {
+    const primed = primedUnderstanding.get(ownerId);
+    if (!primed) return null;
+    primedUnderstanding.delete(ownerId);
+    return primed.text === text ? primed.promise : null;
+  }
+
   const messageBatcher = new MessageBatcher<Context>(
     async (text, ownerId, turnId, signals) => {
       if (ownerId && turnId) await telemetry.beginTurn(ownerId, turnId);
@@ -1065,6 +1132,15 @@ export function createBot(
           );
         }
       : undefined,
+    // Jendela tunggu dipakai, bukan dibiarkan kosong. Median 4.377 ms
+    // berlalu tanpa satu pun pemahaman dikerjakan sebelum ini.
+    (ownerId, text) => {
+      if (typeof conversation.prewarmUnderstanding !== "function") return;
+      const promise = conversation
+        .prewarmUnderstanding(text, { ownerId })
+        .catch(() => null);
+      primedUnderstanding.set(ownerId, { text, promise });
+    },
   ).onUrgent(async (_ownerId, batch) => {
     // Observer dimulai lebih dulu agar lifecycle-nya terurut sebelum
     // `recordTurn`, tetapi tidak ditunggu: telemetry tidak boleh menahan ACK.
@@ -2768,11 +2844,18 @@ export function createBot(
       conversation
         .triageRisk(text, ownerId, context, runtime.signal)
         .catch((error: unknown) => {
-          logger.error(
-            "risk_triage_failed",
-            "Triase keselamatan gagal.",
-            error,
-          );
+          if (isCancellation(error, runtime.signal)) {
+            logger.info(
+              "risk_triage_cancelled",
+              "Triase keselamatan dibatalkan bersama gilirannya.",
+            );
+          } else {
+            logger.error(
+              "risk_triage_failed",
+              "Triase keselamatan gagal.",
+              error,
+            );
+          }
           return null;
         });
     // Bahaya eksplisit tidak menunggu compiler. Pesan lain baru membayar
@@ -2796,6 +2879,9 @@ export function createBot(
           ...runtime,
           ownerId,
           timeZone,
+          // Hasil pass inti yang sudah dihangatkan selama jendela tunggu,
+          // dan hanya bila teksnya persis sama dengan yang kini diproses.
+          primedCore: takePrimedUnderstanding(ownerId, text),
           // The semantic compiler may see bounded active-session state so it
           // can decide relevance; the session itself is not assumed relevant
           // merely because it exists.
@@ -2889,6 +2975,34 @@ export function createBot(
       await noteTurnSignal(ownerId, "risk-triage-unavailable");
     }
     triage = resolveRiskAssessment(riskHint, risk);
+
+    // Keputusan keselamatan dicatat, bukan hanya kegagalannya.
+    //
+    // Sampai 2 September 2026 jalur ini hanya mengeluarkan `risk_triage_failed`
+    // dan `risk_triage_parse_failed`. Tidak ada satu pun catatan tentang level
+    // yang benar-benar diputuskan, sehingga pertanyaan paling wajar tentangnya—
+    // "apakah ini terlalu sensitif?"—tidak dapat dijawab siapa pun, termasuk
+    // oleh yang menulis kodenya. Menaikkan atau menurunkan ambang tanpa angka
+    // ini hanyalah menukar satu perasaan dengan perasaan lain.
+    //
+    // Seluruhnya enum dan boolean. Ringkasan triase sengaja TIDAK ikut: ia
+    // memuat parafrase ucapan pengguna.
+    logSafely(() => {
+      logger.info(
+        "safety_decision",
+        "Keputusan routing keselamatan untuk satu giliran.",
+        {
+          hintLevel: riskHint.level,
+          hintCategory: riskHint.category ?? "none",
+          triageRan: triageRequired,
+          triageLevel: risk?.level ?? "none",
+          responseLevel: triage.level,
+          disposition: triage.disposition,
+          certain: triage.certain,
+        },
+      );
+    });
+
 
     if ("error" in readResult) {
       logger.error(

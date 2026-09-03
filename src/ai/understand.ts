@@ -266,7 +266,7 @@ const LIGHT_INTENTS: ReadonlySet<ConversationIntent> = new Set([
  * pass penuh yang toh dibayar setiap giliran sampai hari ini.
  */
 const DEEPER_TURN_CUES =
-  /\b(?:ingat|inget|catat|hapus|lupakan|lupain|jangan lupa|ingetin|ingatkan|besok|lusa|kemarin|nanti|jam|pukul|tanggal|senin|selasa|rabu|kamis|jumat|sabtu|minggu|deadline|tenggat|ulangan|ujian|uts|uas|tugas|pr|jadwal|agenda|namaku|nama ?ku|aku kelas|kelas \d|sekolah|kampus|jurusan|langganan|paket|saldo|hapus data|ekspor|zona waktu|sesi)\b/iu;
+  /\b(?:ingat|inget|catat|hapus|lupakan|lupain|jangan lupa|ingetin|ingatkan|besok|lusa|kemarin|nanti|jam|pukul|tanggal|senin|selasa|rabu|kamis|jumat|sabtu|minggu|deadline|tenggat|ulangan|ujian|uts|uas|tugas|pr|jadwal|agenda|namaku|nama ?ku|aku kelas|kelas \d|sekolah|kampus|jurusan|langganan|paket|saldo|hapus data|ekspor|zona waktu|sesi|tadi|barusan|sebelumnya|yang itu|itu tadi)\b/iu;
 
 /**
  * Penyaring gratis yang berjalan SEBELUM model dipanggil sama sekali.

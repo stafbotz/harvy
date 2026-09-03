@@ -153,6 +153,15 @@ export class MessageBatcher<T> {
       ownerId: string,
       turnId: string,
     ) => Promise<TurnInterruptionRelation>,
+    /**
+     * Dipanggil ketika kumpulan bubble mulai menunggu, dengan teks sejauh ini.
+     *
+     * Jendela tunggu itu 4.377 ms median dan selama ini kosong sama sekali.
+     * Adapter boleh memakainya untuk memulai pekerjaan yang hanya bergantung
+     * pada teks. Wajib tidak melempar dan tidak ditunggu: ini jalur kenyamanan,
+     * bukan bagian dari kontrak batching.
+     */
+    private readonly warmTurn?: (ownerId: string, text: string) => void,
   ) {}
 
   /**
@@ -264,6 +273,16 @@ export class MessageBatcher<T> {
       entry.boundaryAssessment = local;
       this.scheduleDeadline(ownerId, entry, revision, this.maxWaitMs);
       return;
+    }
+    // Pemahaman inti boleh dimulai sekarang, bukan setelah jendela tutup.
+    // Kalau bubble berikutnya datang, teksnya berubah dan hasil ini tidak
+    // terpakai; itu memang harganya, dan pass inti murah.
+    if (this.warmTurn) {
+      try {
+        this.warmTurn(ownerId, entry.chunks.join("\n"));
+      } catch {
+        // Penghangatan tidak boleh menjatuhkan batching.
+      }
     }
     entry.settleTimer = setTimeout(() => {
       entry.settleTimer = null;

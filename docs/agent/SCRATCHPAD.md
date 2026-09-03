@@ -2736,6 +2736,102 @@ Kuncinya satu: memecah panggilan menurunkan biaya dan menaikkan mutu, tetapi
 hanya **memparalelkan** yang menurunkan waktu. Pecahan yang dijalankan berurutan
 justru menambah 2,1 detik per pecahan.
 
+## 40. Paralelisme di dalam satu giliran adalah 1,00x
+
+Rekonstruksi rentang waktu tiap panggilan model (`timestamp - durationMs`) lalu
+digabungkan per `traceId`, atas 102 giliran yang selesai:
+
+| | median | rata2 |
+|---|---|---|
+| menunggu penggunanya selesai mengetik | 4.377 ms | 4.325 ms |
+| total penanganan | 9.340 ms | 12.293 ms |
+| model, rentang gabungan | 7.956 ms | 9.329 ms |
+| model, dijumlah | 7.956 ms | 9.347 ms |
+| di luar model | 1.551 ms | 2.964 ms |
+
+Gabungan sama persis dengan jumlahnya: **paralelisme 1,00x, tidak ada satu pun
+tumpang tindih.** Median tiga panggilan berurutan per giliran, dan total tunggu
+yang dirasakan penggunanya sekitar 13,7 detik.
+
+Koreksi atas perkiraan sebelumnya: overhead di luar model 1,55 detik median,
+bukan 2,7 detik. Angka 2,7 adalah rata-rata yang tertarik pencilan.
+
+Bentuk giliran paling sering: `reply + turn-boundary + understanding` (32x) dan
+`reply + understanding` (22x). Kontribusi waktu: understanding 41%, reply 35%,
+summary 9%, turn-boundary 9%, risk-triage 2%.
+
+`summary` sempat terlihat menahan giliran, ternyata tidak: `history.compact()`
+dipanggil dengan `void`, jadi ia memang sudah di luar jalur kritis.
+
+### Yang dikerjakan: jendela tunggu berhenti kosong
+
+Pass inti kini dimulai saat kumpulan bubble mulai menunggu, bukan setelah
+jendelanya tutup. `MessageBatcher` menerima callback `warmTurn` opsional;
+`create-bot` menyimpan hasilnya per pemilik, dikunci teks persis, dan
+menyerahkannya lewat `runtime.primedCore` hanya bila teks giliran itu sama.
+
+Bubble berikutnya mengubah teksnya sehingga entri lama tidak pernah cocok lagi
+dan terbuang saat ditimpa. Tidak ada timer dan tidak ada pembersih: umurnya
+sependek satu giliran.
+
+Konteks sengaja kosong saat penghangatan. Kelima field kontrak inti tidak
+bergantung pada ringkasan atau daftar memori, dan satu-satunya bentuk yang
+menuntut riwayat adalah pesan berujuk. Karena itu `tadi`, `barusan`,
+`sebelumnya`, `yang itu`, dan `itu tadi` ditambahkan ke `DEEPER_TURN_CUES`,
+sehingga pesan semacam itu tidak pernah sampai ke jalur hangat.
+
+Penghangatan gagal ke arah kontrak penuh di setiap titik: `prewarmUnderstanding`
+mengembalikan `null` untuk pesan yang toh akan berat, promise yang ditolak
+menjadi `null`, dan `null` sudah berarti kontrak penuh.
+
+## 41. Separuh log galat Harvy bukan galat, dan yang tersisa punya cerita lain
+
+Dua pertanyaan yang tidak dapat dijawab siapa pun sampai 2 September 2026:
+apakah ambang keselamatan terlalu sensitif, dan apakah jalur keselamatan sehat.
+
+Jalur itu hanya mengeluarkan bunyi ketika gagal. Tidak ada satu pun catatan
+level yang diputuskan, sehingga menaikkan atau menurunkan ambangnya hanyalah
+menukar satu perasaan dengan perasaan lain. `safety_decision` kini mencatat
+`hintLevel`, `hintCategory`, `triageRan`, `triageLevel`, `responseLevel`,
+`disposition`, dan `certain`. Enum dan boolean saja; ringkasan triase sengaja
+tidak pernah ikut karena ia memparafrasakan ucapan penggunanya.
+
+### Ongkos keselamatan ternyata 1%
+
+| purpose | panggilan | % waktu |
+|---|---|---|
+| understanding | 64 | 40% |
+| reply | 59 | 32% |
+| turn-boundary | 50 | 12% |
+| summary | 23 | 10% |
+| risk-triage | 7 | **1%** |
+
+Peninjauan balasan nol kali pada sampel ini. Memindahkan keselamatan ke
+belakang jawaban karena itu membeli satu persen.
+
+### Jebakan yang nyaris terpasang
+
+`risk_triage_failed` seluruhnya AbortError, dan itu tampak seperti pembatalan
+yang salah dicatat sebagai galat. Perbaikan pertama menilai dari nama galatnya
+saja—dan itu keliru. Timeout internal `AiClient` memakai `controller.abort()`
+biasa, jadi ia pun muncul sebagai AbortError. Menilai dari namanya akan
+melabeli timeout sebagai pembatalan dan menyembunyikan kegagalan sungguhan,
+kebalikan dari yang dituju.
+
+Penelusuran satu `traceId` membuktikannya: di sekitar triase yang abort itu ada
+`ai_request_failed` beruntun dan `message_understanding_failed`. Giliran itu
+memang bermasalah, bukan dibatalkan.
+
+Yang membedakan hanya satu, dan itu pula yang dipakai `AiClient` sendiri:
+apakah sinyal pemanggilnya sudah dibatalkan.
+
+### Timeout sudah membaik sendiri
+
+Bagian AbortError pada `ai_request_failed` per hari: 0% (20–22 Agustus), lalu
+18–31% (25–31 Agustus), lalu **5%** (1 September). Perbaikan retry timeout pada
+1 September itulah yang menurunkannya. Dicatat supaya tidak dikejar ulang
+sebagai masalah baru.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

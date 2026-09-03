@@ -2527,6 +2527,79 @@ describe("pemahaman dua tahap", () => {
   });
 });
 
+/**
+ * Penghangatan pass inti selama jendela tunggu.
+ *
+ * Diukur atas 102 giliran nyata: paralelisme di dalam satu giliran 1,00x, yaitu
+ * seluruh panggilan model berurutan tanpa tumpang tindih, sementara 4.377 ms
+ * median di depannya berlalu tanpa pemahaman dikerjakan sama sekali.
+ */
+describe("penghangatan pemahaman", () => {
+  const inti = JSON.stringify({
+    intent: "smalltalk",
+    riskHint: { level: "none", category: null, confidence: 1 },
+    needsStepByStep: false,
+    complexity: "mechanical",
+    perluPassPenuh: false,
+  });
+
+  it("memakai hasil hangat tanpa memanggil model lagi", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, inti),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const primed = conversation.prewarmUnderstanding("halo", { ownerId: "1" });
+    assert.equal(requests.length, 1);
+
+    const parsed = await conversation.understand("halo", undefined, {
+      primedCore: primed,
+    });
+
+    // Tetap satu: gilirannya tidak menambah panggilan apa pun.
+    assert.equal(requests.length, 1);
+    assert.equal(parsed?.intent, "smalltalk");
+  });
+
+  // Penghangatan adalah kenyamanan, bukan kontrak. Kegagalannya harus jatuh ke
+  // kontrak penuh, arah yang sama dengan seluruh percabangan lain di sini.
+  it("jatuh ke kontrak penuh ketika hasil hangat gagal", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, inti),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    await conversation.understand("halo", undefined, {
+      primedCore: Promise.reject(new Error("provider tumbang")),
+    });
+
+    assert.ok(fullUnderstandingRequest(requests));
+  });
+
+  // Menghangatkan pesan yang toh akan memakai kontrak penuh hanya menambah
+  // panggilan ketiga yang sia-sia.
+  it("tidak menghangatkan pesan yang sudah jelas berat", async () => {
+    const requests: ChatRequest[] = [];
+    const conversation = new Conversation(
+      recorder(requests, inti),
+      ROUTING,
+      "Asia/Jakarta",
+    );
+
+    const primed = await conversation.prewarmUnderstanding(
+      "besok ada ulangan",
+      { ownerId: "1" },
+    );
+
+    assert.equal(primed, null);
+    assert.equal(requests.length, 0);
+  });
+});
+
 describe("penyaring sapaan perkenalan", () => {
   it("menerima sapaan pendek yang menyebut Harvy", () => {
     assert.equal(

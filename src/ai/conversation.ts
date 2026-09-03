@@ -240,6 +240,12 @@ export interface ConversationRuntime {
    * sambungannya mengubah jawaban. Ditetapkan adapter, bukan model.
    */
   prematureReply?: boolean;
+  /**
+   * Pass inti yang sudah dimulai lebih awal oleh adapter, saat penggunanya
+   * masih mungkin mengetik. Hanya dipakai bila teksnya persis sama; adapter
+   * yang memastikan itu sebelum meneruskannya ke sini.
+   */
+  primedCore?: Promise<CoreUnderstanding | null> | null;
   /** Kapan bubble pertama giliran ini tiba; dipakai menilai `prematureReply`. */
   turnReceivedAt?: number;
   /** Kontrak suara/intent untuk jawaban final Agent Runtime. */
@@ -561,6 +567,38 @@ export class Conversation {
   }
 
   /**
+   * Memulai pass inti sebelum gilirannya resmi dimulai.
+   *
+   * Diukur atas 102 giliran nyata: paralelisme di dalam satu giliran adalah
+   * 1,00x, artinya seluruh panggilan model berjalan berurutan tanpa satu pun
+   * tumpang tindih, dengan median tiga panggilan dan 7.956 ms. Di depannya masih
+   * ada 4.377 ms median menunggu penggunanya selesai mengetik, dan selama
+   * jendela itu tidak ada pemahaman yang dikerjakan sama sekali.
+   *
+   * Yang dihangatkan hanya pass inti, dan hanya keputusannya. Konteks sengaja
+   * kosong: kelima field-nya tidak bergantung pada ringkasan atau daftar memori,
+   * dan satu-satunya yang menuntut riwayat adalah pesan berujuk seperti "yang
+   * tadi itu"—yang sudah ditangkap `DEEPER_TURN_CUES` dan karena itu tidak
+   * pernah sampai ke sini.
+   *
+   * Mengembalikan `null` bila giliran ini toh akan memakai kontrak penuh, supaya
+   * penghangatan tidak pernah menjadi panggilan ketiga yang sia-sia.
+   */
+  async prewarmUnderstanding(
+    message: string,
+    runtime: ConversationRuntime = {},
+  ): Promise<CoreUnderstanding | null> {
+    if (
+      turnLikelyNeedsFullPass(message, {
+        hasActiveSession: Boolean(runtime.session),
+      })
+    ) {
+      return null;
+    }
+    return this.understandCore(message, EMPTY_CONTEXT, runtime);
+  }
+
+  /**
    * Pass inti yang murah, dijalankan sebelum kontrak penuh.
    *
    * Mengembalikan `null` bila bentuknya tidak sah; pemanggilnya lalu jatuh ke
@@ -648,7 +686,12 @@ export class Conversation {
     const hasActiveSession = Boolean(runtime.session);
     let path = "direct-full";
     if (!turnLikelyNeedsFullPass(message, { hasActiveSession })) {
-      const core = await this.understandCore(message, context, runtime);
+      // Hasil yang sudah dihangatkan dipakai bila ada. Kegagalannya menjadi
+      // `null`, dan `null` sudah berarti kontrak penuh—arah yang aman.
+      const primed = runtime.primedCore;
+      const core = primed
+        ? await primed.catch(() => null)
+        : await this.understandCore(message, context, runtime);
       path = core ? "core-escalated" : "core-unreadable";
       if (core && !understandingNeedsFullPass(core, message, { hasActiveSession })) {
         this.logUnderstandingPath("core-only", core.intent);
