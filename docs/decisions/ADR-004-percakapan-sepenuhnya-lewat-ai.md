@@ -85,9 +85,10 @@ Trade-off yang harus diterima:
 - **Perilaku berbeda antar mode.** Satu model uji tidak mewakili tiga model
   produksi. Hasil pengujian dalam mode uji tidak boleh dianggap mewakili
   produksi, terutama untuk percakapan keselamatan.
-- **Privasi berubah.** Isi pesan pelajar kini dikirim ke penyedia model pihak
-  ketiga. Konstitusi Pasal 3.9 menuntut pengguna diberi tahu tentang ini, dan
-  itu **belum dikerjakan**.
+- **Privasi berubah.** Isi pesan pelajar dikirim ke penyedia model pihak
+  ketiga. Konstitusi Pasal 3.9 menuntut pengguna diberi tahu tentang ini.
+  Sejak gelembung persetujuan onboarding menyatakannya, tuntutan itu
+  **sudah dipenuhi**; lihat bagian keadaan sekarang di bawah.
 
 ## Batas yang dipilih dengan sengaja
 
@@ -96,7 +97,31 @@ Ini jalur paling sering dipakai, dan isinya hanya menampilkan kembali data yang
 sudah diekstraksi. Memanggil model dua kali di sana menambah biaya dan jeda
 tanpa manfaat yang sepadan.
 
-## Yang belum dikerjakan
+## Yang sudah dikerjakan sejak ADR ini ditulis
+
+Diperiksa ulang terhadap kode 3 September 2026. Keempat butir yang dulu tercatat
+belum ada, tiga di antaranya kini terpasang:
+
+- **Pemberitahuan pemrosesan pihak ketiga: ada.** Gelembung persetujuan
+  onboarding menyatakan pesan dan gambar diproses AI sebelum percakapan dimulai
+  (`src/bot/onboarding.ts`). Ini menutup tuntutan Pasal 3.9 yang disebut di
+  bagian konsekuensi di atas.
+- **Riwayat percakapan: ada.** `src/core/history-service.ts` menyimpan giliran,
+  memadatkannya menjadi episode, dan mengirim jendela terakhir ke tiap prompt.
+- **Batas pemakaian per pengguna: ada.** `src/core/economy-service.ts` beserta
+  ledger entitlement.
+- **Pemeriksaan keselamatan sebagai lapisan tersendiri: ada.** `src/ai/safety.ts`
+  dan `src/core/safety-policy.ts` memegang triase dan routing terpisah dari
+  penilaian model biasa. Pengukuran 3 September 2026 mencatat ongkosnya 3% dari
+  panggilan dan 1% dari waktu.
+
+Butir-butir itu dibiarkan tertulis di atas sebagai catatan sejarah keputusan,
+bukan sebagai pekerjaan tertunda. Yang membaca ADR ini untuk mencari pekerjaan
+harus memakai daftar di sini, bukan daftar lama.
+
+## Yang belum dikerjakan saat ADR ini ditulis
+
+_Lihat bagian di atas untuk keadaan sekarang._
 
 - Pemberitahuan kepada pengguna bahwa pesannya diproses penyedia model pihak
   ketiga, beserta persetujuannya.

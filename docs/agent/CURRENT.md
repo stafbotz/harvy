@@ -1,42 +1,53 @@
 # Current Context
 
-Refreshed: 2026-08-29
-Baseline: deb2d46
+Refreshed: 2026-09-03
+Baseline: a75ff15
 Context-Version: 1
 
 ## Verified baseline
 
 - Perubahan material yang dirangkum di sini dimulai di atas commit dasar
-  `deb2d46` pada `main`; status commit dan push aktual tetap dibaca dari Git.
-- `npm run check` PASS; `npm test` hijau tanpa kegagalan tercatat, dan bagian
-  Aktif `docs/engineering/KNOWN-FAILURES.md` kosong.
-- `npm run eval:conversation` 12/12 pada model sungguhan. Probe recall
-  memanggil `history.search` 3 dari 3 run; `scripts/coba-agent.ts` membuktikan
-  `terminal.run`, `agent.delegate.parallel`, `calendar.agenda`, dan
-  `history.search` benar-benar dipanggil. Ketepatan isi hasil recall belum
-  stabil dan dicatat di `docs/agent/SCRATCHPAD.md`.
-- Smoke Edge nyata PASS pada desktop/mobile: login, navigasi tiga langkah setup,
-  isi/simpan/verifikasi Compute+GitHub, non-reflection secret, dan layout. Ini
-  memakai probe/storage sementara dan bukan bukti remote live.
+  `a75ff15` pada `main`; status commit dan push aktual tetap dibaca dari Git.
+- `npm run check` PASS; `npm test` 2188/2188 hijau, dan bagian Aktif
+  `docs/engineering/KNOWN-FAILURES.md` kosong.
+- Telemetri pemakaian nyata 3 September 2026, 13 giliran Telegram: jalur
+  pemahaman 5 `core-only`, 5 `core-escalated`, 3 `direct-full`; keputusan
+  keselamatan 13/13 `calm`+`certain`, sehingga izin tulis memori terbuka penuh
+  dan tidak satu pun giliran ditandai berisiko.
+- Biaya terukur dari lalu lintas yang sama: pass pemahaman 1.018 token dan
+  2.179 ms lawan kontrak penuh 7.646 token dan 4.410 ms, yaitu 48% lebih hemat.
+- Pencarian memori berdasarkan makna diuji pada model lokal sungguhan dengan
+  kalimat Indonesia; celah kemiripannya lebar (0,63-0,69 lawan 0,13-0,23) dan
+  satu pencarian 29-199 ms sesudah model dimuat.
 
 ## Recent material changes
 
-- Gerbang bentuk intent menuju Agent Runtime menjadi satu fungsi,
-  `intentAllowsAgentRuntime`, dan menerima `history` serta `memory` di samping
-  `question`/`request`. Sebelumnya kedua adapter menuliskan daftarnya sendiri
-  dan ketiga tool recall tidak dapat dijangkau kalimat yang paling khas bagi
-  mereka. Kontrak `tool_choice: "auto"` dan `history.search` kini punya bukti
-  provider nyata; `memory.list` dan `memory.remember` belum.
-- Kegagalan transport provider punya alasan sendiri, `provider_unavailable`,
-  terpisah dari `invalid_planner_output`. Penolakan 4xx lain sengaja tetap
-  `invalid_planner_output` karena itu request yang kita susun sendiri.
-- Domain semantic `coding` (`show`, `cancel`) memberi padanan bahasa alami untuk
-  `/code_status` dan `/code_cancel` di kedua adapter. Permukaan slash WhatsApp
-  turun dari 29 menjadi 12 yang ditampilkan tanpa melepas satu pun dari katalog
-  eksekusi; slash tak dikenal tidak lagi membuang seluruh katalog ke layar.
+- Pemahaman dipecah dua tahap. Kontrak inti 3.253 karakter menjawab lima field
+  yang diperlukan sebelum berat-ringannya giliran diketahui; kontrak penuh
+  29.513 karakter hanya dibayar giliran yang memerlukannya. Petunjuk teks
+  diperiksa sebelum model dipanggil, sehingga giliran yang sudah jelas berat
+  melewati pass inti dan tidak pernah membayar dua kali. Pass inti juga
+  dihangatkan selama jendela tunggu batching, dan sinyal risikonya
+  memberangkatkan triase keselamatan bersamaan alih-alih berurutan.
+- Telemetri yang selama ini dibuang allow-list dibuka: manifest retrieval
+  memori (12 field), `httpStatus`/`responseOutcome` pada tiap permintaan AI,
+  keputusan keselamatan (`safety_decision`), jalur pemahaman
+  (`understanding_pass_chosen`), dan hasil tulis memori
+  (`memory_write_outcome`) beserta enam sebab penolakan yang sebelumnya
+  seluruhnya mengembalikan `null` identik.
+- Retrieval semantik memperoleh penyedia embedding yang berjalan di dalam
+  proses Harvy sendiri dan hidup secara bawaan, dengan sakelar mati dan pemutus
+  arus. Tidak ada catatan pengguna yang keluar dari mesin. Sapaan onboarding
+  juga tidak lagi naskah tetap: ia dikarang model tiap kali, dengan identitas
+  Harvy dijamin kode.
 
 ## Active cross-subsystem blockers
 
+- `AI_MODE=testing` membuat keempat tingkatan model jatuh ke satu model yang
+  sama, sehingga seluruh pemilihan peran kognitif berjalan tanpa tujuan yang
+  berbeda. 21 dari 37 capability terdefinisi tidak terpasang: seluruh domain
+  coding, sandbox, git, GitHub, delegasi spesialis, dan memori lintas scope.
+  WhatsApp pribadi maupun grup mati karena belum ada kredensial armada.
 - Build terdahulu sudah dipakai lewat akun Telegram tester dan dua akun WhatsApp
   terpisah, tetapi perubahan coding/Console terbaru belum diuji end-to-end dari
   kanal nyata. Dogfood tujuh hari, tiga wawancara, image live, interruption
