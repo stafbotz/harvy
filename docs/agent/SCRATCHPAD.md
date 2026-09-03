@@ -3066,6 +3066,62 @@ bagi kode adalah giliran tuntas; "selesai" bagi pengguna adalah balasan muncul.
 Mengukur yang pertama lalu menyebutnya lambat menghasilkan pekerjaan yang tidak
 menolong siapa pun.
 
+## 47. Prompt masih mengajarkan empat domain yang tidak dapat dieksekusi
+
+`semanticOperation` adalah blok terbesar di kontrak pemahaman penuh: 5.244 dari
+29.514 karakter. Tugasnya mengenali pesan yang sebenarnya perintah tentang
+Harvy sendiri—lihat kuota, hapus catatan, batalkan tugas, ganti paket.
+
+Dari 97 giliran nyata yang tercatat `semantic_route_evaluated`:
+
+| usulan model | jumlah |
+|---|---|
+| tidak ada | 88 (91%) |
+| memory/forget | 5 |
+| memory/list | 3 |
+| usage/show-details | 1 |
+
+Dua domain dari dua belas yang diajarkan. Tetapi jarang **bukan** alasan
+menghapus: "batalkan langganan" harus tetap dikenali walau setahun sekali.
+
+### Yang benar-benar cacat
+
+Empat domain—`project`, `goal`, `skill`, `coding`—melayani trust domain coding.
+Seluruh 21 capability domain itu tidak terpasang (`app.ts` tidak pernah
+mengoper `codingWorkspaceInstalled` dan saudaranya ke katalog). Bila model
+mengusulkan salah satunya, satu-satunya jawaban yang mungkin adalah "Runtime
+coding belum diaktifkan oleh deployment Harvy."
+
+Jadi 1.019 karakter (~255 token) pada **setiap** giliran kontrak penuh
+mengajarkan model mengenali perintah yang hanya dapat ditolak.
+
+Ini melanggar aturan yang sudah tertulis di AGENTS.md: *"Model hanya melihat
+capability yang benar-benar terpasang."* Aturan itu ditegakkan untuk
+`web.search`/`web.open`—dicabut, bukan dimatikan—tetapi tidak di sini.
+
+### Kenapa belum dikerjakan
+
+Perbaikan yang benar adalah menyusun blok itu dari capability yang terpasang,
+sehingga promptnya bergantung konfigurasi. Itu menambah kerumitan pada berkas
+yang tesnya mengunci frasa persis, demi 255 token atau ~3,5% dari pass penuh.
+
+Menghapus mentah tanpa itu memasang jebakan: begitu runtime coding dinyalakan,
+perintah bahasa alaminya diam-diam berhenti dikenali, dan tidak ada tes yang
+akan menangkapnya.
+
+Dicatat sebagai ketidakkonsistenan yang diketahui, bukan pekerjaan tertunda.
+Kerjakan bila blok ini disentuh untuk alasan lain, atau bila runtime coding
+benar-benar dipasang.
+
+### Sekalian tentang publicFocus
+
+Diukur pada pertanyaan yang sama: `publicFocus` memakan ~430 token per giliran
+kontrak penuh (blok khususnya 1.373 karakter plus bagiannya di skema JSON).
+Menghapusnya menghemat ~6% pass penuh dan sekitar 120 ms, dengan harga status
+kehilangan satu-satunya bagian yang bercerita. Baris status sendiri nol token—
+judulnya code-owned—dan tidak menahan apa pun: pembaruannya fire-and-forget dan
+penghapusannya terjadi sesudah balasan terkirim.
+
 ## Menunggu pengukuran dari pemakaian nyata
 
 Empat pertanyaan yang alat ukurnya sudah terpasang 2–3 September 2026 tetapi
