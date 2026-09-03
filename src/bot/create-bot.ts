@@ -252,6 +252,7 @@ import {
 } from "./commands.js";
 import { ActionOfferStore } from "./action-offers.js";
 import { MessageBatcher } from "./message-batcher.js";
+import { DeferredTurnRetry } from "../core/deferred-turn-retry.js";
 import {
   CONSENT_ACCEPTED,
   CONSENT_ACCEPTED_EMOJI,
@@ -1023,6 +1024,10 @@ export function createBot(
     primedUnderstanding.delete(ownerId);
     return primed.text === text ? primed.promise : null;
   }
+
+  const deferredRetry = new DeferredTurnRetry(
+    logger.child("core.deferred-retry"),
+  );
 
   const messageBatcher = new MessageBatcher<Context>(
     async (text, ownerId, turnId, signals) => {
@@ -2026,6 +2031,7 @@ export function createBot(
     drainPending: async () => {
       await drainIngress();
       await drainOnboarding();
+      deferredRetry.cancelAll();
       await messageBatcher.drainAll();
       await stopActiveAgentWork();
       await Promise.allSettled([...activeCodingWork]);
@@ -2269,6 +2275,11 @@ export function createBot(
             waiting.report({ phase: "waiting" });
           }
         }
+        // Pesan baru berarti percakapannya sudah bergerak. Jawaban atas
+        // pesan lama yang gagal justru mengganggu, jadi percobaan ulang
+        // yang tertunda dibatalkan di sini—bukan di dalam batcher, karena
+        // percobaan itu sendiri tidak lewat sana.
+        deferredRetry.cancel(ownerId);
         messageBatcher.enqueue(ownerId, text, ctx, ctx.update.update_id);
         return;
       }
@@ -2608,6 +2619,29 @@ export function createBot(
    * selebihnya Harvy menjawab sebagai teman bicara dan hanya *menawarkan*
    * pencatatan.
    */
+  /**
+   * Menjadwalkan Harvy mencoba giliran ini lagi sendiri, setengah menit lagi.
+   *
+   * Dipanggil sesudah kalimat maaf terkirim, bukan sebagai penggantinya:
+   * orangnya tetap diberi tahu sekarang, dan kalau gangguannya sudah lewat ia
+   * mendapat jawabannya tanpa mengetik ulang apa pun.
+   *
+   * Percobaan tertunda tidak pernah menjadwalkan penerusnya, sehingga
+   * provider yang benar-benar mati berhenti sesudah satu percobaan.
+   */
+  function arrangeDeferredRetry(
+    ctx: Context,
+    ownerId: string,
+    text: string,
+    attempted: boolean,
+  ): void {
+    if (attempted) return;
+    deferredRetry.arrange(ownerId, async (signal) => {
+      if (signal.aborted) return;
+      await handleFreeText(ctx, ownerId, text, { signal }, undefined, false, false, true);
+    });
+  }
+
   async function handleFreeText(
     ctx: Context,
     ownerId: string,
@@ -2616,6 +2650,11 @@ export function createBot(
     firstIngressUpdateId = ctx.update.update_id,
     explicitImmediateDanger = false,
     urgentBoundary = false,
+    // Percobaan ulang tertunda memutar ulang giliran yang sama.
+    // Pesan penggunanya sudah ada di riwayat sejak giliran pertama,
+    // dan kalimat maafnya sudah terkirim; keduanya tidak boleh
+    // terjadi dua kali.
+    isDeferredRetry = false,
   ): Promise<void> {
     // "2" diperluas menjadi frasa pilihan yang tercatat, lalu mengalir lewat
     // jalur biasa.
@@ -2674,6 +2713,7 @@ export function createBot(
         firstIngressUpdateId,
         explicitImmediateDanger,
         urgentBoundary,
+        isDeferredRetry,
       );
     } finally {
       if (activeProgress.get(ownerId) === progress) {
@@ -2703,6 +2743,11 @@ export function createBot(
     firstIngressUpdateId = ctx.update.update_id,
     explicitImmediateDanger = false,
     urgentBoundary = false,
+    // Percobaan ulang tertunda memutar ulang giliran yang sama.
+    // Pesan penggunanya sudah ada di riwayat sejak giliran pertama,
+    // dan kalimat maafnya sudah terkirim; keduanya tidak boleh
+    // terjadi dua kali.
+    isDeferredRetry = false,
   ): Promise<void> {
     const hasImageInput = Boolean(runtime.images?.length);
     if (
@@ -2835,7 +2880,7 @@ export function createBot(
 
     let understanding: Understanding | null;
     let triage: RiskAssessment;
-    let userAlreadyAppended = false;
+    let userAlreadyAppended = isDeferredRetry;
     let storedUserTurn: StoredConversationTurn | null = null;
     let activeRunLaunch: ActiveAgentRun | null = null;
     let activeRunLaunched = false;
@@ -3036,6 +3081,9 @@ export function createBot(
         const response = aiFailureMessage(readResult.error, undefined, {
           seed: ownerId,
         });
+        // Kalimat maafnya tetap dikirim sekarang; percobaan ulang menyusul
+        // sendiri setengah menit lagi bila penggunanya tidak bicara lagi.
+        arrangeDeferredRetry(ctx, ownerId, text, isDeferredRetry);
         if (!(await runtimeIsCurrent(runtime))) {
           await telemetry.discardUndelivered?.(ownerId, currentTurnId());
           return;
@@ -4099,6 +4147,7 @@ export function createBot(
             seed: ownerId,
           });
           await ctx.reply(failure);
+          arrangeDeferredRetry(ctx, ownerId, text, isDeferredRetry);
           // Kalimat gagal tidak masuk riwayat; lihat alasannya di jalur pemahaman.
           return;
         }

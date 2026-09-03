@@ -1936,7 +1936,7 @@ kosmetik tidak boleh menjadi sebab permintaan gagal.
 Judulnya menunjukkan usaha, bukan mekanismenya—tidak menyebut berapa kali atau
 apa yang gagal.
 
-### Yang belum dikerjakan
+### Percobaan ulang tertunda, dibangun 3 September 2026
 
 Percobaan ulang **tertunda**—Harvy menyimpan pesannya, menunggu setengah menit,
 lalu mencoba sekali lagi di luar giliran—dibahas dan disetujui arahnya tetapi
@@ -1944,6 +1944,16 @@ belum dibangun. Dua percobaan di dalam giliran sudah memenuhi "Harvy mencoba
 sendiri", sehingga kalimat gagalnya jujur apa adanya. Yang tersisa dari
 rancangan itu: pembatalan bila pengguna mengirim pesan baru, dan batas agar
 provider yang benar-benar mati tidak diulang tanpa henti.
+
+Keduanya kini ada di `DeferredTurnRetry`, bersama batas ketiga yang muncul
+saat menulisnya: satu jadwal per pemilik, sehingga kegagalan beruntun tidak
+menumpuk menjadi antrean. Percobaan tertunda tidak menjadwalkan penerusnya,
+dan bila ia gagal juga ia berakhir diam—kalimat maafnya sudah dikirim pada
+giliran aslinya, dan yang kedua tidak dapat dipakai penggunanya untuk apa pun.
+
+Riwayat tidak ditulis dua kali: penanda `isDeferredRetry` menyemai
+`userAlreadyAppended`, karena pesan penggunanya memang sudah masuk sebelum
+kalimat maaf pertama terkirim.
 
 ## 29. Prompt caching: yang tidak dicatat tidak bisa diperbaiki
 
@@ -3124,25 +3134,28 @@ penghapusannya terjadi sesudah balasan terkirim.
 
 ## Menunggu pengukuran dari pemakaian nyata
 
-Empat pertanyaan yang alat ukurnya sudah terpasang 2–3 September 2026 tetapi
-datanya belum ada. Semuanya menunggu Harvy dipakai wajar beberapa hari, bukan
-menunggu kode.
+Alat ukurnya dipasang 2-3 September 2026. Tiga dari empat pertanyaan sudah
+terjawab pada hari yang sama, dari 13 giliran Telegram sungguhan:
 
-| pertanyaan | sumbernya | dipasang di |
-|---|---|---|
-| berapa persen giliran selesai lewat kontrak inti | `understanding_pass_chosen` | butir 38 |
-| apakah ambang keselamatan terlalu sensitif | `safety_decision` | butir 41 |
-| apakah Harvy benar-benar belajar, atau menolak diam-diam | `memory_write_outcome` | butir 43 |
-| kecepatan nyata sesudah perubahan | `conversation_turn_completed` + `ai_request_completed` | butir 40, 42 |
+| pertanyaan | jawaban |
+|---|---|
+| berapa persen giliran selesai lewat kontrak inti | **38%** (5 `core-only`, 5 `core-escalated`, 3 `direct-full`) |
+| apakah ambang keselamatan terlalu sensitif | **tidak** — 13/13 `calm`+`certain`, triase tidak pernah dipanggil |
+| kecepatan nyata sesudah perubahan | **48%** lebih hemat: 1.018 token dan 2.179 ms lawan 7.646 token dan 4.410 ms |
+| apakah Harvy benar-benar belajar, atau menolak diam-diam | **masih menunggu** |
 
-Angka yang beredar sekarang untuk tiga yang pertama berasal dari korpus evaluasi
-dan hitungan model latensi, **bukan** dari lalu lintas sungguhan. Korpus itu
-sengaja padat fitur dan bukan wakil obrolan asli, jadi selisihnya bisa besar:
-korpus memberi 15% penghematan sedangkan giliran sederhana nyata memberi 65%.
+Yang terakhir bukan menunggu pemakaian melainkan menunggu **restart**:
+`memory_write_outcome` masih nol karena proses yang berjalan mendahului commit
+yang memasangnya.
 
-Jangan mengambil keputusan ambang—menaikkan atau menurunkan sensitivitas
-keselamatan, mengubah `DEEPER_TURN_CUES`, mengubah batas memori—sebelum data ini
-ada. Menyetel dari perkiraan hanya menukar satu tebakan dengan tebakan lain.
+Angka 38% itu di atas titik impas rancangan dua tahap (~20%), dan di atas
+korpus evaluasi yang memberi 25%. Selisihnya sesuai dugaan: korpus sengaja
+padat fitur.
+
+Yang masih berlaku dari catatan lama: jangan menyetel ambang—sensitivitas
+keselamatan, `DEEPER_TURN_CUES`, batas memori—dari korpus atau perkiraan.
+Sekarang ada tiga angka nyata untuk dipakai; yang keempat menyusul sesudah
+restart.
 
 ## Kemampuan yang absen secara rancangan
 
