@@ -117,6 +117,7 @@ menegaskan mana yang masih mengikat, jadi statusnya sengaja tidak ditebak.
 | [`ADR-042`](decisions/ADR-042-long-term-memory-dan-evidence-backed-learning.md) | hot/warm/cold memory, SQLite archive/outbox, user model, procedure/error lesson, embedding cache, dan deletion fence |
 | [`ADR-043`](decisions/ADR-043-potret-naratif-dan-kontrol-memori-natural.md) | potret naratif `/memori`, renderer bersama, kontrol natural, dan notification tanpa tombol per-item |
 | [`ADR-044`](decisions/ADR-044-semantic-operation-dan-transient-interaction-context.md) | semantic operation code-authorized, transient interaction context, context cleanliness, dan katalog menu |
+| [`ADR-045`](decisions/ADR-045-pencegahan-penyalahgunaan-dan-penangguhan-akses.md) | penangguhan akses proporsional, keselamatan mengalahkan kendali penyalahgunaan, dan laporan ke pengelola |
 
 ADR adalah rekaman keputusan, bukan status kemampuan. Bila ADR lama berisi
 aturan yang telah disupersesi, ikuti ADR penerus dan kontrak aktif.
