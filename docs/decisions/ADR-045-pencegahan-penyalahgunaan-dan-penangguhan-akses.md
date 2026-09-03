@@ -60,12 +60,16 @@ adalah pelajar, sedangkan konstitusi Harvy menaruh pelajar lebih dulu.
    pengguna terkunci lama karena tidak ada yang sempat, bukan karena ada yang
    memutuskan. Pemilik tetap dapat memperpanjang secara sadar.
 
-6. **Deteksi dimulai dari yang kokoh saja.** Makian yang ditujukan adalah kata
-   harfiah kepada sasaran bernama, dan dapat dideteksi dengan andal. Percobaan
-   merusak adalah niat: pelajar penasaran yang bertanya "kamu kerjanya gimana?"
-   bukan penyerang. Karena itu percobaan merusak **dicatat tanpa menangguhkan**
-   sampai ada data nyata tentang bentuknya, persis seperti ambang keselamatan
-   yang tidak disetel sebelum ada pengukuran.
+6. **Buktinya adalah kegigihan, bukan kosakata.** Percobaan merusak tidak dapat
+   dikenali dari satu pesan: pelajar penasaran yang bertanya "kamu kerjanya
+   gimana?" bukan penyerang, dan menebak niat dari sebuah kalimat akan menjerat
+   justru yang paling ingin tahu. Yang membedakan bukan apa yang ditanyakan
+   melainkan apakah orangnya berhenti sesudah ditolak. Yang penasaran bertanya
+   sekali lalu selesai; yang mencoba menembus akan mengulang dengan kalimat
+   lain. Karena itu tangganya sama persis dengan makian—tiga penolakan Harvy
+   lebih dulu, baru penahanan—dan pelajar penasaran tidak akan pernah sampai
+   ketiga. Ambang yang lebih halus menunggu data nyata, tetapi jalurnya berlaku
+   sejak awal.
 
 7. **Yang disimpan adalah hitungan dan sinyal, bukan kutipan.** Profil perilaku
    pelajar adalah permukaan privasi baru. Keputusan penangguhan hanya
@@ -115,7 +119,8 @@ adalah pelajar, sedangkan konstitusi Harvy menaruh pelajar lebih dulu.
 
 ## Yang sengaja tidak diputuskan sekarang
 
-- Ambang deteksi percobaan merusak. Menunggu data nyata, sesuai keputusan 6.
+- Ambang halus untuk percobaan merusak. Jalur penahanannya berlaku sejak awal
+  lewat tangga tiga penolakan; yang menunggu data hanyalah penyetelannya.
 - Penangguhan permanen. Tidak ada, dan tidak akan ada tanpa manusia yang
   memutuskannya secara eksplisit.
 - Banding formal. Untuk sekarang jalurnya adalah pemilik membaca laporannya.
