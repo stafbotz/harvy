@@ -2923,6 +2923,113 @@ keselamatan hanya bersuara saat gagal, dan kini tulis memori tidak bersuara sama
 sekali. Setiap kali, yang hilang justru satu-satunya angka yang dapat menjawab
 pertanyaan yang sedang diajukan.
 
+## 45. Pencarian memori berdasarkan makna, dijalankan di dalam Harvy sendiri
+
+ADR-031 merancang retrieval semantik sebagai **opt-in dan mati secara bawaan**,
+dan ADR yang sama mencatat ia "belum diuji terhadap provider". Sampai 3
+September 2026 itu masih benar, karena tidak ada provider yang dapat dipakai:
+
+| | hasil pemeriksaan |
+|---|---|
+| GMI, penyedia Harvy | 83 model, nol embedding |
+| daftar model OpenRouter | 424 model, nol embedding |
+| `OPENROUTER_API_KEY` | kosong |
+
+Jadi `searchSemantic` selalu pulang kosong bukan karena rusak, melainkan karena
+tidak pernah punya mesin.
+
+### Kenapa lokal, bukan sewa
+
+Menyewa layanan membuka tiga ongkos sekaligus: setiap catatan tentang pengguna
+dikirim ke perusahaan lain untuk diindeks, tiap giliran menambah satu panggilan
+jaringan (biaya tetap terukur ~2.101 ms), dan ada tagihan. Untuk pendamping
+pelajar yang seluruh penyimpanannya lokal dan satu proses, yang pertama bukan
+detail teknis.
+
+Kontrak `TextEmbeddingProvider` ternyata hanya tiga hal—`modelId`,
+`modelVersion`, dan `embed()`—sehingga penyedia lokal adalah satu berkas, bukan
+proyek.
+
+### Terukur pada model sungguhan, kalimat Indonesia
+
+Terhadap "aku lagi berat banget rasanya":
+
+| pembanding | kemiripan |
+|---|---|
+| "aku lagi stres berat" | 0,691 |
+| "aku sedang tertekan dan capek" | 0,627 |
+| "besok ada ulangan matematika" | 0,233 |
+| "harga cabai di pasar naik" | 0,132 |
+
+"berat" dan "stres" tidak berbagi satu huruf pun, dan jaraknya terhadap kalimat
+tak berhubungan lebar—0,63–0,69 lawan 0,13–0,23. Itu celah yang cukup untuk
+ambang mana pun yang wajar.
+
+Biayanya:
+
+| | |
+|---|---|
+| memuat model dari cache | ~3.800 ms, sekali per proses, malas |
+| satu embedding sesudah dimuat | 29–199 ms |
+| bobot model di disk | 130 MB |
+| tambahan `node_modules` | ~330 MB |
+
+Bandingkan dengan biaya tetap satu panggilan jaringan, 2.101 ms: setelah model
+dimuat, jalur lokal satu sampai dua orde lebih cepat, dan tidak ada byte yang
+keluar dari mesin.
+
+### Keputusan rancangan
+
+**Bobot 8-bit, bukan presisi penuh.** Bawaan pustaka pada Node adalah fp32 dan
+mengunduh 399 MB; kuantisasi 8-bit memberi 130 MB. Yang dipakai pencarian
+kemiripan hanya urutan peringkat, dan selisih presisi tidak menggesernya.
+
+**Cache bobot di luar `node_modules`.** Bila dibiarkan di dalamnya, setiap
+pemasangan ulang pustaka menghapus bobotnya dan memaksa unduhan besar lagi.
+
+**Dimuat malas.** Tidak ada apa pun tersentuh sampai embedding pertama diminta,
+sehingga Harvy yang tidak memakainya tidak membayar apa pun saat start.
+Konsekuensinya jujur: giliran pertama yang memakai route ini membayar ~3,8 detik
+pemuatan.
+
+**Kegagalan tidak di-cache.** Pustaka yang belum terpasang atau unduhan yang
+putus harus dapat dicoba lagi pada giliran berikutnya, bukan mematikan route
+sampai Harvy dimulai ulang.
+
+**Dua sumber vektor saling eksklusif dan gagal tertutup.** Config menolak
+`MEMORY_EMBEDDING_MODEL` dan `MEMORY_EMBEDDING_LOCAL_MODEL` terisi bersamaan:
+cache embedding dikunci per model, dan dua ruang vektor yang tercampur
+menghasilkan skor kemiripan yang tidak berarti apa pun.
+
+### Hidup secara bawaan, dan apa yang itu tuntut
+
+ADR-031 merancangnya opt-in karena satu-satunya penyedia waktu itu layanan
+luar, dan mengirim catatan pengguna ke pihak ketiga memang pantas menuntut
+keputusan sadar. Penyedia lokal menghapus alasan itu seluruhnya, jadi pemilik
+produk memutuskan menyalakannya tanpa konfigurasi apa pun.
+
+Menyalakan secara bawaan menuntut dua hal yang tidak diperlukan selama ia
+opt-in:
+
+**Sakelar mati.** `MEMORY_EMBEDDING_LOCAL_MODEL=off` mengembalikannya ke
+keadaan lama. Mesin dengan disk sempit, tanpa jaringan untuk unduhan pertama,
+atau lingkungan uji harus dapat menolak tanpa menyunting kode.
+
+**Pemutus arus.** Mesin tanpa jaringan akan mencoba memuat 130 MB pada SETIAP
+giliran yang memakai pencarian makna, masing-masing dengan jedanya sendiri.
+Sesudah tiga kegagalan berturut-turut, route ini diam sepuluh menit, lalu
+mencoba lagi. Kegagalan tidak permanen: pustaka yang baru dipasang atau
+jaringan yang kembali harus langsung dapat dipakai tanpa Harvy dimulai ulang.
+
+`npm test` 2188/2188 hijau dan **tidak** mengunduh model sama sekali—pemuatan
+malas terbukti: tidak ada satu pun tes yang menyentuhnya.
+
+### Yang tetap benar dari saran sebelumnya
+
+Dengan 8 episode dan beberapa catatan, semuanya masih muat masuk prompt dan
+model membacanya langsung. Route ini baru benar-benar bekerja ketika isinya
+tidak muat lagi. Ia dibangun sekarang supaya siap, bukan karena sudah mendesak.
+
 ## Menunggu pengukuran dari pemakaian nyata
 
 Empat pertanyaan yang alat ukurnya sudah terpasang 2–3 September 2026 tetapi

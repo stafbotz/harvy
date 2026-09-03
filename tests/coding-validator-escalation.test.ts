@@ -139,6 +139,8 @@ function routing(privacyDomain = "workspace.private"): AiConfig {
     modelProfiles: new ModelProfileRegistry([target]),
     configuredModels: [],
     memoryEmbeddingModel: null,
+    memoryEmbeddingLocalModel: null,
+    memoryEmbeddingCacheFolder: "./data/model-cache",
     rollingTokenLimit: 1_000_000,
     prices: {
       cheap: { inputPerMillionUsd: 0, outputPerMillionUsd: 0 },

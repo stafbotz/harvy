@@ -135,6 +135,8 @@ function routing(): AiConfig {
     modelProfiles: new ModelProfileRegistry(models.map(profile)),
     configuredModels: [],
     memoryEmbeddingModel: null,
+    memoryEmbeddingLocalModel: null,
+    memoryEmbeddingCacheFolder: "./data/model-cache",
     rollingTokenLimit: 1_000_000,
     prices: {
       cheap: { inputPerMillionUsd: 0, outputPerMillionUsd: 0 },

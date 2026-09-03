@@ -8,6 +8,10 @@ data/*.sqlite*
 # Lock satu proses untuk repository lokal; dapat tertinggal setelah crash.
 *.runtime.lock
 # Memori dan catatan keselamatan per pengguna. Ini data pribadi, bukan cache.
+# Bobot model embedding lokal. Ratusan megabita, dapat diunduh ulang, dan
+# bukan sumber kebenaran apa pun.
+data/model-cache/
+
 data/memori/
 # Kredensial linked-device WhatsApp. Kebocoran folder ini setara mengambil alih
 # sesi nomor Harvy; tidak boleh pernah masuk Git.

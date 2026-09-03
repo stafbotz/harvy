@@ -55,6 +55,7 @@
     "node": ">=22.16.0"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "baileys": "7.0.0-rc14",
     "grammy": "^1.45.1",
     "qrcode-terminal": "0.12.0",

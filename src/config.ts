@@ -1,4 +1,5 @@
 import { parse, resolve } from "node:path";
+import { DEFAULT_LOCAL_EMBEDDING_MODEL } from "./ai/local-embedding-client.js";
 import type { AiClientOptions } from "./ai/client.js";
 import { ApiKeyPool } from "./ai/key-pool.js";
 import {
@@ -71,6 +72,16 @@ export interface AiConfig {
   configuredModels: ConfiguredModel[];
   /** Null mempertahankan retrieval semantic fail-closed. */
   memoryEmbeddingModel: string | null;
+  /**
+   * Model embedding yang berjalan di dalam proses Harvy sendiri.
+   *
+   * Alternatif lokal untuk `memoryEmbeddingModel`, dipilih ketika data
+   * memori tidak boleh keluar ke penyedia mana pun. Null berarti sama
+   * seperti sebelumnya: retrieval semantik tetap fail-closed.
+   */
+  memoryEmbeddingLocalModel: string | null;
+  /** Tempat bobot model lokal disimpan; bertahan lintas pemasangan ulang. */
+  memoryEmbeddingCacheFolder: string;
   rollingTokenLimit: number;
   prices: Record<ModelTier, TierPrice>;
 }
@@ -523,6 +534,40 @@ export function loadAiConfig(): AiConfig {
   const memoryEmbeddingModel = memoryEmbeddingModelRaw
     ? configuredModelId("MEMORY_EMBEDDING_MODEL", memoryEmbeddingModelRaw)
     : null;
+  const memoryEmbeddingLocalRaw =
+    process.env.MEMORY_EMBEDDING_LOCAL_MODEL?.trim() ?? "";
+  // "off" mematikan pencarian makna sepenuhnya. Diperlukan karena route
+  // ini kini hidup secara bawaan: mesin tanpa ruang disk, tanpa jaringan
+  // untuk unduhan pertama, atau lingkungan uji yang tidak boleh memuat
+  // model harus punya cara menolak tanpa menyunting kode.
+  const memoryEmbeddingLocalOff = /^(?:off|none|mati|0)$/iu
+    .test(memoryEmbeddingLocalRaw);
+  // Dua sumber vektor sekaligus tidak masuk akal dan berbahaya: cache
+  // embedding dikunci per model, dan dua ruang vektor berbeda yang tercampur
+  // menghasilkan skor kemiripan yang tidak berarti apa-apa. Gagal tertutup.
+  if (memoryEmbeddingModelRaw && memoryEmbeddingLocalRaw) {
+    throw configurationError(
+      "CONFIG_MEMORY_EMBEDDING_AMBIGUOUS",
+      "MEMORY_EMBEDDING_MODEL dan MEMORY_EMBEDDING_LOCAL_MODEL tidak boleh diisi bersamaan; pilih satu sumber vektor.",
+    );
+  }
+  // Hidup secara bawaan.
+  //
+  // ADR-031 merancangnya opt-in karena satu-satunya penyedia waktu itu
+  // adalah layanan luar, dan mengirim catatan pengguna ke pihak ketiga
+  // memang pantas menuntut keputusan sadar. Penyedia lokal menghapus
+  // alasan itu: tidak ada data yang keluar, tidak ada tagihan, dan tidak
+  // ada biaya tetap jaringan. Yang tersisa hanya ongkos disk, dan itu
+  // tidak sepadan dengan membiarkan kemampuannya tidur.
+  const memoryEmbeddingLocalModel = memoryEmbeddingLocalOff ||
+      memoryEmbeddingModel
+    ? null
+    : memoryEmbeddingLocalRaw || DEFAULT_LOCAL_EMBEDDING_MODEL;
+  // Cache bobot model tinggal di luar `node_modules`, supaya pemasangan
+  // ulang pustaka tidak memaksa unduhan ratusan megabita sekali lagi.
+  const memoryEmbeddingCacheFolder = resolve(
+    process.env.MEMORY_EMBEDDING_CACHE_FOLDER ?? "./data/model-cache",
+  );
   const testingModels: Partial<Record<ModelTier, string>> = {
     ...(process.env.AI_MODEL_TESTING_CHEAP?.trim()
       ? { cheap: process.env.AI_MODEL_TESTING_CHEAP.trim() }
@@ -602,6 +647,8 @@ export function loadAiConfig(): AiConfig {
       modelProfiles,
       configuredModels,
       memoryEmbeddingModel,
+      memoryEmbeddingLocalModel,
+      memoryEmbeddingCacheFolder,
       rollingTokenLimit,
       prices,
     };
@@ -663,6 +710,8 @@ export function loadAiConfig(): AiConfig {
     modelProfiles,
     configuredModels,
     memoryEmbeddingModel,
+    memoryEmbeddingLocalModel,
+    memoryEmbeddingCacheFolder,
     rollingTokenLimit,
     prices,
   };

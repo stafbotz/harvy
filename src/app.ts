@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { AiClient } from "./ai/client.js";
 import { OpenAiCompatibleEmbeddingProvider } from "./ai/embedding-client.js";
+import { LocalTextEmbeddingProvider } from "./ai/local-embedding-client.js";
 import { Conversation } from "./ai/conversation.js";
 import type { HarvyContext } from "./ai/context.js";
 import { GroupConversation } from "./ai/group-conversation.js";
@@ -291,7 +292,15 @@ const longTermMemory = new LongTermMemoryService(
 );
 // Memori berupa berkas Markdown, satu folder per pengguna. Berkas JSON lama
 // hanya dibaca sekali sebagai bahan impor, lalu tidak pernah ditulis lagi.
-const memoryEmbedding = config.ai.memoryEmbeddingModel
+// Dua sumber vektor yang saling eksklusif; config sudah menolak keduanya
+// terisi bersamaan. Yang lokal tidak mengirim apa pun ke luar proses,
+// sehingga catatan pengguna tidak pernah meninggalkan mesin ini.
+const memoryEmbedding = config.ai.memoryEmbeddingLocalModel
+  ? new LocalTextEmbeddingProvider({
+      model: config.ai.memoryEmbeddingLocalModel,
+      cacheFolder: config.ai.memoryEmbeddingCacheFolder,
+    })
+  : config.ai.memoryEmbeddingModel
   ? new OpenAiCompatibleEmbeddingProvider({
       baseUrl: config.ai.baseUrl,
       keys: config.ai.keys,
