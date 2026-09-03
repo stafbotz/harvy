@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { OperationalLogger } from "../src/observability/operational-logger.js";
 import { describe, it } from "node:test";
 import {
   MemoryService,
@@ -511,3 +512,105 @@ class FailOnceForgetAllLifecycle extends MemoryLifecycle {
     await super.forgetPrivateOwner(ownerId);
   }
 }
+
+/**
+ * Hasil tulis memori kini tercatat.
+ *
+ * Sampai 3 September 2026 `memory-service.ts` tidak punya satu pun catatan
+ * keberhasilan, hanya tiga `logger.error`. Padahal `remember` menolak diam-diam
+ * karena enam sebab berbeda yang semuanya mengembalikan `null` yang sama. Satu
+ * catatan tersimpan setelah 430 panggilan model karena itu tidak dapat
+ * dibedakan antara "tidak ada yang layak diingat" dan "semuanya ditolak".
+ */
+describe("catatan hasil tulis memori", () => {
+  interface Rekam {
+    event: string;
+    data: Record<string, unknown>;
+  }
+
+  function perekam(sink: Rekam[]): OperationalLogger {
+    const logger = {
+      info: (event: string, _message: string, data?: Record<string, unknown>) => {
+        sink.push({ event, data: data ?? {} });
+      },
+      warn: () => undefined,
+      error: () => undefined,
+      debug: () => undefined,
+      child: () => logger,
+    } as unknown as OperationalLogger;
+    return logger;
+  }
+
+  function layanan(sink: Rekam[]): MemoryService {
+    return new MemoryService(
+      new MemoryStore(),
+      () => new Date("2026-09-03T00:00:00.000Z"),
+      null,
+      perekam(sink),
+    );
+  }
+
+  it("mencatat penyimpanan yang berhasil beserta jumlahnya", async () => {
+    const sink: Rekam[] = [];
+    await layanan(sink).remember({
+      ownerId: "1",
+      kind: "preference",
+      content: "suka belajar malam",
+    } as NewMemory);
+
+    const catatan = sink.find((r) => r.event === "memory_write_outcome");
+    assert.equal(catatan?.data["outcome"], "tersimpan");
+    assert.equal(catatan?.data["memoryKind"], "preference");
+    assert.equal(catatan?.data["storedCount"], 1);
+  });
+
+  // Enam sebab penolakan yang dulu tak terbedakan.
+  it("menyebutkan alasan setiap penolakan", async () => {
+    for (
+      const [input, alasan] of [
+        [{ kind: "preference", content: "   " }, "kosong"],
+        [{ kind: "personal", content: "sesuatu yang pribadi" }, "butuh_persetujuan"],
+      ] as const
+    ) {
+      const sink: Rekam[] = [];
+      const hasil = await layanan(sink).remember({
+        ownerId: "1",
+        ...input,
+      } as NewMemory);
+
+      assert.equal(hasil, null, alasan);
+      assert.equal(
+        sink.find((r) => r.event === "memory_write_outcome")?.data["outcome"],
+        alasan,
+      );
+    }
+  });
+
+  it("mencatat usulan berulang sebagai duplikat, bukan diam", async () => {
+    const sink: Rekam[] = [];
+    const service = layanan(sink);
+    const isi = { ownerId: "1", kind: "preference", content: "suka kopi" };
+    await service.remember(isi as NewMemory);
+    sink.length = 0;
+    await service.remember(isi as NewMemory);
+
+    assert.equal(
+      sink.find((r) => r.event === "memory_write_outcome")?.data["outcome"],
+      "duplikat",
+    );
+  });
+
+  // Penjaga terpenting di berkas ini. Catatan memori adalah perkataan
+  // penggunanya sendiri, dan log operasional bukan tempatnya.
+  it("tidak pernah membawa isi catatannya ke dalam log", async () => {
+    const sink: Rekam[] = [];
+    const rahasia = "aku tinggal di jalan melati nomor tujuh";
+    await layanan(sink).remember({
+      ownerId: "1",
+      kind: "context",
+      content: rahasia,
+    } as NewMemory);
+
+    assert.doesNotMatch(JSON.stringify(sink), /melati|tujuh/u);
+  });
+});

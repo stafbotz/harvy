@@ -302,6 +302,12 @@ const PRIVATE_IDENTIFIER_KEYS = new Set([
 ]);
 
 const ALLOWED_DATA_KEYS = new Set([
+  // Hasil satu percobaan menulis memori. `outcome` sudah ada; dua ini
+  // melengkapinya. Isi catatannya tidak pernah ikut—hanya jenis dan jumlah,
+  // cukup untuk menghitung apakah Harvy benar-benar belajar tentang
+  // penggunanya, tidak cukup untuk membaca ulang percakapan siapa pun.
+  "memorykind",
+  "storedcount",
   // Keputusan routing keselamatan. Enum dan boolean saja; ringkasan triase
   // sengaja tidak pernah dicatat karena ia memparafrasakan ucapan pengguna.
   // Tanpa keenam field ini, jalur keselamatan hanya mengeluarkan bunyi saat

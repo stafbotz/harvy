@@ -2877,6 +2877,52 @@ Hanya mempercepat, tidak pernah memutuskan: hasilnya tetap melewati
 hasilnya sekadar tidak terpakai. Kalau pass inti dilewati, sinyalnya tidak
 pernah dikirim.
 
+## 43. Harvy tidak pernah mencatat bahwa ia mengingat sesuatu
+
+Ditemukan 3 September 2026 saat menjelaskan kepada pemilik produk mengapa lima
+dari enam route memori kosong.
+
+Harvy menyimpan **satu** catatan tentang penggunanya setelah 430 panggilan
+model. Pertanyaan wajarnya—apakah itu karena tidak ada yang layak diingat, atau
+karena semuanya ditolak—ternyata tidak dapat dijawab: `memory-service.ts` tidak
+punya satu pun `logger.info` atau `logger.debug`, hanya tiga `logger.error`.
+
+Dan `remember()` menolak diam-diam karena enam sebab berbeda yang seluruhnya
+mengembalikan `null` yang identik: isi kosong, terdeteksi rahasia, pemilik
+terkunci, `personal` tanpa persetujuan, duplikat, dan penyimpanan penuh.
+
+Empat sebab pertama bahkan tergabung dalam satu rantai `||`, sehingga secara
+struktur tidak mungkin dibedakan. Rantai itu kini dipecah menjadi satu gerbang
+per sebab. Urutan evaluasinya tidak berubah dan perilakunya persis sama; yang
+berubah hanyalah setiap penolakan menyebutkan namanya.
+
+`memory_write_outcome` membawa `outcome`, `memoryKind`, dan `storedCount`. Isi
+catatannya **tidak pernah** ikut: itu perkataan penggunanya sendiri, dan log
+operasional bukan tempatnya. Satu tes mengunci hal itu dengan mencari kembali
+frasa aslinya di seluruh log.
+
+### Diuji lewat logger sungguhan, bukan logger palsu
+
+Tes unit memakai logger tiruan, dan itu hanya membuktikan field-nya *dikirim*—
+kesalahan yang sama persis pernah terjadi pada `cacheReadTokens`, yang lolos tes
+tetapi dibuang allow-list di produksi. Karena itu hasilnya diverifikasi ulang
+lewat `createOperationalLogSystem` sungguhan dengan membaca berkasnya kembali:
+
+```
+{"outcome":"tersimpan","memoryKind":"context","storedCount":1}
+{"outcome":"duplikat","memoryKind":"context"}
+{"outcome":"butuh_persetujuan","memoryKind":"personal"}
+isi catatan bocor ke log? tidak
+```
+
+### Kelima kalinya hari ini
+
+Pola yang sama berulang: telemetri manifest memori dibuang allow-list, `intent`
+tidak tercatat, `httpStatus` dan `responseOutcome` dibuang, keputusan
+keselamatan hanya bersuara saat gagal, dan kini tulis memori tidak bersuara sama
+sekali. Setiap kali, yang hilang justru satu-satunya angka yang dapat menjawab
+pertanyaan yang sedang diajukan.
+
 ## Kemampuan yang absen secara rancangan
 
 Bukan pekerjaan tertunda; dicatat supaya tidak diusulkan ulang sebagai

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   MemoryItem,
   MemoryRepository,
+  MemoryKind,
   NewMemory,
 } from "../domain/memory.js";
 import {
@@ -42,20 +43,64 @@ export class MemoryService {
     private readonly learning: MemoryLearningLifecycle | null = null,
   ) {}
 
+  /**
+   * Mencatat hasil satu percobaan menulis memori.
+   *
+   * Sampai 3 September 2026 berkas ini tidak punya satu pun catatan
+   * keberhasilan—hanya tiga `logger.error`. Padahal `remember` dapat menolak
+   * diam-diam karena enam sebab berbeda, dan semuanya mengembalikan `null` yang
+   * sama persis. Akibatnya pertanyaan paling wajar tentang Harvy, "apakah dia
+   * benar-benar belajar tentang penggunanya", tidak dapat dijawab: satu catatan
+   * tersimpan setelah 430 panggilan model bisa berarti tidak ada yang layak
+   * diingat, atau berarti semuanya ditolak, dan dari luar keduanya identik.
+   *
+   * Isi catatannya TIDAK pernah ikut. Yang keluar hanya hasil, jenis, dan
+   * jumlah—cukup untuk menghitung, tidak cukup untuk membaca ulang percakapan
+   * siapa pun.
+   */
+  private noteWriteOutcome(
+    outcome: string,
+    kind: MemoryKind,
+    storedCount?: number,
+  ): void {
+    try {
+      this.logger.info(
+        "memory_write_outcome",
+        "Percobaan menulis memori selesai.",
+        {
+          outcome,
+          memoryKind: kind,
+          ...(storedCount === undefined ? {} : { storedCount }),
+        },
+      );
+    } catch {
+      // Pengumpulan bukti tidak boleh menjadi sebab tulis memori gagal.
+    }
+  }
+
   async remember(input: NewMemory): Promise<MemoryItem | null> {
     return this.exclusiveSource(input.ownerId, async () => {
       const content = input.content.trim();
-      if (
-        !content ||
-        containsForbiddenMemorySecret(content) ||
-        this.blockedOwners.has(input.ownerId) ||
-        (input.kind === "personal" && input.sensitiveConsent !== true)
-      ) return null;
+      // Satu gerbang per sebab, bukan satu rantai `||`.
+      //
+      // Perilakunya persis sama dan urutannya tidak berubah; yang berubah
+      // hanyalah setiap penolakan kini menyebutkan alasannya. Dalam bentuk
+      // lama keenamnya mengembalikan `null` yang tak terbedakan.
+      const reject = (outcome: string): null => {
+        this.noteWriteOutcome(outcome, input.kind);
+        return null;
+      };
+      if (!content) return reject("kosong");
+      if (containsForbiddenMemorySecret(content)) return reject("rahasia");
+      if (this.blockedOwners.has(input.ownerId)) return reject("terkunci");
+      if (input.kind === "personal" && input.sensitiveConsent !== true) {
+        return reject("butuh_persetujuan");
+      }
 
       const existing = await this.listUnlocked(input.ownerId);
-      if (this.blockedOwners.has(input.ownerId)) return null;
+      if (this.blockedOwners.has(input.ownerId)) return reject("terkunci");
       await this.lifecycle?.reconcileSources?.(existing);
-      if (this.blockedOwners.has(input.ownerId)) return null;
+      if (this.blockedOwners.has(input.ownerId)) return reject("terkunci");
 
       // Model mengusulkan memori pada setiap giliran, sehingga hal yang sama
       // akan diusulkan berulang kali. Tanpa penjagaan ini, "kelas 11 IPA" akan
@@ -63,8 +108,8 @@ export class MemoryService {
       const duplicate = existing.find(
         (item) => item.content.toLowerCase() === content.toLowerCase(),
       );
-      if (duplicate) return null;
-      if (existing.length >= MEMORY_STORAGE_LIMIT) return null;
+      if (duplicate) return reject("duplikat");
+      if (existing.length >= MEMORY_STORAGE_LIMIT) return reject("penuh");
 
       const now = this.now();
       const item: MemoryItem = {
@@ -80,12 +125,13 @@ export class MemoryService {
       await this.repository.save(item);
       if (this.blockedOwners.has(input.ownerId)) {
         await this.repository.remove(input.ownerId, item.id);
-        return null;
+        return reject("terkunci_setelah_simpan");
       }
       this.scheduleDerivation(input.ownerId, () =>
         this.lifecycle?.rememberSource(item, input) ?? Promise.resolve());
       this.scheduleLearning(input.ownerId, () =>
         this.learning?.rememberSource(item, input) ?? Promise.resolve());
+      this.noteWriteOutcome("tersimpan", item.kind, existing.length + 1);
       return item;
     });
   }
