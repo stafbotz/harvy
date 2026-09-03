@@ -144,8 +144,10 @@ repository kosong. Bukti provider/kanal live terakhir harus dibaca di
   diverifikasi live. GitHub runtime tetap opt-in; Console menyediakan jalur
   setup private key, OAuth secret, state secret, service HMAC, callback, dan
   Broker, tetapi repository test serta konfirmasi efek tetap diperlukan.
-  Preflight resmi berhenti sebelum efek dengan
-  `GITHUB_LIVE_ACCEPTANCE_REQUIRES_CREATE_NONCRITICAL_DRAFT_PR`.
+  Preflight resmi berhenti sebelum efek. Kode yang disebut catatan lama,
+  GITHUB_LIVE_ACCEPTANCE_REQUIRES_CREATE_NONCRITICAL_DRAFT_PR, tidak pernah
+  ada di kode dan tidak punya pengganti; yang benar-benar dikeluarkan broker
+  adalah kode berawalan `GITHUB_APP_` dan `GITHUB_BROKER_`.
 - Bukti profile Google lama tidak lagi menjadi profile runtime testing.
   `gmi-serving/MiniMaxAI/MiniMax-M3` sudah lulus smoke exact umum dan memakai
   profile code-owned, tetapi CodingRun provider live, target `toughest`, dan

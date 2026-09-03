@@ -142,5 +142,37 @@ ada/tidak ada, perilaku pengguna, known defect, kontrak data/API/storage, atau
 prosedur verifikasi. Typo, refactor murni, dan investigasi tanpa temuan tidak
 perlu entri.
 
+### Dokumen yang tertinggal dijaga tes, bukan ingatan
+
+Dokumentasi yang basi tidak terbaca salah — ia terbaca **benar tetapi tentang
+Harvy yang lain**. Itu sudah terjadi berkali-kali dan tidak pernah tertangkap
+apa pun: ADR-004 mendaftar empat hal "belum dikerjakan" padahal keempatnya
+sudah ada, dan `docs/engineering/status/memory.md` menyatakan pencarian
+semantik mati padahal sudah hidup. Tidak satu pun salah waktu ditulis.
+
+`tests/periksa-dokumentasi.test.ts` membuat kelas kekeliruan itu merah:
+
+- Berkas `src/...` dan simbol dalam backtick wajib benar-benar ada.
+- `docs/agent/CURRENT.md` wajib tidak tertinggal lebih dari 12 commit.
+
+Karena itu satu aturan penulisan berlaku di seluruh dokumen hidup:
+
+> **Backtick berarti pembaca dapat menemukannya di repositori ini.**
+
+Menyebut sesuatu yang sengaja sudah tiada—misalnya menjelaskan kelas yang
+dihapus—cukup ditulis tanpa backtick.
+
+Yang **tidak** diperiksa: `docs/log/`, `docs/evidence/`, `docs/decisions/`, dan
+`docs/engineering/status/archive/`. Semuanya catatan bertanggal yang memang
+menggambarkan masa lalu; ADR menjelaskan mengapa sesuatu diputuskan hari itu,
+bukan menjadi rujukan API hari ini. Yang wajib dijaga pada ADR adalah field
+Status-nya, dan itu urusan manusia yang mencabutnya.
+
+Laporan lengkap tanpa menjalankan suite:
+
+```bash
+npx tsx scripts/periksa-dokumentasi.ts
+```
+
 Status terverifikasi terakhir: `docs/agent/CURRENT.md`. Peta dokumen:
 `docs/INDEX.md`. Operasi Git: `docs/operations/WORKFLOW.md`.

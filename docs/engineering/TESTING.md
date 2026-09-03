@@ -161,7 +161,7 @@ nyata, baseline menjadi **122 test lulus dalam 20 suite**. Setelah riwayat
 dikirim sebagai pesan chat pada langkah balasan, pemberitahuan memori menempel
 di balasan, kalimat tetap Harvy diberi variasi, dan perkenalan kontak pertama
 beserta persetujuannya masuk, baseline menjadi **147 test lulus dalam 25
-suite** — `EphemeralMessageStore` beserta enam tesnya dihapus bersama bubble
+suite** — kelas EphemeralMessageStore beserta enam tesnya dihapus bersama bubble
 pemberitahuan yang digantikannya, jadi angka ini sudah memperhitungkan
 pengurangan itu. Setelah transkrip Telegram pertama menemukan sepuluh cacat dan
 seluruhnya diperbaiki — nada jutek, kedalaman balasan, jam pada langkah balasan,
@@ -1030,7 +1030,8 @@ deskripsi hasil.
 
 ## Uji manual log operasional
 
-Gunakan hanya sentinel sintetis—misalnya `SENTINEL_CHAT_RAHASIA_123`—bukan
+Gunakan hanya sentinel sintetis—misalnya `SENTINEL_FATAL_RAHASIA` yang dipakai
+tes rejection fatal—bukan
 percakapan pengguna nyata.
 
 1. Jalankan development dengan folder log kosong dan `LOG_CONSOLE=false`.

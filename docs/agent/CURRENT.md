@@ -1,15 +1,16 @@
 # Current Context
 
-Refreshed: 2026-09-03
-Baseline: a75ff15
+Refreshed: 2026-09-04
+Baseline: 06c61f2
 Context-Version: 1
 
 ## Verified baseline
 
 - Perubahan material yang dirangkum di sini dimulai di atas commit dasar
-  `a75ff15` pada `main`; status commit dan push aktual tetap dibaca dari Git.
-- `npm run check` PASS; `npm test` 2188/2188 hijau, dan bagian Aktif
-  `docs/engineering/KNOWN-FAILURES.md` kosong.
+  `06c61f2` pada `main`; status commit dan push aktual tetap dibaca dari Git.
+- `npm run check` PASS; `npm test` hijau, dan bagian Aktif
+  `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
+  dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
 - Telemetri pemakaian nyata 3 September 2026, 13 giliran Telegram: jalur
   pemahaman 5 `core-only`, 5 `core-escalated`, 3 `direct-full`; keputusan
   keselamatan 13/13 `calm`+`certain`, sehingga izin tulis memori terbuka penuh
@@ -35,11 +36,17 @@ Context-Version: 1
   (`understanding_pass_chosen`), dan hasil tulis memori
   (`memory_write_outcome`) beserta enam sebab penolakan yang sebelumnya
   seluruhnya mengembalikan `null` identik.
-- Retrieval semantik memperoleh penyedia embedding yang berjalan di dalam
-  proses Harvy sendiri dan hidup secara bawaan, dengan sakelar mati dan pemutus
-  arus. Tidak ada catatan pengguna yang keluar dari mesin. Sapaan onboarding
-  juga tidak lagi naskah tetap: ia dikarang model tiap kali, dengan identitas
-  Harvy dijamin kode.
+- Pencegahan penyalahgunaan dibangun penuh mengikuti ADR-045: tangga tiga
+  peringatan, penangguhan bertimer 1/3/5 jam, penahanan menunggu manusia
+  berplafon 24 jam, dan laporan ke pengelola hanya saat penangguhan.
+  Penilaiannya berjalan di latar dan tidak menahan percakapan; diukur pada
+  model sungguhan 20/20 untuk makian dan 18/19 untuk percobaan menembus
+  batas, keduanya nol salah tuduh. Keselamatan selalu menang: aliran
+  bersinyal distres tidak pernah dapat ditangguhkan, dan pengguna tertangguh
+  tetap dijawab bila pesannya membawa sinyal keselamatan.
+- Retrieval semantik hidup secara bawaan lewat penyedia embedding yang
+  berjalan di dalam proses Harvy sendiri; tidak ada catatan pengguna yang
+  keluar dari mesin. Sapaan onboarding dikarang model tiap kali.
 
 ## Active cross-subsystem blockers
 

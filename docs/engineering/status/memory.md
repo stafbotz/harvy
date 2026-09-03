@@ -81,14 +81,23 @@ learning, storage, atau kontrol data yang bukan policy safety.
   lexical. Update/delete source menginvalidasi projection yang terkait,
   perubahan model tidak mencampur vector, dan tanpa provider FTS, temporal,
   suppression, graph, procedure, serta lessons tetap bekerja.
-- Rute semantic mati pada deployment saat ini. `MEMORY_EMBEDDING_MODEL` tidak
-  diisi, dan provider chat yang dipakai tidak melayani `/embeddings` sama sekali
-  —probe 2026-08-28 menerima HTTP 404, dan katalognya tidak memuat satu pun
-  model embedding. Akibatnya `semanticSearch` selalu mengembalikan array kosong
-  dan RRF memfusikan lima rute, bukan enam. Yang hilang adalah recall parafrasa:
-  fakta yang diucapkan dengan kata berbeda tidak terhubung. Menyalakannya
-  menuntut endpoint embedding terpisah, karena adapter mewarisi `baseUrl` dan
-  key dari provider chat.
+- Rute semantic **hidup sejak 3 September 2026**, memakai model embedding yang
+  berjalan di dalam proses Harvy sendiri. Tidak ada catatan pengguna yang keluar
+  ke penyedia mana pun, tidak ada biaya tetap jaringan per giliran, dan tidak
+  ada tagihan. Bawaannya `Xenova/paraphrase-multilingual-MiniLM-L12-v2` dengan
+  bobot 8-bit; `MEMORY_EMBEDDING_LOCAL_MODEL=off` mematikannya, dan
+  `MEMORY_EMBEDDING_MODEL` menggantikannya dengan penyedia jarak jauh. Keduanya
+  terisi bersamaan ditolak saat start: cache embedding dikunci per model, dan
+  dua ruang vektor yang tercampur menghasilkan skor kemiripan yang tidak berarti
+  apa pun.
+- Diukur pada kalimat Indonesia sungguhan, terhadap "aku lagi berat banget
+  rasanya": "aku lagi stres berat" 0,691 dan "aku sedang tertekan dan capek"
+  0,627, melawan "besok ada ulangan matematika" 0,233 dan "harga cabai di pasar
+  naik" 0,132. Memuat model dari cache ~3.800 ms sekali per proses dan hanya
+  ketika route ini benar-benar dipakai; satu pencarian sesudahnya 29–199 ms.
+  Sebelum ini `searchSemantic` selalu mengembalikan array kosong karena tidak
+  ada satu pun penyedia yang tersedia—GMI melayani 83 model chat tanpa
+  embedding, daftar OpenRouter 424 model juga nol.
 - Anggaran konteks default 48.000 karakter, 40 giliran, 24 memori, 8.000
   karakter ringkasan, dan 6 interaksi. Penegakan memakai karakter karena
   deterministik; perkiraan token memakai `src/ai/token-estimate.ts` yang
