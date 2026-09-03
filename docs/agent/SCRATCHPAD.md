@@ -3030,6 +3030,42 @@ Dengan 8 episode dan beberapa catatan, semuanya masih muat masuk prompt dan
 model membacanya langsung. Route ini baru benar-benar bekerja ketika isinya
 tidak muat lagi. Ia dibangun sekarang supaya siap, bukan karena sudah mendesak.
 
+## 46. "Overhead di luar model" sebagian besar tidak dirasakan siapa pun
+
+Butir 40 mencatat 1.551 ms di luar model dan menyebutnya layak dikejar. Angka
+itu benar, kesimpulannya tidak: ia diukur sampai **giliran dinyatakan tuntas**,
+bukan sampai **jawabannya sampai**.
+
+Dipecah menurut penanda yang sudah ada, 44 giliran nyata:
+
+| | median |
+|---|---|
+| sebelum panggilan model pertama | 340 ms |
+| jeda di antara panggilan model | 453 ms |
+| model selesai sampai balasan terkirim | **817 ms** |
+| balasan terkirim sampai giliran tuntas | 536 ms |
+
+Hanya baris ketiga yang dirasakan pengguna. Baris keempat—penghapusan baris
+status, telemetri, penulisan riwayat—seluruhnya berjalan sesudah jawabannya
+sudah ada di layar. `create-bot.ts:806` sengaja mengirim balasan lebih dulu,
+baru memanggil `progress.responding()`.
+
+Dan dari 817 ms itu, 381 ms adalah panggilan `sendMessage` Telegram sendiri.
+Sisa yang benar-benar dapat dikejar sekitar 436 ms, bukan 1,55 detik.
+
+Dua dugaan yang diuji dan gugur:
+
+- **Jeda antar gelembung.** `MAX_BUBBLE_PAUSE_MS` 1.200 ms terlihat seperti
+  penjelasannya. Bukan: waktunya tetap ~1.420 ms untuk balasan 5 token maupun
+  169 token, sedangkan jeda gelembung hanya berlaku pada gelembung lanjutan.
+- **Baris status menahan pengiriman.** `report()` fire-and-forget, dan
+  penghapusannya terjadi sesudah `ctx.reply` kembali.
+
+Pelajarannya bukan tentang angkanya, melainkan tentang titik ukurnya. "Selesai"
+bagi kode adalah giliran tuntas; "selesai" bagi pengguna adalah balasan muncul.
+Mengukur yang pertama lalu menyebutnya lambat menghasilkan pekerjaan yang tidak
+menolong siapa pun.
+
 ## Menunggu pengukuran dari pemakaian nyata
 
 Empat pertanyaan yang alat ukurnya sudah terpasang 2–3 September 2026 tetapi
