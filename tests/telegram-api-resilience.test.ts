@@ -253,6 +253,126 @@ describe("transformer ketahanan Telegram", () => {
   });
 });
 
+/**
+ * Sinyal tiruan yang meniru polyfill `abort-controller` milik grammY:
+ * namanya `AbortSignal`, punya `addEventListener`, tetapi **bukan** instance
+ * `AbortSignal` global.
+ */
+class PolyfillAbortSignal extends EventTarget {
+  aborted = false;
+
+  abort(): void {
+    this.aborted = true;
+    this.dispatchEvent(new Event("abort"));
+  }
+}
+
+describe("sinyal pembatalan lintas implementasi", () => {
+  it("bekerja dengan sinyal yang bukan instance AbortSignal global", async () => {
+    // Ini kegagalan 5 September 2026. grammY meneruskan AbortSignal dari paket
+    // polyfill, `AbortSignal.any` menolaknya, transformer melempar sebelum
+    // permintaan berangkat, dan grammY mengulang diam-diam selamanya. Harvy
+    // hidup, polling "berjalan", nol pesan sampai.
+    const polyfill = new PolyfillAbortSignal();
+    assert.equal(polyfill instanceof AbortSignal, false);
+
+    let diterimaSignal: unknown = "belum dipanggil";
+    const prev = ((_m: string, _p: unknown, signal?: unknown) => {
+      diterimaSignal = signal;
+      return Promise.resolve({ ok: true, result: [] });
+    }) as never;
+
+    const transformer = createTelegramApiResilience({});
+    const hasil = await transformer(
+      prev,
+      "getUpdates" as never,
+      {} as never,
+      polyfill as never,
+    );
+
+    assert.deepEqual(hasil, { ok: true, result: [] });
+    assert.notEqual(diterimaSignal, "belum dipanggil");
+  });
+
+  it("meneruskan pembatalan pemanggil selama permintaan berjalan", async () => {
+    // Penerusan hanya berarti selagi permintaan menggantung; sesudah selesai
+    // listener memang dilepas. Jadi pembatalannya harus terjadi di tengah.
+    const polyfill = new PolyfillAbortSignal();
+    let dilihat: { aborted: boolean } | undefined;
+    const prev = ((_m: string, _p: unknown, signal?: unknown) => {
+      dilihat = signal as { aborted: boolean };
+      return new Promise((resolve) => {
+        polyfill.abort();
+        resolve({ ok: true, result: [] });
+      });
+    }) as never;
+
+    await createTelegramApiResilience({})(
+      prev,
+      "getUpdates" as never,
+      {} as never,
+      polyfill as never,
+    );
+    assert.equal(
+      dilihat?.aborted,
+      true,
+      "pembatalan pemanggil harus sampai ke sinyal yang diteruskan",
+    );
+  });
+
+  it("melepas listener supaya sinyal polling tidak bocor tiap giliran", async () => {
+    // Sinyal polling grammY hidup selama proses. Satu listener per getUpdates
+    // berarti kebocoran yang tumbuh tiap tiga puluh detik.
+    const polyfill = new PolyfillAbortSignal();
+    let listeners = 0;
+    const asli = polyfill.addEventListener.bind(polyfill);
+    polyfill.addEventListener = ((...args: Parameters<typeof asli>) => {
+      listeners += 1;
+      return asli(...args);
+    }) as typeof polyfill.addEventListener;
+    const lepas = polyfill.removeEventListener.bind(polyfill);
+    polyfill.removeEventListener = ((...args: Parameters<typeof lepas>) => {
+      listeners -= 1;
+      return lepas(...args);
+    }) as typeof polyfill.removeEventListener;
+
+    const prev = (() => Promise.resolve({ ok: true, result: [] })) as never;
+    const transformer = createTelegramApiResilience({});
+    for (let i = 0; i < 5; i += 1) {
+      await transformer(prev, "getUpdates" as never, {} as never, polyfill as never);
+    }
+    assert.equal(listeners, 0, "listener harus dilepas sesudah tiap permintaan");
+  });
+
+  it("tidak mencatat pembatalan yang disengaja sebagai kegagalan", async () => {
+    // bot.stop() membatalkan getUpdates yang menggantung. Mencatatnya sebagai
+    // galat menandai tiap shutdown bersih sebagai kerusakan.
+    const polyfill = new PolyfillAbortSignal();
+    polyfill.abort();
+    const logged: string[] = [];
+    const logger = {
+      child: () => logger,
+      runWithContext: <T,>(_c: unknown, a: () => T) => a(),
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (event: string) => logged.push(event),
+      error: (event: string) => logged.push(event),
+      fatal: () => undefined,
+    };
+    const prev = (() => Promise.reject(new Error("aborted"))) as never;
+
+    await assert.rejects(
+      createTelegramApiResilience({ logger: logger as never })(
+        prev,
+        "getUpdates" as never,
+        {} as never,
+        polyfill as never,
+      ),
+    );
+    assert.deepEqual(logged, []);
+  });
+});
+
 describe("penahanan indikator mengetik", () => {
   it("tidak menahan apa pun sebelum ada kegagalan", () => {
     const cooldown = new TypingCooldown(30_000, 300_000, () => 1_000);

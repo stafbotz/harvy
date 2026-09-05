@@ -137,9 +137,23 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   menit per jenis. Sebelum ini grammY melaporkannya hanya lewat `debugErr`
   dan galat polling tidak pernah sampai ke `bot.catch`, sehingga Harvy dapat
   berhenti menerima pesan berjam-jam dengan nol baris log.
-- Belum diuji terhadap gangguan jaringan sungguhan maupun rate limit Telegram
-  yang nyata; yang ada baru tes unit atas keputusan dan transformer-nya.
-  Jangan menyebutnya terbukti pada kanal hidup.
+- Diuji dari kanal sungguhan 5 September 2026 lewat
+  `npm run acceptance:telegram-private` dengan akun penguji berdedikasi. Run
+  pertama menemukan regresi berat pada transformer itu sendiri: grammY
+  meneruskan `AbortSignal` dari paket polyfill, `AbortSignal.any` menolaknya,
+  dan lemparan itu terjadi sebelum permintaan berangkat sehingga grammY
+  mengulang diam-diam selamanya—Harvy hidup, polling "berjalan", nol pesan
+  sampai. Suite tidak menangkapnya karena tes tidak pernah memberi sinyal
+  pemanggil. Diperbaiki, dan empat tes regresi memakai sinyal tiruan bergaya
+  polyfill kini mengunci kelasnya.
+- Sesudah perbaikan: `onboarding_and_capability_menu` PASS (18,0 dtk, 6
+  bubble), `natural_task_and_reminder` PASS (88,9 dtk),
+  `dedicated_account_cleanup` PASS. `timezone_session_and_checkin` FAIL dengan
+  `EXPECTED_RESPONSE_TIMEOUT` sesudah 185,9 dtk; **attribusinya belum
+  diketahui**—build sebelum perubahan gagal di stage pertama
+  (`ONBOARDING_COPY_MISMATCH`) sehingga tidak pernah mencapai stage ini, jadi
+  bisect tidak dapat menjawabnya. Rate limit dan gangguan jaringan tetap belum
+  diuji.
 
 - Exploratory current-build 26 Agustus benar-benar dijalankan dari akun
   Telegram tester dan pesan berikutnya dipilih dari respons Harvy, bukan dari

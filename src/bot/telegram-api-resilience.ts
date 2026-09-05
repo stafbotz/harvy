@@ -227,15 +227,24 @@ export function createTelegramApiResilience(
   const transformer: Transformer = async (prev, method, payload, signal) => {
     for (let attempt = 1; ; attempt += 1) {
       const deadlineMs = methodDeadlineMs(method);
-      const effectiveSignal = combineSignals(
-        signal,
-        deadlineMs === null ? undefined : deadlineSignal(deadlineMs),
-      );
-
+      // Seluruh penyusunan sinyal berada DI DALAM try. Versi pertama
+      // meletakkannya di luar, sehingga lemparannya lolos dari logging berkas
+      // ini sendiri dan mematikan polling tanpa satu baris pun tercatat.
+      let combined: CombinedSignal = { signal, release: () => {} };
       let response: Awaited<ReturnType<typeof prev>>;
       try {
-        response = await prev(method, payload, effectiveSignal);
+        combined = combineSignals(signal, deadlineMs, deadlineSignal);
+        response = await prev(method, payload, combined.signal);
       } catch (error) {
+        // Pembatalan yang disengaja bukan kegagalan. `bot.stop()` membatalkan
+        // `getUpdates` yang menggantung, dan mencatatnya sebagai galat akan
+        // menandai setiap shutdown bersih sebagai kerusakan—melatih pembacanya
+        // mengabaikan justru event yang berkas ini ada untuknya. Pembedanya
+        // sinyal pemanggil, bukan nama galat: grammY membungkus pembatalan
+        // menjadi `HttpError`. Alasan yang sama ditulis `isCancellation` di
+        // `create-bot.ts`.
+        if (signal !== undefined && isAborted(signal)) throw error;
+
         // Galat transport. Untuk `getUpdates` inilah satu-satunya tempat
         // kegagalan polling dapat terlihat sama sekali—sesudah ini grammY
         // menelannya ke `debugErr` dan mengulang diam-diam.
@@ -260,6 +269,8 @@ export function createTelegramApiResilience(
           );
         }
         throw error;
+      } finally {
+        combined.release();
       }
 
       const decision = retryDecision(method, response, attempt, {
@@ -355,18 +366,62 @@ export class TypingCooldown {
 /**
  * Menggabungkan sinyal pembatalan pemanggil dengan deadline milik kita.
  *
- * `AbortSignal.any` membuang salah satunya bila yang lain `undefined`, jadi
- * kedua keadaan itu ditangani di sini alih-alih di setiap pemanggil.
+ * **Tidak memakai `AbortSignal.any`**, dan itu bukan pilihan gaya. grammY
+ * meneruskan `AbortSignal` dari paket polyfill `abort-controller`: namanya
+ * `AbortSignal`, tetapi ia bukan instance `AbortSignal` global.
+ * `AbortSignal.any` menolaknya dengan galat yang terbaca seperti lelucon—
+ * *The "signals[0]" argument must be an instance of AbortSignal. Received an
+ * instance of AbortSignal.*
+ *
+ * Akibatnya pada 5 September 2026 fatal dan sunyi. Lemparan itu terjadi
+ * sebelum `prev` dipanggil, grammY menangkapnya di `handlePollingError`,
+ * melaporkannya ke `debugErr` yang mati, tidur tiga detik, lalu mengulang
+ * selamanya. Harvy hidup, polling "berjalan", dan nol pesan sampai—persis
+ * kelas kegagalan yang berkas ini dibuat untuk mencegahnya. Ditemukan uji
+ * kanal sungguhan, bukan oleh suite.
+ *
+ * Yang dipakai sekarang hanya `addEventListener`, yang dimiliki kedua
+ * implementasi. Pemanggil **wajib** memanggil `release()` setelah permintaan
+ * selesai: sinyal polling grammY hidup selama proses, dan satu listener per
+ * `getUpdates` berarti kebocoran yang tumbuh tiap tiga puluh detik.
  */
+interface CombinedSignal {
+  signal: GrammySignal | undefined;
+  release: () => void;
+}
+
 function combineSignals(
   caller: GrammySignal | undefined,
-  deadline: AbortSignal | undefined,
-): GrammySignal | undefined {
-  const deadlineSignal = deadline as GrammySignal | undefined;
-  if (!caller) return deadlineSignal;
-  if (!deadlineSignal) return caller;
-  return AbortSignal.any([
-    caller as unknown as AbortSignal,
-    deadline as AbortSignal,
-  ]) as unknown as GrammySignal;
+  deadlineMs: number | null,
+  makeDeadline: (ms: number) => AbortSignal,
+): CombinedSignal {
+  const noop = (): void => {};
+  if (deadlineMs === null) return { signal: caller, release: noop };
+  const deadline = makeDeadline(deadlineMs);
+  if (!caller) {
+    return { signal: deadline as unknown as GrammySignal, release: noop };
+  }
+
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  if (isAborted(caller) || deadline.aborted) {
+    controller.abort();
+    return {
+      signal: controller.signal as unknown as GrammySignal,
+      release: noop,
+    };
+  }
+  caller.addEventListener("abort", abort, { once: true });
+  deadline.addEventListener("abort", abort, { once: true });
+  return {
+    signal: controller.signal as unknown as GrammySignal,
+    release: () => {
+      caller.removeEventListener("abort", abort);
+      deadline.removeEventListener("abort", abort);
+    },
+  };
+}
+
+function isAborted(signal: GrammySignal): boolean {
+  return (signal as { aborted?: boolean }).aborted === true;
 }
