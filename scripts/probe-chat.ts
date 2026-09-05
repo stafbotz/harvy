@@ -381,6 +381,10 @@ async function main(text: string, statePath: string): Promise<void> {
   // membaca data pengguna dari run yang menjawab dari ingatan prompt saja.
   // Jejak harness sengaja tidak membawa input tool, jadi baris ini aman.
   let jejak: string[] = [];
+  // Tombol yang benar-benar akan muncul. Tanpa baris ini probe menghitungnya,
+  // memakainya untuk menyusun balasan, lalu membuangnya—padahal penawaran
+  // tindakan adalah salah satu keputusan adapter yang paling sering ditanyakan.
+  let tombol: string[] = [];
   if (route.kind === "show-tasks") {
     // Pembacaan task deterministik. Tanpa cabang ini probe melaporkan
     // `route: "show-tasks"` lalu diam-diam menjawab lewat `reply()`, sehingga
@@ -550,11 +554,12 @@ async function main(text: string, statePath: string): Promise<void> {
           hasBlockingQuestion: false,
         })
       : [];
+    tombol = buttons.map(adaptiveActionLabel);
     reply = await retry(() =>
       conversation.reply(text, understanding, context, null, triage, null, false, {
         ...runtimeBase,
         session: null,
-        plannedActionLabels: buttons.map(adaptiveActionLabel),
+        plannedActionLabels: tombol,
         routingAssessment: understanding.routingAssessment ?? null,
       })
     );
@@ -606,6 +611,12 @@ async function main(text: string, statePath: string): Promise<void> {
       autoMemoriDisimpan: autoMemory.disimpan,
       autoMemoriSensitifDilewati: autoMemory.dilewatiSensitif,
       catatanTersimpan: state.notes.length,
+      aksiDiusulkanModel: understanding.suggestedActions ?? [],
+      smallStepTerpandu: prefersGuidedSmallStep(
+        understanding.suggestedActions ?? [],
+        understanding.routingAssessment,
+      ),
+      tombol,
       toolNeed: understanding.routingAssessment?.toolNeed ?? null,
       confidence: understanding.routingAssessment?.confidence ?? null,
       unhandledTaskChange,

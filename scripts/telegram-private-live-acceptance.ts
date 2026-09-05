@@ -435,9 +435,27 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
                 "timezone-saved",
               );
 
+              // Kalimatnya sengaja tidak lagi membuka dengan "aku kewalahan".
+              //
+              // Stage ini menguji zona waktu, sesi, dan check-in—bukan
+              // peringkat tawaran. Tetapi Harvy hanya menampilkan satu tombol
+              // (`adaptiveActions` memotong pada satu), dan untuk kalimat yang
+              // dibuka rasa kewalahan model menaruh `listen` di urutan
+              // pertama. `listen` tidak membuka sesi apa pun, jadi seluruh
+              // sisa stage ini tidak pernah tercapai.
+              //
+              // Diukur 5 September 2026 lewat `understand()` sungguhan:
+              // kalimat lama menghasilkan tombol pembuka sesi pada 1 dari 6
+              // percobaan, kalimat ini pada 6 dari 6. Yang berubah hanya
+              // kalimat penguji; perilaku Harvy pada kalimat lama dicatat
+              // sebagai temuan terbuka di `docs/engineering/status/telegram.md`.
+              //
+              // `runLabel` sengaja tidak ikut: nama run berbentuk hex membuat
+              // model menyimpulkan `toolNeed: internal_state`, dan tidak ada
+              // langkah di stage ini yang memeriksanya.
               const offered = await sendAndWait(
                 activeContext,
-                `Aku kewalahan dengan audit ${activeContext.runLabel}. Bantu aku mulai satu langkah kecil.`,
+                "Bantu aku mulai satu langkah kecil buat rapihin catatan biologi.",
                 (message) => hasButton(message, /^Mulai langkah kecil$/u),
                 180_000,
               );
@@ -920,21 +938,36 @@ async function incomingMessagesAfter(
     .sort((left, right) => numericId(left) - numericId(right));
 }
 
+/**
+ * Sejak sapaan pertama dikarang model, gelembung kedua tidak punya kalimat
+ * tetap—dan tidak boleh diperiksa seolah punya.
+ *
+ * `parseIntroduction` justru **menolak** sapaan yang menyebut AI, dan
+ * `nameIntroduction` hanya menjamin kata "Harvy" muncul, bukan rumusan
+ * tertentu. Pemeriksaan lama menuntut "aku Harvy" dan "AI agent" — dua frasa
+ * milik naskah cadangan — sehingga stage ini hanya hijau ketika penyusunan
+ * sapaannya gagal. Ia lulus atau gagal mengikuti kesehatan provider, bukan
+ * mengikuti Harvy.
+ *
+ * Karena itu tiap gelembung diperiksa pada janjinya sendiri: yang dikarang
+ * cukup menyebut namanya, sedangkan transparansi AI, memori, dan kendali
+ * pengguna tetap wajib utuh karena gelembung persetujuan memang naskah tetap.
+ */
 function assertTelegramOnboarding(intro: TelegramBurst): void {
   const bubbles = intro.messages.map((message) => message.message.trim());
   if (bubbles.length !== 3 || bubbles[0] !== "👋") {
     throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_ONBOARDING_BUBBLES_MISMATCH");
   }
-  const combined = bubbles.join("\n\n");
+  if (!/harvy/iu.test(bubbles[1]!)) {
+    throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_ONBOARDING_GREETING_MISMATCH");
+  }
   for (const expected of [
-    /aku Harvy/iu,
-    /AI agent/iu,
     /Pesan atau gambar yang kamu kirim bakal diproses oleh AI/iu,
     /bisa otomatis mengingatnya/iu,
     /bakal bilang setelah benar-benar menyimpan atau memperbaruinya/iu,
     /melihat, mengoreksi, atau menghapusnya/iu,
   ]) {
-    if (!expected.test(combined)) {
+    if (!expected.test(bubbles[2]!)) {
       throw blocked("TELEGRAM_PRIVATE_ACCEPTANCE_ONBOARDING_COPY_MISMATCH");
     }
   }

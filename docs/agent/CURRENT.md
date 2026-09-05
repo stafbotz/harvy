@@ -1,13 +1,13 @@
 # Current Context
 
-Refreshed: 2026-09-04
-Baseline: 06c61f2
+Refreshed: 2026-09-05
+Baseline: 78c24cc
 Context-Version: 1
 
 ## Verified baseline
 
 - Perubahan material yang dirangkum di sini dimulai di atas commit dasar
-  `06c61f2` pada `main`; status commit dan push aktual tetap dibaca dari Git.
+  `78c24cc` pada `main`; status commit dan push aktual tetap dibaca dari Git.
 - `npm run check` PASS; `npm test` hijau, dan bagian Aktif
   `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
   dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
@@ -43,6 +43,14 @@ Context-Version: 1
   grammY, mematuhi `retry_after` saat mengirim, dan mencatat kegagalan yang
   selama ini ditelan grammY. Balasan yang belum terbukti sampai punya janji
   durable, dikirim ulang bertanda hanya dari proses yang sudah mati.
+- Acceptance Telegram pribadi dari akun penguji berdedikasi 5 September 2026:
+  enam stage PASS—onboarding, tugas + pengingat, zona waktu + sesi + check-in
+  proaktif, gambar, memori implisit, dan pembersihan akun.
+  `durable_planning_runtime` FAIL karena stage-nya menunggu AgentRun yang
+  memang sengaja tidak lagi dibuka untuk permintaan tanpa tool. Dua stage lain
+  juga ternyata menguji hal yang bukan kontrak Harvy dan sudah diperbaiki; satu
+  temuan perilaku dibiarkan terbuka karena perbaikannya keputusan produk.
+  Rinciannya di `docs/engineering/status/telegram.md`.
 
 ## Active cross-subsystem blockers
 

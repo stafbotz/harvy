@@ -149,11 +149,61 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
 - Sesudah perbaikan: `onboarding_and_capability_menu` PASS (18,0 dtk, 6
   bubble), `natural_task_and_reminder` PASS (88,9 dtk),
   `dedicated_account_cleanup` PASS. `timezone_session_and_checkin` FAIL dengan
-  `EXPECTED_RESPONSE_TIMEOUT` sesudah 185,9 dtk; **attribusinya belum
-  diketahui**—build sebelum perubahan gagal di stage pertama
-  (`ONBOARDING_COPY_MISMATCH`) sehingga tidak pernah mencapai stage ini, jadi
-  bisect tidak dapat menjawabnya. Rate limit dan gangguan jaringan tetap belum
-  diuji.
+  `EXPECTED_RESPONSE_TIMEOUT` sesudah 185,9 dtk. Attribusinya dikejar terpisah
+  dan **bukan berasal dari perubahan itu**; rinciannya di dua butir berikut.
+  Rate limit dan gangguan jaringan tetap belum diuji.
+
+- Dua stage acceptance ternyata menguji hal yang bukan kontrak Harvy, dan
+  keduanya diperbaiki 5 September 2026 di
+  `scripts/telegram-private-live-acceptance.ts`. Keduanya cacat lama, bukan
+  akibat perubahan ketahanan kanal.
+  - `onboarding_and_capability_menu` menuntut frasa "aku Harvy" dan "AI agent"
+    dari naskah perkenalan tetap. Sejak 1 September sapaan pertama dikarang
+    model, dan `parseIntroduction` justru **menolak** sapaan yang menyebut AI.
+    Stage ini karena itu hanya hijau ketika penyusunan sapaan gagal—ia mengikuti
+    kesehatan provider, bukan Harvy. Sekarang tiap gelembung diperiksa pada
+    janjinya sendiri: yang dikarang cukup menyebut namanya, sedangkan
+    transparansi AI, memori, dan kendali pengguna tetap wajib utuh di gelembung
+    persetujuan yang memang naskah tetap.
+  - `timezone_session_and_checkin` membuka dengan "Aku kewalahan dengan audit
+    …". Harvy hanya menampilkan satu tombol tawaran, dan untuk kalimat yang
+    dibuka rasa kewalahan model menaruh `listen` lebih dulu—`listen` tidak
+    membuka sesi, sehingga seluruh sisa stage tidak pernah tercapai. Diukur
+    lewat `understand()` sungguhan: kalimat lama menghasilkan tombol pembuka
+    sesi pada 1 dari 6 percobaan, kalimat penggantinya pada 6 dari 6. Sesudah
+    diganti, stage ini PASS (96,7 dtk) sampai check-in proaktif benar-benar
+    terkirim beserta kontrolnya.
+
+- Run penuh sesudah kedua perbaikan itu: `onboarding_and_capability_menu`
+  PASS (12,7 dtk), `natural_task_and_reminder` PASS (80,8 dtk),
+  `timezone_session_and_checkin` PASS (102,6 dtk),
+  `multimodal_image_through_private_channel` PASS (31,7 dtk),
+  `implicit_memory_after_onboarding_without_item_consent` PASS (29,2 dtk),
+  `dedicated_account_cleanup` PASS. `durable_planning_runtime` FAIL dengan
+  `EXPECTED_RESPONSE_TIMEOUT` sesudah 180,6 dtk—stage ini belum pernah
+  tercapai sebelumnya karena stage zona waktu selalu berhenti lebih dulu.
+
+- **Stage `durable_planning_runtime` menguji perilaku yang sengaja dihapus.**
+  Ia menunggu anchor AgentRun untuk prompt "susun rencana mendalam tepat tiga
+  langkah". Pemahaman sungguhan atas prompt itu sudah tepat—intent request,
+  `planningRequired` true, complexity deep, executionSize heavy, confidence
+  0,78—tetapi `toolNeed` bernilai `none`, dan sejak 27 Agustus
+  `requiresPlannedExecution` mensyaratkan `toolNeed` `execution` atau
+  `external`. Syarat itu justru perbaikan atas defect yang ditemukan
+  eksplorasi 26 Agustus: analisis chat-only membuka AgentRun padahal tidak
+  perlu. Jadi Harvy berperilaku benar dan stage-nya yang tertinggal. Belum
+  diperbaiki: pilihannya mengganti prompt penguji dengan pekerjaan yang memang
+  butuh tool, atau meninjau ulang syarat tool-backed itu sendiri—dan yang kedua
+  mengembalikan defect lama.
+
+- **Temuan terbuka, tidak diperbaiki di sini.** Untuk "aku kewalahan …, bantu
+  aku mulai satu langkah kecil", Harvy menawarkan "Dengerin dulu" saja dan
+  menjatuhkan hal yang justru diminta secara eksplisit. Sebabnya
+  `adaptiveActions` memotong daftar pada satu tindakan, sementara model
+  memberi `listen` peringkat pertama karena nuansa emosinya tinggi. Menaikkan
+  `start_small` di atas `listen` akan mendorong tindakan kepada orang yang
+  sedang bercerita—wilayah yang dijaga Pasal 3—jadi ini keputusan produk, bukan
+  perbaikan tes.
 
 - Exploratory current-build 26 Agustus benar-benar dijalankan dari akun
   Telegram tester dan pesan berikutnya dipilih dari respons Harvy, bukan dari
