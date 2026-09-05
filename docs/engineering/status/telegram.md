@@ -280,9 +280,12 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
 - **Yang masih terbuka.** Hipotesis bahwa latensi worker 25-30 detik berasal
   dari `AI_MODE=testing`—yang memetakan ketiga tier ke satu model yang sama,
   sehingga planner dan tiga worker paralel mengantre pada endpoint yang sama—
-  belum dapat diuji di host ini: model kedua yang terkonfigurasi ditolak
-  provider aktif dengan 404. Selama tier belum benar-benar terpisah, anggaran
-  75 detik menutupi gejalanya, bukan sebabnya.
+  belum dapat diuji di host ini. Pada mode testing `resolveModel` memang jatuh
+  ke satu model untuk semua tier kecuali override per-tier diisi, dan override
+  itu harus menyebut model yang dilayani provider testing; belum ada yang
+  dipilih. Model tier production sengaja dikosongkan selama masih testing.
+  Selama tier belum benar-benar terpisah, anggaran 75 detik menutupi gejalanya,
+  bukan sebabnya.
 
   Satu perbaikan lagi masuk akal dan belum dikerjakan: klien tetap mengulang
   permintaan yang kena timeout meski sisa waktu aktif run tidak mungkin
