@@ -578,6 +578,65 @@ Smoke ini tidak membuktikan Console aman untuk internet atau angka siap menjadi
 invoice. Jalur produksi mengikuti checklist di
 [`../operations/HARVY_CONSOLE.md`](../operations/HARVY_CONSOLE.md).
 
+## Dua bentuk tes yang justru merugikan
+
+Diambil dari panduan Hermes Agent, yang menuliskannya sesudah keduanya memakan
+waktu rekayasa berulang kali.
+
+### Tes change-detector
+
+Sebuah tes disebut **change-detector** bila ia gagal setiap kali data yang
+**memang diharapkan berubah** diperbarui: katalog model, nomor versi
+konfigurasi, jumlah enumerasi, daftar penyedia yang di-hardcode. Tes seperti
+itu tidak menambah cakupan perilaku apa pun; ia hanya menjamin pembaruan rutin
+merusak CI dan menghabiskan waktu untuk "diperbaiki".
+
+Jangan ditulis:
+
+```ts
+// snapshot katalog — rusak tiap kali ada model baru
+assert.ok(MODELS.includes("gemini-2.5-pro"));
+
+// literal versi konfigurasi — rusak tiap kali schema naik
+assert.equal(DEFAULT_CONFIG.version, 21);
+
+// hitungan enumerasi — rusak tiap kali satu capability ditambah
+assert.equal(CAPABILITIES.length, 37);
+```
+
+Tulis invariannya:
+
+```ts
+// perilaku: apakah plumbing katalognya bekerja sama sekali?
+assert.ok(MODELS.length >= 1);
+
+// perilaku: apakah migrasi menaikkan versi pengguna ke versi terkini?
+assert.equal(migrated.version, DEFAULT_CONFIG.version);
+
+// invarian: setiap capability punya effect dan confirmation yang sah
+for (const capability of CAPABILITIES) {
+  assert.ok(CAPABILITY_EFFECTS.includes(capability.effect));
+}
+```
+
+Aturannya: **kalau tesnya terbaca seperti snapshot data saat ini, hapus. Kalau
+terbaca seperti kontrak tentang bagaimana dua data harus berhubungan,
+pertahankan.** Ketika sebuah perubahan menambah entri baru dan kamu ingin tes,
+buat tesnya menegaskan hubungannya, bukan namanya.
+
+### Tes yang membaca kode sumber untuk menilai perilaku
+
+Tes yang membaca teks berkas `.ts` untuk membuktikan sesuatu **berperilaku**
+benar sebenarnya menguji bentuk kode, bukan kerjanya. Ia lulus ketika
+implementasinya rusak halus—regex cocok pada call site yang ada tetapi salah
+sambung—dan gagal ketika refactor yang benar mengubah penulisannya.
+
+Pengecualian yang sah, dan satu-satunya yang dipakai repositori ini:
+`tests/periksa-dokumentasi.test.ts` membaca sumber untuk memeriksa **invarian
+antara dokumen dan kode**—bahwa simbol dalam backtick benar-benar ada. Itu
+bukan menegaskan perilaku lewat grep; itu memang hubungan antara dua artefak,
+dan tidak ada cara lain memeriksanya.
+
 ## Kapan menambah tes
 
 - Perubahan perilaku harus memiliki tes yang gagal sebelum perbaikan atau tes

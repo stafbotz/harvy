@@ -7,6 +7,11 @@ import type {
   SessionSignal,
   SessionStage,
 } from "../domain/session.js";
+import type { LearningTraceService } from "./learning-trace-service.js";
+import {
+  openingTutorStage,
+  supportLevelFor,
+} from "./mastery-policy.js";
 
 export const SESSION_IDLE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const GOAL_MAX_CHARS = 240;
@@ -31,6 +36,11 @@ export class SessionService {
     private readonly repository: SessionRepository,
     private readonly dueCheckInSource: DueCheckInSource,
     private readonly now: () => Date = () => new Date(),
+    /**
+     * Null mempertahankan perilaku lama: sesi selesai tanpa meninggalkan
+     * jejak, dan Harvy tidak pernah tahu penggunanya sudah bisa apa.
+     */
+    private readonly learning: LearningTraceService | null = null,
   ) {}
 
   async start(input: NewSession): Promise<ActiveSession> {
@@ -180,6 +190,10 @@ export class SessionService {
       if (signal === null) return session;
 
       if (signal === "done" || signal === "cancel") {
+        // Hanya `done`. Membatalkan bukan menyelesaikan, dan menghitungnya
+        // sebagai kemajuan akan membuat Harvy mundur dari bantuan justru
+        // ketika pelajarnya menyerah.
+        if (signal === "done") await this.learning?.recordCompleted(session);
         await this.repository.remove(ownerId);
         return null;
       }
@@ -361,13 +375,31 @@ export class SessionService {
       chatId: input.chatId,
       kind: input.kind,
       goal,
-      stage: firstStage(input.kind),
+      stage: await this.openingStage(input),
       taskId: input.taskId ?? null,
       checkIn: null,
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + SESSION_IDLE_TTL_MS).toISOString(),
     };
+  }
+
+  /**
+   * Tahap pembuka sebuah sesi.
+   *
+   * Untuk tutor, pelajar yang sudah berulang kali menyelesaikan topik ini
+   * sendiri tidak perlu ditanya lagi apa yang sudah ia pahami—Pasal 2
+   * konstitusi meminta bantuan dikurangi bertahap untuk kemampuan yang sudah
+   * dikuasai. Yang berubah hanya titik mulainya: seluruh tangga tetap ada, dan
+   * sinyal `stuck` tetap membawanya ke `hint` lalu `explain` seperti biasa.
+   */
+  private async openingStage(input: NewSession): Promise<SessionStage> {
+    const fallback = firstStage(input.kind);
+    if (input.kind !== "tutor" || !this.learning) return fallback;
+    const goal = cleanGoal(input.goal);
+    if (!goal) return fallback;
+    const traces = await this.learning.list(input.ownerId);
+    return openingTutorStage(supportLevelFor(traces, goal, this.now()));
   }
 
   private touch(

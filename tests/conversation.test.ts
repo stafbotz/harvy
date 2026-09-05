@@ -2177,6 +2177,7 @@ describe("peringkasan episode bertahan pada kegagalan acak", () => {
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
     temporalAnchors: [],
     uncertainties: [],
   });
@@ -2189,6 +2190,7 @@ describe("peringkasan episode bertahan pada kegagalan acak", () => {
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
     temporalAnchors: [],
     uncertainties: [],
   });

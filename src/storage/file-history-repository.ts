@@ -16,6 +16,13 @@ import {
   type HistoryRepository,
   type StoredConversationTurn,
 } from "../domain/history.js";
+import {
+  EPISODE_ANCHOR_MAX_CHARS,
+  EPISODE_ANCHORS_LIMIT,
+  type EpisodeAnchor,
+} from "../core/episode-anchors.js";
+
+const ANCHOR_KINDS = new Set(["waktu", "materi", "angka", "kelas"]);
 
 interface HistoryDatabase {
   version: 2;
@@ -27,7 +34,14 @@ interface LegacyHistoryDatabase {
   histories: unknown[];
 }
 
-const EPISODE_FIELDS = [
+/**
+ * Field episode versi 2, yaitu bentuk yang sudah tersimpan di disk hari ini.
+ *
+ * Dipertahankan utuh: episode lama dibaca dengan daftar ini lalu diberi
+ * `progress` kosong. Menghapusnya berarti membuang seluruh riwayat yang sudah
+ * dipadatkan, dan riwayat itu tidak dapat dibuat ulang dari mana pun.
+ */
+const EPISODE_FIELDS_V2 = [
   "topics",
   "facts",
   "goals",
@@ -37,6 +51,11 @@ const EPISODE_FIELDS = [
   "unresolved",
   "temporalAnchors",
   "uncertainties",
+] as const satisfies readonly (keyof EpisodeSummaryDraft)[];
+
+const EPISODE_FIELDS = [
+  ...EPISODE_FIELDS_V2,
+  "progress",
 ] as const satisfies readonly (keyof EpisodeSummaryDraft)[];
 
 /**
@@ -216,6 +235,8 @@ function legacyEpisode(summary: string, createdAt: string): ConversationEpisode 
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
+    anchors: [],
     temporalAnchors: [],
     uncertainties: [],
   };
@@ -298,17 +319,22 @@ function readHistoryV2(value: unknown): ConversationHistory | null {
 }
 
 function readEpisode(value: unknown): ConversationEpisode | null {
+  if (!isRecord(value)) return null;
+  // Versi 2 tidak membawa `progress`. Ia dibaca apa adanya lalu dinaikkan
+  // dengan daftar kosong; sisanya identik.
+  const legacy = value["schemaVersion"] === 2;
+  const fields = legacy ? EPISODE_FIELDS_V2 : EPISODE_FIELDS;
   if (
-    !isRecord(value) ||
     !hasExactKeys(value, [
       "schemaVersion",
       "episodeId",
       "source",
       "summarizerVersion",
       "createdAt",
-      ...EPISODE_FIELDS,
+      ...fields,
+      ...(legacy ? [] : ["anchors" as const]),
     ]) ||
-    value["schemaVersion"] !== EPISODE_SCHEMA_VERSION
+    (!legacy && value["schemaVersion"] !== EPISODE_SCHEMA_VERSION)
   ) {
     return null;
   }
@@ -318,9 +344,13 @@ function readEpisode(value: unknown): ConversationEpisode | null {
   const source = readEpisodeSource(value["source"]);
   if (!episodeId || !summarizerVersion || !createdAt || !source) return null;
 
+  const anchors = legacy ? [] : readStoredAnchors(value["anchors"], source);
+  if (anchors === null) return null;
+
   const claims = {} as Record<keyof EpisodeSummaryDraft, EpisodeClaim[]>;
   let totalClaims = 0;
-  for (const field of EPISODE_FIELDS) {
+  claims.progress = [];
+  for (const field of fields) {
     const rawClaims = value[field];
     if (
       !Array.isArray(rawClaims) ||
@@ -345,8 +375,76 @@ function readEpisode(value: unknown): ConversationEpisode | null {
     source,
     summarizerVersion,
     createdAt,
+    anchors,
     ...claims,
   };
+}
+
+/**
+ * Membaca anchor tersimpan.
+ *
+ * Bentuknya berbeda dari klaim—ada `kind` dan `count`, tidak ada teks
+ * bebas—sehingga validasinya sendiri. Mengembalikan `null` berarti barisnya
+ * rusak dan episodenya dibuang, sama seperti klaim yang tidak sah.
+ */
+function readStoredAnchors(
+  value: unknown,
+  source: ConversationEpisode["source"],
+): EpisodeAnchor[] | null {
+  if (!Array.isArray(value) || value.length > EPISODE_ANCHORS_LIMIT) return null;
+  const anchors: EpisodeAnchor[] = [];
+  for (const raw of value) {
+    if (
+      !isRecord(raw) ||
+      !hasExactKeys(raw, ["kind", "text", "count", "sourceSequences"])
+    ) {
+      return null;
+    }
+    const kind = raw["kind"];
+    const text = typeof raw["text"] === "string" ? raw["text"] : "";
+    const count = raw["count"];
+    if (
+      !ANCHOR_KINDS.has(kind as string) ||
+      !text ||
+      text.length > EPISODE_ANCHOR_MAX_CHARS ||
+      /\p{C}/u.test(text) ||
+      !Number.isSafeInteger(count) ||
+      (count as number) < 1
+    ) {
+      return null;
+    }
+    const sequences = readAnchorSequences(raw["sourceSequences"], source);
+    if (!sequences) return null;
+    anchors.push({
+      kind: kind as EpisodeAnchor["kind"],
+      text,
+      count: count as number,
+      sourceSequences: sequences,
+    });
+  }
+  return anchors;
+}
+
+function readAnchorSequences(
+  value: unknown,
+  source: ConversationEpisode["source"],
+): number[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8) {
+    return null;
+  }
+  const sequences: number[] = [];
+  for (const raw of value) {
+    if (!Number.isSafeInteger(raw) || (raw as number) < 1) return null;
+    if (
+      source.kind === "turn-range" &&
+      ((raw as number) < source.fromSequence ||
+        (raw as number) > source.throughSequence)
+    ) {
+      return null;
+    }
+    sequences.push(raw as number);
+  }
+  return sequences;
 }
 
 function readEpisodeSource(value: unknown): ConversationEpisode["source"] | null {

@@ -10,6 +10,57 @@ learning, storage, atau kontrol data yang bukan policy safety.
 
 ## Keadaan saat ini
 
+- Episode membawa `anchors` sejak 4 September 2026—tanggal, bab, nilai, kelas
+  yang dipanen `src/core/episode-anchors.ts` lewat regex tanpa panggilan
+  model—tetapi **tidak dirender ke konteks giliran**. Pengukuran pertama tidak
+  mendukungnya, dan pengukuran kedua menunjukkan pembandingnya sendiri cacat
+  (fakta emas bocor lewat jendela giliran yang tidak dipadatkan). Panennya
+  disimpan karena deterministik dan membawa provenance sequence, jadi tetap
+  calon jangkar pencarian; penyuntikannya ke prompt yang dicabut.
+- `npm run eval:compaction` mengukur berapa banyak fakta yang masih dapat
+  diambil kembali sesudah pemadatan: bank pertanyaan tetap, penjaga yang
+  menolak korpus bila fakta emas bocor ke `HISTORY_WINDOW` giliran terakhir,
+  pemadatan berbentuk produksi (`HISTORY_COMPACTION_CHUNK_MAX_TURNS`), dan
+  `--reps` yang melaporkan sebaran. Hasil 4 September 2026, transkrip
+  `ujian-biologi`, tiga repetisi, `AI_MODE=testing`: arm `utuh` 97,9%
+  (93,8-100) pada 4.896 karakter; `episode` 20,8% (12,5-25,0) pada 3.172;
+  `episode+cari` 60,4% (56,3-68,8) pada 3.596. Rentang `episode` dan
+  `episode+cari` tidak bertumpang tindih—pencarian riwayat menaikkan recall
+  hampir tiga kali lipat dengan biaya 13% konteks. Artinya jalur pencarian
+  bukan pelengkap melainkan penopang: konteks episode otomatis sendirian
+  menahan kurang dari seperempat fakta spesifik.
+
+- Episode membawa field `progress` sejak 4 September 2026 (schema v3): hal yang
+  penggunanya berhasil kerjakan atau pahami sendiri, pasangan `unresolved`.
+  Sebelumnya riwayat hanya merekam sisi masalah. Episode v2 tetap dibaca apa
+  adanya dan memperoleh `progress` kosong; riwayat yang sudah dipadatkan tidak
+  dapat dibuat ulang dari mana pun.
+- Sesi tutor yang selesai meninggalkan `LearningTrace`
+  (`src/core/learning-trace-service.ts`): topik, kedalaman bantuan, tahap
+  terdalam, waktu. Tidak ada transkrip maupun penilaian. Sesi yang dibatalkan
+  tidak dicatat. Ini dasar bagi bantuan yang memudar di
+  `src/core/mastery-policy.ts`, yang hanya mengubah tahap pembuka sesi dan
+  tidak pernah menahan bantuan. Lihat ADR-047. Jejaknya ikut terhapus bersama
+  data pengguna dan tidak ikut ekspor.
+- Kontrak pemahaman kini mewajibkan memori ditulis sebagai fakta, bukan
+  perintah kepada diri sendiri. Kalimat perintah terbaca ulang sebagai aturan
+  berdiri pada giliran berikutnya dan dapat mengalahkan permintaan pengguna
+  saat itu.
+
+- Penyimpanan primary memory berbatas 128 butir per pengguna, dan batas itu
+  dulu bersifat akhir: `profile`, `preference`, dan `routine` tidak memiliki
+  masa hidup, sehingga tidak ada apa pun yang membuka tempat dan setiap
+  catatan baru ditolak "penuh" selamanya tanpa pemberitahuan. Sejak 4
+  September 2026 `src/core/memory-curator-policy.ts` menua-kan memori
+  berdasarkan pemakaian, bukan hanya waktu: `lastUsedAt` yang selama ini
+  hanya ditulis kini dibaca. Satu catatan dorman—tidak pernah sekali pun ikut
+  membantu balasan selama 90 hari—boleh dipensiunkan hanya ketika
+  penyimpanan benar-benar penuh. `profile` kebal, dan bila tidak ada yang
+  memenuhi syarat penolakan "penuh" tetap berlaku apa adanya. Dormansi juga
+  menjadi pengurang skor pada `selectRelevantMemories`, dan
+  `MemoryService.dormant` mendaftar catatan yang layak ditanyakan ulang
+  kepada pemiliknya.
+
 - MemoryItem yang dapat dikendalikan pengguna tetap berada di Markdown per
   owner. `/memori`, pertanyaan natural, dan Data & izin kini memakai satu
   renderer potret naratif, bukan daftar `content — kind`. Potret disintesis

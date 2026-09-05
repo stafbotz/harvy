@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { OperationalLogger } from "../src/observability/operational-logger.js";
 import { describe, it } from "node:test";
 import {
+  MEMORY_STORAGE_LIMIT,
   MemoryService,
   type MemoryDerivationLifecycle,
 } from "../src/core/memory-service.js";
@@ -390,6 +391,133 @@ describe("MemoryService", () => {
     assert.deepEqual(await pending, []);
     await wipe;
   });
+
+  it("memensiunkan satu memori dorman agar penyimpanan tidak membeku", async () => {
+    // Sebelum ini, penyimpanan penuh berarti Harvy berhenti belajar selamanya:
+    // profile/preference/routine tidak pernah kedaluwarsa sendiri, jadi tidak
+    // ada yang pernah membuka tempat lagi.
+    const store = new MemoryStore();
+    const now = new Date("2026-09-04T00:00:00.000Z");
+    const lama = new Date(now.getTime() - 200 * 24 * 60 * 60 * 1000).toISOString();
+    for (let index = 0; index < MEMORY_STORAGE_LIMIT; index += 1) {
+      await store.save({
+        id: `dorman-${index}`,
+        ownerId: "ayu",
+        kind: "preference",
+        content: `catatan lama ${index}`,
+        createdAt: lama,
+        lastUsedAt: null,
+        expiresAt: null,
+      });
+    }
+    const service = new MemoryService(store, () => now);
+
+    const saved = await service.remember({
+      ownerId: "ayu",
+      kind: "routine",
+      content: "Belajar tiap malam jam delapan",
+    });
+
+    assert.notEqual(saved, null);
+    const items = await service.list("ayu");
+    assert.equal(items.length, MEMORY_STORAGE_LIMIT);
+    assert.equal(
+      items.some((item) => item.content === "Belajar tiap malam jam delapan"),
+      true,
+    );
+  });
+
+  it("tetap menolak ketika penuh oleh memori yang masih terpakai", async () => {
+    const store = new MemoryStore();
+    const now = new Date("2026-09-04T00:00:00.000Z");
+    const kemarin = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    for (let index = 0; index < MEMORY_STORAGE_LIMIT; index += 1) {
+      await store.save({
+        id: `aktif-${index}`,
+        ownerId: "ayu",
+        kind: "preference",
+        content: `catatan aktif ${index}`,
+        createdAt: kemarin,
+        lastUsedAt: kemarin,
+        expiresAt: null,
+      });
+    }
+    const service = new MemoryService(store, () => now);
+
+    const saved = await service.remember({
+      ownerId: "ayu",
+      kind: "routine",
+      content: "Belajar tiap malam jam delapan",
+    });
+
+    assert.equal(saved, null);
+    assert.equal((await service.list("ayu")).length, MEMORY_STORAGE_LIMIT);
+  });
+
+  it("membersihkan turunan sebelum memori dorman dilepas", async () => {
+    // Derivation yang masih terbang dapat menulis proyeksi semantik sesudah
+    // primary-nya hilang, dan proyeksi yatim berarti data yang dikira sudah
+    // pensiun sebenarnya masih ada. Urutannya karena itu ikut diuji, bukan
+    // hanya hasil akhirnya.
+    const store = new MemoryStore();
+    const lifecycle = new MemoryLifecycle();
+    const now = new Date("2026-09-04T00:00:00.000Z");
+    const lama = new Date(now.getTime() - 200 * 24 * 60 * 60 * 1000).toISOString();
+    for (let index = 0; index < MEMORY_STORAGE_LIMIT; index += 1) {
+      await store.save({
+        id: `dorman-${index}`,
+        ownerId: "ayu",
+        kind: "preference",
+        content: `catatan lama ${index}`,
+        createdAt: lama,
+        lastUsedAt: null,
+        expiresAt: null,
+      });
+    }
+    const service = new MemoryService(store, () => now, lifecycle);
+
+    await service.remember({
+      ownerId: "ayu",
+      kind: "routine",
+      content: "Belajar tiap malam jam delapan",
+    });
+    await service.drain();
+
+    const forget = lifecycle.events.indexOf("forget:ayu:expired");
+    const remember = lifecycle.events.findIndex((event) =>
+      event.startsWith("remember:ayu")
+    );
+    assert.notEqual(forget, -1, "turunan memori yang dipensiunkan tidak dibersihkan");
+    assert.ok(forget < remember, "pembersihan turunan harus mendahului catatan baru");
+  });
+
+  it("tidak pernah memensiunkan profile untuk memberi tempat", async () => {
+    const store = new MemoryStore();
+    const now = new Date("2026-09-04T00:00:00.000Z");
+    const lama = new Date(now.getTime() - 400 * 24 * 60 * 60 * 1000).toISOString();
+    for (let index = 0; index < MEMORY_STORAGE_LIMIT; index += 1) {
+      await store.save({
+        id: `profil-${index}`,
+        ownerId: "ayu",
+        kind: "profile",
+        content: `identitas ${index}`,
+        createdAt: lama,
+        lastUsedAt: null,
+        expiresAt: null,
+      });
+    }
+    const service = new MemoryService(store, () => now);
+
+    assert.equal(
+      await service.remember({
+        ownerId: "ayu",
+        kind: "routine",
+        content: "Belajar tiap malam jam delapan",
+      }),
+      null,
+    );
+  });
+
 });
 
 /** Penyimpanan di memori proses, agar tes tidak menyentuh berkas nyata. */

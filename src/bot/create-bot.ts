@@ -36,6 +36,12 @@ import {
 } from "../ai/model-policy.js";
 import { agentRunLogFields, liveStateRequirement } from "../ai/agent.js";
 import { acknowledgesPrematureReply } from "../core/turn-taking-policy.js";
+import { withoutMutedOffers } from "../core/offer-fatigue-policy.js";
+import {
+  isProjectArchive,
+  unsupportedAttachmentReply,
+  type UnsupportedAttachment,
+} from "../core/attachment-policy.js";
 import {
   canUseDirectTimeFastPath,
   isDirectTimeQuestion,
@@ -215,6 +221,7 @@ import {
   dataControlActions,
   deleteAllConfirmActions,
   formatMemoryPortrait,
+  RECOVERED_REPLY_NOTE,
   formatEconomyUsage,
   formatSession,
   formatTask,
@@ -251,6 +258,12 @@ import {
   type TelegramCommandOptions,
 } from "./commands.js";
 import { ActionOfferStore } from "./action-offers.js";
+import { isAdaptiveActionId } from "../core/action-policy.js";
+import type { ReplyObligationService } from "../core/reply-obligation-service.js";
+import {
+  createTelegramApiResilience,
+  TypingCooldown,
+} from "./telegram-api-resilience.js";
 import { MessageBatcher } from "./message-batcher.js";
 import { DeferredTurnRetry } from "../core/deferred-turn-retry.js";
 import type { AbuseService } from "../core/abuse-service.js";
@@ -484,6 +497,8 @@ const SESSION_KIND_OF: Partial<Record<string, SessionKind>> = {
 export type HarvyBot = Bot & {
   drainPending: () => Promise<void>;
   resumeAgentRuns: () => Promise<void>;
+  /** Mengirim ulang balasan yang belum terbukti sampai sebelum proses mati. */
+  redeliverUnsettledReplies: () => Promise<number>;
   sendCheckIn: (candidate: ActiveSession) => Promise<boolean>;
   sendReminder: (candidate: StudentTask) => Promise<boolean>;
 };
@@ -509,23 +524,52 @@ class ReplyInterruptedError extends Error {
 }
 export interface TypingContext {
   replyWithChatAction: (action: "typing") => Promise<unknown>;
+  chat?: { id: number | string } | undefined;
 }
+
+/**
+ * Penahanan indikator mengetik per chat, dipakai bersama seluruh pemanggil.
+ *
+ * Process-local dan hilang saat restart, sama seperti state navigasi lain di
+ * adapter ini: ia soal laju sesaat, bukan data pengguna.
+ */
+const typingCooldown = new TypingCooldown();
 
 export async function bestEffortTyping(
   ctx: TypingContext,
   logger: OperationalLogger = NOOP_OPERATIONAL_LOGGER,
+  cooldown: TypingCooldown = typingCooldown,
 ): Promise<void> {
+  const chatId = ctx.chat?.id === undefined ? null : String(ctx.chat.id);
+  // Ketika Telegram sedang membatasi laju, mengirim indikator lagi hanya
+  // menambah tekanan lewat jalur yang tidak membawa satu pun kata kepada
+  // penggunanya.
+  if (chatId !== null && cooldown.active(chatId)) return;
   try {
     await ctx.replyWithChatAction("typing");
+    if (chatId !== null) cooldown.clear(chatId);
   } catch (error) {
+    if (chatId !== null) {
+      cooldown.record(chatId, telegramRetryAfterSeconds(error));
+    }
     // Indikator ini kosmetik. Kegagalan Telegram tidak boleh membuang pesan
     // pengguna atau menghentikan giliran percakapan.
     logger.warn(
       "telegram_typing_failed",
-      "Indikator mengetik gagal dikirim.",
+      "Indikator mengetik gagal dikirim; indikator ditahan sebentar.",
       { error },
     );
   }
+}
+
+/** `retry_after` dari galat Telegram, bila galat itu memang membawanya. */
+function telegramRetryAfterSeconds(error: unknown): number | undefined {
+  const parameters = (error as { parameters?: { retry_after?: unknown } })
+    ?.parameters;
+  const seconds = parameters?.retry_after;
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
+    ? seconds
+    : undefined;
 }
 
 /**
@@ -588,6 +632,11 @@ export function createBot(
   usageDashboard: Pick<UserUsageSummaryService, "summary"> | null = null,
   /** Null mempertahankan perilaku lama: tidak ada penangguhan sama sekali. */
   abuse: AbuseService | null = null,
+  /**
+   * Null mempertahankan perilaku lama: balasan yang hilang karena crash tidak
+   * pernah dikirim ulang, dan tidak ada yang mengetahuinya.
+   */
+  replyObligations: ReplyObligationService | null = null,
 ): HarvyBot {
   const commandOptions: TelegramCommandOptions = Object.freeze({
     codingRuntime: codingRuntime !== null,
@@ -797,6 +846,14 @@ export function createBot(
     telemetry.turnTokens?.(ownerId, activeTurnId.get(ownerId) ?? null) ??
       { input: 0, output: 0, pendingInput: 0 };
   const bot = new Bot(config.telegramBotToken);
+  // Dipasang sebelum apa pun memakai API. Ia memberi getUpdates batas waktu
+  // yang sepadan dengan jawaban Telegram sungguhan, mematuhi retry_after saat
+  // mengirim, dan—yang paling penting—membuat kegagalan polling terlihat.
+  // Tanpa ini grammY menelannya ke `debugErr` dan mengulang diam-diam, jadi
+  // Harvy dapat berhenti menerima pesan berjam-jam tanpa satu baris log.
+  bot.api.config.use(
+    createTelegramApiResilience({ logger: logger.child("telegram.api") }),
+  );
   bot.use(async (ctx, next) => {
     const originalReply = ctx.reply.bind(ctx);
     ctx.reply = (async (...args: Parameters<Context["reply"]>) => {
@@ -1790,6 +1847,29 @@ export function createBot(
     });
   });
 
+  /**
+   * Memberi tahu batas kemampuan Harvy ketika lampirannya tidak dapat dibaca.
+   *
+   * Deterministik dan tidak memanggil model: berkasnya memang tidak pernah
+   * sampai ke model, jadi tidak ada yang bisa dipahaminya. Memakai antrean
+   * yang sama dengan aksi bot lain supaya urutannya tetap benar terhadap
+   * pesan yang sedang diproses.
+   */
+  function replyUnsupportedAttachment(
+    ctx: Context,
+    kind: UnsupportedAttachment,
+  ): void {
+    enqueueBotAction(
+      ctx,
+      ownerOf(ctx),
+      "cancel",
+      "Lampiran gagal ditanggapi:",
+      async () => {
+        await ctx.reply(unsupportedAttachmentReply(kind));
+      },
+    );
+  }
+
   bot.on("message:document", (ctx) => {
     const imageType = telegramImageMediaType(ctx.message.document.mime_type);
     if (imageType) {
@@ -1803,33 +1883,27 @@ export function createBot(
       return;
     }
     if (ctx.message.document.mime_type?.startsWith("image/")) {
-      const ownerId = ownerOf(ctx);
-      enqueueBotAction(
-        ctx,
-        ownerId,
-        "cancel",
-        "Format gambar gagal ditanggapi:",
-        async () => {
-          await ctx.reply("Kirim gambar JPEG, PNG, atau WebP, ya.");
-        },
-      );
+      replyUnsupportedAttachment(ctx, "gambar-asing");
+      return;
+    }
+    // ZIP hanya berarti project ketika runtime coding memang terpasang. Di
+    // deployment tanpa runtime itu—yaitu bawaannya—berkas apa pun selain
+    // gambar adalah berkas yang tidak dapat Harvy baca, dan pengirimnya
+    // layak diberi tahu begitu alih-alih disuruh mengirim ZIP.
+    if (
+      !codingRuntime ||
+      !isProjectArchive(
+        ctx.message.document.file_name,
+        ctx.message.document.mime_type,
+      )
+    ) {
+      replyUnsupportedAttachment(ctx, "dokumen");
       return;
     }
     const ownerId = ownerOf(ctx);
     enqueueBotAction(ctx, ownerId, "drain", "Upload project ZIP gagal:", async () => {
-      if (!codingRuntime) {
-        await ctx.reply("Runtime coding belum diaktifkan oleh deployment Harvy.");
-        return;
-      }
       if (!await codingConsent(ctx, ownerId)) return;
       const document = ctx.message.document;
-      if (
-        !document.file_name?.toLocaleLowerCase("en-US").endsWith(".zip") &&
-        document.mime_type !== "application/zip"
-      ) {
-        await ctx.reply("Untuk project coding, kirim archive berformat ZIP.");
-        return;
-      }
       const telegramFile = await ctx.api.getFile(document.file_id);
       if (!telegramFile.file_path) throw new Error("Telegram tidak menyediakan path file ZIP.");
       const archive = await downloadTelegramZip(
@@ -1860,6 +1934,25 @@ export function createBot(
       "image/jpeg",
       ctx.message.caption ?? "",
     );
+  });
+
+  // Harvy tidak mendengar. Tanpa handler ini ia diam saja ketika seorang
+  // pelajar mengirim voice note, dan diam adalah jawaban paling buruk—ia
+  // terbaca seperti diabaikan, bukan seperti keterbatasan.
+  bot.on("message:voice", (ctx) => {
+    replyUnsupportedAttachment(ctx, "suara");
+  });
+
+  bot.on("message:audio", (ctx) => {
+    replyUnsupportedAttachment(ctx, "suara");
+  });
+
+  bot.on("message:video", (ctx) => {
+    replyUnsupportedAttachment(ctx, "video");
+  });
+
+  bot.on("message:video_note", (ctx) => {
+    replyUnsupportedAttachment(ctx, "video");
   });
 
   bot.on("message:text", (ctx) => {
@@ -2039,6 +2132,7 @@ export function createBot(
 
   return Object.assign(bot, {
     resumeAgentRuns: () => resumeActiveAgentRuns(),
+    redeliverUnsettledReplies: () => redeliverUnsettledReplies(),
     drainPending: async () => {
       await drainIngress();
       await drainOnboarding();
@@ -2055,6 +2149,46 @@ export function createBot(
     sendReminder: (candidate: StudentTask) =>
       sendScheduledReminder(candidate),
   });
+
+  /**
+   * Mengirim ulang balasan yang belum terbukti sampai sebelum proses mati.
+   *
+   * Dipanggil sekali saat start, sesudah polling hidup. Yang berasal dari
+   * proses yang sudah dimulai I/O-nya dibawa penanda yang terlihat—kontraknya
+   * at-least-once yang jujur, bukan duplikat diam-diam. Lihat `ADR-046`.
+   */
+  async function redeliverUnsettledReplies(): Promise<number> {
+    if (!replyObligations) return 0;
+    const recoverable = await replyObligations.recover();
+    let delivered = 0;
+    for (const { obligation, possiblyDelivered } of recoverable) {
+      const text = possiblyDelivered
+        ? `${RECOVERED_REPLY_NOTE}
+
+${obligation.text}`
+        : obligation.text;
+      try {
+        for (const bubble of splitReplyBubbles(text)) {
+          await bot.api.sendMessage(obligation.chatId, bubble);
+        }
+        delivered += 1;
+        logger.info(
+          "reply_obligation_redelivered",
+          "Balasan yang tertahan sebelum restart dikirim ulang.",
+          { possiblyDelivered },
+        );
+      } catch (error) {
+        logger.warn(
+          "reply_obligation_redelivery_failed",
+          "Pengiriman ulang balasan tertahan gagal.",
+          { errorType: error instanceof Error ? error.name : "unknown" },
+        );
+      } finally {
+        await replyObligations.settle(obligation.id);
+      }
+    }
+    return delivered;
+  }
 
   async function sendScheduledCheckIn(
     candidate: ActiveSession,
@@ -2790,7 +2924,8 @@ export function createBot(
         { decision: String(choice) },
       );
       text = chosen;
-    }
+    }
+
     const createdProgress = runtime.progress
       ? null
       : createTelegramProgress(ctx, currentTurnId() ?? ownerId);
@@ -3823,7 +3958,15 @@ export function createBot(
         understanding.task?.title.trim() ||
         (explicitSmallStepSession ? text : "") ||
         (proposedActions[0] === "listen" ? "Menyimak cerita ini" : "");
-      const plannedActions = actionGoal ? proposedActions : [];
+      const plannedActionsRaw = actionGoal ? proposedActions : [];
+      // Disaring sesudah `adaptiveActions`, tidak menggantikannya: seluruh
+      // pagar niat dan risiko tetap berjalan lebih dahulu, dan penyaringan ini
+      // hanya boleh membuang.
+      const plannedActions = withoutMutedOffers(
+        plannedActionsRaw,
+        profile.offerFatigue,
+        new Date(),
+      );
       const explicitResponsePreference = inferExplicitResponsePreference(text);
       const authorizedMemoryRetractions =
         (understanding.memoryRetractions ?? []).filter((proposal) =>
@@ -4358,6 +4501,19 @@ export function createBot(
         remembered.saved.length === 0 &&
         (!replyHasBlockingQuestion(reply) || explicitSmallStepSession)
       ) {
+        // Tawaran sebelumnya yang masih hidup kini tergantikan tanpa pernah
+        // ditekan. Itulah satu-satunya saat "diabaikan" dapat diketahui pasti.
+        const superseded = actionOffers.peek(ownerId);
+        if (superseded) {
+          void profiles.noteOffersIgnored(ownerId, superseded.actions)
+            .catch((error: unknown) => {
+              logger.warn(
+                "offer_fatigue_note_failed",
+                "Catatan tawaran yang terlewat gagal disimpan.",
+                { errorType: error instanceof Error ? error.name : "unknown" },
+              );
+            });
+        }
         adaptiveKeyboard = adaptiveActionButtons(
           actionOffers.set(ownerId, plannedActions, actionGoal),
         );
@@ -6252,42 +6408,62 @@ export function createBot(
     // yang sama.
     const notesToDeliver = replyAcknowledgesMemoryWrite(text) ? [] : notes;
 
+    // Janji dicatat sebelum satu byte pun berangkat. Crash pada jendela
+    // antara "jawaban jadi" dan "jawaban terkirim" adalah satu-satunya cara
+    // balasan hilang tanpa jejak, dan jendela itu dimulai tepat di bawah ini.
+    const obligationId = replyObligations && ctx.chat
+      ? await replyObligations.record({
+        ownerId: ownerOf(ctx),
+        chatId: String(ctx.chat.id),
+        channel: "telegram",
+        text,
+      })
+      : null;
+
     let lastMessage: SentMessageRef | null = null;
     const delivered: string[] = [];
-    for (const [index, bubble] of bubbles.entries()) {
-      if (!(await runtimeIsCurrent(runtime))) {
-        throw new ReplyInterruptedError(delivered.join("\n\n"));
-      }
-      const last = index === bubbles.length - 1;
-      const deliveredBubble = last
-        ? withMemoryNotes(bubble, notesToDeliver)
-        : bubble;
-      let sent;
-      try {
-        sent = await ctx.reply(
-          deliveredBubble,
-          last && replyKeyboard ? { reply_markup: replyKeyboard } : {},
-        );
-      } catch (error) {
-        if (delivered.length > 0) {
-          throw new PartialReplyDeliveryError(delivered.join("\n\n"), error);
+    try {
+      for (const [index, bubble] of bubbles.entries()) {
+        if (!(await runtimeIsCurrent(runtime))) {
+          throw new ReplyInterruptedError(delivered.join("\n\n"));
         }
-        throw error;
-      }
-      delivered.push(deliveredBubble);
-      onBubbleDelivered?.(deliveredBubble);
-      lastMessage = {
-        chatId: sent.chat.id,
-        messageId: sent.message_id,
-      };
+        const last = index === bubbles.length - 1;
+        const deliveredBubble = last
+          ? withMemoryNotes(bubble, notesToDeliver)
+          : bubble;
+        let sent;
+        try {
+          if (index === 0) await replyObligations?.markAttempting(obligationId);
+          sent = await ctx.reply(
+            deliveredBubble,
+            last && replyKeyboard ? { reply_markup: replyKeyboard } : {},
+          );
+        } catch (error) {
+          if (delivered.length > 0) {
+            throw new PartialReplyDeliveryError(delivered.join("\n\n"), error);
+          }
+          throw error;
+        }
+        delivered.push(deliveredBubble);
+        onBubbleDelivered?.(deliveredBubble);
+        lastMessage = {
+          chatId: sent.chat.id,
+          messageId: sent.message_id,
+        };
 
-      if (!last) {
-        await bestEffortTyping(ctx, logger);
-        await interruptibleBubblePause(
-          bubblePauseMs(bubbles[index + 1] ?? ""),
-          runtime.signal,
-        );
+        if (!last) {
+          await bestEffortTyping(ctx, logger);
+          await interruptibleBubblePause(
+            bubblePauseMs(bubbles[index + 1] ?? ""),
+            runtime.signal,
+          );
+        }
       }
+    } finally {
+      // Dilepas apa pun yang terjadi. Baris yang tertinggal karena crash
+      // justru yang ingin disapu saat start; baris yang tertinggal karena
+      // galat biasa hanya akan dikirim ulang tanpa perlu.
+      await replyObligations?.settle(obligationId);
     }
     return lastMessage;
   }
@@ -7110,6 +7286,9 @@ export function createBot(
 
     await dropKeyboard(ctx);
     await recordEvent(ownerId, "adaptive_action_chosen");
+    if (isAdaptiveActionId(selected.operation)) {
+      await profiles.noteOfferTaken(ownerId, selected.operation);
+    }
 
     switch (selected.operation) {
       case "listen": {

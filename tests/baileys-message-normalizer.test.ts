@@ -163,6 +163,42 @@ describe("normalisasi pesan Baileys", () => {
     );
   });
 
+  it("menandai suara dan video privat alih-alih membuangnya diam-diam", () => {
+    // Sebelum ini normalizer mengembalikan null untuk keduanya, sehingga
+    // pengirimnya tidak pernah menerima apa pun—terbaca seperti diabaikan,
+    // bukan seperti keterbatasan.
+    const context = {
+      accountId: "utama",
+      selfJids: ["628123456789@s.whatsapp.net"],
+    };
+    const suara = normalizeBaileysPrivateMessage(
+      message({
+        key: {
+          id: "private-voice",
+          remoteJid: "628777777777@s.whatsapp.net",
+          fromMe: false,
+        },
+        message: { audioMessage: { ptt: true, mimetype: "audio/ogg" } },
+      }),
+      context,
+    );
+    assert.equal(suara?.unsupportedMedia, "suara");
+    assert.equal(suara?.text, "");
+
+    const video = normalizeBaileysPrivateMessage(
+      message({
+        key: {
+          id: "private-video",
+          remoteJid: "628777777777@s.whatsapp.net",
+          fromMe: false,
+        },
+        message: { videoMessage: { caption: "ini gimana ya" } },
+      }),
+      context,
+    );
+    assert.equal(video?.unsupportedMedia, "video");
+  });
+
   it("menormalisasi pesan privat tanpa mencampurnya dengan scope grup", () => {
     const normalized = normalizeBaileysPrivateMessage(
       message({
@@ -185,6 +221,7 @@ describe("normalisasi pesan Baileys", () => {
       quotedMessageId: null,
       document: null,
       image: null,
+      unsupportedMedia: null,
     });
     assert.equal(
       whatsappPrivateOwnerId(normalized?.userId ?? ""),

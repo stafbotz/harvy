@@ -5,6 +5,11 @@ import type {
   UserProfile,
 } from "../domain/profile.js";
 import { isValidQuietHours, isValidTimeZone } from "./time-policy.js";
+import type { AdaptiveActionId } from "./action-policy.js";
+import {
+  recordOfferTaken,
+  recordOffersIgnored,
+} from "./offer-fatigue-policy.js";
 
 /**
  * Versi ketentuan yang berlaku sekarang.
@@ -139,6 +144,39 @@ export class ProfileService {
 
     await this.repository.save(updated);
     return updated;
+  }
+
+  /**
+   * Mencatat bahwa tawaran ditampilkan lalu berlalu tanpa ditekan.
+   *
+   * Best-effort dan tidak pernah menahan giliran: ini pengamatan tentang
+   * tombol, bukan data yang gilirannya bergantung padanya.
+   */
+  async noteOffersIgnored(
+    ownerId: string,
+    actions: readonly AdaptiveActionId[],
+  ): Promise<void> {
+    if (actions.length === 0) return;
+    const profile = await this.load(ownerId);
+    const offerFatigue = recordOffersIgnored(
+      profile.offerFatigue,
+      actions,
+      this.now(),
+    );
+    await this.repository.save({ ...profile, offerFatigue });
+  }
+
+  /** Melupakan catatan sebuah tawaran begitu ia benar-benar dipakai. */
+  async noteOfferTaken(
+    ownerId: string,
+    action: AdaptiveActionId,
+  ): Promise<void> {
+    const profile = await this.load(ownerId);
+    if (!profile.offerFatigue?.[action]) return;
+    await this.repository.save({
+      ...profile,
+      offerFatigue: recordOfferTaken(profile.offerFatigue, action),
+    });
   }
 
   async markStyleAsked(ownerId: string): Promise<void> {

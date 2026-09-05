@@ -8,6 +8,7 @@ import {
 } from "baileys";
 import { planResponsePresentation } from "../core/response-presentation.js";
 import type { GroupMessage } from "../domain/group.js";
+import type { UnsupportedAttachment } from "../core/attachment-policy.js";
 
 export interface BaileysMessageContext {
   accountId: string;
@@ -28,6 +29,16 @@ export interface WhatsAppPrivateMessage {
   document?: WhatsAppPrivateInboundDocument | null;
   /** Byte media transient; adapter tidak pernah memasukkannya ke store/log. */
   image?: WhatsAppPrivateInboundImage | null;
+  /**
+   * Media yang memang tidak dapat Harvy baca, bila ada.
+   *
+   * Tidak membawa byte apa pun—tidak ada yang perlu diunduh dari sesuatu yang
+   * tidak dapat dibaca. Ia hanya penanda supaya jalur privat menjawab batas
+   * kemampuannya alih-alih membuang pesannya diam-diam, dan diam adalah yang
+   * terjadi sebelum ini: normalizer mengembalikan `null` untuk voice note,
+   * sehingga pengirimnya tidak pernah menerima apa pun.
+   */
+  unsupportedMedia?: UnsupportedAttachment | null;
 }
 
 export interface WhatsAppPrivateInboundDocument {
@@ -215,8 +226,9 @@ export function normalizeBaileysPrivateMessage(
   const text = messageText(content) ?? "";
   const descriptor = privateDocumentDescriptor(content);
   const image = privateImageDescriptor(content);
+  const unsupportedMedia = privateUnsupportedMedia(content);
   const contextInfo = messageContextInfo(content);
-  if (!text && !descriptor && !image) return null;
+  if (!text && !descriptor && !image && !unsupportedMedia) return null;
   return {
     accountId: context.accountId,
     userId,
@@ -228,7 +240,23 @@ export function normalizeBaileysPrivateMessage(
       ? { ...descriptor, data: Buffer.alloc(0) }
       : null,
     image: image ? { ...image, data: Buffer.alloc(0) } : null,
+    unsupportedMedia,
   };
+}
+
+/**
+ * Media yang jelas di luar jangkauan Harvy.
+ *
+ * Sengaja sempit: hanya suara dan video. Stiker tidak ikut—ia bagian dari cara
+ * orang mengobrol, bukan berkas yang dikirim untuk dibaca, dan menjawabnya
+ * dengan penjelasan keterbatasan akan terasa mengganggu.
+ */
+function privateUnsupportedMedia(
+  content: ReturnType<typeof extractMessageContent>,
+): UnsupportedAttachment | null {
+  if (content?.audioMessage) return "suara";
+  if (content?.videoMessage) return "video";
+  return null;
 }
 
 export function whatsappPrivateOwnerId(userId: string): string {

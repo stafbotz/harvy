@@ -76,4 +76,36 @@ describe("rencana presentasi respons", () => {
       whatsapp.segments.map(({ text, relation }) => ({ text, relation })),
     );
   });
+
+  it("memangkas balasan yang menggema sebelum dipecah jadi banyak notifikasi", () => {
+    const echo = "Aku ngerti banget rasanya kewalahan sama tugas yang numpuk.";
+    const plan = planResponsePresentation(`${echo}
+`.repeat(200), {
+      maxSegmentCharacters: 4_000,
+    });
+
+    assert.equal(plan.repetitionGuardApplied, true);
+    assert.equal(plan.segments.length, 1);
+    assert.equal(plan.logicalText, echo);
+  });
+
+  it("tidak pernah memangkas balasan yang memuat kode berpagar", () => {
+    // Memangkas kode di tengah menghasilkan jawaban salah yang tidak terlihat
+    // salah. Banjir notifikasi setidaknya kelihatan.
+    const baris = "  console.log(0);";
+    const text = ["```js", ...Array.from({ length: 40 }, () => baris), "```"]
+      .join(String.fromCharCode(10));
+    const plan = planResponsePresentation(text, { maxSegmentCharacters: 4_000 });
+
+    assert.equal(plan.repetitionGuardApplied, false);
+    assert.equal(plan.logicalText, text);
+  });
+
+  it("tidak menyentuh balasan wajar", () => {
+    const plan = planResponsePresentation("Besok mau mulai dari bab mana?", {
+      maxSegmentCharacters: 4_000,
+    });
+
+    assert.equal(plan.repetitionGuardApplied, false);
+  });
 });

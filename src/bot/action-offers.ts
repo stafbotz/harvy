@@ -50,6 +50,23 @@ export class ActionOfferStore {
     return offer;
   }
 
+  /**
+   * Tawaran yang masih hidup untuk pengguna ini, atau `null`.
+   *
+   * Ada supaya pemanggil dapat mengetahui satu hal yang tidak bisa diketahui
+   * dari mana pun lagi: tawaran yang tergantikan tanpa pernah ditekan. Tidak
+   * mengubah apa pun, dan yang kedaluwarsa dianggap tidak ada.
+   */
+  peek(ownerId: string): ActionOffer | null {
+    const stored = this.offers.get(ownerId);
+    if (!stored) return null;
+    if (this.now() >= stored.expiresAt) {
+      this.offers.delete(ownerId);
+      return null;
+    }
+    return stored.offer;
+  }
+
   take(
     ownerId: string,
     token: string,

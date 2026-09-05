@@ -129,6 +129,18 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
 
 ## Batas dan defect aktif
 
+- Ketahanan jalur API dipasang di transformer grammY
+  (`src/bot/telegram-api-resilience.ts`), bukan sebagai pengawas dari luar.
+  `getUpdates` dibatasi 55 detik; soket mati membatalkan dirinya lalu grammY
+  membangun ulang koneksi dengan mesin retry-nya sendiri. Kegagalan transport
+  dan penolakan API dicatat ke `OperationalLogger`, diringkas satu baris per
+  menit per jenis. Sebelum ini grammY melaporkannya hanya lewat `debugErr`
+  dan galat polling tidak pernah sampai ke `bot.catch`, sehingga Harvy dapat
+  berhenti menerima pesan berjam-jam dengan nol baris log.
+- Belum diuji terhadap gangguan jaringan sungguhan maupun rate limit Telegram
+  yang nyata; yang ada baru tes unit atas keputusan dan transformer-nya.
+  Jangan menyebutnya terbukti pada kanal hidup.
+
 - Exploratory current-build 26 Agustus benar-benar dijalankan dari akun
   Telegram tester dan pesan berikutnya dipilih dari respons Harvy, bukan dari
   expected transcript. Perjalanan menyelesaikan tugas format evaluasi nyata,
@@ -221,6 +233,11 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
 - Input gambar sudah lulus smoke provider nyata dan tes adapter, tetapi belum
   dikirim lewat akun Telegram tester pada build ini; jangan menyebutnya live
   channel-proven.
+- Masukan yang dapat diproses hanya teks dan gambar. Dokumen non-gambar,
+  pesan suara, dan video dijawab dengan permintaan maaf beserta saran
+  screenshot (`src/core/attachment-policy.ts`); tidak ada transkripsi audio
+  maupun pembacaan isi PDF/Office, dan tidak direncanakan. ZIP tetap menjadi
+  jalur upload project hanya ketika runtime coding terpasang.
 - Work lane baru satu foreground dan belum mempunyai job queue kedua,
   replacement policy, archive Anchor, storage multi-instance, atau receipt
   selain outbound Telegram.

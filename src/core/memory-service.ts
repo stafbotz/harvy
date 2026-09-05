@@ -16,6 +16,10 @@ import {
   selectRelevantMemories,
 } from "./memory-policy.js";
 import { deriveMemoryMetadata } from "./memory-candidate.js";
+import {
+  dormantMemories,
+  retirableMemory,
+} from "./memory-curator-policy.js";
 
 export const MEMORY_STORAGE_LIMIT = 128;
 
@@ -109,9 +113,45 @@ export class MemoryService {
         (item) => item.content.toLowerCase() === content.toLowerCase(),
       );
       if (duplicate) return reject("duplikat");
-      if (existing.length >= MEMORY_STORAGE_LIMIT) return reject("penuh");
-
       const now = this.now();
+      if (existing.length >= MEMORY_STORAGE_LIMIT) {
+        // Sampai 4 September 2026 baris ini adalah akhir dari pembelajaran.
+        // Tiga jenis memori tidak pernah kedaluwarsa sendiri, jadi begitu
+        // penyimpanan penuh tidak ada yang membukanya lagi: setiap catatan
+        // baru ditolak "penuh" selamanya, dan pemiliknya tidak diberi tahu.
+        //
+        // Yang dipensiunkan hanya memori yang tidak pernah sekali pun ikut
+        // membantu sebuah balasan selama jendela dormansi penuh. Bila tidak
+        // ada yang memenuhi syarat, penolakan tetap berlaku apa adanya.
+        const retirable = retirableMemory(existing, now);
+        if (!retirable) return reject("penuh");
+        // Urutan cascade-nya sama persis dengan `listUnlocked`, `forget`, dan
+        // `edit`, dan itu bukan gaya penulisan: derivation yang masih terbang
+        // dapat menulis proyeksi semantik sesudah primary-nya hilang, dan
+        // proyeksi yatim seperti itu berarti data yang dikira sudah pensiun
+        // sebenarnya masih ada.
+        await this.drainOwner(input.ownerId);
+        if (this.blockedOwners.has(input.ownerId)) return reject("terkunci");
+        await this.lifecycle?.forgetSource(retirable, "expired");
+        await this.learning?.forgetSource(retirable);
+        if (!(await this.repository.remove(input.ownerId, retirable.id))) {
+          return reject("penuh");
+        }
+        this.logger.info(
+          "memory_retired_dormant",
+          "Satu memori dorman dipensiunkan agar penyimpanan tidak membeku.",
+          {
+            kind: retirable.kind,
+            daysSinceUse: Math.floor(
+              (now.getTime() -
+                new Date(retirable.lastUsedAt ?? retirable.createdAt).getTime()) /
+                (24 * 60 * 60 * 1000),
+            ),
+            everUsed: retirable.lastUsedAt !== null,
+          },
+        );
+      }
+
       const item: MemoryItem = {
         id: randomUUID().replaceAll("-", "").slice(0, 8),
         ownerId: input.ownerId,
@@ -146,6 +186,18 @@ export class MemoryService {
    */
   async list(ownerId: string): Promise<MemoryItem[]> {
     return this.exclusiveSource(ownerId, () => this.listUnlocked(ownerId));
+  }
+
+  /**
+   * Memori yang sudah lama tidak pernah membantu satu balasan pun.
+   *
+   * Bukan daftar hapus. Ia bahan untuk menanyakan ulang kepada pemiliknya —
+   * hak koreksi pada Pasal 4 hanya berarti sesuatu bila yang keliru dapat
+   * ditunjuk, dan catatan yang berbulan-bulan tak terpakai justru yang paling
+   * mungkin sudah tidak benar lagi.
+   */
+  async dormant(ownerId: string): Promise<MemoryItem[]> {
+    return dormantMemories(await this.list(ownerId), this.now());
   }
 
   private async listUnlocked(ownerId: string): Promise<MemoryItem[]> {

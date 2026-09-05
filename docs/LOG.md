@@ -18,6 +18,8 @@ material lama berada di:
 - [`log/2026-08-22.md`](log/2026-08-22.md)
 - [`log/2026-08-24.md`](log/2026-08-24.md)
 - [`log/2026-08-25-testing-gmi.md`](log/2026-08-25-testing-gmi.md)
+- [`log/2026-08-28-biaya-token.md`](log/2026-08-28-biaya-token.md)
+- [`log/2026-08-28-estimator-token.md`](log/2026-08-28-estimator-token.md)
 - [`log/2026-08-25-eksplorasi.md`](log/2026-08-25-eksplorasi.md)
 - [`log/2026-08-25-console-credential.md`](log/2026-08-25-console-credential.md)
 - [`log/2026-08-26.md`](log/2026-08-26.md)
@@ -52,6 +54,41 @@ Berkas aktif maksimal 24 KiB atau 12 entri; satu entri idealnya di bawah sekitar
 `docs/log/YYYY-MM-DD.md` dan tautkan di atas. Jangan memecah entri atau
 mengarsipkan pekerjaan yang masih memuat tindak lanjut aktif.
 `npm run context:check` menegakkan batas berkas aktif.
+
+## 2026-09-04 — Ketahanan kanal, batas masukan, bantuan yang memudar
+
+Scope: `src/bot/telegram-api-resilience.ts`, `src/core/reply-obligation-service.ts`,
+`src/core/attachment-policy.ts`, `src/core/memory-curator-policy.ts`,
+`src/core/offer-fatigue-policy.ts`, `src/core/repetition-guard.ts`,
+`src/core/mastery-policy.ts`, `src/core/learning-trace-service.ts`,
+`src/core/episode-anchors.ts`, `scripts/eval-pemadatan.ts`, ADR-046, ADR-047.
+
+Changed: tujuh kemampuan diadaptasi dari Hermes Agent (Nous Research). Kanal Telegram
+tidak lagi dapat tuli tanpa diketahui: `getUpdates` dibatasi 55 detik menggantikan
+`timeoutSeconds: 500` bawaan grammY, `retry_after` dipatuhi saat mengirim, dan kegagalan
+yang selama ini hanya masuk `debugErr` kini tercatat. `SAFE_ERROR_TYPES` menerima
+`grammyerror`/`httperror` dan membaca `error_code`. Balasan yang belum terbukti sampai
+memperoleh janji durable dan dikirim ulang bertanda hanya dari proses yang sudah mati —
+pembalikan sadar terhadap `ScheduledDeliveryAttempt` (ADR-046). Harvy hanya memproses
+teks dan gambar dan kini mengatakannya. Penyimpanan memori tidak lagi membeku di 128:
+kurator berbasis pemakaian memensiunkan catatan yang tak pernah sekali pun membantu
+balasan selama 90 hari, `profile` kebal. Pasal 2 konstitusi dapat dijalankan untuk
+pertama kalinya (ADR-047): sesi tutor yang selesai meninggalkan jejak, dan yang memudar
+hanya tahap pembuka.
+
+Verified: `npm run check` bersih; `npm test` 2.353 tes, 2.353 lulus, 0 gagal.
+`npm run eval:compaction` pada model sungguhan, `ujian-biologi`, tiga repetisi: `utuh`
+97,9% (93,8-100) pada 4.896 karakter, `episode` 20,8% (12,5-25,0) pada 3.172,
+`episode+cari` 60,4% (56,3-68,8) pada 3.596. Rentang dua arm terakhir tidak bertumpang
+tindih: pencarian riwayat menopang, bukan melengkapi. Anchor index tidak dirender ke
+prompt — pengukuran tidak mendukungnya, dan pembanding pertamanya sendiri cacat karena
+fakta emas bocor lewat jendela giliran yang tidak dipadatkan.
+
+Not verified: tidak satu pun diuji dari kanal nyata. Harness memakai satu model untuk
+peringkas, penjawab, dan penilai; satu transkrip, tiga repetisi.
+
+Next: `eval:compaction` pada transkrip kedua dan model berbeda per peran sebelum
+menyimpulkan mutu pemadatan. Selisih 37 poin ke langit-langit belum terjelaskan.
 
 ## 2026-08-29 — Recall terjangkau, gangguan provider dinamai, permukaan slash dipangkas
 
@@ -352,80 +389,3 @@ Kegagalan "balasan keselamatan gagal review" muncul bergantian pada
 `danger-followup` dan `violence-danger` sejak sebelum perubahan ini, jadi
 panggilan review tampak tidak stabil; belum ditelusuri. `alone-support` juga
 masih salah menilai risiko sebagai biasa.
-
-## 2026-08-28 — Estimator token tunggal dan cakupan eval understanding
-
-Scope: `src/ai/token-estimate.ts`, `src/ai/client.ts`,
-`src/harness/context-budget.ts`, `scripts/eval-corpus.ts`,
-`scripts/evaluasi-percakapan.ts`, prompt dan tes yang memuat contoh nama.
-
-Changed: nama orang spesifik pada contoh prompt dan tes diganti nama umum;
-sebelumnya satu nama yang sama muncul 112 kali di 12 berkas, membawa risiko
-identifier nyata sekaligus anchoring pada token langka. Perkiraan token kini
-punya satu sumber: `estimateTokens` dengan default 4 karakter per token, dan
-`TokenRatioCalibration` per instance klien yang menajamkan rasio per model dari
-`usage` nyata. Sebelumnya `client.ts` memakai pembagi 4 sementara anggaran
-konteks memakai 4,18 sendiri. `requestWireCharacters` dipakai bersama supaya
-kalibrasi mengoreksi kesalahan yang sama dengan yang dihitung estimator.
-
-Korpus eval percakapan mendapat assertion untuk `semanticOperation`
-(domain/operation/explicitness) dan `routingAssessment` (`toolNeed`,
-`complexity`) beserta delapan kasus baru. Sebelumnya kesepuluh field itu tidak
-pernah diuji sama sekali, padahal mayoritas aturan `understandingPrompt`
-membahasnya dan `toolNeed` menentukan apakah Harvy memperoleh tool.
-
-Cakupan diperluas lagi ke `publicFocus`, `memoryRetractions`, `durability`, dan
-`sourceEvidence`, sehingga kesepuluh field yang tadinya buta kini punya
-assertion. Korpus percakapan 44 → 57 kasus, dan seluruh id baru didaftarkan
-wajib di `tests/evaluation-corpus.test.ts` agar tidak hilang diam-diam.
-
-Cakupan itu langsung menemukan dua defect yang sebelumnya tidak terlihat.
-`semantic-none-on-mention` sering memilih domain usage untuk kalimat yang justru
-menyangkal menanyakannya, padahal prompt sudah memuat aturan eksplisit tentang
-itu. `semantic-task-list-readonly` kadang memberi intent task dan `toolNeed`
-none untuk permintaan membaca daftar tugas—field yang menentukan apakah Harvy
-memperoleh tool sama sekali. Keduanya nondeterministik: lulus saat dijalankan
-sendiri, gagal pada run penuh.
-
-Verified: `npm run check` PASS; `npm test` 1.980 lulus, 2 gagal dalam 242 suite;
-baseline korpus penuh 57 kasus dijalankan seluruhnya dengan 50 lulus, 6 gagal
-kualitas, 1 derau provider.
-
-Not verified: restrukturisasi `understandingPrompt` belum dikerjakan; baseline
-di atas disiapkan untuk memvalidasinya. Rencana menerjemahkan prompt itu ke
-bahasa Inggris ditinjau ulang setelah isinya dibaca utuh—mayoritas aturannya
-adalah spesifikasi parsing bahasa Indonesia, bukan kontrak teknis.
-
-## 2026-08-28 — Biaya token terukur dan anggaran konteks dinaikkan
-
-Scope: `src/harness/context-budget.ts`, `src/ai/persona.ts`,
-`scripts/probe-chat.ts`, `tests/harness-context-budget.test.ts`.
-
-Changed: anggaran konteks default naik dari 16.000 ke 48.000 karakter, giliran
-18 → 40, memori 8 → 24, interaksi 3 → 6. Angka lama hanyalah 0,37% dari jendela
-1.048.576 token MiniMax-M3 dan membuat percakapan panjang kehilangan awalnya.
-Penegakan tetap memakai karakter karena deterministik, tetapi modul kini
-mengekspor `approximateTokens()` agar anggaran dapat ditalar dalam token.
-Konstanta rasio yang sempat hidup di modul ini disatukan ke
-`src/ai/token-estimate.ts` pada entri berikutnya hari yang sama. Contoh kontras
-pada `understandingPrompt` disamakan dengan gaya ringkas yang sudah dipakai di
-seksi yang sama, menghapus boilerplate JSON yang berulang.
-
-Pengukuran live pada 2026-08-28 mengoreksi beberapa angka yang sebelumnya hanya
-perkiraan: rasio sebenarnya 4,18 karakter/token, bukan 3,5. Satu giliran
-percakapan berbiaya 11.000–15.000 token, dan `understandingPrompt` sendiri
-memakan ~8.200 token atau sekitar 60% giliran. Prompt cache provider bersifat
-prefix dan sehat: mengubah hanya baris jam di akhir tetap menyisakan 99% token
-ter-cache. `response_format` `json_object` maupun `json_schema` tidak dihormati
-model ini—keduanya tetap mengembalikan JSON berpagar—sehingga deskripsi skema
-dalam prosa tetap wajib dan tidak boleh dihapus.
-
-Verified: `npm run check` PASS; `npm test` 1.974 lulus, 2 gagal dalam 241 suite;
-22 kasus eval sebelum/sesudah pemangkasan prompt sama-sama 21/22; biaya giliran
-nyata pada percakapan empat giliran 11.610 token, praktis tidak berubah karena
-anggaran adalah plafon, bukan lantai.
-
-Not verified: biaya pada percakapan yang benar-benar mengisi plafon baru belum
-diukur; secara analitis batas penuh menambah ~7.600 token per panggilan ke dua
-panggilan. Pemangkasan prompt tidak menunjukkan perbaikan akurasi terukur, hanya
-455 token lebih murah.

@@ -20,6 +20,8 @@ import type { MemoryKnowledgeState } from "../domain/memory-knowledge.js";
 import type { MemoryKnowledgeService } from "./memory-knowledge-service.js";
 import type { LongTermMemorySnapshot } from "../domain/long-term-memory.js";
 import type { LongTermMemoryService } from "./long-term-memory-service.js";
+import type { ReplyObligationService } from "./reply-obligation-service.js";
+import type { LearningTraceService } from "./learning-trace-service.js";
 
 export interface UserDataExport {
   version: 4;
@@ -67,6 +69,8 @@ export class DataControlService {
     private readonly agentRuns: AgentRunService | null = null,
     private readonly knowledge: MemoryKnowledgeService | null = null,
     private readonly longTerm: LongTermMemoryService | null = null,
+    private readonly replyObligations: ReplyObligationService | null = null,
+    private readonly learningTraces: LearningTraceService | null = null,
   ) {}
 
   async export(ownerId: string): Promise<UserDataExport> {
@@ -134,9 +138,15 @@ export class DataControlService {
     // Telemetry diblokir lebih dulu karena ia juga menjadi gerbang tepat
     // sebelum panggilan model. Dengan begitu pekerjaan latar yang terlambat
     // tidak dapat mengirim data lagi sesudah penghapusan dimulai.
+    // Janji balasan memuat isi percakapan. Dihapus lebih dulu, sebelum store
+    // lain, karena satu-satunya hal yang dapat menuliskannya kembali adalah
+    // pengiriman yang sedang berjalan—dan telemetry di bawah ini yang menutup
+    // pintu ke model.
+    await this.replyObligations?.forgetOwner(ownerId);
     await this.telemetry.forget(ownerId);
     await this.agentRuns?.forget(privateOwnerChannel(ownerId), ownerId);
     await this.sessions.forget(ownerId);
+    await this.learningTraces?.forgetOwner(ownerId);
     await this.tasks.removeAll(ownerId);
     await this.history.forget(ownerId, true);
     await this.longTerm?.forgetPrivateOwner(ownerId);

@@ -619,6 +619,7 @@ function emptyDraft(): EpisodeSummaryDraft {
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
     temporalAnchors: [],
     uncertainties: [],
   };
@@ -628,7 +629,7 @@ function historyWithEpisode(ownerId: string, text: string): ConversationHistory 
   return {
     ownerId,
     episodes: [{
-      schemaVersion: 2,
+      schemaVersion: 3,
       episodeId: `episode_${ownerId}`,
       source: {
         kind: "turn-range",
@@ -638,6 +639,7 @@ function historyWithEpisode(ownerId: string, text: string): ConversationHistory 
         sourceHash: "a".repeat(64),
       },
       summarizerVersion: "test",
+      anchors: [],
       createdAt: "2026-08-01T00:00:00.000Z",
       ...emptyDraft(),
       facts: [{ text, sourceSequences: [1] }],
@@ -690,10 +692,11 @@ class HistoryStore implements HistoryRepository {
     const history = this.histories.find((item) => item.ownerId === ownerId);
     if (!history) return;
     const episode: ConversationEpisode = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       episodeId: "legacy_concurrent",
       source: { kind: "legacy-summary", sourceHash: "f".repeat(64) },
       summarizerVersion: "rolling-v1",
+      anchors: [],
       createdAt: "2026-08-02T01:00:00.000Z",
       ...emptyDraft(),
       facts: [{ text: "Episode lain masuk bersamaan.", sourceSequences: [] }],

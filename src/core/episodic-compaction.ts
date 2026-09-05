@@ -19,6 +19,7 @@ export {
   HISTORY_EPISODE_CONTEXT_LIMIT,
   HISTORY_EPISODE_RETENTION_LIMIT,
 } from "../domain/history.js";
+import { harvestEpisodeAnchors } from "./episode-anchors.js";
 
 export const EPISODE_SUMMARIZER_VERSION = "episodic-v2.0";
 export const HISTORY_EPISODE_CONTEXT_MAX_CHARS = 3_000;
@@ -31,6 +32,7 @@ export const EPISODE_CLAIM_FIELDS = [
   "corrections",
   "commitments",
   "unresolved",
+  "progress",
   "temporalAnchors",
   "uncertainties",
 ] as const satisfies readonly (keyof EpisodeSummaryDraft)[];
@@ -38,6 +40,9 @@ export const EPISODE_CLAIM_FIELDS = [
 const EPISODE_CONTEXT_FIELD_PRIORITY = [
   "corrections",
   "unresolved",
+  // Tepat sesudah "belum selesai": ketika konteks dipangkas, apa yang sudah
+  // bisa dikerjakan penggunanya sama pentingnya dengan apa yang belum.
+  "progress",
   "commitments",
   "decisions",
   "goals",
@@ -157,6 +162,9 @@ export function createConversationEpisode(
   return {
     schemaVersion: EPISODE_SCHEMA_VERSION,
     episodeId: `episode_${makeId().replaceAll("-", "").slice(0, 20)}`,
+    // Dipanen sesudah model menjawab, dari giliran sumbernya sendiri. Klaim
+    // memberi konteks; anchor menjamin token persisnya selamat.
+    anchors: harvestEpisodeAnchors(turns),
     source: {
       kind: "turn-range",
       fromSequence: first.sequence,
@@ -207,6 +215,11 @@ export function renderEpisodeContext(
   const preface = [
     "Episode percakapan, terbaru ke terlama.",
     "Koreksi yang lebih baru mengalahkan catatan lama yang bertentangan.",
+    // Tanpa baris ini model tidak punya cara tahu bahwa yang hilang dari
+    // ringkasan masih ada. Ia lalu menebak—dan tebakan tentang tanggal ujian
+    // atau nomor bab adalah bentuk kekeliruan yang paling merugikan. Dibayar
+    // pada setiap giliran, jadi ditulis sependek mungkin.
+    "Giliran aslinya masih tersimpan dan dapat dicari: kalau sebuah detail tidak ada di sini, cari dulu alih-alih menebak.",
   ];
   const lines = [...preface];
   let included = 0;
@@ -307,6 +320,7 @@ function episodeLines(episode: ConversationEpisode): string[] {
     corrections: "koreksi",
     commitments: "komitmen",
     unresolved: "belum selesai",
+    progress: "sudah bisa",
     temporalAnchors: "waktu",
     uncertainties: "belum pasti",
   };
@@ -316,6 +330,18 @@ function episodeLines(episode: ConversationEpisode): string[] {
       lines.push(`- ${labels[field]}: ${claim.text}`);
     }
   }
+  // Anchor SENGAJA tidak dirender ke konteks giliran.
+  //
+  // Hipotesisnya masuk akal dan ternyata salah. `npm run eval:compaction`
+  // 4 September 2026 mengukurnya dengan arm terpisah: 93,8% utuh, 87,5% tanpa
+  // anchor, 75,0% dengan anchor—turun 12,5 poin dan konteksnya lebih besar,
+  // konsisten di kedua transkrip. Dugaan sebabnya deretan token telanjang
+  // mengencerkan perhatian penjawab, tetapi itu belum diuji.
+  //
+  // Panennya tetap disimpan pada episode: ia deterministik, murah, dan
+  // membawa provenance sequence, sehingga tetap berguna sebagai jangkar
+  // pencarian riwayat. Yang dicabut hanya penyuntikannya ke setiap giliran,
+  // karena justru itu yang diukur dan ditolak.
   return lines;
 }
 

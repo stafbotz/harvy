@@ -1,3 +1,5 @@
+import { collapseRepetition } from "./repetition-guard.js";
+
 export type ResponseSegmentRelation =
   | "primary"
   | "continuation"
@@ -20,6 +22,15 @@ export interface ResponsePresentationPlan {
   segments: readonly ResponsePresentationSegment[];
   /** Pagar ekstrem, bukan aturan kepribadian atau target jumlah bubble. */
   antiSpamGuardApplied: boolean;
+  /**
+   * Balasan tergelincir ke perulangan dan ekornya dipangkas.
+   *
+   * Terpisah dari `antiSpamGuardApplied` karena keduanya menjaga hal berbeda:
+   * yang itu membatasi jumlah segmen semantik, yang ini menangkap kegagalan
+   * model yang justru lolos darinya—satu segmen raksasa yang tetap pecah
+   * menjadi belasan potongan transport.
+   */
+  repetitionGuardApplied: boolean;
 }
 
 export interface ResponsePresentationOptions {
@@ -43,14 +54,30 @@ export function planResponsePresentation(
   response: string,
   options: ResponsePresentationOptions,
 ): ResponsePresentationPlan {
-  const logicalText = response.trim();
-  if (!logicalText) {
+  const delivered = response.trim();
+  if (!delivered) {
     return Object.freeze({
       logicalText: "",
       segments: Object.freeze([]),
       antiSpamGuardApplied: false,
+      repetitionGuardApplied: false,
     });
   }
+
+  // Dipangkas sebelum apa pun yang lain. Segmentasi semantik atas teks yang
+  // menggema hanya menghasilkan segmen raksasa, dan pemecahan transport
+  // sesudahnya justru yang mengubah satu kegagalan model menjadi belasan
+  // notifikasi.
+  //
+  // Kode berpagar dikecualikan, dengan alasan yang sama seperti
+  // `semanticSegments` mengecualikannya: memangkas kode di tengah menghasilkan
+  // jawaban yang salah tanpa terlihat salah. Guard ini menukar satu mode
+  // kegagalan yang mencolok (banjir notifikasi) dengan risiko satu mode
+  // kegagalan yang senyap, dan pertukaran itu hanya sepadan di luar kode.
+  const logicalText = containsFencedCode(delivered)
+    ? delivered
+    : collapseRepetition(delivered);
+  const repetitionGuardApplied = logicalText !== delivered;
 
   const maxCharacters = positiveInteger(
     options.maxSegmentCharacters,
@@ -86,6 +113,7 @@ export function planResponsePresentation(
     logicalText,
     segments: Object.freeze(segments),
     antiSpamGuardApplied: guarded.applied,
+    repetitionGuardApplied,
   });
 }
 

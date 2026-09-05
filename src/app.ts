@@ -147,6 +147,10 @@ import { createWriteAgentExecutors } from "./agent/write-executors.js";
 import { createMemoryAgentExecutors } from "./agent/memory-executors.js";
 import { VirtualTerminalExecutor } from "./agent/virtual-terminal.js";
 import { ParallelDelegationExecutor } from "./agent/parallel-delegation.js";
+import { ReplyObligationService } from "./core/reply-obligation-service.js";
+import { LearningTraceService } from "./core/learning-trace-service.js";
+import { FileLearningTraceRepository } from "./storage/file-learning-trace-repository.js";
+import { FileReplyObligationRepository } from "./storage/file-reply-obligation-repository.js";
 
 async function main(): Promise<void> {
   installThirdPartyConsoleSecretGuard();
@@ -277,7 +281,20 @@ const profiles = new ProfileService(
   new FileProfileRepository(config.profileFile),
 );
 const sessionRepository = new FileSessionRepository(config.sessionFile);
-const sessions = new SessionService(sessionRepository, sessionRepository);
+// Jejak sesi belajar yang selesai. Tanpa ini `SessionService.progress`
+// menghapus sesi tutor begitu selesai dan Harvy kehilangan satu-satunya bukti
+// bahwa penggunanya sudah bisa sesuatu.
+const learningTraces = new LearningTraceService(
+  new FileLearningTraceRepository(config.learningTraceFile),
+  () => new Date(),
+  logger.child("core.learning-trace"),
+);
+const sessions = new SessionService(
+  sessionRepository,
+  sessionRepository,
+  () => new Date(),
+  learningTraces,
+);
 const agentRuns = new AgentRunService(
   new FileAgentRunRepository(config.agentRunFile),
 );
@@ -310,6 +327,20 @@ const memoryEmbedding = config.ai.memoryEmbeddingLocalModel
       providerId: config.ai.providerId,
     })
   : null;
+// Janji balasan yang belum terbukti sampai. Berkasnya hampir selalu kosong;
+// satu baris hidup hanya selama satu balasan berada di udara.
+const replyObligations = new ReplyObligationService(
+  new FileReplyObligationRepository(config.replyObligationFile),
+  {
+    pid: process.pid,
+    // Waktu mulai membedakan proses ini dari proses lain yang kebetulan
+    // mendapat nomor PID yang sama sesudah sistem operasi memakainya ulang.
+    startedAt: new Date(Date.now() - Math.round(process.uptime() * 1_000))
+      .toISOString(),
+  },
+  () => new Date(),
+  logger.child("core.reply-obligation"),
+);
 const memoryKnowledge = new MemoryKnowledgeService(
   new FileMemoryKnowledgeRepository(
     join(config.memoryFolder, "_knowledge"),
@@ -429,6 +460,8 @@ const dataControls = new DataControlService(
   agentRuns,
   memoryKnowledge,
   longTermMemory,
+  replyObligations,
+  learningTraces,
 );
 
 // Penghapusan lintas beberapa berkas dilanjutkan sebelum bot menerima update.
@@ -501,6 +534,7 @@ const bot = createBot(
   economy,
   usageDashboard,
   abuse,
+  replyObligations,
 );
 telegramForReports = bot;
 let whatsapp: BaileysAccountManager | null = null;
@@ -1537,6 +1571,15 @@ try {
         return;
       }
       consoleServer?.markReady();
+      // Sesudah polling hidup, bukan sebelumnya: balasan yang dikirim ulang
+      // memakai jalur API yang sama dengan balasan biasa.
+      void bot.redeliverUnsettledReplies().catch((error: unknown) => {
+        logger.error(
+          "reply_obligation_recovery_failed",
+          "Pemulihan balasan tertahan setelah restart gagal.",
+          error,
+        );
+      });
       void bot.resumeAgentRuns().catch((error: unknown) => {
         logger.error(
           "active_agent_run_recovery_failed",

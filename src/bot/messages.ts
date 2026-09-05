@@ -544,6 +544,18 @@ export function formatEconomyUsage(view: EconomyUsageView): string {
   ].join("\n");
 }
 
+/**
+ * Penanda balasan yang dikirim ulang sesudah Harvy sempat mati.
+ *
+ * Ada karena kejujuran, bukan kesopanan. Balasan yang pengirimannya sempat
+ * dimulai lalu tidak dapat dibuktikan hasilnya mungkin sudah sampai sekali;
+ * mengirimnya lagi tanpa berkata apa-apa berarti seorang pelajar melihat
+ * jawaban yang sama dua kali dan mengira Harvy bingung. Satu kalimat mengubah
+ * duplikat diam-diam menjadi pengiriman ulang yang dapat dimengerti.
+ */
+export const RECOVERED_REPLY_NOTE =
+  "Maaf ya, tadi aku sempat terputus. Ini jawaban yang belum sempat sampai—kalau kamu sudah menerimanya tadi, abaikan yang ini.";
+
 /** Rencana semantik dibentuk core; adapter ini hanya memilih batas Telegram. */
 export function splitReplyBubbles(
   reply: string,

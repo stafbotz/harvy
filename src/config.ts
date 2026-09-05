@@ -120,6 +120,11 @@ export interface ControlPlaneConfig {
 export interface AppConfig {
   telegramBotToken: string;
   dataFile: string;
+  /**
+   * Janji balasan yang belum terbukti sampai. Berumur pendek dengan sengaja;
+   * berkas ini hampir selalu kosong.
+   */
+  replyObligationFile: string;
   /** Memori terstruktur per pengguna. Lihat `ADR-006`. */
   memoryFile: string;
   /** Folder memori Markdown, satu subfolder per pengguna. */
@@ -134,6 +139,8 @@ export interface AppConfig {
   profileFile: string;
   /** Satu sesi aktif dan check-in satu kali per pengguna. */
   sessionFile: string;
+  /** Jejak sesi belajar yang selesai; dasar bantuan yang memudar (ADR-047). */
+  learningTraceFile: string;
   /** Checkpoint agent yang menunggu jawaban; berisi data percakapan sementara. */
   agentRunFile: string;
   /** Token dan event bertipe tertutup; tidak berisi isi percakapan. */
@@ -203,6 +210,9 @@ export function loadConfig(): RuntimeAppConfig {
   return {
     telegramBotToken,
     dataFile: resolve(process.env.DATA_FILE ?? "./data/tasks.json"),
+    replyObligationFile: resolve(
+      process.env.REPLY_OBLIGATION_FILE ?? "./data/reply-obligations.json",
+    ),
     memoryFile: resolve(process.env.MEMORY_FILE ?? "./data/memories.json"),
     memoryFolder: resolve(process.env.MEMORY_FOLDER ?? "./data/memori"),
     historyFile: resolve(process.env.HISTORY_FILE ?? "./data/history.json"),
@@ -214,6 +224,9 @@ export function loadConfig(): RuntimeAppConfig {
     ),
     profileFile: resolve(process.env.PROFILE_FILE ?? "./data/profiles.json"),
     sessionFile: resolve(process.env.SESSION_FILE ?? "./data/sessions.json"),
+    learningTraceFile: resolve(
+      process.env.LEARNING_TRACE_FILE ?? "./data/learning-traces.json",
+    ),
     agentRunFile: resolve(
       process.env.AGENT_RUN_FILE ?? "./data/agent-runs.json",
     ),

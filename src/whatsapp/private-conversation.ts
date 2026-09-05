@@ -48,6 +48,10 @@ import {
 } from "../ai/identity.js";
 import { deterministicArithmeticReply } from "../bot/fast-path-policy.js";
 import {
+  isProjectArchive,
+  unsupportedAttachmentReply,
+} from "../core/attachment-policy.js";
+import {
   CONSENT_ACCEPTED,
   CONSENT_ACCEPTED_EMOJI,
   CONSENT_ACCEPTED_HELD,
@@ -520,11 +524,15 @@ export class WhatsAppPrivateConversation {
     const task = previous.catch(() => undefined).then(async () => {
       if (!this.acceptingIngress) return;
       const text = privateConversationText(message);
-      if (!text && !message.document && !message.image) return;
+      if (
+        !text && !message.document && !message.image &&
+        !message.unsupportedMedia
+      ) return;
       const needsOnboarding = await this.dependencies.profiles.needsOnboarding(
         ownerId,
       );
-      const runIngress = needsOnboarding || message.document || message.image
+      const runIngress = needsOnboarding || message.document || message.image ||
+          message.unsupportedMedia
         ? null
         : await this.reserveActiveRunIngress(ownerId, message);
       if (runIngress) {
@@ -543,6 +551,7 @@ export class WhatsAppPrivateConversation {
       }
       if (
         needsOnboarding || message.document || message.image ||
+        message.unsupportedMedia ||
         isDeterministicPrivateControl(text)
       ) {
         this.batcher.cancelAndEnqueue(ownerId, async () => {
@@ -1404,7 +1413,10 @@ export class WhatsAppPrivateConversation {
     message: WhatsAppPrivateMessage,
   ): Promise<WhatsAppPrivateReplyResult> {
     const text = privateConversationText(message);
-    if (!text && !message.document && !message.image) return null;
+    if (
+      !text && !message.document && !message.image &&
+      !message.unsupportedMedia
+    ) return null;
 
     const usageCommand = parseUsageDashboardCommand(text);
     if (usageCommand === "invalid") return USAGE_COMMAND_TARGET_REJECTED;
@@ -1525,7 +1537,24 @@ export class WhatsAppPrivateConversation {
       };
     }
 
+    // Menang atas teks bila keduanya ada: caption pada video yang tidak dapat
+    // ditonton tetap menyisakan pertanyaan yang tidak dapat dijawab, dan
+    // menjawab caption-nya saja akan terbaca seolah videonya sudah dilihat.
+    if (message.unsupportedMedia) {
+      return unsupportedAttachmentReply(message.unsupportedMedia);
+    }
+
     if (message.document) {
+      // ZIP hanya berarti project ketika runtime coding memang terpasang.
+      // Selebihnya adalah berkas yang tidak dapat Harvy baca, dan menjawabnya
+      // dengan instruksi ZIP mengirim pengirimnya mencari kesalahan yang
+      // tidak ia buat.
+      if (
+        !this.dependencies.codingRuntime ||
+        !isProjectArchive(message.document.fileName, message.document.mimetype)
+      ) {
+        return unsupportedAttachmentReply("dokumen");
+      }
       return this.uploadProjectZip(message);
     }
 

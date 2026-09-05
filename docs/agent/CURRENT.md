@@ -23,30 +23,26 @@ Context-Version: 1
 
 ## Recent material changes
 
-- Pemahaman dipecah dua tahap. Kontrak inti 3.253 karakter menjawab lima field
-  yang diperlukan sebelum berat-ringannya giliran diketahui; kontrak penuh
-  29.513 karakter hanya dibayar giliran yang memerlukannya. Petunjuk teks
-  diperiksa sebelum model dipanggil, sehingga giliran yang sudah jelas berat
-  melewati pass inti dan tidak pernah membayar dua kali. Pass inti juga
-  dihangatkan selama jendela tunggu batching, dan sinyal risikonya
-  memberangkatkan triase keselamatan bersamaan alih-alih berurutan.
-- Telemetri yang selama ini dibuang allow-list dibuka: manifest retrieval
-  memori (12 field), `httpStatus`/`responseOutcome` pada tiap permintaan AI,
-  keputusan keselamatan (`safety_decision`), jalur pemahaman
-  (`understanding_pass_chosen`), dan hasil tulis memori
-  (`memory_write_outcome`) beserta enam sebab penolakan yang sebelumnya
-  seluruhnya mengembalikan `null` identik.
-- Pencegahan penyalahgunaan dibangun penuh mengikuti ADR-045: tangga tiga
-  peringatan, penangguhan bertimer 1/3/5 jam, penahanan menunggu manusia
-  berplafon 24 jam, dan laporan ke pengelola hanya saat penangguhan.
-  Penilaiannya berjalan di latar dan tidak menahan percakapan; diukur pada
-  model sungguhan 20/20 untuk makian dan 18/19 untuk percobaan menembus
-  batas, keduanya nol salah tuduh. Keselamatan selalu menang: aliran
-  bersinyal distres tidak pernah dapat ditangguhkan, dan pengguna tertangguh
-  tetap dijawab bila pesannya membawa sinyal keselamatan.
-- Retrieval semantik hidup secara bawaan lewat penyedia embedding yang
-  berjalan di dalam proses Harvy sendiri; tidak ada catatan pengguna yang
-  keluar dari mesin. Sapaan onboarding dikarang model tiap kali.
+- `npm run eval:compaction` mengukur recall sesudah pemadatan, dan sudah
+  dijalankan. Transkrip `ujian-biologi`, tiga repetisi, `AI_MODE=testing`:
+  `utuh` 97,9% (93,8-100) pada 4.896 karakter, `episode` 20,8% (12,5-25,0)
+  pada 3.172, `episode+cari` 60,4% (56,3-68,8) pada 3.596. Rentangnya tidak
+  bertumpang tindih: **pencarian riwayat menopang, bukan melengkapi**—konteks
+  episode otomatis sendirian menahan kurang dari seperempat fakta spesifik.
+  Anchor index karena itu tidak dirender ke prompt; pengukurannya tidak
+  mendukung, dan penunjuk pemulihan pada konteks episode yang justru terbukti
+  menunjuk ke jalur bernilai ~40 poin recall.
+- Pasal 2 konstitusi dapat dijalankan untuk pertama kalinya (ADR-047). Sesi
+  tutor yang selesai meninggalkan `LearningTrace`, dan
+  `src/core/mastery-policy.ts` memakainya untuk memendekkan tahap pembuka
+  sesudah tiga penyelesaian mandiri berturut. Yang memudar **hanya** tahap
+  pembuka. Episode juga memperoleh field `progress` (schema v3, v2 tetap
+  dibaca), dan memori wajib ditulis sebagai fakta, bukan perintah.
+- Kanal Telegram tidak lagi bisa tuli tanpa diketahui (ADR-046). Transformer
+  API memberi `getUpdates` batas 55 detik menggantikan 500 detik bawaan
+  grammY, mematuhi `retry_after` saat mengirim, dan mencatat kegagalan yang
+  selama ini ditelan grammY. Balasan yang belum terbukti sampai punya janji
+  durable, dikirim ulang bertanda hanya dari proses yang sudah mati.
 
 ## Active cross-subsystem blockers
 

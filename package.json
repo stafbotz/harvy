@@ -45,6 +45,7 @@
     "backup:drill": "tsx scripts/local-backup-drill.ts",
     "eval:conversation": "tsx scripts/evaluasi-percakapan.ts --conversation-only --compact",
     "eval:conversation:full": "tsx scripts/evaluasi-percakapan.ts --all --compact",
+    "eval:compaction": "tsx scripts/eval-pemadatan.ts",
     "eval:routing": "tsx scripts/evaluasi-routing.ts",
     "eval:group": "tsx scripts/evaluasi-grup.ts",
     "eval:group:full": "tsx scripts/evaluasi-grup.ts --all",

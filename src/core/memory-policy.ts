@@ -7,6 +7,7 @@
  */
 import type { MemoryItem, MemoryKind } from "../domain/memory.js";
 import { containsSecretLikeValue } from "../security/credential-like.js";
+import { dormancyPenalty } from "./memory-curator-policy.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -150,7 +151,12 @@ function scoreOf(item: MemoryItem, words: Set<string>, now: Date): number {
   // cocok dengan pesan harus tetap menang atas memori baru yang tidak nyambung.
   const recency = Math.max(0, 3 - ageDays / 30);
 
-  return overlap * 5 + KIND_WEIGHT[item.kind] + recency;
+  // Umur menghitung sejak memori lahir; dormansi menghitung sejak ia terakhir
+  // benar-benar berguna. Keduanya berbeda, dan yang kedua lebih jujur: catatan
+  // yang tiap minggu membantu tidak layak kalah dari catatan yang belum pernah
+  // sekali pun terpakai hanya karena yang kedua lebih muda.
+  return overlap * 5 + KIND_WEIGHT[item.kind] + recency -
+    dormancyPenalty(item, now);
 }
 
 function wordOverlap(content: string, words: Set<string>): number {

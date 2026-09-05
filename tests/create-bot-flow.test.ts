@@ -24,6 +24,11 @@ import {
 import type { AppConfig } from "../src/config.js";
 import type { DataControlService } from "../src/core/data-control-service.js";
 import type { EconomyService } from "../src/core/economy-service.js";
+import { ReplyObligationService } from "../src/core/reply-obligation-service.js";
+import type {
+  ReplyObligation,
+  ReplyObligationRepository,
+} from "../src/domain/reply-obligation.js";
 import { AgentRunService } from "../src/core/agent-run-service.js";
 import type { HistoryService } from "../src/core/history-service.js";
 import { HISTORY_WINDOW } from "../src/core/history-policy.js";
@@ -124,6 +129,126 @@ describe("alur adapter Telegram", () => {
       "Warna dominannya terlihat jelas.",
     ]);
     assert.doesNotMatch(JSON.stringify(harness.turns), /\/9j\/2wAB|ffd8ffdb/iu);
+  });
+
+  it("melepas janji balasan sesudah balasan benar-benar terkirim", async () => {
+    const store = new MemoryObligationStore();
+    const obligations = new ReplyObligationService(store, LIVE_PROCESS);
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding(),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Oke, kita mulai dari bab sel ya.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      { replyObligations: obligations },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("mulai dari mana ya"));
+    await harness.bot.drainPending();
+
+    assert.ok(harness.sent.includes("Oke, kita mulai dari bab sel ya."));
+    // Terkirim berarti janjinya lepas; baris yang tertinggal justru yang
+    // ingin disapu saat start.
+    assert.deepEqual(store.rows, []);
+    assert.ok(store.seenStates.includes("pending"));
+    assert.ok(store.seenStates.includes("attempting"));
+  });
+
+  it("tidak meninggalkan janji ketika kegagalan kirim sudah ditangani gilirannya", async () => {
+    // Janji hanya boleh bertahan bila prosesnya mati sebelum `finally`.
+    // Kegagalan yang ditangani giliran itu sendiri sudah menghasilkan balasan
+    // penggantinya; meninggalkan barisnya berarti pengguna menerima jawaban
+    // yang sama lagi sesudah restart berikutnya tanpa sebab.
+    const store = new MemoryObligationStore();
+    const obligations = new ReplyObligationService(store, LIVE_PROCESS);
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding(),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "Jawaban yang tidak sempat sampai.",
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        replyObligations: obligations,
+        failSend: (text) => text.includes("tidak sempat sampai"),
+      },
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("halo"));
+    await harness.bot.drainPending();
+
+    assert.deepEqual(store.rows, []);
+    assert.ok(store.seenStates.includes("attempting"));
+  });
+
+  it("mengirim ulang balasan tertahan dengan penanda yang mengakuinya", async () => {
+    const store = new MemoryObligationStore();
+    store.rows = [{
+      id: "tertahan",
+      ownerId: "123",
+      chatId: "123",
+      channel: "telegram",
+      text: "Ini jawaban yang belum sempat sampai.",
+      state: "attempting",
+      attempts: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ownerProcess: DEAD_PROCESS,
+    }];
+    const harness = basicHarness({} as Conversation, {} as TaskService, {
+      replyObligations: new ReplyObligationService(store, LIVE_PROCESS),
+    });
+
+    assert.equal(await harness.bot.redeliverUnsettledReplies(), 1);
+    assert.ok(harness.sent.some((text) => text.includes("sempat terputus")));
+    assert.ok(
+      harness.sent.some((text) => text.includes("belum sempat sampai")),
+    );
+    assert.deepEqual(store.rows, []);
+  });
+
+  it("meminta screenshot ketika pelajar mengirim berkas yang tidak terbaca", async () => {
+    // Sebelum ini PDF tugas jatuh ke jalur upload project dan dijawab "Untuk
+    // project coding, kirim archive berformat ZIP"—kalimat yang mengirim
+    // pengirimnya mencari kesalahan yang tidak ia buat.
+    const harness = basicHarness({} as Conversation);
+
+    await harness.bot.handleUpdate(documentUpdate("tugas.pdf", "application/pdf"));
+    await harness.bot.drainPending();
+
+    const reply = harness.sent.at(-1) ?? "";
+    assert.match(reply, /^Maaf ya,/u);
+    assert.match(reply, /cuma teks dan gambar/u);
+    assert.match(reply, /screenshot/iu);
+    assert.doesNotMatch(reply, /ZIP/iu);
+  });
+
+  it("menjawab pesan suara alih-alih mendiamkannya", async () => {
+    const harness = basicHarness({} as Conversation);
+
+    await harness.bot.handleUpdate(voiceUpdate());
+    await harness.bot.drainPending();
+
+    const reply = harness.sent.at(-1) ?? "";
+    assert.match(reply, /^Maaf ya,/u);
+    assert.match(reply, /mendengarkan pesan suara/u);
+    assert.match(reply, /ketik/iu);
+  });
+
+  it("tetap menerima gambar sebagai dokumen", async () => {
+    const harness = basicHarness({} as Conversation);
+
+    await harness.bot.handleUpdate(documentUpdate("catatan.gif", "image/gif"));
+    await harness.bot.drainPending();
+
+    // GIF bukan format yang dapat dibaca, tapi jawabannya tetap tentang
+    // format gambar—bukan tentang berkas yang tidak dapat dibuka sama sekali.
+    const reply = harness.sent.at(-1) ?? "";
+    assert.match(reply, /format gambarnya/u);
+    assert.match(reply, /JPEG, PNG, atau WebP/u);
   });
 
   it("tidak mengunduh foto Telegram sebelum consent", async () => {
@@ -6257,6 +6382,7 @@ function config(): AppConfig {
   return {
     telegramBotToken: "123:test",
     dataFile: "unused",
+  replyObligationFile: "/tmp/harvy-test-reply-obligations.json",
     memoryFile: "unused",
     memoryFolder: "unused",
     historyFile: "unused",
@@ -6264,6 +6390,7 @@ function config(): AppConfig {
     longTermMemoryFile: "unused",
     profileFile: "unused",
     sessionFile: "unused",
+  learningTraceFile: "/tmp/harvy-test-learning-traces.json",
     agentRunFile: "unused",
     telemetryFile: "unused",
     telemetryRetentionDays: 30,
@@ -6453,6 +6580,40 @@ function messageUpdate(text: string, updateId = 1): Update {
   };
 }
 
+function documentUpdate(
+  fileName: string,
+  mimeType: string,
+  updateId = 1,
+): Update {
+  const update = messageUpdate("", updateId);
+  if (update.message) {
+    delete update.message.text;
+    update.message.document = {
+      file_id: `doc-${updateId}`,
+      file_unique_id: `unique-doc-${updateId}`,
+      file_name: fileName,
+      mime_type: mimeType,
+      file_size: 1_024,
+    };
+  }
+  return update;
+}
+
+function voiceUpdate(updateId = 1): Update {
+  const update = messageUpdate("", updateId);
+  if (update.message) {
+    delete update.message.text;
+    update.message.voice = {
+      file_id: `voice-${updateId}`,
+      file_unique_id: `unique-voice-${updateId}`,
+      duration: 7,
+      mime_type: "audio/ogg",
+      file_size: 4_096,
+    };
+  }
+  return update;
+}
+
 function photoUpdate(caption: string, updateId = 1): Update {
   const update = messageUpdate(caption, updateId);
   if (update.message) {
@@ -6638,6 +6799,44 @@ function installFakeTelegram(
   }) as Parameters<typeof bot.api.config.use>[0]);
 }
 
+const LIVE_PROCESS = { pid: process.pid, startedAt: "2026-09-04T10:00:00.000Z" };
+const DEAD_PROCESS = { pid: 4242, startedAt: "2026-09-04T09:00:00.000Z" };
+
+class MemoryObligationStore implements ReplyObligationRepository {
+  rows: ReplyObligation[] = [];
+  readonly seenStates: string[] = [];
+
+  async save(obligation: ReplyObligation): Promise<void> {
+    this.seenStates.push(obligation.state);
+    const index = this.rows.findIndex((row) => row.id === obligation.id);
+    if (index >= 0) this.rows[index] = obligation;
+    else this.rows.push(obligation);
+  }
+
+  async listUnsettled(): Promise<ReplyObligation[]> {
+    return this.rows.filter(
+      (row) => row.state === "pending" || row.state === "attempting",
+    );
+  }
+
+  async list(ownerId: string): Promise<ReplyObligation[]> {
+    return this.rows.filter((row) => row.ownerId === ownerId);
+  }
+
+  async remove(id: string): Promise<boolean> {
+    const index = this.rows.findIndex((row) => row.id === id);
+    if (index < 0) return false;
+    this.rows.splice(index, 1);
+    return true;
+  }
+
+  async removeAll(ownerId: string): Promise<number> {
+    const before = this.rows.length;
+    this.rows = this.rows.filter((row) => row.ownerId !== ownerId);
+    return before - this.rows.length;
+  }
+}
+
 function basicHarness(
   conversation: Conversation,
   tasks: TaskService = {} as TaskService,
@@ -6657,6 +6856,7 @@ function basicHarness(
     telegramFilePath?: string;
     usageDashboard?: Pick<UserUsageSummaryService, "summary">;
     economy?: EconomyService;
+    replyObligations?: ReplyObligationService;
   } = {},
 ): {
   bot: ReturnType<typeof createBot>;
@@ -6705,6 +6905,8 @@ function basicHarness(
     undefined,
     overrides.economy,
     overrides.usageDashboard,
+    undefined,
+    overrides.replyObligations,
   );
   installFakeTelegram(
     bot,

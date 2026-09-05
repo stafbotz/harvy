@@ -53,6 +53,7 @@ function episode(
       | "corrections"
       | "commitments"
       | "unresolved"
+      | "progress"
       | "temporalAnchors"
       | "uncertainties",
       EpisodeClaim[]
@@ -67,6 +68,7 @@ function episode(
     corrections: draft.corrections ?? [],
     commitments: draft.commitments ?? [],
     unresolved: draft.unresolved ?? [],
+    progress: draft.progress ?? [],
     temporalAnchors: draft.temporalAnchors ?? [],
     uncertainties: draft.uncertainties ?? [],
   };
@@ -84,6 +86,7 @@ function episode(
         .digest("hex"),
     },
     summarizerVersion: SYNTHETIC_SUMMARIZER_VERSION,
+    anchors: [],
     createdAt,
   };
 }
@@ -109,6 +112,7 @@ export const SYNTHETIC_EPISODES: readonly ConversationEpisode[] = [
     ),
     commitments: claims("Membuat ringkasan satu halaman sebelum Selasa malam"),
     unresolved: claims("Belum tahu apakah soalnya pilihan ganda atau uraian"),
+    progress: claims("Sudah bisa menjelaskan alur pertukaran gas tanpa catatan"),
     temporalAnchors: claims("Dua minggu sebelum ujian tengah semester"),
   }),
   episode("sintetis-tugas-kelompok", "2026-08-19T13:05:00.000Z", 13, 9, {

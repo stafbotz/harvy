@@ -158,10 +158,27 @@ describe("episode summary v2", () => {
     }, turns, "2026-08-02T01:01:00.000Z", () => "fixed");
     assert.notEqual(episode, null);
 
-    const rendered = renderEpisodeContext([episode!], 340) ?? "";
+    // Anggarannya mengikuti panjang preface, bukan kontraknya. Yang diuji
+    // tetap sama: ketika ruang sempit, koreksi dan pekerjaan terbuka menang
+    // atas topik.
+    const rendered = renderEpisodeContext([episode!], 460) ?? "";
     assert.match(rendered, /koreksi: Koreksi terbaru/u);
     assert.match(rendered, /belum selesai: Pertanyaan belum selesai/u);
     assert.doesNotMatch(rendered, /topik: Topik lama/u);
+  });
+
+  it("memberi tahu model bahwa giliran aslinya masih dapat dicari", () => {
+    // Tanpa ini model tidak punya cara tahu bahwa yang hilang dari ringkasan
+    // masih ada, lalu menebak—dan tebakan tentang tanggal ujian atau nomor
+    // bab adalah bentuk kekeliruan yang paling merugikan.
+    const episode = createConversationEpisode({
+      ...emptyPayload(),
+      facts: [{ text: "Ulangan biologi bab sel", sourceSequences: [7] }],
+    }, turns, "2026-08-02T01:01:00.000Z", () => "fixed");
+
+    const rendered = renderEpisodeContext([episode!]) ?? "";
+    assert.match(rendered, /masih tersimpan dan dapat dicari/u);
+    assert.match(rendered, /cari dulu alih-alih menebak/u);
   });
 });
 
@@ -174,6 +191,7 @@ function emptyPayload() {
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
     temporalAnchors: [],
     uncertainties: [],
   };

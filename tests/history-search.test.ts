@@ -157,6 +157,7 @@ describe("history full-text search", () => {
       topics: [claim("Persiapan ujian biologi bab sistem pernapasan", 1)],
       facts: [claim("Ujian biologi diadakan hari Rabu pagi", 2)],
       unresolved: [claim("Belum tahu apakah soal ujian pilihan ganda atau uraian", 3)],
+      progress: [claim("Belum tahu apakah soal ujian pilihan ganda atau uraian", 3)],
     });
 
     const fields = searchConversationEpisodes(
@@ -180,6 +181,7 @@ describe("history full-text search", () => {
     const target = episode("ujian", 1, {
       facts: [claim("Ujian biologi diadakan hari Rabu pagi", 1)],
       unresolved: [claim("Belum tahu apakah soal ujian pilihan ganda atau uraian", 2)],
+      progress: [claim("Belum tahu apakah soal ujian pilihan ganda atau uraian", 2)],
     });
 
     const tanpaAspek = searchConversationEpisodes([target], "ujian pagi")[0]
@@ -199,6 +201,7 @@ describe("history full-text search", () => {
       topics: [claim("Persiapan ujian biologi bab sistem pernapasan", 1)],
       facts: [claim("Ujian biologi diadakan hari Rabu pagi", 2)],
       unresolved: [claim("Belum tahu apakah soalnya pilihan ganda atau uraian", 3)],
+      progress: [claim("Belum tahu apakah soalnya pilihan ganda atau uraian", 3)],
     });
 
     const fields = searchConversationEpisodes([target], "ujian biologi")[0]
@@ -227,7 +230,7 @@ function episode(
     .flatMap((item) => item.sourceSequences);
   const throughSequence = Math.max(fromSequence, ...sequences);
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     episodeId: `episode_${id}`,
     source: {
       kind: "turn-range",
@@ -237,6 +240,7 @@ function episode(
       sourceHash: "a".repeat(64),
     },
     summarizerVersion: "test",
+    anchors: [],
     createdAt,
     ...draft,
   };
@@ -255,6 +259,7 @@ function emptyDraft(): EpisodeSummaryDraft {
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
     temporalAnchors: [],
     uncertainties: [],
   };

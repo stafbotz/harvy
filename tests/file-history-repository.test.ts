@@ -99,6 +99,52 @@ describe("FileHistoryRepository", () => {
     });
   });
 
+  it("membaca episode v2 lama dan memberinya progress kosong", async () => {
+    // Riwayat yang sudah dipadatkan tidak dapat dibuat ulang dari mana pun.
+    // Menaikkan versi tanpa menerima bentuk lama akan membuang seluruhnya.
+    await withHistoryFile(async (file) => {
+      const stored = {
+        version: 2,
+        histories: [{
+          ownerId: "student-a",
+          episodes: [{
+            schemaVersion: 2,
+            episodeId: "ep-lama",
+            source: {
+              kind: "turn-range",
+              fromSequence: 1,
+              throughSequence: 2,
+              turnCount: 2,
+              sourceHash: "a".repeat(64),
+            },
+            summarizerVersion: "episodic-v2.0",
+            createdAt: "2026-08-02T01:00:00.000Z",
+            topics: [{ text: "ulangan biologi", sourceSequences: [1] }],
+            facts: [],
+            goals: [],
+            decisions: [],
+            corrections: [],
+            commitments: [],
+            unresolved: [],
+            temporalAnchors: [],
+            uncertainties: [],
+          }],
+          turns: [],
+          nextSequence: 3,
+          updatedAt: "2026-08-02T01:00:00.000Z",
+        }],
+      };
+      await writeFile(file, JSON.stringify(stored), "utf8");
+
+      const loaded = await new FileHistoryRepository(file).load("student-a");
+      const episode = loaded?.episodes[0];
+      assert.equal(episode?.episodeId, "ep-lama");
+      assert.equal(episode?.topics[0]?.text, "ulangan biologi");
+      assert.deepEqual(episode?.progress, []);
+      assert.deepEqual(episode?.anchors, []);
+    });
+  });
+
   it("menserialisasi migrasi baca dan write yang datang bersamaan", async () => {
     await withHistoryFile(async (file) => {
       await writeFile(file, JSON.stringify({
@@ -129,7 +175,7 @@ describe("FileHistoryRepository", () => {
         histories: [{
           ownerId: "student",
           episodes: [{
-            schemaVersion: 2,
+            schemaVersion: 3,
             episodeId: "episode_invalid",
             source: {
               kind: "turn-range",
@@ -139,6 +185,7 @@ describe("FileHistoryRepository", () => {
               sourceHash: "a".repeat(64),
             },
             summarizerVersion: "episodic-v2.0",
+            anchors: [],
             createdAt: "2026-08-02T01:00:00.000Z",
             topics: [],
             facts: [{ text: "di luar sumber", sourceSequences: [9] }],
@@ -147,6 +194,7 @@ describe("FileHistoryRepository", () => {
             corrections: [],
             commitments: [],
             unresolved: [],
+            progress: [],
             temporalAnchors: [],
             uncertainties: [],
           }],
@@ -273,7 +321,7 @@ function history(ownerId: string, text: string): ConversationHistory {
 
 function episode(fromSequence: number, throughSequence: number) {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     episodeId: `episode_${fromSequence}_${throughSequence}`,
     source: {
       kind: "turn-range",
@@ -283,6 +331,7 @@ function episode(fromSequence: number, throughSequence: number) {
       sourceHash: "a".repeat(64),
     },
     summarizerVersion: "episodic-v2.0",
+    anchors: [],
     createdAt: "2026-08-02T01:00:00.000Z",
     topics: [],
     facts: [] as Array<{ text: string; sourceSequences: number[] }>,
@@ -291,6 +340,7 @@ function episode(fromSequence: number, throughSequence: number) {
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
     temporalAnchors: [],
     uncertainties: [],
   };

@@ -1,3 +1,5 @@
+import type { EpisodeAnchor } from "../core/episode-anchors.js";
+
 /**
  * Riwayat percakapan: giliran mentah terbaru dan episode terstruktur dari
  * rentang yang sudah dipadatkan.
@@ -19,7 +21,13 @@ export interface StoredConversationTurn extends ConversationTurn {
   sequence: number;
 }
 
-export const EPISODE_SCHEMA_VERSION = 2 as const;
+/**
+ * Versi 3 menambahkan `progress` dan `anchors`. Episode versi 2 tetap dibaca
+ * apa adanya dan memperoleh keduanya kosong; menaikkan versi tanpa itu akan
+ * membuang seluruh episode lama, dan riwayat yang sudah dipadatkan tidak dapat
+ * dibuat ulang dari mana pun.
+ */
+export const EPISODE_SCHEMA_VERSION = 3 as const;
 export const EPISODE_CLAIM_MAX_CHARS = 280;
 export const EPISODE_CLAIMS_PER_FIELD_LIMIT = 4;
 export const EPISODE_TOTAL_CLAIMS_LIMIT = 24;
@@ -52,6 +60,16 @@ export interface EpisodeSummaryDraft {
   corrections: EpisodeClaim[];
   commitments: EpisodeClaim[];
   unresolved: EpisodeClaim[];
+  /**
+   * Yang berhasil dikerjakan atau dipahami penggunanya sendiri di episode ini.
+   *
+   * Pasangan `unresolved`. Tanpanya, riwayat Harvy hanya merekam sisi
+   * masalah—apa yang macet, apa yang belum jelas—dan tidak pernah sisi
+   * kemajuan. Konstitusi Pasal 2 menuntut Harvy mengurangi bantuan untuk
+   * kemampuan yang sudah dikuasai penggunanya; tanpa field ini tidak ada
+   * satu pun tempat yang dapat menunjukkan sesuatu sudah dikuasai.
+   */
+  progress: EpisodeClaim[];
   temporalAnchors: EpisodeClaim[];
   uncertainties: EpisodeClaim[];
 }
@@ -103,6 +121,14 @@ export interface ConversationEpisode extends EpisodeSummaryDraft {
   /** Versi kontrak prompt/parser, bukan ID model penyedia. */
   summarizerVersion: string;
   createdAt: string;
+  /**
+   * Fakta persis yang dipanen kode, bukan ditulis model.
+   *
+   * Sengaja **tidak** ikut `EpisodeSummaryDraft`: draft adalah kontrak
+   * keluaran model, dan seluruh nilai berkas ini justru karena tidak ada model
+   * di jalurnya. Diisi sesudah peringkas menjawab.
+   */
+  anchors: EpisodeAnchor[];
 }
 
 export interface ConversationHistory {

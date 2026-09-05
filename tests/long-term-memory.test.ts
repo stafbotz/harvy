@@ -463,6 +463,7 @@ function episodeDraft(turns: StoredConversationTurn[]): EpisodeSummaryDraft {
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
     temporalAnchors: [],
     uncertainties: [],
   };
@@ -470,7 +471,7 @@ function episodeDraft(turns: StoredConversationTurn[]): EpisodeSummaryDraft {
 
 function archiveEpisode(episodeId: string, text: string): ConversationEpisode {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     episodeId,
     source: {
       kind: "turn-range",
@@ -480,6 +481,7 @@ function archiveEpisode(episodeId: string, text: string): ConversationEpisode {
       sourceHash: "b".repeat(64),
     },
     summarizerVersion: "test",
+    anchors: [],
     createdAt: "2026-08-21T00:00:00.000Z",
     topics: [],
     facts: [{ text, sourceSequences: [1] }],
@@ -488,6 +490,7 @@ function archiveEpisode(episodeId: string, text: string): ConversationEpisode {
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
     temporalAnchors: [],
     uncertainties: [],
   };

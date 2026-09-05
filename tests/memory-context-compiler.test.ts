@@ -740,7 +740,7 @@ function episode(
 ): ConversationEpisode {
   return {
     ...emptyDraft(),
-    schemaVersion: 2,
+    schemaVersion: 3,
     episodeId: `episode-${id}`,
     facts: [{ text: fact, sourceSequences: [sequence] }],
     source: {
@@ -752,6 +752,7 @@ function episode(
     },
     createdAt,
     summarizerVersion: "test",
+    anchors: [],
   };
 }
 
@@ -764,6 +765,7 @@ function emptyDraft() {
     corrections: [],
     commitments: [],
     unresolved: [],
+    progress: [],
     temporalAnchors: [],
     uncertainties: [],
   };

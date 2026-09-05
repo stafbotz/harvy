@@ -58,6 +58,20 @@ export interface UserProfile {
    * seluruh penyimpanan lain bersih.
    */
   deletionRequestedAt: string | null;
+  /**
+   * Tawaran tindakan yang sudah berkali-kali dilewatkan tanpa ditekan.
+   *
+   * Opsional supaya berkas profil lama terbaca apa adanya tanpa migrasi.
+   * Isinya hitungan dan stempel waktu per tombol—tidak ada isi percakapan,
+   * dan tidak ada apa pun tentang pengguna selain bahwa satu tombol tidak
+   * berguna baginya belakangan ini.
+   *
+   * Ada di sini, bukan di memori, karena inilah tepatnya yang dimaksud berkas
+   * ini: status kenalan. Ia juga sengaja bertahan melewati penghapusan memori,
+   * dengan alasan yang sama seperti catatan persetujuan—memakai hak menghapus
+   * ingatan tidak seharusnya membuat Harvy mulai mendesak lagi dari awal.
+   */
+  offerFatigue?: import("../core/offer-fatigue-policy.js").OfferFatigue;
 }
 
 export interface ProfileRepository {

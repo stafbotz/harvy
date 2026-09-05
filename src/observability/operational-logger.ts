@@ -220,6 +220,11 @@ const SAFE_ERROR_TYPES = new Set([
   "configurationerror",
   "error",
   "evalerror",
+  // Dua nama galat grammY. Tanpa keduanya di sini, setiap kegagalan Telegram
+  // runtuh menjadi `type: "error"`, dan penolakan API tidak lagi dapat
+  // dibedakan dari kegagalan jaringan pada log mana pun.
+  "grammyerror",
+  "httperror",
   "operationallogerror",
   "rangeerror",
   "referenceerror",
@@ -1665,7 +1670,22 @@ function normalizeError(error: unknown, depth = 0): NormalizedError {
       ? candidateType
       : "error";
   const code = safeErrorScalar(record?.code);
-  const status = safeErrorScalar(record?.statusCode ?? record?.status);
+  // `error_code` adalah tempat grammY menaruh status HTTP Telegram; ia tidak
+  // pernah muncul sebagai `status` maupun `statusCode`. Tanpa baris ini,
+  // 403 "bot was blocked by the user", 400 "message is too long", dan
+  // 429 "retry after 34" tercatat identik—tiga keadaan dengan tiga tindakan
+  // yang sama sekali berbeda.
+  //
+  // `description` milik Telegram sengaja TIDAK ikut meski di situlah
+  // pembedanya paling tajam. Ia teks dari server, dan pada beberapa bentuk
+  // galat ia mengutip kembali isi pesan penggunanya ("can't parse entities:
+  // ... at byte offset N"). Membuang seluruh pesan galat adalah posisi yang
+  // dipilih berkas ini sejak awal; mengembalikannya lewat pintu ini akan
+  // menjadi keputusan privasi yang tidak pernah dinyatakan.
+  const status = safeErrorScalar(
+    record?.statusCode ?? record?.status ??
+      (record as { error_code?: unknown } | undefined)?.error_code,
+  );
   const stack = source?.stack
     ? scrubString(
         source.stack
