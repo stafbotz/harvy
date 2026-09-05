@@ -60,7 +60,7 @@ import {
   memoryCandidateConflictsWithRetractions,
 } from "../src/core/memory-candidate.js";
 import { isSensitiveMemory } from "../src/core/memory-policy.js";
-import { liveStateRequirement } from "../src/ai/agent.js";
+import { createModelAgentWorker, liveStateRequirement } from "../src/ai/agent.js";
 import { isModelIdentityQuestion } from "../src/ai/identity.js";
 import { isDirectTimeQuestion } from "../src/agent/time-fast-path.js";
 import { resolveActiveTaskReference } from "../src/core/task-reference.js";
@@ -74,6 +74,7 @@ import {
   SYNTHETIC_NOTES,
 } from "./synthetic-recall.js";
 import { VirtualTerminalExecutor } from "../src/agent/virtual-terminal.js";
+import { ParallelDelegationExecutor } from "../src/agent/parallel-delegation.js";
 import { AgentHarness } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
 import { ProfileService } from "../src/core/profile-service.js";
@@ -82,6 +83,7 @@ import { TaskService } from "../src/core/task-service.js";
 import { authorizeAutomaticMemory } from "../src/core/memory-candidate.js";
 import { loadConfig } from "../src/config.js";
 import { createInstrumentedAiClient } from "./instrumented-ai-client.js";
+import { createStderrOperationalLogger } from "./stderr-operational-logger.js";
 import { retryAgentRun, retryOnTransient } from "./probe-retry.js";
 import type {
   ConversationEpisode,
@@ -223,13 +225,22 @@ async function main(text: string, statePath: string): Promise<void> {
     config.ai,
     config.defaultTimezone,
     () => new Date(),
-    undefined,
+    // Tanpa sink, setiap keputusan yang hanya menjelaskan dirinya lewat log
+    // tidak terlihat di sini—termasuk penolakan bentuk jawaban yang membuang
+    // satu panggilan model dan dapat menghabiskan deadline run.
+    createStderrOperationalLogger("probe.ai.conversation"),
     new AgentHarness(
       createHarvyCapabilityCatalog({
         internalToolsInstalled: true,
         recallToolsInstalled: true,
         virtualTerminalInstalled: true,
-        parallelDelegationInstalled: false,
+        // `app.ts` memasang delegasi paralel setiap kali specialist tidak
+        // terpasang, dan itulah komposisi yang dipakai pengguna hari ini.
+        // Probe yang mematikannya mengukur bentuk run yang berbeda: mode
+        // orchestrate tanpa fan-out selesai dalam satu panggilan planner,
+        // sehingga jalur termahal—planner, worker paralel, penyintesis—tidak
+        // pernah terlihat di sini.
+        parallelDelegationInstalled: true,
         specialistDelegationInstalled: false,
       }),
     ),
@@ -247,6 +258,7 @@ async function main(text: string, statePath: string): Promise<void> {
         profiles,
       }),
       new VirtualTerminalExecutor(),
+      new ParallelDelegationExecutor(createModelAgentWorker(client, config.ai)),
     ],
   );
 
