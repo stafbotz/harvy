@@ -31,7 +31,9 @@ penggunanya sudah tercatat di riwayat, dan teks jawabannya hanya ada di satu
 variabel di memori. Proses yang mati di antara "jawaban jadi" dan "jawaban
 terkirim" membuangnya tanpa siapa pun tahu.
 
-Pembandingnya adalah Hermes Agent (Nous Research), yang membangun tiga detektor
+Pembandingnya adalah Hermes Agent (Nous Research) — versi dan lisensinya
+dicatat di `docs/engineering/hermes-provenance.md`, karena salinannya tidak
+disimpan di repositori ini — yang membangun tiga detektor
 polling terpisah beserta watchdog untuk watchdog-nya, dan sebuah ledger
 kewajiban pengiriman berbasis SQLite.
 

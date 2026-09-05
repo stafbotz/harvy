@@ -13,6 +13,7 @@ pertanyaan konkret diketahui. Jangan memuat seluruh `docs/`.
 | Ringkasan capability per area | [`engineering/STATUS.md`](engineering/STATUS.md) |
 | Perubahan material terbaru | [`LOG.md`](LOG.md), cari maksimal 3 entri relevan |
 | Cara kerja agent/Git | [`../AGENTS.md`](../AGENTS.md), lalu [`operations/WORKFLOW.md`](operations/WORKFLOW.md) bila perlu |
+| Asal mekanisme yang dikutip komentar `hermes/…` | [`engineering/hermes-provenance.md`](engineering/hermes-provenance.md) |
 
 Snapshot membantu navigasi, bukan menggantikan kode dan tes sebagai bukti
 keadaan aktual.

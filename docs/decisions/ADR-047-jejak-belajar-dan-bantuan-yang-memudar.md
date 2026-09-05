@@ -38,7 +38,8 @@ Hasilnya: `grep -rn "dikuasai\|mengurangi bantuan" src/` mengembalikan nol.
 Pasal 2 tidak dapat dilaksanakan karena Harvy tidak punya cara mengetahui
 pelajarnya sudah bisa.
 
-Pembandingnya Hermes Agent, yang membangun mesin persis untuk ini—dua penghitung
+Pembandingnya Hermes Agent (versi dan lisensinya di
+`docs/engineering/hermes-provenance.md`), yang membangun mesin persis untuk ini—dua penghitung
 terpisah (giliran pengguna untuk memori, iterasi tool untuk skill), tinjauan
 latar yang berjalan **sesudah** balasan terkirim, dan koreksi di tempat saat
 kekeliruan ketahuan. Tetapi arah pertumbuhannya berlawanan: Hermes menumbuhkan
