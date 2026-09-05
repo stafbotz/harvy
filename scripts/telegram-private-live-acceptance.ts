@@ -94,7 +94,11 @@ type AcceptanceFocus =
   | "memory"
   | "restart"
   | "session"
-  | "multimodal";
+  | "multimodal"
+  // Jalur planning durable adalah stage termahal dan paling jarang tercapai:
+  // ia berada di urutan keenam, sehingga satu percobaan menuntut empat stage
+  // lain berhasil lebih dulu. Fokus ini membuatnya dapat diulang sendirian.
+  | "planning";
 
 async function main(): Promise<void> {
   const repositoryRoot = process.cwd();
@@ -149,6 +153,14 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
   });
   const readyAttempts = new Set<number>();
   let restartScheduled = 0;
+  // Kenapa runtime-nya mati, bukan sekadar berapa kali.
+  //
+  // Supervisor sudah membawa `code` dan `signal` pada tiap restart, tetapi
+  // laporan ini membuangnya. Akibatnya satu run yang restart di tengah stage
+  // planning hanya terbaca sebagai "restartScheduled: 1"—tidak dapat dibedakan
+  // dari OOM, exit bersih, atau crash yang diam. Keduanya angka dan enum, jadi
+  // tidak menambah apa pun ke permukaan privasi keluaran.
+  const restartExits: { attempt: number; code: number | null; signal: string | null }[] = [];
   let acceptanceFaultInjected = 0;
   const runtime = superviseRuntime({
     entry,
@@ -172,6 +184,11 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
         if (event.attempt >= 2) markReadyAfterRestart();
       } else if (event.type === "child-restart-scheduled") {
         restartScheduled += 1;
+        restartExits.push({
+          attempt: event.attempt,
+          code: event.code,
+          signal: event.signal,
+        });
       } else if (event.type === "acceptance-fault-injected") {
         acceptanceFaultInjected += 1;
       }
@@ -731,7 +748,7 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
         );
       }
 
-      if (focus === "full" && continueStages) {
+      if ((focus === "full" || focus === "planning") && continueStages) {
         continueStages = await recordStage(
           stages,
           "durable_planning_runtime",
@@ -842,10 +859,31 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
     await client.disconnect().catch(() => undefined);
     controller.abort();
     runtimeCode = await runtime.catch(() => 1);
-    await removeIsolatedRuntimeRoot(root);
+    // Satu-satunya bukti yang tersisa sesudah run gagal.
+    //
+    // Stage pembersihan menghapus seluruh data pengguna, jadi transkrip tidak
+    // dapat dibaca ulang dari root—tetapi log operasional tidak memuat data
+    // pengguna dan justru menyimpan urutan panggilan model beserta sebab
+    // berhentinya sebuah run. Tanpa menahan root, kegagalan planning hanya
+    // terbaca sebagai kode error tanpa sebab.
+    //
+    // Opt-in, dan sengaja: bila run gagal sebelum stage pembersihan, data akun
+    // penguji ikut tertinggal di direktori sementara. Hapus sendiri sesudah
+    // selesai membaca.
+    if (process.env.HARVY_ACCEPTANCE_KEEP_ROOT === "1") {
+      process.stderr.write("root=" + root + "\n");
+    } else {
+      await removeIsolatedRuntimeRoot(root);
+    }
   }
 
-  const expectedStageCount = focus === "full" ? 9 : 3;
+  // Fokus `planning` tidak berhenti pada stage-nya: stage keselamatan dan
+  // ekspor data mengikutinya tanpa gerbang fokus, jadi lima stage berjalan.
+  const expectedStageCount = focus === "full"
+    ? 9
+    : focus === "planning"
+    ? 5
+    : 3;
   const restartProven = focus !== "restart" ||
     (acceptanceFaultInjected === 1 && restartScheduled >= 1 &&
       readyAttempts.has(1) && readyAttempts.has(2));
@@ -863,6 +901,7 @@ async function runAcceptance(repositoryRoot: string): Promise<void> {
     restartProven,
     runtimeTrace: {
       restartScheduled,
+      restartExits,
       acceptanceFaultInjected,
       readyAttempts: [...readyAttempts].sort((left, right) => left - right),
     },
@@ -1463,7 +1502,7 @@ function acceptanceFocus(
     : env.HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS?.trim() || "full";
   if (
     value === "full" || value === "memory" || value === "restart" ||
-    value === "session" || value === "multimodal"
+    value === "session" || value === "multimodal" || value === "planning"
   ) {
     return value;
   }

@@ -183,18 +183,54 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   `EXPECTED_RESPONSE_TIMEOUT` sesudah 180,6 dtk—stage ini belum pernah
   tercapai sebelumnya karena stage zona waktu selalu berhenti lebih dulu.
 
-- **Stage `durable_planning_runtime` menguji perilaku yang sengaja dihapus.**
-  Ia menunggu anchor AgentRun untuk prompt "susun rencana mendalam tepat tiga
-  langkah". Pemahaman sungguhan atas prompt itu sudah tepat—intent request,
+- **Stage `durable_planning_runtime` menunggu perilaku yang sengaja dihapus,
+  dan naskahnya sudah diganti.** Ia meminta rencana audit kualitas Harvy
+  sendiri. Pemahaman atas naskah itu sudah tepat—intent request,
   `planningRequired` true, complexity deep, executionSize heavy, confidence
-  0,78—tetapi `toolNeed` bernilai `none`, dan sejak 27 Agustus
-  `requiresPlannedExecution` mensyaratkan `toolNeed` `execution` atau
-  `external`. Syarat itu justru perbaikan atas defect yang ditemukan
-  eksplorasi 26 Agustus: analisis chat-only membuka AgentRun padahal tidak
-  perlu. Jadi Harvy berperilaku benar dan stage-nya yang tertinggal. Belum
-  diperbaiki: pilihannya mengganti prompt penguji dengan pekerjaan yang memang
-  butuh tool, atau meninjau ulang syarat tool-backed itu sendiri—dan yang kedua
-  mengembalikan defect lama.
+  0,78—tetapi `toolNeed` bernilai `none` pada 3 dari 3 percobaan, dan sejak
+  27 Agustus `requiresPlannedExecution` mensyaratkan `execution` atau
+  `external`. Syarat itu justru perbaikan atas defect eksplorasi 26 Agustus:
+  analisis chat-only membuka AgentRun padahal tidak perlu. Isinya pun tidak
+  lagi dilayani: diminta mengaudit dirinya sendiri, Harvy menjawab bahwa ia
+  tidak punya akses ke kode, log, maupun telemetry, lalu menawarkan checklist
+  dari sisi pengguna. Naskahnya kini pekerjaan riset yang memang berat dan
+  membutuhkan pengumpulan sumber, yang membuka jalur durable pada 4 dari 4
+  percobaan.
+
+- **Jalur planning durable memang hidup, dan pertama kali terbukti dari kanal
+  sungguhan sejak 24 Agustus.** Dengan naskah baru, stage ini pernah PASS penuh:
+  anchor dibuat, disematkan selama berjalan, disunting di tempat, dilepas
+  sematannya pada keadaan akhir, satu gelembung anchor terlihat, dan rencananya
+  lulus penilaian—tiga langkah bernomor, ketiganya memuat Tindakan, Bukti, dan
+  Kriteria lulus.
+
+- **Defect: run orchestrate kehabisan deadline sebelum penyintesisnya selesai.**
+  Stage ini lulus hanya 3 dari 6 percobaan. Log operasional run yang gagal
+  memberi sebabnya utuh: planner selesai, tiga worker delegasi paralel memakan
+  13-16 detik masing-masing, penyintesis baru mulai pada detik ~45 dan
+  **dibatalkan dua detik kemudian**—`ai_request_cancelled`, lalu
+  `active_run_stopped` dengan `outcome: deadline`, lalu
+  `agent_planner_failed` dengan `TimeoutError`. Batasnya
+  `DEFAULT_AGENT_RUN_LIMITS.deadlineMs` = 45.000 ms, dan bentuk orchestrate
+  yang Harvy pilih sendiri (planner -> worker paralel -> penyintesis) sering
+  tidak muat di dalamnya. Bagi pengguna akibatnya: anchor berakhir "Berhenti"
+  tanpa satu pun hasil. Naskah yang lebih panjang memperburuknya—menambah satu
+  kalimat permintaan detail menurunkan kelulusan menjadi 1 dari 5, karena
+  pekerjaannya jadi lebih berat pada anggaran yang sama.
+
+  Belum diperbaiki di sini. Menaikkan `deadlineMs` menyentuh **seluruh** run
+  agent, bukan hanya planning durable, dan ikut menaikkan biaya serta lama
+  tunggu; itu keputusan produk. Yang juga masuk akal ditinjau: menyisakan
+  anggaran khusus untuk penyintesis, atau menyerahkan hasil parsial ketika
+  deadline jatuh sesudah worker selesai.
+
+- Dua alat dibuat untuk mengejar stage ini dan tetap ada.
+  `HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS=planning` menjalankannya sendirian
+  (~1,5 menit, lawan ~8 menit run penuh), dan
+  `HARVY_ACCEPTANCE_KEEP_ROOT=1` menahan direktori runtime terisolasi supaya
+  log operasionalnya dapat dibaca sesudah run gagal. Laporan run juga kini
+  memuat `restartExits` berisi `code` dan `signal` tiap restart; tanpa itu
+  satu restart di tengah stage hanya terbaca sebagai angka.
 
 - **Temuan terbuka, tidak diperbaiki di sini.** Untuk "aku kewalahan …, bantu
   aku mulai satu langkah kecil", Harvy menawarkan "Dengerin dulu" saja dan

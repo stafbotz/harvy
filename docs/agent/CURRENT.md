@@ -1,13 +1,13 @@
 # Current Context
 
 Refreshed: 2026-09-05
-Baseline: 78c24cc
+Baseline: 51be932
 Context-Version: 1
 
 ## Verified baseline
 
 - Perubahan material yang dirangkum di sini dimulai di atas commit dasar
-  `78c24cc` pada `main`; status commit dan push aktual tetap dibaca dari Git.
+  `51be932` pada `main`; status commit dan push aktual tetap dibaca dari Git.
 - `npm run check` PASS; `npm test` hijau, dan bagian Aktif
   `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
   dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
@@ -46,11 +46,16 @@ Context-Version: 1
 - Acceptance Telegram pribadi dari akun penguji berdedikasi 5 September 2026:
   enam stage PASS—onboarding, tugas + pengingat, zona waktu + sesi + check-in
   proaktif, gambar, memori implisit, dan pembersihan akun.
-  `durable_planning_runtime` FAIL karena stage-nya menunggu AgentRun yang
-  memang sengaja tidak lagi dibuka untuk permintaan tanpa tool. Dua stage lain
-  juga ternyata menguji hal yang bukan kontrak Harvy dan sudah diperbaiki; satu
-  temuan perilaku dibiarkan terbuka karena perbaikannya keputusan produk.
-  Rinciannya di `docs/engineering/status/telegram.md`.
+  `durable_planning_runtime` sudah dapat dicapai lagi sesudah naskah
+  pengujinya diganti—ia menunggu AgentRun yang memang tidak lagi dibuka untuk
+  permintaan tanpa tool—dan pernah PASS penuh, tetapi hanya 3 dari 6 percobaan.
+  Sebabnya terbukti dari log: run orchestrate kehabisan
+  `DEFAULT_AGENT_RUN_LIMITS.deadlineMs` (45 detik) sebelum penyintesisnya
+  selesai, sehingga anchor berakhir "Berhenti" tanpa hasil. Belum diperbaiki
+  karena batas itu berlaku untuk seluruh run agent. Dua stage lain ternyata
+  menguji hal yang bukan kontrak Harvy dan sudah diperbaiki; satu temuan
+  perilaku dibiarkan terbuka karena perbaikannya keputusan produk. Rinciannya
+  di `docs/engineering/status/telegram.md`.
 
 ## Active cross-subsystem blockers
 
