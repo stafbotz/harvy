@@ -384,42 +384,147 @@ function structuredStepsTool(
   };
 }
 
-function renderStructuredStepsReply(
+/**
+ * Sebab penolakan jawaban terstruktur, bebas isi.
+ *
+ * Seluruh fieldnya angka dan enum: nomor langkah, nomor field, dan panjang
+ * karakter. Tidak ada potongan jawaban model di dalamnya, sehingga aman masuk
+ * log operasional.
+ */
+export type StructuredStepsRejection =
+  | { reason: "arguments_shape" }
+  | { reason: "step_count"; steps: number; limit: number }
+  | { reason: "step_shape"; step: number }
+  | { reason: "title_length"; step: number; characters: number }
+  | { reason: "field_type"; step: number; field: number }
+  | {
+      reason: "field_too_short";
+      step: number;
+      field: number;
+      characters: number;
+      limit: number;
+    }
+  | {
+      reason: "field_too_long";
+      step: number;
+      field: number;
+      characters: number;
+      limit: number;
+    }
+  | { reason: "reply_too_long"; characters: number; limit: number };
+
+const MAX_STRUCTURED_REPLY_CHARACTERS = 8_000;
+
+/**
+ * Menjelaskan kenapa satu panggilan `harvy_structured_steps_v1` ditolak kode.
+ *
+ * Sampai 6 September 2026 penolakan ini tidak meninggalkan jejak apa pun.
+ * Nilai `null` dari renderer terbaca sebagai "keputusan tidak sah", satu
+ * perbaikan dicoba, dan bila perbaikan itu tidak selesai sebelum deadline
+ * pengguna menerima "Berhenti" tanpa satu kata pun tentang sebabnya. Jawaban
+ * yang ditolak bisa saja sudah benar isinya dan hanya melampaui satu batas
+ * panjang yang dihitung kode—dan itu tidak dapat diketahui tanpa fungsi ini.
+ */
+export function structuredStepsRejection(
+  calls: readonly ChatToolCall[],
+  contract: ReplyStructureContract,
+): StructuredStepsRejection | null {
+  const call = calls.length === 1 ? calls[0] : null;
+  if (
+    !call || call.type !== "function" ||
+    call.function.name !== STRUCTURED_STEPS_TOOL_NAME
+  ) {
+    return null;
+  }
+  const input = parseNativeArguments(call.function.arguments);
+  if (!input) return { reason: "arguments_shape" };
+  const outcome = structuredStepsOutcome(input, contract);
+  return "reply" in outcome ? null : outcome;
+}
+
+function structuredStepsOutcome(
   input: Record<string, unknown>,
   contract: ReplyStructureContract,
-): string | null {
-  if (!exactKeys(input, ["steps"]) || !Array.isArray(input.steps) ||
-    input.steps.length !== contract.exactSteps) return null;
+): { reply: string } | StructuredStepsRejection {
+  if (!exactKeys(input, ["steps"]) || !Array.isArray(input.steps)) {
+    return { reason: "arguments_shape" };
+  }
+  if (input.steps.length !== contract.exactSteps) {
+    return {
+      reason: "step_count",
+      steps: input.steps.length,
+      limit: contract.exactSteps,
+    };
+  }
   const valueKeys = contract.perStepFields.length > 0
     ? contract.perStepFields.map((_, index) => `field_${index + 1}`)
     : ["content"];
+  const maxFieldCharacters = structuredFieldBudgetCharacters(contract);
   const rendered: string[] = [];
   for (const [index, rawStep] of input.steps.entries()) {
     if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) {
-      return null;
+      return { reason: "step_shape", step: index + 1 };
     }
     const step = rawStep as Record<string, unknown>;
     if (!exactKeys(step, ["title", ...valueKeys]) ||
-      typeof step.title !== "string") return null;
+      typeof step.title !== "string") {
+      return { reason: "step_shape", step: index + 1 };
+    }
     const title = step.title.replace(/\s+/gu, " ").trim()
       .replace(/^\d{1,2}[.)]\s*/u, "");
-    if (title.length < 3 || title.length > 120) return null;
+    if (title.length < 3 || title.length > 120) {
+      return {
+        reason: "title_length",
+        step: index + 1,
+        characters: title.length,
+      };
+    }
     const lines = [`${index + 1}. ${title}`];
     for (const [fieldIndex, key] of valueKeys.entries()) {
       const rawValue = step[key];
-      if (typeof rawValue !== "string") return null;
+      if (typeof rawValue !== "string") {
+        return { reason: "field_type", step: index + 1, field: fieldIndex + 1 };
+      }
       const label = contract.perStepFields[fieldIndex] ?? null;
       const value = cleanStructuredFieldValue(rawValue, label);
-      if (
-        value.length < contract.minimumFieldCharacters ||
-        value.length > structuredFieldMaxCharacters(contract)
-      ) return null;
+      if (value.length < contract.minimumFieldCharacters) {
+        return {
+          reason: "field_too_short",
+          step: index + 1,
+          field: fieldIndex + 1,
+          characters: value.length,
+          limit: contract.minimumFieldCharacters,
+        };
+      }
+      if (value.length > maxFieldCharacters) {
+        return {
+          reason: "field_too_long",
+          step: index + 1,
+          field: fieldIndex + 1,
+          characters: value.length,
+          limit: maxFieldCharacters,
+        };
+      }
       lines.push(label ? `   ${label}: ${value}` : `   ${value}`);
     }
     rendered.push(lines.join("\n"));
   }
   const reply = rendered.join("\n\n");
-  return reply.length <= 8_000 ? reply : null;
+  return reply.length <= MAX_STRUCTURED_REPLY_CHARACTERS
+    ? { reply }
+    : {
+        reason: "reply_too_long",
+        characters: reply.length,
+        limit: MAX_STRUCTURED_REPLY_CHARACTERS,
+      };
+}
+
+function renderStructuredStepsReply(
+  input: Record<string, unknown>,
+  contract: ReplyStructureContract,
+): string | null {
+  const outcome = structuredStepsOutcome(input, contract);
+  return "reply" in outcome ? outcome.reply : null;
 }
 
 function cleanStructuredFieldValue(
@@ -440,7 +545,46 @@ function cleanStructuredFieldValue(
   return possibleLabel === expected ? trimmed.slice(colon + 1).trim() : trimmed;
 }
 
+/**
+ * Panjang field yang **diberitahukan** kepada model lewat schema.
+ *
+ * Sengaja lebih ketat daripada yang ditegakkan kode: angka ini menyuruh model
+ * membidik jawaban padat, dan biaya melesetnya ditanggung oleh selisih ke
+ * `structuredFieldBudgetCharacters`.
+ */
+const STRUCTURED_FIELD_GUIDANCE_CHARACTERS = 1_200;
+
 function structuredFieldMaxCharacters(
+  contract: ReplyStructureContract,
+): number {
+  return Math.max(
+    contract.minimumFieldCharacters,
+    Math.min(
+      STRUCTURED_FIELD_GUIDANCE_CHARACTERS,
+      structuredFieldBudgetCharacters(contract),
+    ),
+  );
+}
+
+/**
+ * Panjang field yang benar-benar ditegakkan kode saat merender.
+ *
+ * Dua angka, bukan satu, karena keduanya menjawab pertanyaan berbeda. Schema
+ * memberi target; renderer menjaga satu hal saja—seluruh jawaban tetap muat
+ * dalam batas kirim. Sampai 6 September 2026 keduanya adalah angka yang sama,
+ * dan ceiling 1.200 di dalamnya tidak menjaga apa pun: pada kontrak tiga
+ * langkah tanpa label, anggaran sesungguhnya 2.452 karakter per field.
+ *
+ * Akibatnya terukur pada jalur planning durable. Model membalas rencana yang
+ * lengkap dan benar bentuknya, satu langkahnya 1.305 karakter, dan kode
+ * membuang **seluruh** jawaban karena 105 karakter di atas angka anjuran—lalu
+ * membayar satu panggilan sintesis lagi untuk memperbaikinya. Panggilan kedua
+ * itu memakan 11-18 detik dari deadline run 45 detik, dan bila ia tidak
+ * selesai pengguna tidak menerima apa pun.
+ *
+ * Batas total tetap ditegakkan terpisah setelah seluruh langkah dirender.
+ */
+function structuredFieldBudgetCharacters(
   contract: ReplyStructureContract,
 ): number {
   const fieldCount = Math.max(1, contract.perStepFields.length);
@@ -454,12 +598,7 @@ function structuredFieldMaxCharacters(
   const availableForValues = Math.max(0, 7_800 - fixedCharacters);
   return Math.max(
     contract.minimumFieldCharacters,
-    Math.min(
-      1_200,
-      Math.floor(
-        availableForValues / (contract.exactSteps * fieldCount),
-      ),
-    ),
+    Math.floor(availableForValues / (contract.exactSteps * fieldCount)),
   );
 }
 

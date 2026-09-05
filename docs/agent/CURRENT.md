@@ -1,13 +1,13 @@
 # Current Context
 
-Refreshed: 2026-09-05
-Baseline: 51be932
+Refreshed: 2026-09-06
+Baseline: 5b294a1
 Context-Version: 1
 
 ## Verified baseline
 
 - Perubahan material yang dirangkum di sini dimulai di atas commit dasar
-  `51be932` pada `main`; status commit dan push aktual tetap dibaca dari Git.
+  `5b294a1` pada `main`; status commit dan push aktual tetap dibaca dari Git.
 - `npm run check` PASS; `npm test` hijau, dan bagian Aktif
   `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
   dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
@@ -23,39 +23,30 @@ Context-Version: 1
 
 ## Recent material changes
 
-- `npm run eval:compaction` mengukur recall sesudah pemadatan, dan sudah
-  dijalankan. Transkrip `ujian-biologi`, tiga repetisi, `AI_MODE=testing`:
-  `utuh` 97,9% (93,8-100) pada 4.896 karakter, `episode` 20,8% (12,5-25,0)
-  pada 3.172, `episode+cari` 60,4% (56,3-68,8) pada 3.596. Rentangnya tidak
-  bertumpang tindih: **pencarian riwayat menopang, bukan melengkapi**—konteks
-  episode otomatis sendirian menahan kurang dari seperempat fakta spesifik.
-  Anchor index karena itu tidak dirender ke prompt; pengukurannya tidak
-  mendukung, dan penunjuk pemulihan pada konteks episode yang justru terbukti
-  menunjuk ke jalur bernilai ~40 poin recall.
-- Pasal 2 konstitusi dapat dijalankan untuk pertama kalinya (ADR-047). Sesi
-  tutor yang selesai meninggalkan `LearningTrace`, dan
-  `src/core/mastery-policy.ts` memakainya untuk memendekkan tahap pembuka
-  sesudah tiga penyelesaian mandiri berturut. Yang memudar **hanya** tahap
-  pembuka. Episode juga memperoleh field `progress` (schema v3, v2 tetap
-  dibaca), dan memori wajib ditulis sebagai fakta, bukan perintah.
+- Jalur planning durable: dua sebab kegagalan diperbaiki 6 September 2026.
+  Pertama, renderer `harvy_structured_steps_v1` membuang seluruh jawaban bila
+  satu field melewati ceiling tetap 1.200 karakter padahal anggaran
+  sesungguhnya 2.452; terukur, rencana lengkap dengan satu langkah 1.305
+  karakter dibuang lalu sintesis ulang dibayar 11-18 detik. Angka anjuran kini
+  terpisah dari yang ditegakkan (`structuredFieldBudgetCharacters`), dan
+  penolakan yang tersisa menyebutkan sebabnya lewat
+  `agent_structured_final_rejected`; sebelumnya kelas ini tidak berjejak. Kedua, lane durable tidak lagi memakai anggaran
+  waktu lane chat: `DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik berlaku bila
+  adapter menyalakan `durableWork`, chat tetap 45 detik. Dari 15 run
+  orchestrate pada model sungguhan, 11 selesai 20,5-42,1 detik dan 4 terpotong
+  tepat di 45,0 detik padahal hanya sintesis akhir yang tersisa—dan sintesis
+  terukur 9,4-17,6 detik. Run yang terpotong sudah membayar planner dan seluruh
+  worker lalu membuangnya.
 - Kanal Telegram tidak lagi bisa tuli tanpa diketahui (ADR-046). Transformer
-  API memberi `getUpdates` batas 55 detik menggantikan 500 detik bawaan
-  grammY, mematuhi `retry_after` saat mengirim, dan mencatat kegagalan yang
-  selama ini ditelan grammY. Balasan yang belum terbukti sampai punya janji
-  durable, dikirim ulang bertanda hanya dari proses yang sudah mati.
-- Acceptance Telegram pribadi dari akun penguji berdedikasi 5 September 2026:
+  API memberi `getUpdates` batas 55 detik menggantikan 500 detik bawaan grammY,
+  mematuhi `retry_after` saat mengirim, dan mencatat kegagalan yang selama ini
+  ditelan grammY. Balasan yang belum terbukti sampai punya janji durable.
+- Acceptance Telegram pribadi dari akun penguji berdedikasi 5-6 September 2026:
   enam stage PASS—onboarding, tugas + pengingat, zona waktu + sesi + check-in
   proaktif, gambar, memori implisit, dan pembersihan akun.
-  `durable_planning_runtime` sudah dapat dicapai lagi sesudah naskah
-  pengujinya diganti—ia menunggu AgentRun yang memang tidak lagi dibuka untuk
-  permintaan tanpa tool—dan pernah PASS penuh, tetapi hanya 3 dari 6 percobaan.
-  Sebabnya terbukti dari log: run orchestrate kehabisan
-  `DEFAULT_AGENT_RUN_LIMITS.deadlineMs` (45 detik) sebelum penyintesisnya
-  selesai, sehingga anchor berakhir "Berhenti" tanpa hasil. Belum diperbaiki
-  karena batas itu berlaku untuk seluruh run agent. Dua stage lain ternyata
-  menguji hal yang bukan kontrak Harvy dan sudah diperbaiki; satu temuan
-  perilaku dibiarkan terbuka karena perbaikannya keputusan produk. Rinciannya
-  di `docs/engineering/status/telegram.md`.
+  `durable_planning_runtime` lulus 3 dari 6 lalu 0 dari 4; sesudah kedua
+  perbaikan di atas, 6 dari 6 dalam 36,5-79,2 detik. Rinciannya di
+  `docs/engineering/status/telegram.md`.
 
 ## Active cross-subsystem blockers
 

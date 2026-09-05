@@ -205,24 +205,91 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   Kriteria lulus.
 
 - **Defect: run orchestrate kehabisan deadline sebelum penyintesisnya selesai.**
-  Stage ini lulus hanya 3 dari 6 percobaan. Log operasional run yang gagal
-  memberi sebabnya utuh: planner selesai, tiga worker delegasi paralel memakan
-  13-16 detik masing-masing, penyintesis baru mulai pada detik ~45 dan
-  **dibatalkan dua detik kemudian**—`ai_request_cancelled`, lalu
-  `active_run_stopped` dengan `outcome: deadline`, lalu
-  `agent_planner_failed` dengan `TimeoutError`. Batasnya
-  `DEFAULT_AGENT_RUN_LIMITS.deadlineMs` = 45.000 ms, dan bentuk orchestrate
-  yang Harvy pilih sendiri (planner -> worker paralel -> penyintesis) sering
-  tidak muat di dalamnya. Bagi pengguna akibatnya: anchor berakhir "Berhenti"
-  tanpa satu pun hasil. Naskah yang lebih panjang memperburuknya—menambah satu
-  kalimat permintaan detail menurunkan kelulusan menjadi 1 dari 5, karena
-  pekerjaannya jadi lebih berat pada anggaran yang sama.
+  Stage ini lulus hanya 3 dari 6 percobaan, dan 0 dari 4 pada batch berikutnya.
+  Bagi pengguna akibatnya satu: anchor berakhir "Berhenti" tanpa satu pun
+  hasil. Sesudah dua perbaikan 6 September 2026 di bawah, stage ini lulus 6 dari
+  6 dari kanal sungguhnya dalam 36,5-79,2 detik, semuanya dengan tiga langkah
+  bernomor yang lengkap Tindakan, Bukti, dan Kriteria lulus, satu gelembung
+  anchor yang disunting di tempat, disematkan saat berjalan, dan dilepas
+  sematannya pada keadaan akhir. Batas waktunya 45.000 ms, ditulis langsung di `Conversation.agent`
+  (nilainya sama dengan `DEFAULT_AGENT_RUN_LIMITS.deadlineMs`), dan bentuk
+  orchestrate yang Harvy pilih sendiri—planner, worker paralel, penyintesis—
+  memang sering hampir tidak muat di dalamnya.
 
-  Belum diperbaiki di sini. Menaikkan `deadlineMs` menyentuh **seluruh** run
-  agent, bukan hanya planning durable, dan ikut menaikkan biaya serta lama
-  tunggu; itu keputusan produk. Yang juga masuk akal ditinjau: menyisakan
-  anggaran khusus untuk penyintesis, atau menyerahkan hasil parsial ketika
-  deadline jatuh sesudah worker selesai.
+  Sebab pertamanya sudah diperbaiki 6 September 2026, dan sebab itu bukan
+  panjangnya pekerjaan melainkan **satu sintesis yang dibuang kode lalu
+  dibayar dua kali.** Lihat butir berikut.
+
+- **Diperbaiki: jawaban yang benar dibuang karena melewati angka anjuran.**
+  Permintaan yang menyebut "tepat tiga langkah" menurunkan
+  `ReplyStructureContract`, dan jawaban akhirnya wajib lewat
+  `harvy_structured_steps_v1`. Renderer menolak seluruh jawaban bila satu field
+  melewati batas panjang. Batas itu dihitung `structuredFieldMaxCharacters`,
+  yang memakai ceiling tetap 1.200 karakter—padahal anggaran sesungguhnya pada
+  kontrak tiga langkah tanpa label adalah 2.452, dan yang benar-benar dijaga
+  adalah panjang seluruh balasan.
+
+  Terukur pada model sungguhan lewat `scripts/probe-chat.ts` dengan naskah
+  acceptance yang sama: model membalas rencana lengkap yang satu langkahnya
+  1.305 karakter, kode membuang **seluruh** jawaban karena 105 karakter di atas
+  angka anjuran, lalu membayar satu sintesis ulang selama 11-18 detik. Dua dari
+  delapan run kena; pada salah satunya sintesis ulang itu dibatalkan deadline
+  dan pengguna tidak menerima apa pun.
+
+  Sekarang angka anjuran dan angka yang ditegakkan dipisah:
+  `structuredFieldMaxCharacters` tetap memberi 1.200 kepada schema supaya model
+  membidik jawaban padat, sementara `structuredFieldBudgetCharacters` yang
+  ditegakkan renderer hanya menjaga agar seluruh balasan tetap muat. Delapan
+  run sesudahnya: nol penolakan bentuk, dan balasan yang sampai ke pengguna
+  memanjang dari 2.358-3.110 menjadi 2.358-3.384 karakter.
+
+- **Penolakan bentuk kini menyebutkan sebabnya.** Sampai 6 September 2026
+  penolakan itu tidak meninggalkan satu baris pun: yang terlihat hanya run yang
+  berhenti karena deadline, sehingga sebabnya terbaca sebagai "pekerjaannya
+  terlalu berat". `structuredStepsRejection` menamai kelasnya beserta angkanya
+  —nomor langkah, nomor field, panjang, batas—dan
+  `agent_structured_final_rejected` mencatatnya. Isinya angka dan enum saja;
+  tidak ada potongan jawaban model.
+
+- **Diperbaiki: lane durable tidak lagi memakai anggaran waktu lane chat.**
+  Sesudah penolakan bentuk hilang, sisa kegagalannya satu kelas: satu atau dua
+  worker memakan 25-30 detik, penyintesis mulai terlalu dekat dengan dinding,
+  lalu dibatalkan. Dua dari delapan probe kena.
+
+  Diukur lebih dulu, bukan ditebak. Lima belas run orchestrate pada model
+  sungguhan: sebelas selesai dalam 20,5-42,1 detik, empat sisanya terpotong
+  tepat di 45,0 detik. Pada keempatnya worker sudah selesai sekitar detik ke-34
+  dan hanya sintesis akhir yang tersisa, sedangkan sintesis terukur 9,4-17,6
+  detik—jadi keempatnya membutuhkan sekitar 46-52 detik. Batas 45 detik
+  memotong distribusinya tepat di bahu atas. Run yang terpotong juga bukan run
+  yang hemat: planner dan seluruh worker sudah dibayar penuh lalu dibuang.
+
+  `DURABLE_AGENT_RUN_DEADLINE_MS` = 75.000 ms sekarang berlaku hanya ketika
+  adapter durable menyalakan `durableWork`; lane chat tetap
+  `CHAT_AGENT_RUN_DEADLINE_MS` = 45.000 ms karena pengguna menunggunya di
+  layar. Lane durable sudah memberi tahu pengguna bahwa ia boleh terus
+  mengobrol dan menandai kemajuannya pada anchor yang disematkan, jadi yang
+  dibeli di sini bukan kesabaran pengguna di depan layar. Telegram dan WhatsApp
+  memakai pagar yang sama.
+
+  Tiga run acceptance sesudahnya lulus, dan salah satunya memakan 79,2 detik
+  untuk seluruh stage—bentuk yang tidak akan selesai pada anggaran lama.
+  Enam run acceptance berturut-turut sejak kedua perbaikan: semuanya lulus,
+  36,5-79,2 detik, ketiganya dengan penilaian kualitas hijau.
+
+- **Yang masih terbuka.** Hipotesis bahwa latensi worker 25-30 detik berasal
+  dari `AI_MODE=testing`—yang memetakan ketiga tier ke satu model yang sama,
+  sehingga planner dan tiga worker paralel mengantre pada endpoint yang sama—
+  belum dapat diuji di host ini: model kedua yang terkonfigurasi ditolak
+  provider aktif dengan 404. Selama tier belum benar-benar terpisah, anggaran
+  75 detik menutupi gejalanya, bukan sebabnya.
+
+  Satu perbaikan lagi masuk akal dan belum dikerjakan: klien tetap mengulang
+  permintaan yang kena timeout meski sisa waktu aktif run tidak mungkin
+  menampung percobaan kedua—terukur sekali, dua worker diulang dengan sisa ~8
+  detik dan keduanya dibatalkan. Belum dikerjakan karena bukti yang ada baru
+  satu kejadian, dan ambang "cukup waktu untuk mengulang" tidak boleh dikarang
+  tanpa pengukuran.
 
 - Dua alat dibuat untuk mengejar stage ini dan tetap ada.
   `HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS=planning` menjalankannya sendirian

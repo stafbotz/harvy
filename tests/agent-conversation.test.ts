@@ -8,7 +8,10 @@ import {
   type ChatRequest,
   type ChatToolCall,
 } from "../src/ai/client.js";
-import { createModelAgentWorker } from "../src/ai/agent.js";
+import {
+  createModelAgentWorker,
+  structuredStepsRejection,
+} from "../src/ai/agent.js";
 import { Conversation, type RoutingConfig } from "../src/ai/conversation.js";
 import { ParallelDelegationExecutor } from "../src/agent/parallel-delegation.js";
 import { SpecialistDelegationExecutor } from "../src/agent/specialist-delegation.js";
@@ -19,6 +22,7 @@ import {
   type AgentRunCheckpoint,
 } from "../src/harness/agent-harness.js";
 import { createHarvyCapabilityCatalog } from "../src/harness/capabilities.js";
+import { deriveReplyStructureContract } from "../src/core/reply-structure-contract.js";
 import { RunBudgetAccount } from "../src/core/run-budget.js";
 import { ModelProfileRegistry } from "../src/ai/model-profile.js";
 import type { WorkBrief } from "../src/domain/agent-handoff.js";
@@ -1147,6 +1151,85 @@ describe("Conversation agent runtime", () => {
     }
   });
 
+  it("memberi pekerjaan latar anggaran waktu lebih panjang daripada lane chat", async () => {
+    // Lane chat ditunggu di layar; lane durable punya Run Anchor dan sudah
+    // memberi tahu pengguna bahwa ia boleh lanjut mengobrol. Empat dari lima
+    // belas run orchestrate pada model sungguhan terpotong tepat di dinding 45
+    // detik padahal hanya sintesis akhir yang tersisa.
+    const requests: ChatRequest[] = [];
+    const conversation = fixture(requests, [], []);
+
+    await conversation.agent(
+      "susun rencana belajarku",
+      "orchestrate",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+    await conversation.agent(
+      "susun rencana belajarku",
+      "orchestrate",
+      undefined,
+      { ownerId: "student", channel: "telegram", durableWork: true },
+    );
+
+    assert.equal(requests[0]?.runBudget?.deadlineMs, 45_000);
+    assert.equal(requests[1]?.runBudget?.deadlineMs, 75_000);
+  });
+
+  it("mengirim langkah yang melewati anjuran schema selama seluruh jawaban masih muat", async () => {
+    // 1.305 karakter: persis panjang yang terukur ditolak pada jalur planning
+    // durable 5 September 2026, 105 karakter di atas angka anjuran 1.200.
+    // Anggaran sesungguhnya untuk kontrak tiga langkah tanpa label 2.452, jadi
+    // jawaban ini muat dan tidak boleh membayar satu sintesis ulang.
+    const panjang = `${"Bandingkan retrieval practice, spaced repetition, dan interleaving. ".repeat(19)}Catat hasilnya.`;
+    assert.ok(panjang.length > 1_200 && panjang.length < 2_452);
+    const requests: ChatRequest[] = [];
+    const client = agentClientDouble({
+      async completeToolTurn(
+        request: ChatRequest & { tools: readonly ChatFunctionTool[] },
+      ): Promise<ChatAssistantToolMessage> {
+        requests.push(request);
+        const calls = [nativeToolCall("harvy_structured_steps_v1", {
+          steps: [
+            { title: "Kumpulkan sumber", content: panjang },
+            { title: "Bandingkan hasilnya", content: "Susun tabel perbandingan dari tiga sumber terkuat." },
+            { title: "Uji pada jadwal nyata", content: "Jalankan dua minggu lalu bandingkan skor kuis awal dan akhir." },
+          ],
+        })];
+        assert.equal(request.validateToolCalls?.(calls), true);
+        return { role: "assistant", content: null, tool_calls: calls };
+      },
+    });
+    const conversation = new Conversation(
+      client,
+      PRODUCTION_ROUTING,
+      "Asia/Jakarta",
+      () => new Date("2026-08-04T05:00:00.000Z"),
+    );
+
+    const result = await conversation.agent(
+      "Susun rencana mendalam tepat tiga langkah.",
+      "orchestrate",
+      undefined,
+      { ownerId: "student", channel: "telegram" },
+    );
+
+    assert.equal(result.status, "completed");
+    // Satu panggilan saja: tidak ada sintesis ulang yang dibayar.
+    assert.equal(requests.length, 1);
+    if (result.status === "completed") {
+      assert.ok(result.reply.includes(panjang));
+    }
+    // Angka yang diberitahukan kepada model tetap ketat.
+    const steps = requests[0]?.tools?.find(
+      (tool) => tool.function.name === "harvy_structured_steps_v1",
+    );
+    const properties = (steps?.function.parameters as {
+      properties: { steps: { items: { properties: { content: { maxLength: number } } } } };
+    }).properties;
+    assert.equal(properties.steps.items.properties.content.maxLength, 1_200);
+  });
+
   it("memulihkan truncation sekali dari state padat dengan role recovery tertutup", async () => {
     const requests: ChatRequest[] = [];
     let call = 0;
@@ -1780,6 +1863,101 @@ function runBudgetFromSystem(
   assert.ok(encoded, "run budget envelope tidak ditemukan");
   return JSON.parse(encoded) as Record<string, unknown>;
 }
+
+/**
+ * Penolakan bentuk jawaban dulu tidak menyebutkan sebabnya sama sekali, dan
+ * satu-satunya gejala yang terlihat adalah run yang berhenti karena deadline.
+ * Diagnosis di bawah ini yang membuat sebabnya dapat dibaca dari log.
+ */
+describe("diagnosis final terstruktur", () => {
+  const contract = deriveReplyStructureContract(
+    "Susun rencana mendalam tepat tiga langkah.",
+  );
+
+  function panggilan(steps: unknown): readonly ChatToolCall[] {
+    return [nativeToolCall("harvy_structured_steps_v1", { steps })];
+  }
+
+  function langkah(isi: string, judul = "Kumpulkan sumber"): unknown {
+    return { title: judul, content: isi };
+  }
+
+  it("menerima jawaban yang muat tanpa menyebut sebab apa pun", () => {
+    assert.ok(contract);
+    assert.equal(
+      structuredStepsRejection(
+        panggilan([
+          langkah("Bandingkan tiga teknik menghafal dari sumber terkuat."),
+          langkah("Susun tabel perbandingan yang dapat diperiksa ulang.", "Bandingkan"),
+          langkah("Uji dua minggu lalu bandingkan skor kuis awal dan akhir.", "Uji"),
+        ]),
+        contract,
+      ),
+      null,
+    );
+  });
+
+  it("menyebut field yang melewati anggaran beserta angkanya", () => {
+    assert.ok(contract);
+    const terlalu = "a".repeat(2_453);
+    assert.deepEqual(
+      structuredStepsRejection(
+        panggilan([
+          langkah(terlalu),
+          langkah("Susun tabel perbandingan yang dapat diperiksa ulang.", "Bandingkan"),
+          langkah("Uji dua minggu lalu bandingkan skor kuis awal dan akhir.", "Uji"),
+        ]),
+        contract,
+      ),
+      {
+        reason: "field_too_long",
+        step: 1,
+        field: 1,
+        characters: 2_453,
+        limit: 2_452,
+      },
+    );
+  });
+
+  it("membedakan jumlah langkah dari isi yang terlalu pendek", () => {
+    assert.ok(contract);
+    assert.deepEqual(
+      structuredStepsRejection(
+        panggilan([langkah("Bandingkan tiga teknik menghafal dari sumber terkuat.")]),
+        contract,
+      ),
+      { reason: "step_count", steps: 1, limit: 3 },
+    );
+    assert.deepEqual(
+      structuredStepsRejection(
+        panggilan([
+          langkah("Bandingkan tiga teknik menghafal dari sumber terkuat."),
+          langkah("Terlalu pendek.", "Bandingkan"),
+          langkah("Uji dua minggu lalu bandingkan skor kuis awal dan akhir.", "Uji"),
+        ]),
+        contract,
+      ),
+      {
+        reason: "field_too_short",
+        step: 2,
+        field: 1,
+        characters: 15,
+        limit: 32,
+      },
+    );
+  });
+
+  it("diam untuk call yang bukan jawaban terstruktur", () => {
+    assert.ok(contract);
+    assert.equal(
+      structuredStepsRejection(
+        [nativeToolCall("harvy_need_input_v1", { prompt: "Mau mulai dari mana?" })],
+        contract,
+      ),
+      null,
+    );
+  });
+});
 
 function fixture(
   sink: ChatRequest[],

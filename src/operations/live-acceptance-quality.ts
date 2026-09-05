@@ -36,9 +36,12 @@ export interface LivePlanQuality {
  *
  * Naskahnya sengaja pendek. Versi yang lebih lengkap—menambahkan "Berikan
  * detail yang cukup agar orang lain dapat menjalankannya tanpa menebak"—membuat
- * modelnya mengerjakan pekerjaan yang lebih berat dan stage-nya lulus 1 dari 5,
- * lawan 3 dari 6 pada naskah ini. Sebabnya bukan naskahnya melainkan
- * `DEFAULT_AGENT_RUN_LIMITS.deadlineMs`; lihat
+ * stage-nya lulus 1 dari 5, lawan 3 dari 6 pada naskah ini. Sebabnya pernah
+ * dicatat di sini sebagai deadline run semata. Itu tidak lengkap: frasa "tanpa
+ * menebak" masuk ke pola `detailed` pada `deriveReplyStructureContract`, yang
+ * menaikkan panjang minimum tiap field sekaligus memancing jawaban lebih
+ * panjang—dan jawaban yang lebih panjang dahulu lebih sering dibuang utuh oleh
+ * batas per-field. Batas itu sudah diperbaiki; lihat
  * `docs/engineering/status/telegram.md`.
  */
 export function liveAcceptancePlanningPrompt(label: string): string {

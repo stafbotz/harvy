@@ -64,6 +64,7 @@ import {
   parseAgentAutoDecision,
   parseAgentNativeDecision,
   STRUCTURED_STEPS_TOOL_NAME,
+  structuredStepsRejection,
   type AgentMode,
 } from "./agent.js";
 import {
@@ -176,7 +177,10 @@ import {
   type ModelProfileRegistry,
 } from "./model-profile.js";
 import type { RunBudgetAccount } from "../core/run-budget.js";
-import { deriveReplyStructureContract } from "../core/reply-structure-contract.js";
+import {
+  deriveReplyStructureContract,
+  type ReplyStructureContract,
+} from "../core/reply-structure-contract.js";
 import type { TierPrice } from "../core/telemetry-service.js";
 import { prepareAgentContext } from "./agent-context-pressure.js";
 import {
@@ -280,6 +284,12 @@ export interface ConversationRuntime {
   >;
   /** ID durable code-owned; model/provider tidak boleh memilihnya. */
   runId?: string;
+  /**
+   * Giliran ini adalah pekerjaan latar dengan Run Anchor, bukan balasan chat
+   * yang ditunggu di layar. Ditetapkan adapter durable saja; lihat
+   * `DURABLE_AGENT_RUN_DEADLINE_MS`.
+   */
+  durableWork?: boolean;
   /** RunMailbox yang tiba sebelum checkpoint pertama, sudah dibatasi core. */
   initialAgentInputs?: readonly AgentUserInput[];
   /** Cancellation dan generation guard dari adapter untuk run agent panjang. */
@@ -492,6 +502,36 @@ const EPISODE_SUMMARY_MAX_TOKENS = 768;
  */
 const EPISODE_SUMMARY_ATTEMPTS = 3;
 const GENERAL_MODEL_DEADLINE_MS = 30_000;
+
+/**
+ * Anggaran waktu aktif satu invocation AgentRun pada lane chat.
+ *
+ * Pengguna menunggu balasan ini di layar, jadi angkanya tidak dinaikkan.
+ */
+const CHAT_AGENT_RUN_DEADLINE_MS = 45_000;
+
+/**
+ * Anggaran yang sama untuk pekerjaan latar dengan Run Anchor.
+ *
+ * Lane durable memberi tahu pengguna "kamu tetap bisa ngobrol" dan menandai
+ * kemajuannya pada satu anchor yang disematkan, jadi yang dibeli waktu tambahan
+ * di sini bukan kesabaran pengguna di depan layar.
+ *
+ * Angkanya diukur, bukan ditebak. Lima belas run orchestrate berturut-turut
+ * pada model sungguhan 5-6 September 2026 (planner, tiga worker paralel,
+ * penyintesis): sebelas selesai dalam 20,5-42,1 detik, empat sisanya terpotong
+ * tepat di dinding 45 detik. Pada keempatnya pekerjaannya sudah hampir jadi—
+ * worker selesai sekitar detik ke-34 dan hanya sintesis akhir yang tersisa,
+ * dan sintesis terukur 9,4-17,6 detik. Artinya keempatnya membutuhkan sekitar
+ * 46-52 detik, dan 45 detik memotong distribusi itu tepat di tengah bahu
+ * atasnya.
+ *
+ * Run yang terpotong bukan run yang hemat: planner dan seluruh worker sudah
+ * dibayar penuh, lalu hasilnya dibuang. Waktu tambahan di sini mengubah
+ * pengeluaran yang sudah terjadi menjadi jawaban, bukan menambah pekerjaan
+ * baru.
+ */
+const DURABLE_AGENT_RUN_DEADLINE_MS = 75_000;
 const OPERATION_PRESENTATION_MAX_TOKENS = 256;
 const OPERATION_PRESENTATION_DEADLINE_MS = 3_000;
 const CHECK_IN_PRESENTATION_MAX_TOKENS = 192;
@@ -579,6 +619,41 @@ export class Conversation {
         "understanding_pass_chosen",
         "Jalur pass pemahaman dipilih.",
         { understandingPath: path, ...(intent ? { intent } : {}) },
+      );
+    } catch {
+      // sengaja diam
+    }
+  }
+
+  /**
+   * Mencatat sebab jawaban terstruktur ditolak kode.
+   *
+   * Penolakan ini mahal: ia membuang jawaban yang sudah dibayar, memakai satu
+   * panggilan model lagi untuk memperbaikinya, dan bila perbaikan itu tidak
+   * selesai sebelum deadline run pengguna tidak menerima apa pun. Sampai 6
+   * September 2026 tidak ada satu baris pun yang menyebutkan sebabnya, jadi
+   * yang terlihat dari luar hanya "Berhenti".
+   *
+   * Isinya angka dan enum dari `structuredStepsRejection`; tidak ada potongan
+   * jawaban model. Gagal aman: pengumpulan bukti tidak boleh menjatuhkan
+   * giliran.
+   */
+  private logStructuredFinalRejected(
+    calls: readonly ChatToolCall[],
+    contract: ReplyStructureContract,
+  ): void {
+    try {
+      const rejection = structuredStepsRejection(calls, contract);
+      this.logger.warn(
+        "agent_structured_final_rejected",
+        "Jawaban terstruktur ditolak kode sebelum dikirim.",
+        {
+          ...(rejection ?? { reason: "unknown" }),
+          contractSteps: contract.exactSteps,
+          contractFields: contract.perStepFields.length,
+          contractDetail: contract.detail,
+          contractMinimumFieldCharacters: contract.minimumFieldCharacters,
+        },
       );
     } catch {
       // sengaja diam
@@ -2085,7 +2160,9 @@ export class Conversation {
       policy: privateConversationAuthorizationPolicy(),
       limits: {
         maxSteps: 6,
-        deadlineMs: 45_000,
+        deadlineMs: runtime.durableWork
+          ? DURABLE_AGENT_RUN_DEADLINE_MS
+          : CHAT_AGENT_RUN_DEADLINE_MS,
         resumeWindowMs: 10 * 60 * 1_000,
         maxReplyCharacters: 8_000,
         maxObservationCharacters: 4_000,
@@ -2816,9 +2893,13 @@ export class Conversation {
           call.function.name === STRUCTURED_STEPS_TOOL_NAME
         )
       ) {
+        this.logStructuredFinalRejected(toolCallsOf(turn), replyContract);
         await assertRecoveryFresh(runtime, signal);
         turn = await repairStructuredFinal();
         decision = parseAgentAutoDecision(turn, [], replyContract);
+        if (!decision) {
+          this.logStructuredFinalRejected(toolCallsOf(turn), replyContract);
+        }
       }
       // Argumen yang tidak cocok schema tidak melempar di client, jadi kasus ini
       // dulu berakhir sebagai "keputusan tidak sah" tanpa model pernah tahu

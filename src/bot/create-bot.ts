@@ -5225,6 +5225,7 @@ ${obligation.text}`
           style: attempt.run.style,
           intent: attempt.run.intent,
           runId,
+          durableWork: true,
           signal: controller.signal,
           isCurrent: () => agentRuns.isActiveAttemptCurrent(
             "telegram",
