@@ -150,6 +150,24 @@ describe("RunBudgetAccount", () => {
     assert.equal(checkpoint.unknownUsageAttempts, 1);
   });
 
+  it("menyisakan waktu untuk jawaban akhir, bukan hanya token dan biaya", () => {
+    // Sintesis akhir terukur 4,3-17,6 detik pada model sungguhan; anggaran
+    // work karena itu berhenti 18 detik sebelum dinding, sementara sisa waktu
+    // aktif tetap dilaporkan apa adanya.
+    let now = 1_000;
+    const budget = account({ deadlineMs: 45_000 }, () => now);
+    assert.equal(budget.remainingActiveMs(), 45_000);
+    assert.equal(budget.remainingWorkMs(), 27_000);
+
+    now = 1_000 + 30_000;
+    assert.equal(budget.remainingActiveMs(), 15_000);
+    assert.equal(budget.remainingWorkMs(), 0, "sisa 15 detik milik jawaban akhir");
+
+    now = 1_000 + 45_000;
+    assert.equal(budget.remainingActiveMs(), 0);
+    assert.equal(budget.remainingWorkMs(), 0);
+  });
+
   it("mempertahankan waktu aktif saat resume tanpa menghitung jeda pengguna", () => {
     let now = 1_000;
     const first = account({}, () => now);

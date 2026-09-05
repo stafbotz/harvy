@@ -840,7 +840,8 @@ export class AiClient {
         const keyRotationAvailable = attempt + 1 < keyAttempts;
         const timedOut = error instanceof Error &&
           error.name === "AbortError";
-        const timeoutRetryAvailable = timedOut && timeoutRetries > 0;
+        const timeoutRetryAvailable = timedOut && timeoutRetries > 0 &&
+          retryStillFitsRun(attemptRequest);
         if (timeoutRetryAvailable) timeoutRetries -= 1;
         // Batas laju dijatah terpisah dari timeout, dan diulang dengan jeda.
         //
@@ -1384,6 +1385,31 @@ export class AiClient {
       ? Math.min(configured, request.execution.deadlineMs)
       : configured;
   }
+}
+
+/**
+ * Percobaan ulang sesudah timeout hanya berguna bila run masih dapat menjawab.
+ *
+ * Di luar AgentRun tidak ada RunBudget, dan di sana perilaku lama berlaku utuh:
+ * satu cegukan provider tidak boleh langsung menjadi "maaf" di layar pengguna.
+ *
+ * Di dalam AgentRun ceritanya berbeda, dan ini terukur. Empat percobaan ulang
+ * worker pada 5 September 2026 berjalan dengan sisa 8,3-10,5 detik. Tiga
+ * dibatalkan deadline. Yang keempat **selesai**—10,0 detik, 1.061 token—dan
+ * runnya tetap berakhir tanpa hasil, karena keberhasilan itu memakai seluruh
+ * jendela yang tersisa dan tidak menyisakan waktu untuk menyusun jawaban.
+ * Empat dari empat memakai anggaran penuh dan memberi pengguna nol.
+ *
+ * Karena itu yang diperiksa bukan peluang percobaan kedua berhasil, melainkan
+ * apakah run masih punya waktu untuk memakai hasilnya. Panggilan final
+ * dikecualikan: ia justru yang dilindungi, dan sesudahnya tidak ada lagi yang
+ * perlu dijawab.
+ */
+function retryStillFitsRun(request: ChatRequest): boolean {
+  const budget = request.runBudget;
+  if (!budget) return true;
+  if (request.execution?.budgetClass === "final") return true;
+  return budget.remainingWorkMs() > 0;
 }
 
 function completionUrl(

@@ -287,12 +287,45 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   Selama tier belum benar-benar terpisah, anggaran 75 detik menutupi gejalanya,
   bukan sebabnya.
 
-  Satu perbaikan lagi masuk akal dan belum dikerjakan: klien tetap mengulang
-  permintaan yang kena timeout meski sisa waktu aktif run tidak mungkin
-  menampung percobaan kedua—terukur sekali, dua worker diulang dengan sisa ~8
-  detik dan keduanya dibatalkan. Belum dikerjakan karena bukti yang ada baru
-  satu kejadian, dan ambang "cukup waktu untuk mengulang" tidak boleh dikarang
-  tanpa pengukuran.
+
+- **Diperbaiki: percobaan ulang yang tidak menyisakan waktu untuk menjawab.**
+  Klien mengulang permintaan yang kena timeout dengan anggaran lebih panjang.
+  Di luar AgentRun itu benar—latensi provider ini terukur sangat bervariasi dan
+  satu cegukan tidak boleh langsung menjadi "maaf" di layar. Di dalam AgentRun
+  ia menghabiskan sisa jendela.
+
+  Seluruh riwayat ledger memuat empat percobaan ulang di dalam run agent,
+  semuanya worker, dengan sisa waktu 8,3-10,5 detik. Tiga dibatalkan deadline.
+  Yang keempat **selesai**—10,0 detik, 1.061 token—dan runnya tetap berakhir
+  tanpa hasil, karena keberhasilan itu memakai seluruh sisa jendela dan tidak
+  menyisakan waktu untuk menyusun jawaban. Empat dari empat memakai anggaran
+  penuh dan memberi pengguna nol.
+
+  Karena itu yang diperiksa bukan peluang percobaan kedua berhasil, melainkan
+  apakah run masih sempat memakai hasilnya. `RunBudgetAccount.remainingWorkMs`
+  menyisakan 18 detik terakhir untuk jawaban akhir—diukur dari 14 sintesis yang
+  selesai, 4,3-17,6 detik dengan p50 12,0—dan `retryStillFitsRun` menahan
+  pengulangan work ketika sisa itu sudah masuk wilayah tersebut. Panggilan
+  final tidak ditahan: ia justru yang dilindungi. Di luar AgentRun tidak ada
+  RunBudget dan perilaku lama berlaku utuh.
+
+  Terbukti dari lapangan: empat probe sesudahnya memuat tiga timeout worker dan
+  **nol** percobaan ulang, dan pada kedua run yang kena, penyintesis
+  benar-benar mendapat gilirannya—pada salah satunya ia selesai dalam 5,3
+  detik, sesuatu yang tidak pernah terjadi ketika pengulangan masih memakan
+  sisa waktunya.
+  Tingkat kelulusan batch itu sendiri tidak dapat dibandingkan: worker pada
+  batch tersebut berjalan 14-30 detik lawan 4-13 detik pada batch sebelumnya,
+  dan empat run bukan sampel.
+
+- **Temuan baru, belum diperbaiki.** Satu run gagal karena penyintesis memanggil
+  tool yang tidak ada pada langkah itu (`agent_tool_shape_repair`,
+  `reason: unknown_tool`): delegasi memang dihapus dari daftar callable sesudah
+  langkah pertama, tetapi transcript native masih memuat panggilan delegasi
+  sebelumnya. Satu perbaikan dicoba, dan perbaikan itu dibatalkan deadline.
+  Penyakitnya sama dengan penolakan bentuk yang sudah diperbaiki—satu jawaban
+  ditolak, satu panggilan sintesis lagi dibayar—tetapi buktinya baru satu
+  kejadian, jadi belum layak diperbaiki tanpa pengukuran lebih dulu.
 
 - Dua alat dibuat untuk mengejar stage ini dan tetap ada.
   `HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS=planning` menjalankannya sendirian

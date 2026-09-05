@@ -2234,6 +2234,103 @@ function testFallback(
   };
 }
 
+/**
+ * Percobaan ulang di dalam AgentRun.
+ *
+ * Terukur 5 September 2026: empat percobaan ulang worker berjalan dengan sisa
+ * 8,3-10,5 detik. Tiga dibatalkan deadline; yang keempat selesai dan runnya
+ * tetap tidak menghasilkan apa pun, karena keberhasilan itu memakai seluruh
+ * jendela yang tersisa. Yang diperiksa karena itu bukan peluang berhasil,
+ * melainkan apakah run masih sempat memakai hasilnya.
+ */
+describe("percobaan ulang menghormati sisa waktu run", () => {
+  function timeoutLaluBaik(hitung: { n: number }) {
+    return async (): Promise<Response> => {
+      hitung.n += 1;
+      if (hitung.n === 1) {
+        const error = new Error("dibatalkan");
+        error.name = "AbortError";
+        throw error;
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "oke" }, finish_reason: "stop" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+  }
+
+  function klien(): AiClient {
+    return new AiClient({
+      baseUrl: "https://example.invalid",
+      keys: new ApiKeyPool(["kunci-tunggal"]),
+    });
+  }
+
+  it("menahan pengulangan work ketika sisa waktu hanya cukup untuk menjawab", async () => {
+    const hitung = { n: 0 };
+    globalThis.fetch = timeoutLaluBaik(hitung);
+
+    await assert.rejects(
+      () => klien().complete({
+        model: "model-uji",
+        messages: [{ role: "user", content: "halo" }],
+        maxTokens: 100,
+        execution: clientExecution(100, "planner"),
+        runBudget: clientRunBudget({ deadlineMs: 10_000 }),
+      }),
+      (error: unknown) => error instanceof Error && error.name === "AbortError",
+    );
+    assert.equal(hitung.n, 1, "percobaan kedua tidak boleh dimulai");
+  });
+
+  it("tetap mengulang work ketika run masih punya waktu sesudah menjawab", async () => {
+    const hitung = { n: 0 };
+    globalThis.fetch = timeoutLaluBaik(hitung);
+
+    const hasil = await klien().complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+      maxTokens: 100,
+      execution: clientExecution(100, "planner"),
+      runBudget: clientRunBudget({ deadlineMs: 45_000 }),
+    });
+
+    assert.equal(hitung.n, 2);
+    assert.equal(hasil, "oke");
+  });
+
+  it("tidak menahan panggilan final, karena justru itu yang dilindungi", async () => {
+    const hitung = { n: 0 };
+    globalThis.fetch = timeoutLaluBaik(hitung);
+
+    const hasil = await klien().complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+      maxTokens: 100,
+      execution: clientExecution(100, "synthesizer"),
+      runBudget: clientRunBudget({ deadlineMs: 10_000 }),
+    });
+
+    assert.equal(hitung.n, 2);
+    assert.equal(hasil, "oke");
+  });
+
+  it("tidak mengubah apa pun di luar AgentRun", async () => {
+    const hitung = { n: 0 };
+    globalThis.fetch = timeoutLaluBaik(hitung);
+
+    const hasil = await klien().complete({
+      model: "model-uji",
+      messages: [{ role: "user", content: "halo" }],
+    });
+
+    assert.equal(hitung.n, 2);
+    assert.equal(hasil, "oke");
+  });
+});
+
 function clientExecution(
   maxOutputTokens: number,
   role: "conversationalist" | "planner" | "synthesizer" =

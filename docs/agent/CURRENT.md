@@ -23,20 +23,20 @@ Context-Version: 1
 
 ## Recent material changes
 
-- Jalur planning durable: dua sebab kegagalan diperbaiki 6 September 2026.
-  Pertama, renderer `harvy_structured_steps_v1` membuang seluruh jawaban bila
-  satu field melewati ceiling tetap 1.200 karakter padahal anggaran
-  sesungguhnya 2.452; terukur, rencana lengkap dengan satu langkah 1.305
-  karakter dibuang lalu sintesis ulang dibayar 11-18 detik. Angka anjuran kini
-  terpisah dari yang ditegakkan (`structuredFieldBudgetCharacters`), dan
-  penolakan yang tersisa menyebutkan sebabnya lewat
-  `agent_structured_final_rejected`; sebelumnya kelas ini tidak berjejak. Kedua, lane durable tidak lagi memakai anggaran
-  waktu lane chat: `DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik berlaku bila
-  adapter menyalakan `durableWork`, chat tetap 45 detik. Dari 15 run
-  orchestrate pada model sungguhan, 11 selesai 20,5-42,1 detik dan 4 terpotong
-  tepat di 45,0 detik padahal hanya sintesis akhir yang tersisa—dan sintesis
-  terukur 9,4-17,6 detik. Run yang terpotong sudah membayar planner dan seluruh
-  worker lalu membuangnya.
+- Jalur planning durable: tiga sebab kegagalan diperbaiki 6 September 2026.
+  (1) Renderer `harvy_structured_steps_v1` membuang seluruh jawaban bila satu
+  field melewati ceiling tetap 1.200 karakter padahal anggarannya 2.452; satu
+  langkah 1.305 karakter membuang rencana lengkap dan membeli sintesis ulang
+  11-18 detik. Anjuran kini terpisah dari yang ditegakkan
+  (`structuredFieldBudgetCharacters`); penolakan sisanya berjejak lewat
+  `agent_structured_final_rejected`. (2) Lane durable tidak lagi memakai
+  anggaran lane chat: `DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik bila adapter
+  menyalakan `durableWork`, chat tetap 45. Dari 15 run orchestrate, 11 selesai
+  20,5-42,1 detik dan 4 terpotong tepat di 45,0 padahal hanya sintesis akhir
+  yang tersisa—dan run terpotong sudah membayar planner beserta seluruh worker.
+  (3) Klien tidak lagi mengulang timeout ketika sisa waktu run tinggal jatah
+  jawaban akhir (`RunBudgetAccount.remainingWorkMs`, 18 detik dari 14 sintesis
+  4,3-17,6 detik); empat pengulangan begitu di seluruh riwayat, semua nol.
 - Kanal Telegram tidak lagi bisa tuli tanpa diketahui (ADR-046). Transformer
   API memberi `getUpdates` batas 55 detik menggantikan 500 detik bawaan grammY,
   mematuhi `retry_after` saat mengirim, dan mencatat kegagalan yang selama ini
@@ -44,8 +44,8 @@ Context-Version: 1
 - Acceptance Telegram pribadi dari akun penguji berdedikasi 5-6 September 2026:
   enam stage PASS—onboarding, tugas + pengingat, zona waktu + sesi + check-in
   proaktif, gambar, memori implisit, dan pembersihan akun.
-  `durable_planning_runtime` lulus 3 dari 6 lalu 0 dari 4; sesudah kedua
-  perbaikan di atas, 6 dari 6 dalam 36,5-79,2 detik. Rinciannya di
+  `durable_planning_runtime` lulus 3 dari 6 lalu 0 dari 4; sesudah perbaikan di
+  atas, 6 dari 6 dalam 36,5-79,2 detik. Rincian:
   `docs/engineering/status/telegram.md`.
 
 ## Active cross-subsystem blockers

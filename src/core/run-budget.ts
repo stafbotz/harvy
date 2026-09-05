@@ -127,6 +127,23 @@ const MAX_FINAL_SYNTHESIS_RESERVE_TOKENS = 49_152;
 const FINAL_SYNTHESIS_RESERVE_DIVISOR = 2;
 
 /**
+ * Waktu yang dilindungi untuk sintesis akhir.
+ *
+ * Token dan biaya sudah lama menyisakan bagian khusus untuk balasan final;
+ * waktu tidak, padahal waktu yang habis membuat sisa anggaran lain tidak ada
+ * artinya. Angkanya diukur: empat belas sintesis yang selesai pada model
+ * sungguhan 5-6 September 2026 memakan 4,3-17,6 detik, p50 12,0 detik, dan 13
+ * dari 14 di atas 9,5 detik.
+ *
+ * Dipakai hanya untuk menahan **pekerjaan baru yang bersifat pengulangan**,
+ * bukan untuk memotong pekerjaan yang sedang berjalan. Memotong worker yang
+ * masih hidup akan menukar jawaban baik dengan jawaban tipis; menahan
+ * percobaan ulang yang tidak menyisakan waktu untuk menjawab tidak menukar
+ * apa pun.
+ */
+const FINAL_SYNTHESIS_RESERVE_MS = 18_000;
+
+/**
  * Akun budget mutable satu run. Seluruh mutasi reservation sinkron sehingga
  * beberapa worker paralel tidak dapat melewati check lalu reserve bersamaan.
  */
@@ -163,6 +180,17 @@ export class RunBudgetAccount {
 
   isTimeExhausted(): boolean {
     return this.remainingActiveMs() <= 0;
+  }
+
+  /**
+   * Sisa waktu yang masih boleh dipakai pekerjaan non-final.
+   *
+   * Nol berarti yang tersisa hanya cukup—kalau cukup—untuk menyusun jawaban,
+   * jadi tidak ada gunanya memulai percobaan baru yang harus dijawab lagi
+   * sesudahnya.
+   */
+  remainingWorkMs(): number {
+    return Math.max(0, this.remainingActiveMs() - FINAL_SYNTHESIS_RESERVE_MS);
   }
 
   assertStep(step: number): void {
