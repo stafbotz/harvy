@@ -422,11 +422,14 @@ describe("usage dashboard formatting", () => {
     );
 
     assert.match(rendered.text, /Sisa penggunaan/u);
-    assert.match(rendered.text, /Sisa hari ini/u);
+    assert.match(rendered.text, /Sisa 24 jam terakhir/u);
     // Dibulatkan ke bawah, seperti sisa kuota periode: lebih baik menganggap
     // ruangnya lebih sempit daripada lebih lega.
     assert.match(rendered.text, /22%/u);
-    assert.match(rendered.text, /terpisah dari kuota periode/u);
+    assert.match(rendered.text, /Terpisah dari kuota periode/u);
+    // Judulnya tidak boleh menyiratkan reset tengah malam; jendelanya berjalan.
+    assert.doesNotMatch(rendered.text, /Sisa hari ini/u);
+    assert.match(rendered.text, /bukan pada pergantian hari/u);
   });
 
   it("tidak menampilkan baris itu ketika jendela pendek tidak ditegakkan", () => {
@@ -441,7 +444,7 @@ describe("usage dashboard formatting", () => {
       "plain",
     );
 
-    assert.doesNotMatch(rendered.text, /Sisa hari ini/u);
+    assert.doesNotMatch(rendered.text, /Sisa 24 jam terakhir/u);
     // Bagian kosong tidak boleh meninggalkan baris kosong ganda.
     assert.doesNotMatch(rendered.text, /\n\n\n/u);
   });

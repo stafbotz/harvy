@@ -480,7 +480,12 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   menampilkan baris "Sisa hari ini" di samping kuota periode—bukan
   menggantikannya, karena keduanya memang ada. Diverifikasi dari kanal sesudah
   kuota dikembalikan ke batas paket asli: "Sisa penggunaan 97%" berdampingan
-  dengan "Sisa hari ini 22%", persis angka yang dihitung dari penyimpanan.
+  dengan 22% pada jendela pendek, persis angka yang dihitung dari penyimpanan.
+
+  Judul barisnya sempat "Sisa hari ini", dan itu mengulang kekeliruan yang sama
+  dari sisi lain: jendelanya **berjalan**—yang terpakai pukul sembilan kemarin
+  pulih pukul sembilan hari ini, bukan pada tengah malam. Sekarang "Sisa 24 jam
+  terakhir", dengan satu kalimat yang menyebut jendelanya berjalan.
 
   Copy penolakannya ikut dibetulkan. "Batas pemakaian singkat Harvy tercapai.
   Coba lagi setelah jeda" terbaca seperti jeda menit padahal mekanismenya 24

@@ -153,7 +153,9 @@ export function formatCompactUsage(value: number): string {
  * Oktober". Angkanya benar, dan justru itu yang menyesatkan.
  *
  * Baris ini tidak menggantikan kuota periode; keduanya nyata dan keduanya
- * ditampilkan. Yang dihilangkan hanyalah kemungkinan pengguna menyimpulkan
+ * ditampilkan. Keduanya juga berbeda bentuk: kuota periode adalah jendela tetap
+ * sepanjang `billingPeriodDays` yang berakhir pada satu tanggal, sedangkan yang
+ * ini jendela berjalan yang pulih terus-menerus. Yang dihilangkan hanyalah kemungkinan pengguna menyimpulkan
  * masih punya banyak ruang padahal yang membatasinya hari itu hampir penuh.
  */
 function rollingSection(
@@ -165,17 +167,20 @@ function rollingSection(
     summary.rollingAllowance.remainingBasisPoints,
   );
   const jam = summary.rollingAllowance.windowHours;
+  // Labelnya sengaja bukan "Sisa hari ini". Jendela ini **berjalan**: yang
+  // terpakai pukul sembilan kemarin pulih sendiri pukul sembilan hari ini, bukan
+  // pada tengah malam. Percobaan pertama memakai "hari ini" dan itu mengulang
+  // persis kekeliruan yang sedang diperbaiki—judul yang menjawab pertanyaan
+  // berbeda dari yang ditanyakan orang.
   return [
-    format.bold(jam === 24 ? "Sisa hari ini" : `Sisa ${jam} jam terakhir`),
+    format.bold(`Sisa ${jam} jam terakhir`),
     format.text(
       `${usageProgressBarFromBasisPoints(remaining)} ${
         formatRemainingPercentage(remaining)
       }`,
     ),
     format.text(
-      jam === 24
-        ? "Batas harian yang terpisah dari kuota periode; pulih sendiri seiring waktu."
-        : `Batas jendela ${jam} jam, terpisah dari kuota periode.`,
+      `Terpisah dari kuota periode. Jendela berjalan: yang terpakai pulih ${jam} jam kemudian, bukan pada pergantian hari.`,
     ),
   ];
 }
