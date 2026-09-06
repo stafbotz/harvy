@@ -9,6 +9,7 @@ import {
   type ChatToolCall,
 } from "../src/ai/client.js";
 import {
+  classifyUnavailableTool,
   createModelAgentWorker,
   structuredStepsRejection,
 } from "../src/ai/agent.js";
@@ -1956,6 +1957,57 @@ describe("diagnosis final terstruktur", () => {
       ),
       null,
     );
+  });
+});
+
+/**
+ * `unknown_tool` saja tidak dapat dipakai memutuskan apa pun: tiga kejadian
+ * yang menuntut perbaikan berbeda terbaca sama persis dari log.
+ */
+describe("golongan tool yang tidak tersedia", () => {
+  const terpasang = new Map([
+    ["harvy_agent_delegate_parallel_v1", "agent.delegate.parallel"],
+    ["harvy_task_list_active_v1", "task.list_active"],
+  ]);
+  const kontrak = deriveReplyStructureContract(
+    "Susun rencana mendalam tepat tiga langkah.",
+  );
+
+  it("membedakan fungsi final teks bebas saat kontrak terstruktur berlaku", () => {
+    assert.ok(kontrak);
+    assert.equal(
+      classifyUnavailableTool(["harvy_final_v1"], terpasang, kontrak),
+      "final_teks_saat_kontrak_terstruktur",
+    );
+    // Tanpa kontrak, nama yang sama bukan kelas itu—dan memang tidak pernah
+    // ditolak, karena fungsi finalnya justru ditawarkan.
+    assert.equal(
+      classifyUnavailableTool(["harvy_final_v1"], terpasang, null),
+      "nama_tidak_dikenal",
+    );
+  });
+
+  it("membedakan delegasi yang dicabut dari capability biasa", () => {
+    assert.equal(
+      classifyUnavailableTool(
+        ["harvy_agent_delegate_parallel_v1"],
+        terpasang,
+        null,
+      ),
+      "delegasi_sesudah_langkah_pertama",
+    );
+    assert.equal(
+      classifyUnavailableTool(["harvy_task_list_active_v1"], terpasang, null),
+      "capability_tidak_callable",
+    );
+  });
+
+  it("menyebut nama karangan sebagai tidak dikenal, bukan menebaknya", () => {
+    assert.equal(
+      classifyUnavailableTool(["harvy_web_search_v9"], terpasang, null),
+      "nama_tidak_dikenal",
+    );
+    assert.equal(classifyUnavailableTool([], terpasang, null), "nama_tidak_dikenal");
   });
 });
 

@@ -267,6 +267,43 @@ export function parseAgentAutoDecision(
   );
 }
 
+/**
+ * Golongan tool yang dipanggil model padahal tidak ditawarkan pada langkah itu.
+ *
+ * `unknown_tool` saja tidak dapat dipakai memutuskan apa pun. Tiga kejadian
+ * yang sangat berbeda terbaca sama persis: model memanggil fungsi final teks
+ * bebas padahal kontrak terstruktur menggantinya, model memanggil capability
+ * yang memang sudah dicabut dari langkah itu, dan model mengarang nama. Yang
+ * pertama berarti kontrak kita membingungkan, yang kedua berarti jejaknya
+ * sendiri menyesatkannya, dan yang ketiga tidak dapat kita perbaiki. Ketiganya
+ * menuntut perbaikan berbeda, dan biayanya sama: satu panggilan model lagi.
+ *
+ * Nilai kembaliannya enum tertutup, jadi aman masuk log; nama dari model
+ * sendiri tidak pernah dicatat.
+ */
+export type UnavailableToolClass =
+  | "final_teks_saat_kontrak_terstruktur"
+  | "delegasi_sesudah_langkah_pertama"
+  | "capability_tidak_callable"
+  | "nama_tidak_dikenal";
+
+export function classifyUnavailableTool(
+  names: readonly string[],
+  installedToolNames: ReadonlyMap<string, string>,
+  replyContract: ReplyStructureContract | null,
+): UnavailableToolClass {
+  const name = names[0];
+  if (name === undefined) return "nama_tidak_dikenal";
+  if (name === FINAL_TOOL_NAME && replyContract !== null) {
+    return "final_teks_saat_kontrak_terstruktur";
+  }
+  const capabilityId = installedToolNames.get(name);
+  if (capabilityId === undefined) return "nama_tidak_dikenal";
+  return capabilityId.startsWith("agent.delegate.")
+    ? "delegasi_sesudah_langkah_pertama"
+    : "capability_tidak_callable";
+}
+
 /** Menerjemahkan satu native call menjadi proposal; bukan menjadi authority. */
 export function parseAgentNativeDecision(
   calls: readonly ChatToolCall[],

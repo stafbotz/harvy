@@ -60,6 +60,7 @@ import {
   agentNativeTools,
   agentPlannerInput,
   agentPlannerPrompt,
+  classifyUnavailableTool,
   liveStateRequirement,
   parseAgentAutoDecision,
   parseAgentNativeDecision,
@@ -638,6 +639,17 @@ export class Conversation {
    * jawaban model. Gagal aman: pengumpulan bukti tidak boleh menjatuhkan
    * giliran.
    */
+  /** Nama native tool seluruh executor terpasang, bukan hanya yang callable. */
+  private installedNativeToolNames(): ReadonlyMap<string, string> {
+    const names = new Map<string, string>();
+    for (const executor of this.agentExecutors) {
+      if (executor.nativeTool) {
+        names.set(executor.nativeTool.name, executor.capabilityId);
+      }
+    }
+    return names;
+  }
+
   private logStructuredFinalRejected(
     calls: readonly ChatToolCall[],
     contract: ReplyStructureContract,
@@ -2938,7 +2950,19 @@ export class Conversation {
         this.logger.warn(
           "agent_tool_shape_repair",
           "Bentuk native tool call ditolak kode; satu perbaikan dicoba.",
-          { reason: error.reason },
+          {
+            reason: error.reason,
+            ...(error.reason === "unknown_tool"
+              ? {
+                  toolClass: classifyUnavailableTool(
+                    error.unavailableToolNames,
+                    this.installedNativeToolNames(),
+                    replyContract,
+                  ),
+                  step: plannerInput.step,
+                }
+              : {}),
+          },
         );
         await assertRecoveryFresh(runtime, signal);
         return finishAgentDecision(

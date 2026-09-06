@@ -318,14 +318,36 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   batch tersebut berjalan 14-30 detik lawan 4-13 detik pada batch sebelumnya,
   dan empat run bukan sampel.
 
-- **Temuan baru, belum diperbaiki.** Satu run gagal karena penyintesis memanggil
-  tool yang tidak ada pada langkah itu (`agent_tool_shape_repair`,
-  `reason: unknown_tool`): delegasi memang dihapus dari daftar callable sesudah
-  langkah pertama, tetapi transcript native masih memuat panggilan delegasi
-  sebelumnya. Satu perbaikan dicoba, dan perbaikan itu dibatalkan deadline.
-  Penyakitnya sama dengan penolakan bentuk yang sudah diperbaiki—satu jawaban
-  ditolak, satu panggilan sintesis lagi dibayar—tetapi buktinya baru satu
-  kejadian, jadi belum layak diperbaiki tanpa pengukuran lebih dulu.
+- **Temuan `unknown_tool`: diberi nama, tidak diperbaiki.** Satu run gagal
+  karena penyintesis memanggil tool yang tidak ditawarkan pada langkah itu, dan
+  perbaikan yang dibayar penuh untuk itu dibatalkan deadline. Dugaan pertamanya
+  delegasi—dicabut dari daftar callable sesudah langkah pertama, sementara
+  transcript native masih memuat panggilan model sendiri kepadanya.
+
+  Dugaan itu tidak dapat diuji, karena lognya tidak menyebut tool mana. Itu
+  yang diperbaiki lebih dulu: `AiToolShapeError` kini membawa nama tool yang
+  ditolak, `classifyUnavailableTool` menggolongkannya menjadi enum tertutup—
+  fungsi final teks bebas saat kontrak terstruktur berlaku, delegasi sesudah
+  langkah pertama, capability yang tidak callable, atau nama karangan—dan
+  `agent_tool_shape_repair` mencatat golongan itu beserta nomor langkahnya.
+  Nama dari model tidak pernah masuk log.
+
+  Sesudah itu kelasnya dicoba direproduksi dan **tidak muncul**: 20 run kontrak
+  terstruktur pada mode tools dan 10 run orchestrate dengan delegasi, nol
+  `unknown_tool`. Yang muncul dua golongan lain—`missing_tool_call` dan
+  `multiple_tool_calls`, masing-masing sekali—dan keduanya pulih lewat satu
+  perbaikan. Jadi perbaikan bentuk bukan pemborosan yang sistematis; yang
+  merugikan hanya perbaikan yang dimulai terlalu dekat dengan dinding waktu.
+
+  Tidak ada perubahan perilaku di sini. Menukar kebijakan penawaran tool atas
+  satu kejadian adalah persis yang dilarang `KNOWN-FAILURES.md`: sebab adalah
+  hipotesis sampai dibuktikan. Kejadian berikutnya akan menyebut dirinya
+  sendiri.
+
+- Dua kasus probe baru menyertainya dan tetap ada:
+  `npx tsx scripts/coba-agent.ts --kasus=terstruktur --ulangi=N` mengukur
+  kontrak bentuk jawaban, dan `--kasus=delegasi --ulangi=N` mengukur bentuk
+  orchestrate; keduanya menghitung kejadian log, bukan menebaknya dari balasan.
 
 - Dua alat dibuat untuk mengejar stage ini dan tetap ada.
   `HARVY_TELEGRAM_PRIVATE_ACCEPTANCE_FOCUS=planning` menjalankannya sendirian

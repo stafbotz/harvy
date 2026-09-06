@@ -337,10 +337,33 @@ export class AiToolShapeError extends AiError {
   constructor(
     readonly reason: AiToolShapeFailureReason,
     message: string,
+    /**
+     * Nama tool yang dipanggil tetapi tidak ditawarkan, bila ada.
+     *
+     * Dibawa karena "unknown_tool" saja tidak dapat dipakai memutuskan apa pun:
+     * model yang memanggil fungsi final teks bebas saat kontrak terstruktur
+     * berlaku, model yang memanggil capability yang sudah dicabut, dan model
+     * yang mengarang nama semuanya terbaca sama. Nilainya berasal dari model,
+     * jadi ia data tak tepercaya—pemanggil menggolongkannya lebih dulu dan
+     * tidak pernah mencatatnya mentah.
+     */
+    readonly unavailableToolNames: readonly string[] = [],
   ) {
     super(message);
     this.name = "AiToolShapeError";
   }
+}
+
+/** Nama tool berasal dari model; batasi jumlah dan panjangnya sebelum dibawa. */
+function unavailableToolNames(
+  calls: readonly ChatToolCall[],
+  available: ReadonlySet<string>,
+): string[] {
+  return calls
+    .map((call) => call.function.name)
+    .filter((name) => !available.has(name))
+    .slice(0, 3)
+    .map((name) => name.slice(0, 64));
 }
 
 /** Terminal BYOK failure never authorizes a silent Harvy-funded fallback. */
@@ -459,6 +482,7 @@ export class AiClient {
       throw new AiToolShapeError(
         "unknown_tool",
         "Model memanggil native tool yang tidak tersedia.",
+        unavailableToolNames(calls, availableNames),
       );
     }
     if (!normalizedRequest.parallelToolCalls && calls.length !== 1) {
@@ -511,6 +535,7 @@ export class AiClient {
       throw new AiToolShapeError(
         "unknown_tool",
         "Model memanggil native tool yang tidak tersedia.",
+        unavailableToolNames(calls, availableNames),
       );
     }
     if (!normalizedRequest.parallelToolCalls && calls.length !== 1) {
