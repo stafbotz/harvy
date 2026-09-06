@@ -122,6 +122,39 @@ function unwrapFinalTag(text: string): string {
   return text.slice("<final>".length, -"</final>".length).trim();
 }
 
+/**
+ * Kalimat yang menceritakan protokol pemanggilan tool, bukan menjawab.
+ *
+ * Aturan planner sudah melarangnya sejak lama—"jangan menyebut episode, klaim,
+ * record, field, query, hasil pencarian, atau nama tool di jawabanmu"—dan
+ * dogfood 6 September 2026 tetap menangkapnya: untuk pertanyaan tentang urutan
+ * menulis bab 3, Harvy membuka jawabannya dengan "pertanyaan ini bisa dijawab
+ * dari konteks yang sudah ada, jadi aku pakai teks biasa aja, tanpa perlu
+ * panggil tool apa-apa". Yang dibacakan pelajar adalah instruksi sistem kita
+ * sendiri.
+ *
+ * Polanya sengaja sempit: hanya kalimat yang menyebut **Harvy memanggil**
+ * function/tool. Pelajar yang bertanya tentang aplikasi bernama "tool" tetap
+ * dijawab utuh, dan kalimat yang jujur menyatakan sebuah capability tidak
+ * tersedia tidak memuat kata kerja memanggil.
+ */
+const TOOL_PROTOCOL_NARRATION =
+  /\b(?:(?:tidak|tanpa|nggak|gak|ga|belum)\s+(?:perlu\s+)?)?(?:me)?(?:manggil|panggil)\w*\s+(?:function|fungsi|tool)\b|\b(?:tool|function)\s+call\b|\bnative\s+(?:function|tool)\b/iu;
+
+export function withoutToolProtocolNarration(text: string): string {
+  const pieces = text.match(/[^.!?\n]+[.!?]?|\n+/gu) ?? [text];
+  const kept = pieces
+    .filter((piece) =>
+      /^\n+$/u.test(piece) || !TOOL_PROTOCOL_NARRATION.test(piece)
+    )
+    .join("")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+  // Jawaban kosong lebih buruk daripada kebocoran. Bila seluruh isinya berupa
+  // narasi protokol, biarkan apa adanya dan biarkan review balasan yang menilai.
+  return kept || text;
+}
+
 const FINAL_TOOL_NAME = "harvy_final_v1";
 const NEED_INPUT_TOOL_NAME = "harvy_need_input_v1";
 export const STRUCTURED_STEPS_TOOL_NAME = "harvy_structured_steps_v1";
@@ -257,7 +290,9 @@ export function parseAgentAutoDecision(
 ): AgentPlannerDecision | null {
   if (completion.kind === "text") {
     if (replyContract !== null) return null;
-    const reply = unwrapFinalTag(completion.content.trim());
+    const reply = withoutToolProtocolNarration(
+      unwrapFinalTag(completion.content.trim()),
+    );
     return reply.length > 0 ? { kind: "final", reply } : null;
   }
   return parseAgentNativeDecision(
@@ -322,7 +357,10 @@ export function parseAgentNativeDecision(
     input.reply.trim().length > 0 &&
     exactKeys(input, ["reply"])
   ) {
-    return { kind: "final", reply: input.reply };
+    return {
+      kind: "final",
+      reply: withoutToolProtocolNarration(input.reply),
+    };
   }
   if (
     call.function.name === STRUCTURED_STEPS_TOOL_NAME &&

@@ -12,6 +12,7 @@ import {
   classifyUnavailableTool,
   createModelAgentWorker,
   structuredStepsRejection,
+  withoutToolProtocolNarration,
 } from "../src/ai/agent.js";
 import { Conversation, type RoutingConfig } from "../src/ai/conversation.js";
 import { ParallelDelegationExecutor } from "../src/agent/parallel-delegation.js";
@@ -2008,6 +2009,41 @@ describe("golongan tool yang tidak tersedia", () => {
       "nama_tidak_dikenal",
     );
     assert.equal(classifyUnavailableTool([], terpasang, null), "nama_tidak_dikenal");
+  });
+});
+
+/**
+ * Kebocoran protokol ke layar pelajar. Aturan promptnya sudah ada sejak lama
+ * dan tetap dilanggar, jadi pagarnya tidak boleh hanya berupa kalimat.
+ */
+describe("narasi protokol tool tidak sampai ke pengguna", () => {
+  it("membuang kalimat yang menceritakan pemanggilan function", () => {
+    const bocor = [
+      "pertanyaan ini bisa dijawab dari konteks yang sudah ada, jadi aku pakai teks biasa aja, tanpa perlu panggil tool apa-apa.",
+      "setelah dua kalimat pembuka, lanjutkan ke pendekatan spesifik dan alasannya.",
+    ].join(" ");
+
+    assert.equal(
+      withoutToolProtocolNarration(bocor),
+      "setelah dua kalimat pembuka, lanjutkan ke pendekatan spesifik dan alasannya.",
+    );
+  });
+
+  it("tidak menyentuh jawaban yang memang membahas alat belajar", () => {
+    const utuh =
+      "buat tugas ini kamu bisa pakai tool gratis seperti Zotero. aku juga bisa bantu rapikan sitasinya.";
+    assert.equal(withoutToolProtocolNarration(utuh), utuh);
+  });
+
+  it("tidak menyentuh pengakuan jujur bahwa sesuatu tidak tersedia", () => {
+    const jujur =
+      "aku belum punya akses ke web, jadi sumbernya belum bisa kucek sendiri.";
+    assert.equal(withoutToolProtocolNarration(jujur), jujur);
+  });
+
+  it("membiarkan jawaban apa adanya bila seluruh isinya narasi protokol", () => {
+    const semua = "aku tidak perlu memanggil tool untuk ini.";
+    assert.equal(withoutToolProtocolNarration(semua), semua);
   });
 });
 
