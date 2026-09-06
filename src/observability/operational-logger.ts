@@ -448,6 +448,14 @@ const ALLOWED_DATA_KEYS = new Set([
   "semanticfallback",
   "semanticoperation",
   "semanticreference",
+  // Tiga pemeriksaan terakhir otorisasi proposal semantic: ambang confidence,
+  // subject, dan kecocokan evidence. Boolean dan enum tertutup; potongan
+  // ucapan pengguna tidak pernah ikut. Tanpa ketiganya, penolakan proposal
+  // hanya terbaca sebagai "jatuh ke conversation" tanpa sebab yang dapat
+  // dipilih—dogfood 6 September 2026 kehilangan satu jam karenanya.
+  "authorityconfidencemet",
+  "semanticsubject",
+  "authorityevidencematches",
   "selectedroute",
   "status",
   "succeeded",

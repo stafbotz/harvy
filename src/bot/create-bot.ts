@@ -3689,27 +3689,6 @@ ${obligation.text}`
             `explicit-${understanding.semanticOperation?.explicitness ?? "none"}`,
             `reference-${understanding.semanticOperation?.reference ?? "none"}`,
             `payload-${understanding.task ? "t" : "n"}${understanding.task?.dueAt ? "d" : "n"}${understanding.task?.remindAt ? "r" : "n"}`,
-            // Tiga pemeriksaan terakhir `semanticOperationAuthorized` yang
-            // sebelumnya tidak terlihat sama sekali. Dogfood 6 September 2026
-            // menemukan giliran "tugas itu udah kelar" yang membawa
-            // `semantic-task-complete`, `explicit-explicit`, dan
-            // `reference-recent`—seluruhnya di dalam allowlist—tetapi tetap
-            // jatuh ke conversation. Tanpa ketiganya, penyebabnya tidak dapat
-            // dipilih di antara confidence, subject, dan evidence.
-            `conf09-${
-              (understanding.semanticOperation?.confidence ?? 0) >= 0.9 ? "1" : "0"
-            }`,
-            `subject-${understanding.semanticOperation?.subject ?? "none"}`,
-            `evidence-${
-              understanding.semanticOperation
-                ? semanticEvidenceMatches(
-                    text,
-                    understanding.semanticOperation.evidence,
-                  )
-                  ? "1"
-                  : "0"
-                : "n"
-            }`,
             `proposed-${proposedRoute.kind}`,
             `selected-${route.kind}`,
             `allowed-${proposedRouteAllowed ? "1" : "0"}`,
@@ -3726,6 +3705,27 @@ ${obligation.text}`
             understanding.semanticOperation?.explicitness ?? "none",
           semanticReference:
             understanding.semanticOperation?.reference ?? "none",
+          // Tiga pemeriksaan terakhir `semanticOperationAuthorized`, yang
+          // sebelumnya tidak terlihat sama sekali. Dogfood 6 September 2026
+          // menemukan giliran "tugas itu udah kelar" membawa
+          // `semantic-task-complete`, `explicit-explicit`, dan
+          // `reference-recent`—seluruhnya di dalam allowlist—tetapi tetap jatuh
+          // ke conversation, dan penyebabnya tidak dapat dipilih di antara
+          // confidence, subject, serta evidence.
+          //
+          // Sebagai field tersendiri, bukan disambung ke `decision`. String
+          // digabung itu sudah berada di tepi batas 160 karakter sanitizer, dan
+          // menambahinya justru meredaksi seluruh keterangan—baris yang paling
+          // banyak isinya menjadi yang paling dulu hilang.
+          authorityConfidenceMet:
+            (understanding.semanticOperation?.confidence ?? 0) >= 0.9,
+          semanticSubject: understanding.semanticOperation?.subject ?? "none",
+          authorityEvidenceMatches: understanding.semanticOperation
+            ? semanticEvidenceMatches(
+                text,
+                understanding.semanticOperation.evidence,
+              )
+            : null,
           proposedRoute: proposedRoute.kind,
           selectedRoute: route.kind,
           proposedRouteAllowed,

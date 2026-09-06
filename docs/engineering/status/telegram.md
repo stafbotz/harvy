@@ -459,6 +459,45 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   soal jam tenang yang muncul sesudah restart padahal pengaturannya sudah
   tersimpan. Keduanya belum punya sebab yang terbukti.
 
+- Run kedua journey yang sama, 6 September 2026, sesudah keempat perbaikan di
+  atas dan sesudah kuota akun penguji dinaikkan lewat kontrol operator
+  (`quotaOverride`, hanya pada root journey ini). `resumed: true`, lima giliran,
+  satu restart runtime, shutdown bersih, dan seluruh delapan marker mode full
+  lengkap. Penilaian: usefulness 4, naturalness 4, initiative 4, nonRepetition
+  4, uiClarity 5, contextCoherence 5, correctionHandling 3,
+  completion `completed`.
+
+  Tiga perbaikan terverifikasi dari kanal: giliran "aku capek banget, semua
+  tugas numpuk" tidak lagi menawarkan "Dengerin dulu" kepada pengguna yang sudah
+  memilih "Langsung saran"; dua tugas benar-benar berpindah ke `completed` di
+  penyimpanan lewat rute deterministik; dan tidak ada giliran yang tertahan
+  seperti 4 menit 12 detik itu. Konteks lintas run juga utuh—Harvy menyebut
+  pekerjaan bab 3 dari run pertama dengan tepat.
+
+- **Sisa yang sama, kata yang berbeda.** Pada permintaan "bukan 50, sekarang 60,
+  tolong yang 50 dilupakan", Harvy menjawab "oke, 60 bukan 50, udah diganti"
+  sementara tidak ada `memory_write_outcome` sama sekali dan penyimpanan tetap
+  berisi satu catatan lama. Penanda 📍 memang tidak lagi lolos, tetapi
+  "diganti" bukan bagian dari kosakata yang diperiksa
+  `replyAcknowledgesMemoryWrite` (`dicatat`, `disimpan`, `diingat`,
+  `diperbarui`). Belum diperbaiki: menambah "ganti"/"ubah" ke daftar itu ikut
+  menghapus kalimat yang jujur soal dunia pengguna—misalnya "jadwalnya udah
+  diganti"—dan buktinya baru satu kejadian.
+
+  Penolakan rutenya sendiri terbukti **benar**: giliran itu membawa
+  `intent: control` sekaligus `semantic: memory.forget`, dua sinyal yang
+  bertentangan, dan `memoryControlAuthorized` memang menolak memutasi memori
+  atas kontradiksi.
+
+- **Regresi yang ditemukan dan diperbaiki di tengah run.** Tiga pemeriksaan
+  otorisasi yang ditambahkan pagi itu semula disambung ke string `decision`.
+  String itu sudah berada di tepi batas 160 karakter sanitizer log, sehingga
+  tambahannya justru membuat **seluruh** keterangan menjadi
+  `[REDACTED_SCALAR]`—baris yang paling banyak isinya menjadi yang paling dulu
+  hilang. Ketiganya kini menjadi field terstruktur tersendiri di sebelah
+  `semanticReference`, dan ketiga kuncinya didaftarkan pada allowlist
+  `ALLOWED_DATA_KEYS`; tanpa itu field baru dibuang diam-diam.
+
 - Exploratory journey bounded `tg-adaptive-20260824-a` menyelesaikan 25/25
   giliran dengan response surface, 77 surface event, satu restart, dan shutdown
   bersih. Assessment manual `completed` tetap membawa `generic-output`,

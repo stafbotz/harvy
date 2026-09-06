@@ -23,16 +23,16 @@ Context-Version: 1
 
 - Dogfood terpadatkan pertama lewat akun penguji (`tg-dogfood-20260906a`, 35
   giliran) menemukan empat cacat yang tidak pernah terlihat probe, dan
-  keempatnya sudah diperbaiki: balasan mengaku menyimpan tanpa receipt
-  code-owned—gerbangnya dulu menuntut adanya kandidat yang gagal, bukan adanya
-  receipt; "udah kelar" yang tidak mengubah state tugas kini disertai baris
-  code-owned bahwa tidak ada yang ditandai; animasi status yang menahan jawaban
-  sungguhan sampai 4 menit 12 detik kini digabung, berhenti sesudah satu
-  penolakan kanal, dan tidak lagi ditunggu tanpa batas saat penutupan; serta
-  narasi protokol tool di dalam balasan dan tawaran "Dengerin dulu" kepada
-  pengguna yang sudah memilih "Langsung saran". Kuota plan Perkenalan (200.000
-  token per 24 jam, ~30 giliran) menghentikan journey di giliran 35 dengan copy
-  yang menyebutnya "jeda singkat"; itu belum diperbaiki.
+  keempatnya diperbaiki: balasan mengaku menyimpan tanpa receipt code-owned
+  (gerbangnya dulu menuntut adanya kandidat yang gagal, bukan adanya receipt);
+  "udah kelar" yang tidak mengubah state tugas kini disertai baris code-owned;
+  animasi status yang menahan jawaban sungguhan sampai 4 menit 12 detik kini
+  digabung, berhenti sesudah satu penolakan kanal, dan tidak lagi ditunggu tanpa
+  batas; serta narasi protokol tool di dalam balasan dan tawaran "Dengerin dulu"
+  kepada pengguna yang memilih "Langsung saran". Run kedua melengkapi delapan
+  marker mode full dan memverifikasi tiga di antaranya dari kanal. Kuota plan
+  Perkenalan (200.000 token per 24 jam, ~30 giliran) menghentikan run pertama di
+  giliran 35 dengan copy yang menyebutnya "jeda singkat"; itu belum diperbaiki.
 - Ingatan jahitan pada `history.search` ditutup. `scoreEpisode` membuang klaim
   yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku, dan
   klaim `unresolved` justru jarang mengulang kata topiknya. Sebelum: 24 run
@@ -43,8 +43,7 @@ Context-Version: 1
 - Jalur planning durable: penolakan bentuk jawaban yang membuang sintesis
   (`structuredFieldBudgetCharacters`), anggaran waktu lane durable yang terpisah
   dari lane chat (`DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik), dan pengulangan
-  timeout yang tidak menyisakan waktu menjawab (`remainingWorkMs`). Acceptance
-  Telegram pribadi dari akun penguji: enam stage PASS, dan
+  timeout yang tidak menyisakan waktu menjawab (`remainingWorkMs`).
   `durable_planning_runtime` yang lulus 3 dari 6 lalu 0 dari 4 kini 6 dari 6
   dalam 36,5-79,2 detik.
 
