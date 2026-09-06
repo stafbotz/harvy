@@ -26,11 +26,19 @@ const ORDER: readonly LogLevel[] = [
  *
  * Keluarannya ke stderr supaya stdout tetap murni JSON hasil probe.
  */
+export interface StderrLogEvent {
+  level: LogLevel;
+  event: string;
+  fields: Record<string, unknown>;
+}
+
 export function createStderrOperationalLogger(
   component = "probe",
   minimumLevel: LogLevel = "warn",
+  /** Dipanggil untuk tiap baris yang lolos ambang; probe memakainya menghitung. */
+  observer?: (entry: StderrLogEvent) => void,
 ): OperationalLogger {
-  return new StderrOperationalLogger(component, minimumLevel);
+  return new StderrOperationalLogger(component, minimumLevel, {}, observer);
 }
 
 class StderrOperationalLogger implements OperationalLogger {
@@ -38,6 +46,7 @@ class StderrOperationalLogger implements OperationalLogger {
     private readonly component: string,
     private readonly minimumLevel: LogLevel,
     private readonly bindings: Record<string, unknown> = {},
+    private readonly observer?: (entry: StderrLogEvent) => void,
   ) {}
 
   child(component: string, bindings?: Record<string, unknown>): OperationalLogger {
@@ -45,6 +54,7 @@ class StderrOperationalLogger implements OperationalLogger {
       `${this.component}.${component}`,
       this.minimumLevel,
       { ...this.bindings, ...bindings },
+      this.observer,
     );
   }
 
@@ -113,6 +123,7 @@ class StderrOperationalLogger implements OperationalLogger {
   ): void {
     if (ORDER.indexOf(level) < ORDER.indexOf(this.minimumLevel)) return;
     const merged = { ...this.bindings, ...fields };
+    this.observer?.({ level, event, fields: merged });
     const payload = Object.keys(merged).length > 0
       ? ` ${JSON.stringify(merged)}`
       : "";
