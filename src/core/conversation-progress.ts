@@ -147,6 +147,15 @@ export interface TransientProgressOptions {
    */
   modelAnswered?: () => boolean;
   seed?: string;
+  /**
+   * Batas menunggu antrean render saat giliran ditutup.
+   *
+   * Penutupan menyingkirkan surface status sebelum jawaban pertama, dan sampai
+   * 6 September 2026 ia menunggu **seluruh** antrean—termasuk edit animasi yang
+   * tertahan batas laju kanal. Jawaban sungguhan karena itu dapat mengantre di
+   * belakang pekerjaan yang murni kosmetik.
+   */
+  closeTimeoutMs?: number;
   onError?: (operation: "show" | "update" | "remove" | "typing", error: unknown) => void;
 }
 
@@ -187,6 +196,13 @@ const NOTE_ROTATION_FRAMES = 5;
 const DEFAULT_MINIMUM_UPDATE_INTERVAL_MS = 1_500;
 
 /**
+ * Cukup lama untuk penutupan yang sehat, jauh lebih pendek daripada satu
+ * penahanan batas laju. Penghapusan surface tetap dijalankan sesudahnya; yang
+ * dibatasi hanya lamanya jawaban ikut menunggu.
+ */
+const DEFAULT_CLOSE_TIMEOUT_MS = 3_000;
+
+/**
  * Satu transient surface per turn. Semua kegagalan bersifat kosmetik dan tidak
  * pernah menolak promise delivery jawaban utama.
  */
@@ -203,11 +219,26 @@ export class TransientConversationProgress<Reference>
   private waitingTimer: ReturnType<typeof setInterval> | null = null;
   private waitingFrame = 0;
   private operation = Promise.resolve();
+  /**
+   * Berapa banyak pekerjaan render yang masih mengantre.
+   *
+   * Denyut animasi tidak boleh menumpuk. Ia berdetak sekali per detik selama
+   * giliran berjalan, sementara satu edit yang tertahan `retry_after` Telegram
+   * dapat memakan puluhan detik—dan setiap detak berikutnya menambah antrean
+   * di belakangnya. Dogfood 6 September 2026 mengukur akibatnya: 355 dari 434
+   * surface event satu journey adalah edit animasi, satu di antaranya ditolak
+   * Telegram, dan giliran itu memakan 4 menit 12 detik sementara giliran
+   * tetangganya 11-28 detik.
+   */
+  private pendingRenders = 0;
+  /** Animasi berhenti sesudah satu kegagalan render; ia hanya kosmetik. */
+  private animationFailed = false;
   private lastRenderedAt = 0;
   private closed = false;
   private readonly graceMs: number;
   private readonly minimumUpdateIntervalMs: number;
   private readonly animationIntervalMs: number;
+  private readonly closeTimeoutMs: number;
   private readonly seed: string;
 
   constructor(
@@ -219,6 +250,10 @@ export class TransientConversationProgress<Reference>
     this.minimumUpdateIntervalMs = nonNegativeInteger(
       options.minimumUpdateIntervalMs,
       DEFAULT_MINIMUM_UPDATE_INTERVAL_MS,
+    );
+    this.closeTimeoutMs = nonNegativeInteger(
+      options.closeTimeoutMs,
+      DEFAULT_CLOSE_TIMEOUT_MS,
     );
     this.animationIntervalMs = nonNegativeInteger(
       options.animationIntervalMs,
@@ -270,7 +305,7 @@ export class TransientConversationProgress<Reference>
 
   async finish(): Promise<void> {
     if (this.closed) {
-      await this.operation;
+      await this.settledOrTimeout();
       return;
     }
     this.closed = true;
@@ -289,7 +324,29 @@ export class TransientConversationProgress<Reference>
         this.options.onError?.("remove", error);
       }
     });
-    await this.operation;
+    await this.settledOrTimeout();
+  }
+
+  /**
+   * Menunggu antrean render, tetapi tidak lebih lama daripada batas penutupan.
+   *
+   * Penghapusan surface tetap berada di antrean dan tetap dijalankan; yang
+   * dilepas hanyalah kewajiban jawaban pengguna ikut menunggunya.
+   */
+  private async settledOrTimeout(): Promise<void> {
+    if (this.closeTimeoutMs <= 0) {
+      await this.operation;
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    await Promise.race([
+      this.operation,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, this.closeTimeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+    if (timer !== null) clearTimeout(timer);
   }
 
   /**
@@ -304,14 +361,19 @@ export class TransientConversationProgress<Reference>
    * menyunting lebih sering daripada batas yang sudah dipilih untuk kanal.
    */
   private startAnimation(): void {
-    if (this.closed || this.waitingTimer !== null) return;
+    if (this.closed || this.animationFailed || this.waitingTimer !== null) return;
     this.waitingTimer = setInterval(() => {
       if (this.closed) {
         this.stopAnimation();
         return;
       }
       this.waitingFrame += 1;
-      if (this.reference !== null) this.enqueue(() => this.updateLatest());
+      // Detak yang datang selagi render sebelumnya masih berjalan dibuang:
+      // detak berikutnya sudah membawa frame terbaru, dan menumpuknya hanya
+      // memperpanjang antrean yang harus dilalui balasan sungguhan.
+      if (this.reference !== null && this.pendingRenders === 0) {
+        this.enqueue(() => this.updateLatest());
+      }
     }, this.animationIntervalMs);
     this.waitingTimer.unref?.();
   }
@@ -374,6 +436,11 @@ export class TransientConversationProgress<Reference>
       );
       this.lastRenderedAt = this.now();
     } catch (error) {
+      // Kegagalan pertama menghentikan denyut. Penolakan Telegram hampir selalu
+      // batas laju, dan meneruskan satu edit per detik justru memperpanjangnya.
+      // Perubahan fase sungguhan tetap boleh menyunting surface ini.
+      this.animationFailed = true;
+      this.stopAnimation();
       this.options.onError?.("update", error);
     }
   }
@@ -396,7 +463,13 @@ export class TransientConversationProgress<Reference>
   }
 
   private enqueue(operation: () => Promise<void>): void {
-    this.operation = this.operation.then(operation, operation).catch(() => undefined);
+    this.pendingRenders += 1;
+    this.operation = this.operation
+      .then(operation, operation)
+      .catch(() => undefined)
+      .finally(() => {
+        this.pendingRenders -= 1;
+      });
   }
 }
 

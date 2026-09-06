@@ -907,3 +907,108 @@ describe("perkiraan biaya ikut dihitung", () => {
     );
   });
 });
+
+/**
+ * Surface status wajib gagal secara kosmetik.
+ *
+ * Dogfood 6 September 2026 mengukur kebalikannya: 355 dari 434 surface event
+ * satu journey adalah edit animasi, satu di antaranya ditolak Telegram, dan
+ * giliran itu memakan 4 menit 12 detik sementara tetangganya 11-28 detik.
+ * Balasan sungguhan mengantre di belakang pekerjaan yang murni hiasan.
+ */
+describe("animasi status tidak menahan jawaban", () => {
+  it("tidak menumpuk denyut selagi render sebelumnya masih berjalan", async () => {
+    let updates = 0;
+    let lepaskan: () => void = () => undefined;
+    const tertahan = new Promise<void>((resolve) => {
+      lepaskan = resolve;
+    });
+    const progress = new TransientConversationProgress(
+      {
+        show: async () => "status",
+        update: async () => {
+          updates += 1;
+          await tertahan;
+        },
+        remove: async () => undefined,
+      },
+      { graceMs: 0, minimumUpdateIntervalMs: 5, animationIntervalMs: 5 },
+    );
+
+    progress.report({ phase: "waiting", detail: "general" });
+    await delay(60);
+    // Denyut 5 ms selama 60 ms: tanpa penggabungan, antreannya belasan render.
+    assert.equal(updates, 1);
+    lepaskan();
+    await progress.finish();
+  });
+
+  it("berhenti berdenyut sesudah render pertama ditolak kanal", async () => {
+    let updates = 0;
+    const kesalahan: string[] = [];
+    const progress = new TransientConversationProgress(
+      {
+        show: async () => "status",
+        update: async () => {
+          updates += 1;
+          throw new Error("429");
+        },
+        remove: async () => undefined,
+      },
+      {
+        graceMs: 0,
+        minimumUpdateIntervalMs: 5,
+        animationIntervalMs: 5,
+        onError: (operation) => kesalahan.push(operation),
+      },
+    );
+
+    progress.report({ phase: "waiting", detail: "general" });
+    await delay(60);
+    await progress.finish();
+
+    assert.equal(updates, 1, `denyut berlanjut sesudah ditolak: ${updates}`);
+    assert.deepEqual(kesalahan, ["update"]);
+  });
+
+  it("tidak menunggu antrean kosmetik lebih lama daripada batas penutupan", async () => {
+    let lepaskan: () => void = () => undefined;
+    const tertahan = new Promise<void>((resolve) => {
+      lepaskan = resolve;
+    });
+    let dihapus = false;
+    const progress = new TransientConversationProgress(
+      {
+        show: async () => "status",
+        update: async () => {
+          await tertahan;
+        },
+        remove: async () => {
+          dihapus = true;
+        },
+      },
+      {
+        graceMs: 0,
+        minimumUpdateIntervalMs: 5,
+        animationIntervalMs: 5,
+        closeTimeoutMs: 40,
+      },
+    );
+
+    progress.report({ phase: "waiting", detail: "general" });
+    await delay(20);
+    const mulai = Date.now();
+    await progress.finish();
+    const menunggu = Date.now() - mulai;
+
+    assert.ok(
+      menunggu < 400,
+      `penutupan menunggu ${menunggu} ms di belakang render yang tertahan`,
+    );
+    assert.equal(dihapus, false, "penghapusan masih mengantre, dan itu wajar");
+    // Sesudah render yang tertahan dilepas, penghapusan tetap dijalankan.
+    lepaskan();
+    await delay(20);
+    assert.equal(dihapus, true);
+  });
+});
