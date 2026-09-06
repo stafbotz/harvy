@@ -127,6 +127,9 @@ describe("Conversation agent runtime", () => {
     assert.equal(toolResult.tool_call_id, assistantCall.tool_calls[0]?.id);
     assert.equal(toolResult.name, "harvy_settings_time_get_v1");
     assert.match(toolResult.content, /settings\.time\.get\.result/u);
+    // Capability yang masih ada di daftar tidak diberi penanda pencabutan.
+    // Penanda yang muncul di mana-mana akan mengajari model mengabaikannya.
+    assert.doesNotMatch(toolResult.content, /callableAgain/u);
   });
 
   // Dahulu kelas state-live dipaksa lewat named `tool_choice`, sehingga
@@ -434,6 +437,16 @@ describe("Conversation agent runtime", () => {
     assert.match(
       requests[1]?.messages.at(-1)?.content ?? "",
       /agent\.delegate\.parallel\.result/u,
+    );
+    // Celah yang menjatuhkan satu run sungguhan. Daftar tool langkah kedua
+    // sudah tidak memuat delegasi—baris di atas menguncinya—sementara
+    // transcript tetap memperlihatkan model memanggilnya dengan berhasil.
+    // Model yang mengikuti transcript memanggil nama yang tidak ditawarkan,
+    // dan satu-satunya perbaikan yang dibayar run itu dibatalkan deadline.
+    // Yang ditawarkan tidak diubah; hasilnya yang berhenti diam.
+    assert.match(
+      requests[1]?.messages.at(-1)?.content ?? "",
+      /"callableAgain":\s*false/u,
     );
     assert.match(
       requests[1]?.messages.map((message) => message.content).join("\n") ?? "",

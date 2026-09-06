@@ -1,21 +1,21 @@
 # Current Context
 
-Refreshed: 2026-09-06
-Baseline: 6c65494
+Refreshed: 2026-09-07
+Baseline: 5148077
 Context-Version: 1
 
 ## Verified baseline
 
-- Diperiksa terhadap `6c65494`; perubahan di sini dimulai di atas `5b294a1`.
-- `npm run check` PASS dan `npm test` 2.406 lulus 0 gagal; bagian Aktif
+- Diperiksa terhadap `5148077`; perubahan di sini dimulai di atas `5b294a1`.
+- `npm run check` PASS dan `npm test` 2.409 lulus 0 gagal; bagian Aktif
   `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
   dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
 - Telemetri pemakaian nyata 3 September 2026, 13 giliran Telegram: 5
   `core-only`, 5 `core-escalated`, 3 `direct-full`; keselamatan 13/13
   `calm`+`certain`. Pass pemahaman 1.018 token dan 2.179 ms lawan kontrak penuh
   7.646 token dan 4.410 ms, 48% lebih hemat.
-- Pencarian memori berdasarkan makna diuji pada model lokal sungguhan; celah
-  kemiripannya lebar (0,63-0,69 lawan 0,13-0,23).
+- Pencarian memori berdasarkan makna diuji pada model lokal; celah kemiripannya
+  lebar (0,63-0,69 lawan 0,13-0,23).
 
 ## Recent material changes
 
@@ -33,19 +33,20 @@ Context-Version: 1
   lolos penyaring narasi, "besok" untuk hari Rabu (`clockNote` kini membawa peta
   hari terdekat), dan syarat dari dosen yang tidak masuk memori—nol dari enam
   probe sebelum aturan self/work diperjelas, lima dari enam sesudahnya.
-  Verifikasi empat giliran membuktikan peta hari dipakai dan sapaan bersih, lalu
-  menemukan dua cacat lagi: klaim "sudah tersimpan" lolos gerbang receipt karena
-  daftarnya memuat awalan di- dan bukan ter-, dan gaya `advice` tetap dijawab
-  pertanyaan telanjang—`questionOnlyReply` kini memasukkannya ke jalur
-  regenerasi. Kata rusak tetap terbuka: delapan kejadian, tanpa sebab di kode.
+  Verifikasi empat giliran menemukan dua lagi: klaim "sudah tersimpan" lolos
+  gerbang receipt karena daftarnya memuat awalan di- dan bukan ter-, dan gaya
+  `advice` tetap dijawab pertanyaan telanjang—`questionOnlyReply` kini
+  memasukkannya ke jalur regenerasi. Kata rusak tetap terbuka: delapan
+  kejadian, tanpa sebab di kode.
 - Ingatan jahitan pada `history.search` ditutup: `scoreEpisode` membuang klaim
   yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku.
   Sebelum `withRequestedFields` 24 run memberi 2 jahitan; sesudah, 48 run nol.
-- Jalur planning durable: penolakan bentuk jawaban yang membuang sintesis
-  (`structuredFieldBudgetCharacters`), anggaran waktu lane durable terpisah
-  (`DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik), dan pengulangan timeout yang tidak
-  menyisakan waktu menjawab (`remainingWorkMs`). `durable_planning_runtime` yang
-  lulus 3 dari 6 lalu 0 dari 4 kini 6 dari 6.
+- `unknown_tool` dibuktikan dari kode, bukan dari model: delegasi disaring
+  keluar saat `input.step > 0` sementara transcript tetap memperlihatkan
+  panggilannya berhasil, jadi langkah kedua membaca undangan memanggil tool yang
+  sudah tidak ditawarkan. Hasil tool kini membawa `callableAgain` false dan
+  koreksinya menyebut nama yang ditolak; yang ditawarkan tidak diubah. Probe
+  delegasi dan terstruktur 10 run: nol `unknown_tool`, sama seperti baseline.
 
 ## Active cross-subsystem blockers
 

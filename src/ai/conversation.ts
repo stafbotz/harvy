@@ -2396,7 +2396,6 @@ export class Conversation {
     nativeThread: AgentNativeThread,
     runBudget: RunBudgetAccount,
   ): Promise<unknown> {
-    continueAgentNativeThread(nativeThread, input, mode);
     const required = liveStateRequirement(
       input.request,
       {
@@ -2435,6 +2434,10 @@ export class Conversation {
         },
       ),
     };
+    // Transcript disambung sesudah daftar callable disaring, bukan sebelumnya.
+    // Hasil tool langkah lalu perlu tahu apakah capability-nya masih boleh
+    // dipanggil, dan itu baru diketahui di sini.
+    continueAgentNativeThread(nativeThread, plannerInput, mode);
     const mustReadLiveState = required !== null && !observed && !requiredFailed;
     const requiredCapability = mustReadLiveState
       ? plannerInput.callableCapabilities.find(
@@ -2988,7 +2991,7 @@ export class Conversation {
         await assertRecoveryFresh(runtime, signal);
         return finishAgentDecision(
           await repairToolShape(
-            `Panggilan function sebelumnya ditolak kode dan tidak dijalankan maupun dikirim kepada pengguna (${toolShapeCorrection(error.reason)}). Panggil tepat satu function dari daftar yang tersedia, pakai persis nama field pada schema-nya, tanpa field tambahan, dan tanpa teks biasa di luar function call.`,
+            `Panggilan function sebelumnya ditolak kode dan tidak dijalankan maupun dikirim kepada pengguna (${toolShapeCorrection(error.reason, error.unavailableToolNames)}). Panggil tepat satu function dari daftar yang tersedia, pakai persis nama field pada schema-nya, tanpa field tambahan, dan tanpa teks biasa di luar function call.`,
           ),
           false,
         );
@@ -3188,13 +3191,29 @@ export function agentStopDeservesExplanation(
     reason === "capability_changed";
 }
 
-/** Menamai penyimpangan bentuk supaya koreksinya konkret, bukan teguran umum. */
-function toolShapeCorrection(reason: AiToolShapeFailureReason): string {
+/**
+ * Menamai penyimpangan bentuk supaya koreksinya konkret, bukan teguran umum.
+ *
+ * `unknown_tool` mendapat nama function yang ditolak, sejajar dengan koreksi
+ * schema di atasnya yang sudah lama menyebutkannya. Tanpa itu koreksinya hanya
+ * mengulang aturan yang sudah ada di prompt, dan satu-satunya perbaikan yang
+ * dibayar run itu dihabiskan untuk teguran yang tidak menambah informasi apa
+ * pun. Nama itu berasal dari model dan kembali kepada model saja: ia tidak
+ * pernah masuk log, dan `agent_tool_shape_repair` tetap mencatat golongannya.
+ */
+function toolShapeCorrection(
+  reason: AiToolShapeFailureReason,
+  unavailable: readonly string[] = [],
+): string {
   switch (reason) {
     case "missing_tool_call":
       return "kamu menjawab dengan teks biasa, bukan function call";
-    case "unknown_tool":
-      return "nama function-nya tidak ada di daftar yang tersedia";
+    case "unknown_tool": {
+      const named = rejectedToolNames(unavailable);
+      return named
+        ? `kamu memanggil ${named}, dan nama itu tidak ada di daftar langkah ini`
+        : "nama function-nya tidak ada di daftar yang tersedia";
+    }
     case "multiple_tool_calls":
       return "kamu memanggil lebih dari satu function sekaligus";
     case "ignored_tool_choice":
@@ -3441,6 +3460,19 @@ function continueAgentNativeThread(
     if (!observation) {
       throw new Error("Hasil native tool belum tersedia untuk continuation.");
     }
+    // Delegasi dicabut dari daftar callable sesudah langkah pertama, sementara
+    // transcript tetap memperlihatkan model memanggilnya dengan berhasil. Satu
+    // run pernah gagal tepat di celah itu: penyintesis memanggil lagi nama yang
+    // sudah tidak ditawarkan, kode menolak dengan `unknown_tool`, dan satu-
+    // satunya perbaikan yang dibayar run itu keburu dibatalkan deadline.
+    //
+    // Yang ditawarkan tidak diubah—menukar kebijakan atas satu kejadian persis
+    // yang dilarang `KNOWN-FAILURES.md`. Yang diperbaiki adalah transcript yang
+    // diam-diam bertentangan dengan daftar tool: hasilnya kini menyebutkan
+    // sendiri bahwa capability itu tidak dapat dipanggil lagi.
+    const stillCallable = input.callableCapabilities.some(
+      (capability) => capability.id === observation.capabilityId,
+    );
     thread.messages.push(
       pending.assistant,
       {
@@ -3451,6 +3483,7 @@ function continueAgentNativeThread(
           capabilityId: observation.capabilityId,
           status: observation.status,
           summary: observation.summary,
+          ...(stillCallable ? {} : { callableAgain: false }),
         }),
       },
     );
@@ -3679,4 +3712,20 @@ function parseJsonRecord(raw: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Nama function yang ditolak, dirapikan sebelum kembali ke prompt.
+ *
+ * Isinya karangan model, jadi ia dipotong dan dibersihkan: paling banyak dua
+ * nama, masing-masing 64 karakter, tanpa pergantian baris. Yang dijaga bukan
+ * kerahasiaan—nama itu kembali kepada model yang menulisnya—melainkan bentuk
+ * prompt, supaya satu keluaran aneh tidak menggeser sisa instruksinya.
+ */
+function rejectedToolNames(names: readonly string[]): string | null {
+  const cleaned = names
+    .map((name) => name.replace(/\s+/gu, " ").trim().slice(0, 64))
+    .filter((name) => name.length > 0)
+    .slice(0, 2);
+  return cleaned.length > 0 ? cleaned.join(" dan ") : null;
 }

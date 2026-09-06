@@ -339,10 +339,47 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   perbaikan. Jadi perbaikan bentuk bukan pemborosan yang sistematis; yang
   merugikan hanya perbaikan yang dimulai terlalu dekat dengan dinding waktu.
 
-  Tidak ada perubahan perilaku di sini. Menukar kebijakan penawaran tool atas
-  satu kejadian adalah persis yang dilarang `KNOWN-FAILURES.md`: sebab adalah
-  hipotesis sampai dibuktikan. Kejadian berikutnya akan menyebut dirinya
-  sendiri.
+  Tidak ada perubahan perilaku pada tahap itu. Menukar kebijakan penawaran tool
+  atas satu kejadian adalah persis yang dilarang `KNOWN-FAILURES.md`: sebab
+  adalah hipotesis sampai dibuktikan.
+
+- **Dugaan itu akhirnya dibuktikan, dari kode dan bukan dari model.** Tiga
+  puluh run tidak pernah dapat menunjukkannya, tetapi jalurnya dapat dibaca:
+  `agent.delegate.parallel` disaring keluar dari `callableCapabilities` ketika
+  `input.step > 0`, sementara `continueAgentNativeThread` tetap mendorong
+  panggilan assistant beserta hasilnya ke transcript. Pada langkah kedua model
+  membaca riwayat yang memperlihatkan panggilan berhasil ke tool yang sudah
+  tidak ada di daftarnya. Itu bukan kebetulan yang menunggu reproduksi; itu
+  undangan yang tertulis di dalam permintaan.
+
+  Dua perbaikan menyusul, dan keduanya tidak menyentuh apa yang ditawarkan.
+  Hasil tool kini membawa `callableAgain` bernilai false ketika capability-nya
+  memang sudah tidak ada di daftar langkah itu, dan `AGENT_PLANNER_SHARED`
+  menjelaskan artinya supaya field itu terbaca sebagai aturan. Capability yang
+  masih callable tidak diberi penanda apa pun—penanda yang muncul di mana-mana
+  akan mengajari model mengabaikannya. Lalu koreksi `unknown_tool` menyebut
+  nama function yang ditolak, sejajar dengan koreksi schema di sebelahnya yang
+  sudah lama menyebutkannya; sebelumnya ia hanya mengulang aturan yang sudah
+  ada di prompt, sehingga satu-satunya perbaikan yang dibayar run itu habis
+  untuk teguran tanpa informasi baru. Nama itu berasal dari model dan kembali
+  kepada model saja: dipotong 64 karakter, paling banyak dua, tanpa pergantian
+  baris, dan tidak pernah masuk log.
+
+  Karena modelnya tidak dapat diminta mengulangi kesalahan itu, buktinya
+  dibangun dari kode. Klien double memanggil nama yang pernah ada, dan tesnya
+  mengunci dua hal sekaligus: koreksinya menyebut nama yang ditolak, dan run
+  tetap selesai. Penanda pencabutannya diperiksa pada tes delegasi yang memang
+  sudah ada—langkah kedua di sana sudah lama dikunci tidak lagi menawarkan
+  delegasi, dan sekarang hasil tool-nya ikut mengatakannya. Assertion itu
+  dibuktikan bukan kosong dengan mematikan satu barisnya: tes yang tepat
+  menjadi merah, lalu hijau lagi sesudah dipulihkan.
+
+  Diukur sesudahnya, dan yang dicari adalah regresi, bukan perbaikan. Probe
+  delegasi 10 run: nol tool ditolak, sama seperti baseline. Probe terstruktur
+  10 run: `multiple_tool_calls` satu kali, nol `unknown_tool`—kelas yang sama
+  dengan baseline 20 run. Selisih penyelesaian di kedua probe tidak dianggap
+  sinyal; n-nya sepuluh, dan varians corpus di repositori ini pernah memberi
+  50, 55, dan 53 lulus pada tiga run penuh yang sama.
 
 - Dua kasus probe baru menyertainya dan tetap ada:
   `npx tsx scripts/coba-agent.ts --kasus=terstruktur --ulangi=N` mengukur

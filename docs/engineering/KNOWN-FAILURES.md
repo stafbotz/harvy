@@ -19,8 +19,19 @@ perubahanmu — buktikan asalnya sebelum melapor.
 
 ## Aktif
 
-Tidak ada kegagalan yang diketahui. Suite penuh terakhir pada 2026-09-06
-hijau: 2.406 tes, 2.406 lulus, 0 gagal dalam 315 suite.
+Tidak ada kegagalan yang diketahui. Suite penuh terakhir pada 2026-09-07
+hijau: 2.409 tes, 2.409 lulus, 0 gagal dalam 316 suite.
+
+### Peka beban, bukan merah: animasi progres
+
+`tests/conversation-progress.test.ts` memakai timer 5 ms di dalam jendela 60 ms.
+Pada mesin yang sedang penuh, dua di antaranya pernah merah dalam run yang sama
+sekali tidak menyentuh berkasnya. Arah kegagalannya yang membedakan: assertion
+"tidak menumpuk denyut" mendapat `updates` bernilai **0**, bukan belasan. Kalau
+penggabungan denyutnya rusak, antreannya menumpuk; nol berarti timer-nya tidak
+pernah sempat berjalan. Sendirian di mesin senggang: lima dari lima hijau.
+
+Jangan mengejar keduanya sebelum memastikan mesinnya senggang.
 
 Dijalankan dengan `node --test --test-concurrency=2`. Dengan konkurensi bawaan,
 mesin ini kehabisan memori dan runner-nya dibunuh di tengah jalan; tujuh berkas
