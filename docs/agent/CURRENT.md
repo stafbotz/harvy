@@ -34,7 +34,7 @@ Context-Version: 1
   kanal. Run ketiga: "sisa penggunaan" menjawab kuota periode padahal yang
   menghentikan percakapan adalah jendela 24 jam—97% lawan 22,9% pada saat yang
   sama—jadi dashboard kini menampilkan "Sisa 24 jam terakhir" di sampingnya, dan
-  copy penolakannya menyebut batas harian beserta kapan ia pulih.
+  copy penolakannya menyebut kapan jatah itu pulih.
 - Ingatan jahitan pada `history.search` ditutup. `scoreEpisode` membuang klaim
   yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku, dan
   klaim `unresolved` justru jarang mengulang kata topiknya. Sebelum: 24 run
