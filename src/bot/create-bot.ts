@@ -198,6 +198,7 @@ import type {
 import type { StudentTask } from "../domain/task.js";
 import {
   semanticConfidenceBucket,
+  semanticEvidenceMatches,
   semanticOperationContextAvailable,
   codingRunStatusOperation,
   naturalSurfaceAuthorized,
@@ -233,6 +234,7 @@ import {
   MEMORY_PORTRAIT_EMPTY,
   MEMORY_PORTRAIT_UNAVAILABLE,
   MEMORY_SAVE_UNAVAILABLE,
+  TASK_COMPLETION_NOT_APPLIED,
   MEMORY_SECRET_REJECTION,
   MEMORY_WIPE_PROMPT,
   memoryNoteLines,
@@ -346,7 +348,13 @@ interface AuthorizedMemoryCandidate {
 interface StoredMemoryBatch {
   /** Primary memory yang benar-benar baru ditulis dan perlu rollback bila send gagal. */
   saved: MemoryItem[];
-  /** Ada kandidat yang tidak berhasil commit dan tidak boleh diakui sebagai write. */
+  /**
+   * Ada kandidat yang tidak berhasil commit.
+   *
+   * Bukan gerbang klaim. Yang menentukan boleh-tidaknya balasan mengaku menulis
+   * hanyalah ada tidaknya receipt di `acknowledgements`; giliran tanpa kandidat
+   * sama sekali pun tidak boleh mengaku.
+   */
   uncommitted: boolean;
   /** Primary baru atau duplicate yang diminta eksplisit oleh user turn ini. */
   explicitlyRemembered: MemoryItem[];
@@ -3151,6 +3159,8 @@ ${obligation.text}`
     let storedUserTurn: StoredConversationTurn | null = null;
     let activeRunLaunch: ActiveAgentRun | null = null;
     let activeRunLaunched = false;
+    /** Giliran ini benar-benar mengubah state tugas lewat capability tulis. */
+    let taskMutationCommitted = false;
     let activeRunSurfaceReply = false;
     let activeRunMemoryNotice: string | null = null;
     const requestRiskTriage = (): Promise<RiskTriage | null> =>
@@ -3679,6 +3689,27 @@ ${obligation.text}`
             `explicit-${understanding.semanticOperation?.explicitness ?? "none"}`,
             `reference-${understanding.semanticOperation?.reference ?? "none"}`,
             `payload-${understanding.task ? "t" : "n"}${understanding.task?.dueAt ? "d" : "n"}${understanding.task?.remindAt ? "r" : "n"}`,
+            // Tiga pemeriksaan terakhir `semanticOperationAuthorized` yang
+            // sebelumnya tidak terlihat sama sekali. Dogfood 6 September 2026
+            // menemukan giliran "tugas itu udah kelar" yang membawa
+            // `semantic-task-complete`, `explicit-explicit`, dan
+            // `reference-recent`—seluruhnya di dalam allowlist—tetapi tetap
+            // jatuh ke conversation. Tanpa ketiganya, penyebabnya tidak dapat
+            // dipilih di antara confidence, subject, dan evidence.
+            `conf09-${
+              (understanding.semanticOperation?.confidence ?? 0) >= 0.9 ? "1" : "0"
+            }`,
+            `subject-${understanding.semanticOperation?.subject ?? "none"}`,
+            `evidence-${
+              understanding.semanticOperation
+                ? semanticEvidenceMatches(
+                    text,
+                    understanding.semanticOperation.evidence,
+                  )
+                  ? "1"
+                  : "0"
+                : "n"
+            }`,
             `proposed-${proposedRoute.kind}`,
             `selected-${route.kind}`,
             `allowed-${proposedRouteAllowed ? "1" : "0"}`,
@@ -3951,6 +3982,7 @@ ${obligation.text}`
               risk: triage.level,
               hasActiveSession: false,
               hasBlockingQuestion: false,
+              stylePreference: profile.stylePreference,
             })
           : [];
       const actionGoal =
@@ -4274,6 +4306,16 @@ ${obligation.text}`
               // Setiap run meninggalkan jejak, bukan hanya yang gagal. Tanpa
               // baris ini tidak ada cara membuktikan giliran mana yang masuk
               // Agent Runtime maupun capability mana yang benar-benar dipanggil.
+              // Apakah giliran ini benar-benar mengubah state tugas. Jejak
+              // diperlakukan opsional dengan sengaja: pemanggil menerima objek
+              // dari luar, dan pengumpulan bukti tidak boleh menjatuhkan
+              // giliran.
+              taskMutationCommitted = (agentResult.trace ?? []).some(
+                (event) =>
+                  event.phase === "execute" &&
+                  event.outcome === "ok" &&
+                  event.capabilityId === "task.manage",
+              );
               const agentFields = agentRunLogFields(agentResult, planningMode);
               if (agentResult.status === "stopped") {
                 logger.warn(
@@ -4456,14 +4498,39 @@ ${obligation.text}`
       ) {
         reply = normalizeMemoryWriteEmoji(reply);
       }
+      // Tanpa receipt code-owned, klaim write dihapus—termasuk ketika giliran
+      // ini tidak pernah punya kandidat sama sekali.
+      //
+      // Sampai 6 September 2026 gerbang ini menuntut `remembered.uncommitted`,
+      // yaitu ada kandidat yang gagal commit. Giliran tanpa kandidat karena itu
+      // lolos sepenuhnya, dan itu justru bentuk yang paling sering muncul:
+      // dogfood 6 September menemukan Harvy menjawab koreksi dengan "50 yang
+      // aku pegang sekarang, yang 30 aku lepas ya 📍" pada giliran yang tidak
+      // menulis apa pun. Seluruh run hanya memuat satu `memory_write_outcome`,
+      // sementara balasannya menjanjikan tiga. Yang menentukan bukan apakah
+      // kandidatnya gagal, melainkan apakah kode memegang receipt.
       if (
         reply &&
         remembered.acknowledgements.length === 0 &&
-        remembered.uncommitted &&
         replyAcknowledgesMemoryWrite(reply)
       ) {
         reply = withoutUnconfirmedMemoryWriteClaims(reply) ||
           "Aku dengar yang kamu ceritakan.";
+      }
+      // Model mengusulkan menandai tugas selesai, kode menolak, dan tanpa baris
+      // ini pengguna tidak pernah tahu bahwa keadaannya tidak berubah.
+      //
+      // Tidak perlu memeriksa rutenya: cabang `complete-task` selalu membalas
+      // lalu `return`, jadi setiap giliran yang sampai ke sini pasti tidak
+      // menandai apa pun.
+      if (
+        reply &&
+        !activeRunLaunch &&
+        !taskMutationCommitted &&
+        understanding.semanticOperation?.domain === "task" &&
+        understanding.semanticOperation.operation === "complete"
+      ) {
+        reply = [reply.trimEnd(), "", TASK_COMPLETION_NOT_APPLIED].join("\n");
       }
       if (
         activeRunLaunch &&

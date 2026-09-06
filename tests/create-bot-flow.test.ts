@@ -941,6 +941,160 @@ describe("alur adapter Telegram", () => {
     assert.match(harness.sent.at(-1) ?? "", /Kamu sangat mencintai Rani/iu);
   });
 
+  // Dogfood 6 September 2026: "tugas yang tadi kamu ingetin itu udah kelar"
+  // membawa `semantic-task-complete` berconfidence 0,72—di bawah ambang rute
+  // deterministik—sehingga giliran dieskalasikan ke Agent Runtime persis
+  // seperti rancangannya. Log run itu: `plannerMode: tools`,
+  // `capabilities: none`. Modelnya memegang `task.manage` dan tidak
+  // memanggilnya, lalu mengiyakan dengan hangat, dan tugasnya tetap `active`.
+  //
+  // Kalimat Harvy bukan klaim palsu—itu gema ucapan pengguna—jadi yang kurang
+  // bukan sensor, melainkan satu tanda bahwa keadaannya tidak berubah.
+  it("memberi tahu ketika usulan menandai selesai tidak pernah dijalankan", async () => {
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "task",
+          semanticOperation: {
+            ...semanticOperation(
+              "task",
+              "complete",
+              "tugas yang tadi kamu ingetin itu udah kelar",
+            ),
+            confidence: 0.72,
+          },
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        agent: async () => ({
+          status: "completed",
+          reply: "sip, desain penelitian bab 3 udah kelar.",
+          trace: [{ step: 0, phase: "plan", outcome: "final", capabilityId: null }],
+        }),
+      } as unknown as Conversation,
+      {
+        listActive: async () => [],
+        list: async () => [],
+      } as unknown as TaskService,
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("tugas yang tadi kamu ingetin itu udah kelar"),
+    );
+    await harness.bot.drainPending();
+
+    // Baris code-owned itu terkirim sebagai gelembung tersendiri.
+    const sent = harness.sent.join("\n");
+    assert.match(sent, /desain penelitian bab 3 udah kelar/u);
+    assert.match(sent, /belum menandai apa pun selesai/u);
+  });
+
+  it("diam ketika capability tulis benar-benar menyelesaikan tugasnya", async () => {
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({
+          intent: "task",
+          semanticOperation: {
+            ...semanticOperation(
+              "task",
+              "complete",
+              "tugas yang tadi kamu ingetin itu udah kelar",
+            ),
+            confidence: 0.72,
+          },
+        }),
+        triageRisk: async () => CALM_TRIAGE,
+        agent: async () => ({
+          status: "completed",
+          reply: "sip, sudah kutandai selesai.",
+          trace: [
+            {
+              step: 0,
+              phase: "execute",
+              outcome: "ok",
+              capabilityId: "task.manage",
+            },
+          ],
+        }),
+      } as unknown as Conversation,
+      {
+        listActive: async () => [],
+        list: async () => [],
+      } as unknown as TaskService,
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("tugas yang tadi kamu ingetin itu udah kelar"),
+    );
+    await harness.bot.drainPending();
+
+    assert.doesNotMatch(harness.sent.join("\n"), /belum menandai apa pun/u);
+  });
+
+  it("tidak menambahkan tanda itu pada giliran biasa", async () => {
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({}),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async () => "oke, semangat ya.",
+      } as unknown as Conversation,
+      {} as TaskService,
+    );
+
+    await harness.bot.handleUpdate(messageUpdate("makasih ya"));
+    await harness.bot.drainPending();
+
+    assert.equal(harness.sent.at(-1), "oke, semangat ya.");
+  });
+
+  // Dogfood 6 September 2026: pada koreksi "bukan 30, minimal 50", Harvy
+  // menjawab "50 yang aku pegang sekarang, yang 30 aku lepas ya 📍" sementara
+  // seluruh run hanya memuat satu `memory_write_outcome`—dan bukan dari giliran
+  // itu. Gerbangnya dulu menuntut adanya kandidat yang gagal commit, sehingga
+  // giliran tanpa kandidat sama sekali lolos utuh.
+  it("menghapus klaim menyimpan pada giliran yang tidak punya kandidat", async () => {
+    const harness = basicHarness(
+      {
+        classifyTurnBoundary: async () => "complete",
+        understand: async () => understanding({}),
+        triageRisk: async () => CALM_TRIAGE,
+        reply: async (
+          _text: string,
+          _understanding: unknown,
+          _context: unknown,
+          _style: unknown,
+          _triage: unknown,
+          _insight: unknown,
+          _raiseHelp: unknown,
+          runtime: ConversationRuntime,
+        ) => {
+          assert.deepEqual(runtime.memoryAcknowledgements, []);
+          return "oke, 50 yang aku pegang sekarang. yang 30 aku lepas ya. 📍";
+        },
+      } as unknown as Conversation,
+      {} as TaskService,
+      {
+        memories: {
+          relevantTo: async () => [],
+          list: async () => [],
+          remember: async () => null,
+          markUsed: async () => undefined,
+        } as unknown as MemoryService,
+      },
+    );
+
+    await harness.bot.handleUpdate(
+      messageUpdate("bukan minimal 30, dosenku minta minimal 50 responden"),
+    );
+    await harness.bot.drainPending();
+
+    const sent = harness.sent.at(-1) ?? "";
+    assert.doesNotMatch(sent, /📍/u);
+    assert.match(sent, /50 yang aku pegang sekarang/u);
+  });
+
   it("membiarkan acknowledgement kontekstual memakai 📍 tanpa note kedua", async () => {
     const inputs: NewMemory[] = [];
     const harness = basicHarness(

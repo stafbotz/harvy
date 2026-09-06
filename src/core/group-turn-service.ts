@@ -1574,9 +1574,12 @@ export class GroupTurnService {
     if (memoryCandidates.forbiddenSecret) {
       reply = GROUP_MEMORY_SECRET_REJECTION;
     } else {
+      // Sama seperti kanal privat: yang menentukan bukan adanya kandidat,
+      // melainkan adanya receipt. Duplikat eksplisit tetap boleh diakui karena
+      // isinya memang sudah tersimpan.
       if (
-        (memoryCandidates.consent || memoryCandidates.implicitSkipped) &&
         savedMemories.length === 0 &&
+        !memoryCandidates.explicitDuplicateContent &&
         replyAcknowledgesMemoryWrite(reply)
       ) {
         reply = withoutUnconfirmedMemoryWriteClaims(reply) ||

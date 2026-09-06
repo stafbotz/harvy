@@ -52,6 +52,44 @@ describe("tombol adaptif", () => {
     );
   });
 
+  // Dogfood 6 September 2026: dua giliran sesudah menekan "Langsung saran",
+  // Harvy tetap menawarkan "Dengerin dulu". Pilihannya sudah dinyatakan lewat
+  // tombol code-owned; menawarkan kebalikannya membuat tombol itu tak berarti.
+  it("tidak menawarkan mendengarkan ketika pengguna memilih langsung saran", () => {
+    const proposed: AdaptiveActionId[] = ["listen", "start_small"];
+    assert.deepEqual(
+      adaptiveActions(proposed, {
+        intent: "feeling",
+        risk: "biasa",
+        hasActiveSession: false,
+        hasBlockingQuestion: false,
+        stylePreference: "advice",
+      }),
+      ["start_small"],
+    );
+    // Tanpa preferensi, peringkat model tetap dihormati.
+    assert.deepEqual(
+      adaptiveActions(proposed, {
+        intent: "feeling",
+        risk: "biasa",
+        hasActiveSession: false,
+        hasBlockingQuestion: false,
+      }),
+      ["listen"],
+    );
+    // Preferensi mendengarkan tidak memaksa apa pun dari sisi ini.
+    assert.deepEqual(
+      adaptiveActions(proposed, {
+        intent: "feeling",
+        risk: "biasa",
+        hasActiveSession: false,
+        hasBlockingQuestion: false,
+        stylePreference: "listen",
+      }),
+      ["listen"],
+    );
+  });
+
   it("membatasi sesi aktif pada satu kontrol sesi", () => {
     assert.deepEqual(
       adaptiveActions(

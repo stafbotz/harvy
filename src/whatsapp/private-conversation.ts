@@ -3774,9 +3774,10 @@ export class WhatsAppPrivateConversation {
           memoryRetractionNotice(),
         ].join("\n");
       }
+      // Tanpa receipt code-owned, klaim write dihapus. Lihat alasan panjangnya
+      // di `create-bot.ts`; pagarnya wajib sama pada kedua kanal.
       if (
         remembered.acknowledgements.length === 0 &&
-        remembered.uncommitted &&
         replyAcknowledgesMemoryWrite(reply)
       ) {
         reply = withoutUnconfirmedMemoryWriteClaims(reply) ||

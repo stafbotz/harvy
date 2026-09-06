@@ -2,6 +2,7 @@ import type {
   ConversationIntent,
   RoutingAssessment,
 } from "../ai/model-policy.js";
+import type { StylePreference } from "../domain/profile.js";
 import type { SemanticOperation } from "../domain/semantic-operation.js";
 import type { RiskLevel } from "./safety-policy.js";
 
@@ -32,6 +33,15 @@ export interface ActionPolicyInput {
   risk: RiskLevel;
   hasActiveSession: boolean;
   hasBlockingQuestion: boolean;
+  /**
+   * Gaya yang dipilih pengguna sendiri lewat tombol code-owned, bila ada.
+   *
+   * Dogfood 6 September 2026: dua giliran sesudah menekan "Langsung saran",
+   * Harvy tetap menawarkan "Dengerin dulu". Itu bukan pertimbangan Pasal 3
+   * antara mendengar dan mendorong tindakan—pilihannya sudah dinyatakan, dan
+   * menawarkan kebalikannya membuat tombol code-owned terasa tidak berarti.
+   */
+  stylePreference?: StylePreference | null;
 }
 
 const ALLOWED_BY_INTENT: Record<
@@ -74,7 +84,8 @@ export function adaptiveActions(
     (id) =>
       id !== "schedule_checkin" &&
       id !== "view_session" &&
-      id !== "stop_session",
+      id !== "stop_session" &&
+      !(id === "listen" && input.stylePreference === "advice"),
   );
   return inactiveOnly.filter((id) => allowed.has(id)).slice(0, 1);
 }

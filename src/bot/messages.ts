@@ -246,6 +246,19 @@ export const MEMORY_CHANGE_PROMPT =
   "Ada yang salah atau udah berubah? Bilang aja. Kamu juga bisa minta aku melupakan sesuatu.";
 export const MEMORY_SECRET_REJECTION =
   "Aku nggak akan menyimpan password, OTP, PIN, API key, token, atau credential lain sebagai ingatan. Kalau credential itu masih aktif dan sudah terlanjur dikirim, sebaiknya segera ganti.";
+/**
+ * Pemberitahuan bahwa tidak ada tugas yang benar-benar ditandai selesai.
+ *
+ * Dipakai hanya ketika model sendiri mengusulkan `task.complete` tetapi kode
+ * menolak menjalankannya. Dogfood 6 September 2026 menemukan bentuk yang lebih
+ * buruk daripada penolakan: pengguna bilang tugasnya kelar, Harvy mengiyakan
+ * dengan hangat, dan tugasnya tetap `active` di penyimpanan. Yang salah bukan
+ * kalimat Harvy—itu gema ucapan pengguna—melainkan tidak adanya satu pun tanda
+ * bahwa keadaannya tidak berubah.
+ */
+export const TASK_COMPLETION_NOT_APPLIED =
+  "Oh iya, aku belum menandai apa pun selesai di daftar tugasmu. Buka /tugas kalau mau kutandai.";
+
 export const MEMORY_SAVE_UNAVAILABLE =
   "Aku belum bisa menyimpan yang itu sebagai ingatan sekarang. Coba lagi nanti, ya.";
 export const MEMORY_WIPE_PROMPT = [
