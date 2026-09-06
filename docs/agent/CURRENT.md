@@ -1,14 +1,14 @@
 # Current Context
 
 Refreshed: 2026-09-06
-Baseline: 5b294a1
+Baseline: 6c65494
 Context-Version: 1
 
 ## Verified baseline
 
-- Perubahan material yang dirangkum di sini dimulai di atas commit dasar
-  `5b294a1` pada `main`; status commit dan push aktual tetap dibaca dari Git.
-- `npm run check` PASS; `npm test` hijau, dan bagian Aktif
+- Diperiksa terhadap `6c65494`; perubahan material yang dirangkum di sini
+  dimulai di atas `5b294a1`. Status commit dan push dibaca dari Git.
+- `npm run check` PASS dan `npm test` 2.373 lulus 0 gagal; bagian Aktif
   `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
   dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
 - Telemetri pemakaian nyata 3 September 2026, 13 giliran Telegram: jalur
@@ -68,8 +68,8 @@ Context-Version: 1
   distributed lease, outbox/dispatcher, shared store, dan reconciliation
   multi-instance; jangan klaim siap horizontal atau siap peluncuran publik.
 - Corpus provider adalah regresi terbatas, bukan pengukuran FP/FN safety/memory
-  yang terkalibrasi. Jangan menyamakan suite fake/local, smoke provider, atau
-  browser Console dengan bukti usefulness pengguna dan efek remote.
+  terkalibrasi. Suite fake/local, smoke provider, dan browser Console bukan
+  bukti usefulness pengguna maupun efek remote.
 
 ## Route to detail
 
