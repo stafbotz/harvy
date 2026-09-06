@@ -7087,6 +7087,11 @@ function usageSummary(): UserUsageSummary {
       usedBasisPoints: 3_200,
       state: "healthy",
     },
+    rollingAllowance: {
+      windowHours: 24,
+      remainingBasisPoints: 10_000,
+      enforced: true,
+    },
     modelUsage: {
       inputTokens: 184_000,
       cachedInputTokens: 121_000,

@@ -404,6 +404,48 @@ describe("usage dashboard formatting", () => {
     }
   });
 
+  // Dogfood 6 September 2026: pengguna bertanya "sisa penggunaanku berapa,
+  // kemarin sempat kena batas", dan dashboard menjawab 97% dengan "Reset: 6
+  // Oktober". Angkanya benar untuk kuota periode, dan justru itu yang
+  // menyesatkan—yang menghentikannya kemarin adalah jendela 24 jam, yang pada
+  // saat yang sama tinggal 22,9%.
+  it("menampilkan sisa jendela pendek di samping kuota periode", () => {
+    const rendered = renderUsageDashboard(
+      acceptanceSummary({
+        rollingAllowance: {
+          windowHours: 24,
+          remainingBasisPoints: 2_290,
+          enforced: true,
+        },
+      }),
+      "plain",
+    );
+
+    assert.match(rendered.text, /Sisa penggunaan/u);
+    assert.match(rendered.text, /Sisa hari ini/u);
+    // Dibulatkan ke bawah, seperti sisa kuota periode: lebih baik menganggap
+    // ruangnya lebih sempit daripada lebih lega.
+    assert.match(rendered.text, /22%/u);
+    assert.match(rendered.text, /terpisah dari kuota periode/u);
+  });
+
+  it("tidak menampilkan baris itu ketika jendela pendek tidak ditegakkan", () => {
+    const rendered = renderUsageDashboard(
+      acceptanceSummary({
+        rollingAllowance: {
+          windowHours: 24,
+          remainingBasisPoints: 10_000,
+          enforced: false,
+        },
+      }),
+      "plain",
+    );
+
+    assert.doesNotMatch(rendered.text, /Sisa hari ini/u);
+    // Bagian kosong tidak boleh meninggalkan baris kosong ganda.
+    assert.doesNotMatch(rendered.text, /\n\n\n/u);
+  });
+
   it("menampilkan Terpakai dari basis points yang sama hanya di dekat 100%", () => {
     const untouched = renderUsageDashboard(acceptanceSummary({
       allowance: {
@@ -574,6 +616,9 @@ function accounting(
       sponsoredRemainingComputeUnits: "0",
       walletComputeUnits: "0",
       byokAvailable: false,
+      rollingWindowHours: 24,
+      rollingLimitComputeUnits: "200000000",
+      rollingUsedComputeUnits: "0",
       health: "healthy",
       nextResetAt: PERIOD_END,
       fundingPreference: "harvy_first",
@@ -677,6 +722,11 @@ function acceptanceSummary(overrides: Partial<UserUsageSummary> = {}): UserUsage
       remainingBasisPoints: 6_800,
       usedBasisPoints: 3_200,
       state: "healthy",
+    },
+    rollingAllowance: {
+      windowHours: 24,
+      remainingBasisPoints: 10_000,
+      enforced: true,
     },
     modelUsage: {
       inputTokens: 184_000,

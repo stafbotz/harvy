@@ -36,6 +36,22 @@ export interface UserUsageSummary {
     usedBasisPoints: number;
     state: EconomyUsageView["health"];
   };
+  /**
+   * Anggaran jendela pendek—batas yang benar-benar menghentikan percakapan.
+   *
+   * Terpisah dari `allowance`, yang menghitung periode tagihan. Keduanya bisa
+   * jauh berbeda: dogfood 6 September 2026 mengukur periode menyisakan 97% pada
+   * saat jendela 24 jam tinggal 22,9% pada plan Perkenalan, dan sehari
+   * sebelumnya jendela itu habis sementara periodenya tetap terbaca hampir
+   * penuh. Menjawab "sisa penggunaanku berapa" dengan angka periode saja
+   * karena itu benar secara aritmetika dan menyesatkan bagi pemakainya.
+   */
+  rollingAllowance: {
+    windowHours: number;
+    remainingBasisPoints: number;
+    /** Batas nol berarti kanal ini memang tidak memakai jendela pendek. */
+    enforced: boolean;
+  };
   modelUsage: {
     inputTokens: number;
     cachedInputTokens: number | null;
@@ -181,6 +197,8 @@ function summarizeUserUsage(
     BigInt(view.sponsoredGrantedComputeUnits);
   const remainingAllowance = BigInt(view.remainingIncludedComputeUnits) +
     BigInt(view.sponsoredRemainingComputeUnits);
+  const rollingLimit = BigInt(view.rollingLimitComputeUnits);
+  const rollingRemaining = rollingLimit - BigInt(view.rollingUsedComputeUnits);
   const remainingBasisPoints = allowanceBasisPoints(
     remainingAllowance,
     totalAllowance,
@@ -201,6 +219,11 @@ function summarizeUserUsage(
       remainingBasisPoints,
       usedBasisPoints: totalAllowance <= 0n ? 0 : 10_000 - remainingBasisPoints,
       state: view.health,
+    },
+    rollingAllowance: {
+      windowHours: view.rollingWindowHours,
+      remainingBasisPoints: allowanceBasisPoints(rollingRemaining, rollingLimit),
+      enforced: rollingLimit > 0n,
     },
     modelUsage: {
       inputTokens,

@@ -459,6 +459,39 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   soal jam tenang yang muncul sesudah restart padahal pengaturannya sudah
   tersimpan. Keduanya belum punya sebab yang terbukti.
 
+- **Diperbaiki: "sisa penggunaan" menjawab anggaran yang bukan penghentinya.**
+  Run ketiga journey yang sama menguji pertanyaan yang paling sering diajukan
+  pengguna. Dashboard `/penggunaan` menjawab dari kuota **periode tagihan**,
+  satu-satunya angka yang pernah ditampilkannya, sedangkan yang benar-benar
+  menghentikan percakapan adalah jendela **24 jam** pada `rollingComputeLimit`.
+  Keduanya nyata, keduanya benar, dan selisihnya besar: dihitung dari
+  penyimpanan journey pada plan Perkenalan, periode menyisakan 97% pada saat
+  jendela 24 jam tinggal 22,9%—dan sehari sebelumnya jendela itu habis di
+  tengah kerja sementara dashboard tetap terbaca 97% dengan "Reset: 6 Oktober".
+
+  Terlihat paling jelas pada giliran ini: pengguna bertanya "sisa penggunaanku
+  berapa ya sekarang? kemarin sempat kena batas soalnya", dan jawabannya 97%.
+  Bahasa alami dan `/penggunaan` memakai renderer code-owned yang sama, jadi
+  tidak ada angka yang dikarang model—yang salah bukan pengambilan angkanya
+  melainkan angka mana yang diambil.
+
+  `EconomyUsageView` kini membawa jendela pendek beserta pemakaiannya,
+  `UserUsageSummary` menurunkannya menjadi `rollingAllowance`, dan dashboard
+  menampilkan baris "Sisa hari ini" di samping kuota periode—bukan
+  menggantikannya, karena keduanya memang ada. Diverifikasi dari kanal sesudah
+  kuota dikembalikan ke batas paket asli: "Sisa penggunaan 97%" berdampingan
+  dengan "Sisa hari ini 22%", persis angka yang dihitung dari penyimpanan.
+
+  Copy penolakannya ikut dibetulkan. "Batas pemakaian singkat Harvy tercapai.
+  Coba lagi setelah jeda" terbaca seperti jeda menit padahal mekanismenya 24
+  jam; sekarang ia menyebut batas harian, kapan jatahnya pulih, dan ke mana
+  melihat sisanya.
+
+- Run ketiga: tiga giliran, satu restart runtime, shutdown bersih, journey
+  dipertahankan. Penilaian usefulness 4, naturalness 4, initiative 3,
+  nonRepetition 4, uiClarity 3, contextCoherence 5, correctionHandling 4,
+  completion `partial`—scope-nya memang satu pertanyaan, bukan perjalanan penuh.
+
 - Run kedua journey yang sama, 6 September 2026, sesudah keempat perbaikan di
   atas dan sesudah kuota akun penguji dinaikkan lewat kontrol operator
   (`quotaOverride`, hanya pada root journey ini). `resumed: true`, lima giliran,

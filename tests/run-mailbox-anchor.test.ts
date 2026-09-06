@@ -151,7 +151,7 @@ describe("Run Anchor", () => {
     assert.match(rendered, /tidak akan mengirim ulang otomatis/iu);
   });
 
-  it("menjelaskan batas pemakaian singkat secara jujur", () => {
+  it("menjelaskan batas harian secara jujur, termasuk kapan ia pulih", () => {
     const run = activeRun({
       status: "failed",
       phase: "failed",
@@ -164,7 +164,13 @@ describe("Run Anchor", () => {
     });
 
     const rendered = renderRunAnchor(run);
-    assert.match(rendered, /batas pemakaian singkat/iu);
+    // Sampai 6 September 2026 copy-nya berbunyi "batas pemakaian singkat ...
+    // coba lagi setelah jeda", sehingga terbaca seperti jeda menit padahal
+    // mekanismenya jendela 24 jam. Dogfood hari itu berhenti di giliran 35
+    // karenanya, dan pengguna tidak punya cara tahu berapa lama harus menunggu.
+    assert.match(rendered, /batas harian/iu);
+    assert.match(rendered, /24 jam/iu);
+    assert.match(rendered, /\/penggunaan/iu);
     assert.match(rendered, /task dan percakapanmu tetap tersimpan/iu);
     assert.doesNotMatch(rendered, /hasil.*dapat dipercaya/iu);
   });

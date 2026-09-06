@@ -65,7 +65,7 @@ export function agentStopMessage(
       // bahwa masalahnya bukan pada kalimat pengguna.
       return "Layanan modelnya sedang tidak bisa kuhubungi, jadi pekerjaannya berhenti sebelum ada jawaban dan aku tidak akan mengarang isinya. Coba lagi sebentar lagi; task dan percakapanmu tetap tersimpan.";
     case "usage_anti_abuse":
-      return "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan.";
+      return "Batas harian Harvy tercapai. Jatahnya pulih sendiri dalam 24 jam, dan sisanya bisa dilihat lewat /penggunaan. Task dan percakapanmu tetap tersimpan.";
     case "usage_wallet_disabled":
       return "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Aktifkan funding atau gunakan provider sendiri untuk melanjutkan.";
     case "usage_byok_unavailable":

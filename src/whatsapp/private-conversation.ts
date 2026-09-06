@@ -5002,7 +5002,7 @@ function privateConversationText(message: WhatsAppPrivateMessage): string {
 function failureMessage(error: unknown): string {
   if (error instanceof UsageLimitError) {
     if (error.reason === "anti_abuse") {
-      return "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; percakapanmu tetap tersimpan.";
+      return "Batas harian Harvy tercapai. Jatahnya pulih sendiri dalam 24 jam, dan sisanya bisa dilihat lewat /penggunaan. Percakapanmu tetap tersimpan.";
     }
     if (error.reason === "wallet_disabled") {
       return "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Aktifkan dari pengaturan funding, gunakan provider sendiri, atau tunggu pembaruan kapasitas.";

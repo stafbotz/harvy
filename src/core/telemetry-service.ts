@@ -175,7 +175,7 @@ export class UsageLimitError extends Error {
         : reason === "byok_unavailable"
           ? "Credential BYOK tersedia, tetapi belum cocok untuk pekerjaan ini."
         : reason === "anti_abuse"
-          ? "Batas pemakaian singkat Harvy tercapai."
+          ? "Batas harian Harvy tercapai."
           : "Kapasitas Harvy-funded untuk periode ini sudah terpakai.",
     );
     this.name = "UsageLimitError";

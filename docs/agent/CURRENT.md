@@ -21,25 +21,26 @@ Context-Version: 1
 
 ## Recent material changes
 
-- Dogfood terpadatkan pertama lewat akun penguji (`tg-dogfood-20260906a`, 35
-  giliran) menemukan empat cacat yang tidak pernah terlihat probe, dan
-  keempatnya diperbaiki: balasan mengaku menyimpan tanpa receipt code-owned
-  (gerbangnya dulu menuntut adanya kandidat yang gagal, bukan adanya receipt);
-  "udah kelar" yang tidak mengubah state tugas kini disertai baris code-owned;
-  animasi status yang menahan jawaban sungguhan sampai 4 menit 12 detik kini
-  digabung, berhenti sesudah satu penolakan kanal, dan tidak lagi ditunggu tanpa
-  batas; serta narasi protokol tool di dalam balasan dan tawaran "Dengerin dulu"
-  kepada pengguna yang memilih "Langsung saran". Run kedua melengkapi delapan
-  marker mode full dan memverifikasi tiga di antaranya dari kanal. Kuota plan
-  Perkenalan (200.000 token per 24 jam, ~30 giliran) menghentikan run pertama di
-  giliran 35 dengan copy yang menyebutnya "jeda singkat"; itu belum diperbaiki.
+- Dogfood terpadatkan lewat akun penguji (`tg-dogfood-20260906a`, tiga run)
+  menemukan lima cacat yang tidak pernah terlihat probe, dan kelimanya
+  diperbaiki. Run pertama, 35 giliran: balasan mengaku menyimpan tanpa receipt
+  code-owned (gerbangnya dulu menuntut adanya kandidat yang gagal, bukan adanya
+  receipt); "udah kelar" yang tidak mengubah state tugas kini disertai baris
+  code-owned; animasi status yang menahan jawaban sungguhan sampai 4 menit 12
+  detik kini digabung, berhenti sesudah satu penolakan kanal, dan tidak lagi
+  ditunggu tanpa batas; serta narasi protokol tool di dalam balasan dan tawaran
+  "Dengerin dulu" kepada pengguna yang memilih "Langsung saran". Run kedua
+  melengkapi delapan marker mode full dan memverifikasi tiga di antaranya dari
+  kanal. Run ketiga: "sisa penggunaan" menjawab kuota periode padahal yang
+  menghentikan percakapan adalah jendela 24 jam—97% lawan 22,9% pada saat yang
+  sama—jadi dashboard kini menampilkan "Sisa hari ini" di sampingnya, dan copy
+  penolakannya menyebut batas harian beserta kapan ia pulih.
 - Ingatan jahitan pada `history.search` ditutup. `scoreEpisode` membuang klaim
   yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku, dan
   klaim `unresolved` justru jarang mengulang kata topiknya. Sebelum: 24 run
   memberi 18 tepat, 4 jujur tidak menemukan, 2 menjahit klaim dua percakapan
-  menjadi ingatan yang tidak pernah terjadi—keenamnya dari kueri topik-saja,
-  yang 0 dari 6 benar. Sesudah `withRequestedFields`: 48 run, nol jahitan,
-  nol tidak menemukan, dan kueri topik-saja 3 dari 3 benar.
+  menjadi ingatan yang tidak pernah terjadi. Sesudah `withRequestedFields`:
+  48 run, nol jahitan, nol tidak menemukan.
 - Jalur planning durable: penolakan bentuk jawaban yang membuang sintesis
   (`structuredFieldBudgetCharacters`), anggaran waktu lane durable yang terpisah
   dari lane chat (`DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik), dan pengulangan

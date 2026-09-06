@@ -87,7 +87,7 @@ export function runFailureCopy(run: ActiveAgentRun): string {
     case "input_expired":
       return "Pekerjaan berhenti karena pertanyaan yang kubutuhkan tidak terjawab sebelum waktunya habis. Kirim lagi permintaannya kalau masih kamu perlukan.";
     case "usage_anti_abuse":
-      return "Pekerjaan belum selesai karena batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; task dan percakapanmu tetap tersimpan.";
+      return "Pekerjaan belum selesai karena batas harian Harvy tercapai. Jatahnya pulih sendiri dalam 24 jam, dan sisanya bisa dilihat lewat /penggunaan. Task dan percakapanmu tetap tersimpan.";
     case "usage_wallet_disabled":
       return "Pekerjaan belum selesai karena saldo tambah compute belum diizinkan untuk dipakai otomatis. Aktifkan funding atau gunakan provider sendiri untuk melanjutkan.";
     case "usage_byok_unavailable":

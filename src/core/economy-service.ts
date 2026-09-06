@@ -75,6 +75,19 @@ export interface EconomyUsageView {
   sponsoredRemainingComputeUnits: ComputeAmount;
   walletComputeUnits: ComputeAmount;
   byokAvailable: boolean;
+  /**
+   * Anggaran jendela pendek yang benar-benar menghentikan percakapan.
+   *
+   * Terpisah dari kuota periode, dan itulah masalahnya sampai 6 September 2026:
+   * satu-satunya angka yang pernah ditampilkan adalah kuota periode, sedangkan
+   * yang memotong pengguna di tengah kerja adalah batas ini. Dogfood hari itu
+   * mengukur selisihnya pada plan Perkenalan—periode menyisakan 97% pada saat
+   * jendela 24 jam tinggal 22,9%, dan sehari sebelumnya jendela itu habis
+   * sementara periodenya tetap terbaca hampir penuh.
+   */
+  rollingWindowHours: number;
+  rollingLimitComputeUnits: ComputeAmount;
+  rollingUsedComputeUnits: ComputeAmount;
   health: UsageHealth;
   nextResetAt: string;
   fundingPreference: FundingPreferenceMode;
@@ -288,7 +301,7 @@ export class EconomyService implements EconomyFundingAuthority {
         BigInt(owner.policy.rollingComputeLimit) > 0n &&
         rollingUsed + estimatedBig > BigInt(owner.policy.rollingComputeLimit)
       ) {
-        throw new FundingUnavailableError("anti_abuse", "Batas pemakaian singkat Harvy tercapai.");
+        throw new FundingUnavailableError("anti_abuse", "Batas harian Harvy tercapai.");
       }
 
       let source: FundingSource | null = context.safetyCritical ? "safety_exempt" : null;
@@ -542,6 +555,11 @@ export class EconomyService implements EconomyFundingAuthority {
         (item) => item.subjectRef === owner.subjectRef,
       );
       const remaining = BigInt(period.includedGranted) - BigInt(period.includedUsed) - BigInt(period.includedReserved);
+      const projection = ensureUsageProjection(state, owner.subjectRef, owner.at);
+      pruneRolling(projection, owner.policy.rollingWindowHours, owner.at);
+      const rollingUsed = sumAmounts(
+        projection.rollingCharges.map((item) => item.computeUnits),
+      ) + BigInt(projection.rollingReserved);
       const sponsoredRemaining = sponsored.reduce(
         (sum, grant) => sum + BigInt(grant.amount) - BigInt(grant.used) - BigInt(grant.reserved),
         0n,
@@ -568,6 +586,9 @@ export class EconomyService implements EconomyFundingAuthority {
         sponsoredRemainingComputeUnits: nonNegative(sponsoredRemaining),
         walletComputeUnits: wallet?.availableComputeUnits ?? "0",
         byokAvailable,
+        rollingWindowHours: owner.policy.rollingWindowHours,
+        rollingLimitComputeUnits: owner.policy.rollingComputeLimit,
+        rollingUsedComputeUnits: rollingUsed.toString(),
         health: healthFromRemaining(
           remaining + sponsoredRemaining,
           BigInt(period.includedGranted) + sponsoredGranted,

@@ -432,7 +432,7 @@ function usageLimitMessage(error: UsageLimitError): string {
     return "Saldo tambah compute tersedia, tetapi penggunaan otomatis belum diizinkan. Kamu bisa mengaktifkannya dari pengaturan funding, memakai provider sendiri, atau menunggu pembaruan kapasitas.";
   }
   if (error.reason === "anti_abuse") {
-    return "Batas pemakaian singkat Harvy tercapai. Coba lagi setelah jeda; kapasitas dan pekerjaanmu tetap tersimpan.";
+    return "Batas harian Harvy tercapai. Jatahnya pulih sendiri dalam 24 jam, dan sisanya bisa dilihat lewat /penggunaan. Kapasitas dan pekerjaanmu tetap tersimpan.";
   }
   if (error.reason === "byok_unavailable") {
     return "Provider BYOK-mu belum cocok untuk tingkat pekerjaan ini. Kamu dapat memilih model BYOK yang lebih kuat, menambah provider lain, memakai compute Harvy/PAYG dengan izin, atau menunggu pembaruan kapasitas.";

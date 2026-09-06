@@ -39,6 +39,7 @@ export function renderUsageDashboard(
       format.text(formatPeriod(summary.period.startsAt, summary.period.endsAt, timeZone)),
     ],
     remainingSection(summary, format),
+    rollingSection(summary, format),
     [
       format.bold("Reset"),
       format.text(formatResetDate(summary.period.resetsAt, summary.period.startsAt, timeZone)),
@@ -61,7 +62,12 @@ export function renderUsageDashboard(
     ].map((line) => format.text(line)));
   }
   return {
-    text: sections.map((section) => section.join("\n")).join("\n\n"),
+    // Bagian kosong—misalnya jendela pendek yang memang tidak ditegakkan
+    // pada kanal ini—tidak boleh meninggalkan baris kosong ganda.
+    text: sections
+      .filter((section) => section.length > 0)
+      .map((section) => section.join("\n"))
+      .join("\n\n"),
     telegramParseMode: channel === "telegram" ? "HTML" : null,
   };
 }
@@ -134,6 +140,44 @@ export function formatCompactUsage(value: number): string {
   if (value < 1_000) return value.toString();
   if (value < 1_000_000) return scaled(value, 1_000, "k");
   return scaled(value, 1_000_000, "M");
+}
+
+/**
+ * Sisa anggaran jendela pendek—batas yang benar-benar menghentikan percakapan.
+ *
+ * Sampai 6 September 2026 dashboard ini hanya menampilkan kuota periode, dan
+ * itu menjawab pertanyaan yang berbeda dari yang ditanyakan orang. Dogfood hari
+ * itu mengukur selisihnya pada plan Perkenalan: periode menyisakan 97% pada
+ * saat jendela 24 jam tinggal 22,9%, dan sehari sebelumnya jendela itu habis di
+ * tengah kerja sementara "Sisa penggunaan" tetap terbaca 97% dengan "Reset: 6
+ * Oktober". Angkanya benar, dan justru itu yang menyesatkan.
+ *
+ * Baris ini tidak menggantikan kuota periode; keduanya nyata dan keduanya
+ * ditampilkan. Yang dihilangkan hanyalah kemungkinan pengguna menyimpulkan
+ * masih punya banyak ruang padahal yang membatasinya hari itu hampir penuh.
+ */
+function rollingSection(
+  summary: UserUsageSummary,
+  format: SemanticFormatter,
+): string[] {
+  if (!summary.rollingAllowance.enforced) return [];
+  const remaining = normalizeBasisPoints(
+    summary.rollingAllowance.remainingBasisPoints,
+  );
+  const jam = summary.rollingAllowance.windowHours;
+  return [
+    format.bold(jam === 24 ? "Sisa hari ini" : `Sisa ${jam} jam terakhir`),
+    format.text(
+      `${usageProgressBarFromBasisPoints(remaining)} ${
+        formatRemainingPercentage(remaining)
+      }`,
+    ),
+    format.text(
+      jam === 24
+        ? "Batas harian yang terpisah dari kuota periode; pulih sendiri seiring waktu."
+        : `Batas jendela ${jam} jam, terpisah dari kuota periode.`,
+    ),
+  ];
 }
 
 function remainingSection(
