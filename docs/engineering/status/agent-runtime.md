@@ -223,14 +223,36 @@ agent, scope/authority, atau executor internal.
 
 ## Batas dan defect aktif
 
-- `history.search` terbukti dipanggil, tetapi ketepatan isinya belum stabil.
-  Pencariannya leksikal atas teks klaim episode, jadi query yang hanya memuat
-  topik mengembalikan topik/fakta/penanda waktu dan melewatkan klaim
-  `unresolved` yang justru ditanyakan. Pada probe 2026-08-29, dari lima run
-  dengan pertanyaan yang sama, dua menyebut klaim yang tepat, dua menjawab
-  jujur bahwa hasilnya tidak memuat klaim itu, dan satu menjahit klaim dari dua
-  episode berbeda menjadi satu ingatan yang tidak pernah terjadi. Deskripsi
-  tool sudah memperingatkan keduanya; efeknya belum diukur ulang.
+- **Diperbaiki: ingatan jahitan pada `history.search`.** Pencariannya leksikal
+  atas teks klaim episode, dan `scoreEpisode` membuang klaim yang tidak
+  berbagi satu kata pun dengan kueri **sebelum** bonus jenis klaim sempat
+  berlaku. Itu tepat mengenai klaim yang paling sering ditanyakan: "Belum tahu
+  apakah soalnya pilihan ganda atau uraian" tidak memuat "ujian" maupun
+  "biologi", jadi untuk kueri yang hanya memuat topik ia tidak pernah masuk
+  kandidat—dan Harvy menjawab dari klaim yang ada sambil terdengar seperti
+  mengingat.
+
+  Diukur dengan `npx tsx scripts/coba-agent.ts --kasus=recall --ulangi=24`, yang
+  menggolongkan tiap jawaban alih-alih menilainya lulus/gagal. Sebelum
+  perbaikan, 24 run: 18 menyebut klaim yang tepat, 4 menjawab jujur tidak
+  menemukan, dan 2 menjahit klaim dari episode lain menjadi ingatan yang tidak
+  pernah terjadi. Seluruh enam kegagalan itu berasal dari satu bentuk kueri yang
+  sama—topik saja, tanpa kata pengguna sendiri—dan bentuk itu 0 dari 6 benar.
+  Slot `aspect` hampir selalu terisi bahkan pada run yang gagal, jadi ia bukan
+  obatnya: ia hanya menaikkan klaim yang sudah lolos ambang leksikal.
+
+  `withRequestedFields` kini membawa klaim yang **jenisnya** diminta meski tidak
+  cocok kata, dengan skor nol sehingga selalu berada di bawah klaim yang
+  benar-benar cocok. Batasnya tetap ketat: hanya dari episode yang memang sudah
+  cocok, hanya untuk field yang diminta, dan peringkat antar-episode dihitung
+  dari klaim yang cocok kata saja sehingga isi hasil bertambah tanpa menggeser
+  episode mana yang menang.
+
+  Sesudah perbaikan, 48 run: nol ingatan jahitan, nol "tidak menemukan". Bentuk
+  kueri topik-saja muncul 3 kali dan ketiganya benar. Satu run menemukan tiga
+  hal yang belum jelas di tiga percakapan berbeda, menolak menebak, lalu
+  menanyakan yang mana—sambil menyebut tanggal tiap sumber terpisah, persis
+  yang diminta deskripsi tool.
 - Lane grup tetap memakai `toolChoice: "required"` dan itu keputusan, bukan
   sisa. Daftar capability-nya kosong, sehingga satu-satunya tool adalah fungsi
   final dan fungsi pertanyaan; yang membuat kontrak wajib merugikan di jalur

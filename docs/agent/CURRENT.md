@@ -12,41 +12,41 @@ Context-Version: 1
   `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
   dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
 - Telemetri pemakaian nyata 3 September 2026, 13 giliran Telegram: jalur
-  pemahaman 5 `core-only`, 5 `core-escalated`, 3 `direct-full`; keputusan
-  keselamatan 13/13 `calm`+`certain`, sehingga izin tulis memori terbuka penuh
-  dan tidak satu pun giliran ditandai berisiko.
-- Biaya terukur dari lalu lintas yang sama: pass pemahaman 1.018 token dan
-  2.179 ms lawan kontrak penuh 7.646 token dan 4.410 ms, yaitu 48% lebih hemat.
+  pemahaman 5 `core-only`, 5 `core-escalated`, 3 `direct-full`; keselamatan
+  13/13 `calm`+`certain`, jadi izin tulis memori terbuka penuh.
+- Biaya dari lalu lintas yang sama: pass pemahaman 1.018 token dan 2.179 ms
+  lawan kontrak penuh 7.646 token dan 4.410 ms, 48% lebih hemat.
 - Pencarian memori berdasarkan makna diuji pada model lokal sungguhan dengan
-  kalimat Indonesia; celah kemiripannya lebar (0,63-0,69 lawan 0,13-0,23) dan
-  satu pencarian 29-199 ms sesudah model dimuat.
+  kalimat Indonesia; celah kemiripannya lebar (0,63-0,69 lawan 0,13-0,23).
 
 ## Recent material changes
 
-- Jalur planning durable: tiga sebab kegagalan diperbaiki 6 September 2026.
-  (1) Renderer `harvy_structured_steps_v1` membuang seluruh jawaban bila satu
-  field melewati ceiling tetap 1.200 karakter padahal anggarannya 2.452; satu
-  langkah 1.305 karakter membuang rencana lengkap dan membeli sintesis ulang
-  11-18 detik. Anjuran kini terpisah dari yang ditegakkan
-  (`structuredFieldBudgetCharacters`); penolakan sisanya berjejak lewat
-  `agent_structured_final_rejected`. (2) Lane durable tidak lagi memakai
-  anggaran lane chat: `DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik bila adapter
-  menyalakan `durableWork`, chat tetap 45. Dari 15 run orchestrate, 11 selesai
-  20,5-42,1 detik dan 4 terpotong tepat di 45,0 padahal hanya sintesis akhir
-  yang tersisa—dan run terpotong sudah membayar planner beserta seluruh worker.
-  (3) Klien tidak lagi mengulang timeout ketika sisa waktu run tinggal jatah
-  jawaban akhir (`RunBudgetAccount.remainingWorkMs`, 18 detik dari 14 sintesis
-  4,3-17,6 detik); empat pengulangan begitu di seluruh riwayat, semua nol.
-- Kanal Telegram tidak lagi bisa tuli tanpa diketahui (ADR-046). Transformer
-  API memberi `getUpdates` batas 55 detik menggantikan 500 detik bawaan grammY,
-  mematuhi `retry_after` saat mengirim, dan mencatat kegagalan yang selama ini
-  ditelan grammY. Balasan yang belum terbukti sampai punya janji durable.
+- Jalur planning durable: tiga sebab kegagalan diperbaiki. (1) Renderer
+  `harvy_structured_steps_v1` membuang seluruh jawaban bila satu field melewati
+  ceiling anjuran 1.200 karakter padahal anggarannya 2.452; anjuran kini
+  terpisah dari yang ditegakkan (`structuredFieldBudgetCharacters`), dan
+  penolakan sisanya berjejak lewat `agent_structured_final_rejected`. (2) Lane
+  durable memakai `DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik bila adapter
+  menyalakan `durableWork`, chat tetap 45: dari 15 run orchestrate, 4 terpotong
+  tepat di 45,0 detik padahal hanya sintesis akhir yang tersisa. (3) Klien
+  tidak lagi mengulang timeout ketika sisa waktu run tinggal jatah jawaban
+  akhir (`RunBudgetAccount.remainingWorkMs`); empat pengulangan begitu di
+  seluruh riwayat, semua memberi pengguna nol.
+- Ingatan jahitan pada `history.search` ditutup. `scoreEpisode` membuang klaim
+  yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku,
+  dan klaim `unresolved` justru jarang mengulang kata topiknya. Diukur dengan
+  `scripts/coba-agent.ts --kasus=recall`: sebelum, 24 run memberi 18 tepat, 4
+  jujur tidak menemukan, dan 2 menjahit klaim dua percakapan menjadi ingatan
+  yang tidak pernah terjadi—keenamnya dari bentuk kueri yang sama, topik saja,
+  yang 0 dari 6 benar. `withRequestedFields` kini membawa klaim yang jenisnya
+  diminta dengan skor nol, hanya dari episode yang sudah cocok, tanpa menggeser
+  peringkat antar-episode. Sesudah, 48 run: nol jahitan, nol tidak menemukan,
+  dan kueri topik-saja 3 dari 3 benar.
 - Acceptance Telegram pribadi dari akun penguji berdedikasi 5-6 September 2026:
   enam stage PASS—onboarding, tugas + pengingat, zona waktu + sesi + check-in
   proaktif, gambar, memori implisit, dan pembersihan akun.
   `durable_planning_runtime` lulus 3 dari 6 lalu 0 dari 4; sesudah perbaikan di
-  atas, 6 dari 6 dalam 36,5-79,2 detik. Rincian:
-  `docs/engineering/status/telegram.md`.
+  atas, 6 dari 6 dalam 36,5-79,2 detik.
 
 ## Active cross-subsystem blockers
 

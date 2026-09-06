@@ -193,6 +193,66 @@ describe("history full-text search", () => {
     assert.equal(tanpaAspek?.[0], "facts");
     assert.equal(denganAspek?.[0], "unresolved");
   });
+  // Klaim `unresolved` jarang mengulang kata topiknya. "Belum tahu apakah
+  // soalnya pilihan ganda atau uraian" tidak memuat "ujian" maupun "biologi",
+  // jadi ia gugur sebelum bonus jenis sempat berlaku—dan justru itu yang
+  // ditanyakan. Terukur pada model sungguhan, 24 run pertanyaan yang sama:
+  // enam kegagalannya semua memakai kueri tanpa kata pengguna sendiri.
+  it("membawa klaim yang jenisnya diminta walau tidak berbagi satu kata pun", () => {
+    const target = episode("ujian", 1, {
+      topics: [claim("Persiapan ujian biologi bab sistem pernapasan", 1)],
+      facts: [claim("Ujian biologi diadakan hari Rabu pagi", 2)],
+      unresolved: [claim("Belum tahu apakah soalnya pilihan ganda atau uraian", 3)],
+    });
+
+    const tanpaAspek = searchConversationEpisodes(
+      [target],
+      "ujian biologi persiapan",
+    )[0];
+    const denganAspek = searchConversationEpisodes(
+      [target],
+      "ujian biologi persiapan",
+      { aspect: "belum jelas" },
+    )[0];
+
+    assert.equal(
+      tanpaAspek?.claims.some((entry) => entry.field === "unresolved"),
+      false,
+    );
+    assert.equal(
+      denganAspek?.claims.some((entry) => entry.field === "unresolved"),
+      true,
+    );
+    // Skornya nol dan tempatnya paling belakang: ia melengkapi hasil, bukan
+    // mengaku paling relevan.
+    const dibawa = denganAspek?.claims.at(-1);
+    assert.equal(dibawa?.field, "unresolved");
+    assert.equal(dibawa?.score, 0);
+    // Peringkat episode dihitung dari klaim yang benar-benar cocok kata, jadi
+    // menambah isi hasil tidak boleh menggeser episode mana yang menang.
+    assert.equal(denganAspek?.score, tanpaAspek?.score);
+  });
+
+  it("tidak menarik episode yang memang tidak cocok, walau jenisnya diminta", () => {
+    const target = episode("ujian", 1, {
+      topics: [claim("Persiapan ujian biologi bab sistem pernapasan", 1)],
+      unresolved: [claim("Belum tahu apakah soalnya pilihan ganda atau uraian", 2)],
+    });
+    const lain = episode("tidur", 1, {
+      topics: [claim("Jam tidur berantakan menjelang pekan sibuk", 1)],
+      unresolved: [claim("Belum jelas apakah sulit fokus karena kurang tidur", 2)],
+    });
+
+    const hasil = searchConversationEpisodes(
+      [target, lain],
+      "ujian biologi persiapan",
+      { aspect: "belum jelas" },
+    );
+
+    assert.equal(hasil.length, 1);
+    assert.equal(hasil[0]?.episodeId, "episode_ujian");
+  });
+
   // Pembobotan hanya menata ulang klaim yang sudah cocok secara leksikal. Ia
   // tidak boleh mengubah hasil ketika pertanyaannya tidak menyebut jenis
   // apa pun, dan tidak boleh menyeret klaim tak berkaitan ke dalam hasil.

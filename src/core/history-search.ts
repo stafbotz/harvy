@@ -215,10 +215,19 @@ function scoreEpisode(
     right.score - left.score ||
     compareOrdinal(left.field, right.field) ||
     compareOrdinal(left.text, right.text));
-  const selectedClaims = claims.slice(0, HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT);
+  const rankedClaims = claims.slice(0, HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT);
+  // Peringkat episode dihitung dari klaim yang benar-benar cocok kata, bukan
+  // dari klaim yang ditambahkan karena jenisnya diminta. Menambah isi hasil
+  // tidak boleh menggeser episode mana yang menang.
   const coverage = matchedTerms.size / queryTerms.length;
-  const score = selectedClaims.reduce((total, claim) => total + claim.score, 0) +
+  const score = rankedClaims.reduce((total, claim) => total + claim.score, 0) +
     coverage * 4;
+  const selectedClaims = withRequestedFields(
+    rankedClaims,
+    indexed,
+    claims,
+    requestedFields,
+  );
 
   return {
     episodeId: indexed.episode.episodeId,
@@ -227,6 +236,77 @@ function scoreEpisode(
     score: roundScore(score),
     claims: selectedClaims,
   };
+}
+
+/**
+ * Menjamin klaim yang **jenisnya** diminta ikut terbawa, bukan hanya yang
+ * kebetulan berbagi kata.
+ *
+ * `scoreEpisode` membuang klaim tanpa satu pun term yang cocok sebelum bonus
+ * field sempat berlaku, dan itu tepat sasaran pada pertanyaan yang paling
+ * sering ditanyakan orang: klaim `unresolved` biasanya tidak mengulang kata
+ * topiknya. "Belum tahu apakah soalnya pilihan ganda atau uraian" tidak memuat
+ * "ujian" maupun "biologi", jadi untuk kueri "ujian biologi persiapan" ia tidak
+ * pernah masuk kandidat—dan model menjawab dari klaim yang ada sambil
+ * terdengar seperti mengingat.
+ *
+ * Terukur pada model sungguhan, 24 run pertanyaan yang sama: 18 menyebut klaim
+ * yang tepat, 4 menjawab jujur tidak menemukan, dan 2 menjahit klaim dari
+ * episode lain menjadi ingatan yang tidak pernah terjadi. Pembeda keenam
+ * kegagalan itu satu hal: kueri yang disusun planner tidak memuat kata
+ * pengguna sendiri. Slot `aspect` sudah ada dan hampir selalu terisi, tetapi
+ * tidak menolong—ia hanya menaikkan klaim yang sudah lolos ambang leksikal.
+ *
+ * Batasnya tetap ketat. Episode yang sama sekali tidak cocok tetap tidak masuk
+ * hasil, klaim tambahan hanya diambil dari episode yang memang sudah cocok,
+ * hanya untuk field yang diminta, dan skornya nol sehingga ia selalu berada di
+ * bawah klaim yang benar-benar cocok kata.
+ */
+function withRequestedFields(
+  ranked: readonly HistoricalEpisodeClaimMatch[],
+  indexed: IndexedEpisode,
+  scored: readonly HistoricalEpisodeClaimMatch[],
+  requestedFields: ReadonlySet<EpisodeClaimField>,
+): HistoricalEpisodeClaimMatch[] {
+  if (requestedFields.size === 0) return [...ranked];
+  const selected = [...ranked];
+  let replaceAt = selected.length - 1;
+  for (const field of requestedFields) {
+    if (selected.some((claim) => claim.field === field)) continue;
+    const fromScored = scored.find((claim) => claim.field === field);
+    const candidate = fromScored ?? unmatchedClaim(indexed, field);
+    if (!candidate) continue;
+    if (selected.length < HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT) {
+      selected.push(candidate);
+      continue;
+    }
+    // Slot penuh: tukar klaim berperingkat terendah, dan jangan pernah menukar
+    // lebih dari separuh isi hasil.
+    if (replaceAt < Math.floor(HISTORY_SEARCH_CLAIMS_PER_EPISODE_LIMIT / 2)) {
+      continue;
+    }
+    selected[replaceAt] = candidate;
+    replaceAt -= 1;
+  }
+  return selected;
+}
+
+function unmatchedClaim(
+  indexed: IndexedEpisode,
+  field: EpisodeClaimField,
+): HistoricalEpisodeClaimMatch | null {
+  const claim = indexed.claims.find(
+    (indexedClaim) => indexedClaim.field === field,
+  );
+  return claim
+    ? {
+        field: claim.field,
+        claimIndex: claim.claimIndex,
+        text: claim.claim.text,
+        sourceSequences: [...claim.claim.sourceSequences],
+        score: 0,
+      }
+    : null;
 }
 
 function compareMatches(
