@@ -21,32 +21,32 @@ Context-Version: 1
 
 ## Recent material changes
 
-- Jalur planning durable: tiga sebab kegagalan diperbaiki. (1) Renderer
-  `harvy_structured_steps_v1` membuang seluruh jawaban bila satu field melewati
-  ceiling anjuran 1.200 karakter padahal anggarannya 2.452; anjuran kini
-  terpisah dari yang ditegakkan (`structuredFieldBudgetCharacters`), dan
-  penolakan sisanya berjejak lewat `agent_structured_final_rejected`. (2) Lane
-  durable memakai `DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik bila adapter
-  menyalakan `durableWork`, chat tetap 45: dari 15 run orchestrate, 4 terpotong
-  tepat di 45,0 detik padahal hanya sintesis akhir yang tersisa. (3) Klien
-  tidak lagi mengulang timeout ketika sisa waktu run tinggal jatah jawaban
-  akhir (`RunBudgetAccount.remainingWorkMs`); empat pengulangan begitu di
-  seluruh riwayat, semua memberi pengguna nol.
+- Dogfood terpadatkan pertama lewat akun penguji (`tg-dogfood-20260906a`, 35
+  giliran) menemukan empat cacat yang tidak pernah terlihat probe, dan
+  keempatnya sudah diperbaiki: balasan mengaku menyimpan tanpa receipt
+  code-owned—gerbangnya dulu menuntut adanya kandidat yang gagal, bukan adanya
+  receipt; "udah kelar" yang tidak mengubah state tugas kini disertai baris
+  code-owned bahwa tidak ada yang ditandai; animasi status yang menahan jawaban
+  sungguhan sampai 4 menit 12 detik kini digabung, berhenti sesudah satu
+  penolakan kanal, dan tidak lagi ditunggu tanpa batas saat penutupan; serta
+  narasi protokol tool di dalam balasan dan tawaran "Dengerin dulu" kepada
+  pengguna yang sudah memilih "Langsung saran". Kuota plan Perkenalan (200.000
+  token per 24 jam, ~30 giliran) menghentikan journey di giliran 35 dengan copy
+  yang menyebutnya "jeda singkat"; itu belum diperbaiki.
 - Ingatan jahitan pada `history.search` ditutup. `scoreEpisode` membuang klaim
-  yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku,
-  dan klaim `unresolved` justru jarang mengulang kata topiknya. Diukur dengan
-  `scripts/coba-agent.ts --kasus=recall`: sebelum, 24 run memberi 18 tepat, 4
-  jujur tidak menemukan, dan 2 menjahit klaim dua percakapan menjadi ingatan
-  yang tidak pernah terjadi—keenamnya dari bentuk kueri yang sama, topik saja,
-  yang 0 dari 6 benar. `withRequestedFields` kini membawa klaim yang jenisnya
-  diminta dengan skor nol, hanya dari episode yang sudah cocok, tanpa menggeser
-  peringkat antar-episode. Sesudah, 48 run: nol jahitan, nol tidak menemukan,
-  dan kueri topik-saja 3 dari 3 benar.
-- Acceptance Telegram pribadi dari akun penguji berdedikasi 5-6 September 2026:
-  enam stage PASS—onboarding, tugas + pengingat, zona waktu + sesi + check-in
-  proaktif, gambar, memori implisit, dan pembersihan akun.
-  `durable_planning_runtime` lulus 3 dari 6 lalu 0 dari 4; sesudah perbaikan di
-  atas, 6 dari 6 dalam 36,5-79,2 detik.
+  yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku, dan
+  klaim `unresolved` justru jarang mengulang kata topiknya. Sebelum: 24 run
+  memberi 18 tepat, 4 jujur tidak menemukan, 2 menjahit klaim dua percakapan
+  menjadi ingatan yang tidak pernah terjadi—keenamnya dari kueri topik-saja,
+  yang 0 dari 6 benar. Sesudah `withRequestedFields`: 48 run, nol jahitan,
+  nol tidak menemukan, dan kueri topik-saja 3 dari 3 benar.
+- Jalur planning durable: penolakan bentuk jawaban yang membuang sintesis
+  (`structuredFieldBudgetCharacters`), anggaran waktu lane durable yang terpisah
+  dari lane chat (`DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik), dan pengulangan
+  timeout yang tidak menyisakan waktu menjawab (`remainingWorkMs`). Acceptance
+  Telegram pribadi dari akun penguji: enam stage PASS, dan
+  `durable_planning_runtime` yang lulus 3 dari 6 lalu 0 dari 4 kini 6 dari 6
+  dalam 36,5-79,2 detik.
 
 ## Active cross-subsystem blockers
 

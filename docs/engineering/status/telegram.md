@@ -388,6 +388,77 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   shutdown bersih dan receipt tetap content-free. Focus memori juga lulus tiga
   run berurutan setelah satu kegagalan intermittent ditemukan dan prompt
   ekstraksi diperkuat.
+- Journey eksploratif terpadatkan `tg-dogfood-20260906a` menyelesaikan 35
+  giliran lewat akun penguji, satu restart runtime, shutdown bersih, dan journey
+  dipertahankan. Jadwal dipendekkan supaya yang hanya dapat dibuktikan oleh
+  waktu berlalu tetap teruji dalam hitungan jam: pengingat lima menit
+  benar-benar jatuh sendiri sebagai pesan proaktif berkancing, jeda empat menit
+  idle tidak merusak apa pun, konteks bertahan saat topik pindah lalu kembali,
+  dan sesudah restart Harvy masih menjawab angka yang disebut sebelum restart.
+  Penilaian content-free: usefulness 4, naturalness 3, initiative 4,
+  nonRepetition 3, uiClarity 3, contextCoherence 4, correctionHandling 5,
+  completion `partial`. **Ini bukan bukti dogfood tujuh hari**—seluruh giliran
+  penggunanya dikarang, jadi yang terukur kelas mekanis, bukan kegunaan.
+
+  Journey itu berhenti di giliran 35 karena kuota, dan angkanya layak dicatat
+  sendiri: plan `personal_perkenalan` memberi `rolling24hTokenLimit` 200.000
+  dengan `rollingWindowHours` 24, sehingga sekitar 30 giliran percakapan seperti
+  ini menghabiskan jatah sehari penuh. Copy yang muncul—"Batas pemakaian
+  singkat Harvy tercapai. Coba lagi setelah jeda"—membuat pengguna mengira
+  jedanya menit, bukan sampai 24 jam. Belum diperbaiki; itu keputusan produk.
+
+- **Diperbaiki: balasan mengaku menyimpan tanpa receipt.** Harvy menjawab
+  koreksi dengan "50 yang aku pegang sekarang, yang 30 aku lepas ya 📍",
+  sementara seluruh run hanya memuat satu `memory_write_outcome`—dan bukan dari
+  giliran itu. Penyimpanannya benar berisi satu catatan. Gerbang penghapus klaim
+  dulu menuntut `remembered.uncommitted`, yaitu adanya kandidat yang gagal
+  commit, sehingga giliran yang tidak punya kandidat sama sekali lolos utuh.
+  Yang menentukan sekarang hanya ada tidaknya receipt code-owned, pada Telegram,
+  WhatsApp, maupun grup.
+
+- **Diperbaiki: "udah kelar" tanpa mengubah apa pun.** Pengguna menyatakan tugas
+  selesai, Harvy mengiyakan, dan tugasnya tetap `active` di penyimpanan. Rutenya
+  benar menolak—`semantic-task-complete` datang dengan confidence 0,72,
+  di bawah ambang 0,9—dan giliran dieskalasikan ke Agent Runtime persis seperti
+  rancangannya. Log run itu `plannerMode: tools`, `capabilities: none`:
+  modelnya memegang `task.manage` dan tidak memanggilnya. Kalimat Harvy sendiri
+  bukan klaim palsu, melainkan gema ucapan pengguna, jadi yang ditambahkan
+  bukan sensor melainkan satu baris code-owned—`TASK_COMPLETION_NOT_APPLIED`—
+  yang hanya muncul ketika tidak ada capability tulis tugas yang benar-benar
+  berhasil pada giliran itu.
+
+  Penyebab penolakannya sendiri tidak dapat dipilih dari log: domain, operasi,
+  explicitness, dan reference semuanya tercatat di dalam allowlist. Tiga
+  pemeriksaan terakhir `semanticOperationAuthorized` karena itu ikut dicatat
+  sekarang—ambang confidence, subject, dan kecocokan evidence—dan semuanya
+  bebas isi.
+
+- **Diperbaiki: animasi status menahan jawaban sungguhan.** Satu giliran chat
+  biasa memakan 4 menit 12 detik (`handlingLatencyMs` 244.596) sementara
+  tetangganya 11-28 detik. Di tengahnya `telegram_request_rejected` dan
+  `telegram_progress_operation_failed`. Sebabnya bentuk antreannya: 355 dari 434
+  surface event journey itu adalah edit animasi pada irama satu detik, dan
+  `finish()` menunggu **seluruh** antrean sebelum jawaban dikirim—termasuk edit
+  kosmetik yang tertahan batas laju kanal. Tiga hal berubah: denyut yang datang
+  selagi render sebelumnya berjalan dibuang alih-alih menumpuk, satu render yang
+  ditolak menghentikan denyut seterusnya, dan penutupan berhenti menunggu
+  antrean sesudah `closeTimeoutMs`. Penghapusan surface tetap dijalankan; yang
+  dilepas hanya kewajiban jawaban ikut menunggunya.
+
+- **Diperbaiki: dua kebocoran kecil yang membuat kontrak terasa kosong.**
+  Balasan sempat membacakan protokol kita sendiri—"jadi aku pakai teks biasa
+  aja, tanpa perlu panggil tool apa-apa"—padahal aturan promptnya sudah lama
+  melarang menyebut nama tool; `withoutToolProtocolNarration` kini membuang
+  kalimat yang menceritakan pemanggilan function, dan hanya itu. Dan dua giliran
+  sesudah pengguna menekan "Langsung saran", Harvy masih menawarkan "Dengerin
+  dulu"; `adaptiveActions` sekarang menerima `stylePreference` dan tidak
+  menawarkan mendengarkan kepada pengguna yang sudah memilih saran.
+
+- Yang teramati tetapi tidak diperbaiki: empat kata rusak dalam 35 giliran
+  ("ataucampuran", "ngali", "ngebuatanya", "diempetin"), dan satu jawaban basi
+  soal jam tenang yang muncul sesudah restart padahal pengaturannya sudah
+  tersimpan. Keduanya belum punya sebab yang terbukti.
+
 - Exploratory journey bounded `tg-adaptive-20260824-a` menyelesaikan 25/25
   giliran dengan response surface, 77 surface event, satu restart, dan shutdown
   bersih. Assessment manual `completed` tetap membawa `generic-output`,
