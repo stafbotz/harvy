@@ -5609,7 +5609,7 @@ describe("alur adapter Telegram", () => {
     );
     assert.match(
       (dashboardCall.payload as { text: string }).text,
-      /^<b>Penggunaan Harvy<\/b>/u,
+      /^<b>Penggunaan Harvy · Toro<\/b>/u,
     );
 
     await harness.bot.handleUpdate(commandWithArgumentsUpdate(
@@ -7091,6 +7091,7 @@ function usageSummary(): UserUsageSummary {
       windowHours: 24,
       remainingBasisPoints: 10_000,
       enforced: true,
+      recoversAt: null,
     },
     effectiveAllowance: {
       remainingBasisPoints: 6_800,

@@ -88,6 +88,17 @@ export interface EconomyUsageView {
   rollingWindowHours: number;
   rollingLimitComputeUnits: ComputeAmount;
   rollingUsedComputeUnits: ComputeAmount;
+  /**
+   * Kapan bagian pertama jendela pendek kembali menjadi jatah, bila ada
+   * pemakaian di dalamnya.
+   *
+   * Jendela ini berjalan, sehingga tiap pemakaian keluar dari hitungan tepat
+   * `rollingWindowHours` sesudah terjadi. Yang paling berguna diketahui
+   * pengguna yang kehabisan bukan mekanismenya, melainkan pukul berapa ia bisa
+   * melanjutkan—dan itu waktu pemakaian tertua yang masih dihitung, ditambah
+   * lebar jendelanya.
+   */
+  rollingRecoversAt: string | null;
   health: UsageHealth;
   nextResetAt: string;
   fundingPreference: FundingPreferenceMode;
@@ -560,6 +571,14 @@ export class EconomyService implements EconomyFundingAuthority {
       const rollingUsed = sumAmounts(
         projection.rollingCharges.map((item) => item.computeUnits),
       ) + BigInt(projection.rollingReserved);
+      const oldestRollingCharge = projection.rollingCharges.reduce<number | null>(
+        (oldest, item) => {
+          const at = Date.parse(item.at);
+          if (!Number.isFinite(at)) return oldest;
+          return oldest === null || at < oldest ? at : oldest;
+        },
+        null,
+      );
       const sponsoredRemaining = sponsored.reduce(
         (sum, grant) => sum + BigInt(grant.amount) - BigInt(grant.used) - BigInt(grant.reserved),
         0n,
@@ -589,6 +608,12 @@ export class EconomyService implements EconomyFundingAuthority {
         rollingWindowHours: owner.policy.rollingWindowHours,
         rollingLimitComputeUnits: owner.policy.rollingComputeLimit,
         rollingUsedComputeUnits: rollingUsed.toString(),
+        rollingRecoversAt: oldestRollingCharge === null
+          ? null
+          : new Date(
+              oldestRollingCharge +
+                owner.policy.rollingWindowHours * 60 * 60 * 1_000,
+            ).toISOString(),
         health: healthFromRemaining(
           remaining + sponsoredRemaining,
           BigInt(period.includedGranted) + sponsoredGranted,

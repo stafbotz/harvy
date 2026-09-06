@@ -51,6 +51,8 @@ export interface UserUsageSummary {
     remainingBasisPoints: number;
     /** Batas nol berarti kanal ini memang tidak memakai jendela pendek. */
     enforced: boolean;
+    /** Kapan bagian pertama jendela kembali menjadi jatah; null bila kosong. */
+    recoversAt: string | null;
   };
   /**
    * Anggaran yang benar-benar mengikat sekarang, yaitu yang sisa **absolut**-nya
@@ -248,6 +250,7 @@ function summarizeUserUsage(
       windowHours: view.rollingWindowHours,
       remainingBasisPoints: rollingRemainingBasisPoints,
       enforced: rollingEnforced,
+      recoversAt: view.rollingRecoversAt,
     },
     effectiveAllowance: {
       remainingBasisPoints: rollingBinds

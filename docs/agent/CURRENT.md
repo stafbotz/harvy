@@ -8,12 +8,12 @@ Context-Version: 1
 
 - Diperiksa terhadap `6c65494`; perubahan material yang dirangkum di sini
   dimulai di atas `5b294a1`. Status commit dan push dibaca dari Git.
-- `npm run check` PASS dan `npm test` 2.373 lulus 0 gagal; bagian Aktif
+- `npm run check` PASS dan `npm test` 2.388 lulus 0 gagal; bagian Aktif
   `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
   dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
 - Telemetri pemakaian nyata 3 September 2026, 13 giliran Telegram: jalur
   pemahaman 5 `core-only`, 5 `core-escalated`, 3 `direct-full`; keselamatan
-  13/13 `calm`+`certain`, jadi izin tulis memori terbuka penuh.
+  13/13 `calm`+`certain`.
 - Biaya dari lalu lintas yang sama: pass pemahaman 1.018 token dan 2.179 ms
   lawan kontrak penuh 7.646 token dan 4.410 ms, 48% lebih hemat.
 - Pencarian memori berdasarkan makna diuji pada model lokal sungguhan dengan
@@ -30,17 +30,18 @@ Context-Version: 1
   detik kini digabung, berhenti sesudah satu penolakan kanal, dan tidak lagi
   ditunggu tanpa batas; serta narasi protokol tool di dalam balasan dan tawaran
   "Dengerin dulu" kepada pengguna yang memilih "Langsung saran". Run kedua
-  melengkapi delapan marker mode full dan memverifikasi tiga di antaranya dari
-  kanal. Run ketiga dan keempat: "sisa penggunaan" menjawab kuota periode
-  padahal yang menghentikan percakapan adalah jendela 24 jam—97% lawan 22,9%
-  pada saat yang sama—jadi ia kini menampilkan anggaran yang sisa absolutnya
-  paling kecil dan menyebut yang mana.
+  melengkapi delapan marker mode full. Run ketiga dan keempat: "sisa
+  penggunaan" menjawab kuota periode padahal yang menghentikan percakapan
+  adalah jendela 24 jam—97% lawan 22,9% pada saat yang sama—jadi ia kini
+  menampilkan anggaran yang sisa absolutnya paling kecil dan menyebut yang
+  mana. Tampilannya diringkas dari 35 baris menjadi 9, dan keterangannya
+  berhenti menjelaskan mekanisme begitu jatah tinggal seperempat—ia menyebut
+  pukul berapa jatah bertambah lagi.
 - Ingatan jahitan pada `history.search` ditutup. `scoreEpisode` membuang klaim
   yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku, dan
-  klaim `unresolved` justru jarang mengulang kata topiknya. Sebelum: 24 run
-  memberi 18 tepat, 4 jujur tidak menemukan, 2 menjahit klaim dua percakapan
-  menjadi ingatan yang tidak pernah terjadi. Sesudah `withRequestedFields`:
-  48 run, nol jahitan, nol tidak menemukan.
+  klaim `unresolved` justru jarang mengulang kata topiknya. Sebelum
+  `withRequestedFields`: 24 run memberi 18 tepat, 2 di antaranya menjahit klaim
+  dua percakapan. Sesudah: 48 run, nol jahitan.
 - Jalur planning durable: penolakan bentuk jawaban yang membuang sintesis
   (`structuredFieldBudgetCharacters`), anggaran waktu lane durable yang terpisah
   dari lane chat (`DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik), dan pengulangan

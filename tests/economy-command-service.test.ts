@@ -32,6 +32,7 @@ function usage(overrides: Partial<EconomyUsageView> = {}): EconomyUsageView {
     rollingWindowHours: 24,
     rollingLimitComputeUnits: "200000000",
     rollingUsedComputeUnits: "0",
+    rollingRecoversAt: null,
     health: "healthy",
     nextResetAt: "2026-09-20T00:00:00.000Z",
     fundingPreference: "harvy_first",

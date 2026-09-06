@@ -512,6 +512,44 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   nonRepetition 4, uiClarity 3, contextCoherence 5, correctionHandling 4,
   completion `partial`—scope-nya memang satu pertanyaan, bukan perjalanan penuh.
 
+- **Tampilan `/penggunaan` diringkas dari 35 baris menjadi 9.** Baris terpanjang
+  turun dari 129 karakter menjadi 55. Bentuk lamanya memberi ruang yang sama
+  besar kepada hal yang paling sering ditanya dan hal yang hampir tidak pernah
+  ditanya: sembilan seksi, tiap label memakan tiga baris, dan "Efisiensi ·
+  Hemat dari cache ≈ $0.00" sepadan dengan sisa penggunaan. Jawaban dari
+  pertanyaan yang membuat orang membukanya ada di baris 11.
+
+      Penggunaan Harvy · Perkenalan
+
+      Sisa sekarang
+      █████░░░░░░░░░░░░░░░ 22%
+      Jatah nambah lagi sekitar besok pukul 12.51
+
+      Kuota periode 97% · reset 6 Oktober
+      Aktivitas 529.8k masuk (172.1k cache) · 17.5k keluar
+      Ditanggung Harvy $0.00 · sebagian biaya belum terhitung
+
+  Yang dihapus dari tampilan hanyalah seksi Efisiensi—cache hit dan hemat
+  cache—beserta dua seksi yang mengatakan hal sama dengan cara berbeda ("Sumber
+  biaya" dan "Saat ini menggunakan", kini satu baris). Nilainya tetap ada pada
+  `UserUsageSummary` bagi pemanggil lain. Peringatan kuota hampir habis tidak
+  ikut hilang; ia menempati baris keterangan yang sama.
+
+- **Baris keterangan menyesuaikan diri.** Saat jatah masih longgar ia
+  menjelaskan mekanismenya sekali—"Batas 24 jam terakhir, bukan per hari".
+  Begitu tinggal seperempat, ia berhenti menjelaskan dan menjawab pertanyaan
+  yang sebenarnya: pukul berapa jatahnya bertambah lagi, dihitung dari
+  pemakaian tertua yang masih di dalam jendela plus lebar jendelanya
+  (`rollingRecoversAt`). Ambang seperempat dipilih dari pengukuran: satu
+  giliran percakapan memakan sekitar 2% jatah harian pada plan Perkenalan, jadi
+  seperempat berarti belasan giliran lagi—titik ketika "kapan aku bisa lanjut"
+  mulai menjadi pertanyaan nyata.
+
+  Keluaran pertamanya di kanal berbunyi "sekitar pukul 12.51" pada pukul
+  19.00—jam yang sudah lewat hari itu. Jendela berjalan membuat pemulihan
+  selalu berada di dalam 24 jam ke depan, jadi tanggal yang berbeda hanya bisa
+  berarti besok, dan sekarang kata itu ikut ditulis.
+
 - Run kedua journey yang sama, 6 September 2026, sesudah keempat perbaikan di
   atas dan sesudah kuota akun penguji dinaikkan lewat kontrol operator
   (`quotaOverride`, hanya pada root journey ini). `resumed: true`, lima giliran,

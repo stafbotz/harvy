@@ -29,47 +29,207 @@ export function renderUsageDashboard(
   summary: UserUsageSummary,
   channel: UsageDashboardChannel,
   timeZone = "Asia/Jakarta",
+  now: Date = new Date(),
 ): RenderedUsageDashboard {
   const format = semanticFormatter(channel);
   const sections: string[][] = [
-    [format.bold("Penggunaan Harvy"), "────────────────────────"],
-    [format.bold("Paket"), format.text(summary.plan.publicName)],
-    [
-      format.bold("Periode"),
-      format.text(formatPeriod(summary.period.startsAt, summary.period.endsAt, timeZone)),
-    ],
-    remainingSection(summary, format),
-    periodPoolSection(summary, format),
-    [
-      format.bold("Reset"),
-      format.text(formatResetDate(summary.period.resetsAt, summary.period.startsAt, timeZone)),
-    ],
-    activitySection(summary, format),
-    costSection(summary, format),
-    fundingSection(summary, format),
+    [format.bold(`Penggunaan Harvy · ${summary.plan.publicName}`)],
+    remainingSection(summary, format, timeZone, now),
+    contextSection(summary, format, timeZone),
   ];
-  const efficiency = efficiencySection(summary, format);
-  if (efficiency) sections.push(efficiency);
-  const current = currentFundingSection(summary, format);
-  if (current) sections.push(current);
   if (summary.allowance.state === "exhausted") {
     sections.push([
       summary.plan.isFree
         ? "Penggunaan gratis periode ini sudah terpakai."
         : "Kapasitas paket periode ini sudah terpakai.",
-      "",
       "Kamu masih bisa melanjutkan dengan paket Harvy, saldo tambahan, API milikmu, atau menunggu reset.",
     ].map((line) => format.text(line)));
   }
   return {
-    // Bagian kosong—misalnya jendela pendek yang memang tidak ditegakkan
-    // pada kanal ini—tidak boleh meninggalkan baris kosong ganda.
+    // Bagian kosong tidak boleh meninggalkan baris kosong ganda.
     text: sections
       .filter((section) => section.length > 0)
       .map((section) => section.join("\n"))
       .join("\n\n"),
     telegramParseMode: channel === "telegram" ? "HTML" : null,
   };
+}
+
+/**
+ * Ambang saat jam pemulihan lebih berguna daripada penjelasan mekanismenya.
+ *
+ * Satu giliran percakapan memakan sekitar 2% jatah harian pada plan Perkenalan
+ * (diukur 6 September 2026: 35 giliran menghabiskan 77% jatah). Seperempat
+ * jatah karena itu berarti belasan giliran lagi—titik ketika "kapan aku bisa
+ * lanjut" mulai menjadi pertanyaan nyata, dan penjelasan cara kerja jendela
+ * berhenti menolong.
+ */
+const RECOVERY_HINT_BASIS_POINTS = 2_500;
+
+/**
+ * Sisa yang benar-benar bisa dipakai sekarang.
+ *
+ * Menjawab satu pertanyaan: berapa banyak lagi sebelum ada yang menghentikan.
+ * Sampai 6 September 2026 baris ini menampilkan kuota periode, dan pada plan
+ * Perkenalan kuota itu tepat 30 kali jatah hariannya—sehingga ia hampir tidak
+ * pernah bisa turun jauh dan membaca 97% pada hari pengguna benar-benar
+ * terhenti.
+ */
+function remainingSection(
+  summary: UserUsageSummary,
+  format: SemanticFormatter,
+  timeZone: string,
+  now: Date,
+): string[] {
+  const remaining = normalizeBasisPoints(
+    summary.effectiveAllowance.remainingBasisPoints,
+  );
+  const lines = [
+    format.bold("Sisa sekarang"),
+    format.text(
+      `${usageProgressBarFromBasisPoints(remaining)} ${
+        formatRemainingPercentage(remaining)
+      }`,
+    ),
+  ];
+  const note = remainingNote(summary, remaining, timeZone, now);
+  if (note) lines.push(format.text(note));
+  return lines;
+}
+
+/**
+ * Keterangan di bawah batang: mekanisme saat longgar, jam pemulihan saat mepet.
+ *
+ * Penjelasan cara kerja berguna sekali lalu menjadi kebisingan; jam pemulihan
+ * berguna tiap kali pengguna mepet. Keduanya karena itu tidak pernah tampil
+ * bersamaan.
+ */
+function remainingNote(
+  summary: UserUsageSummary,
+  remaining: number,
+  timeZone: string,
+  now: Date,
+): string | null {
+  if (summary.effectiveAllowance.binding !== "rolling") {
+    const state = summary.allowance.state;
+    return state === "getting_low" || state === "low" || state === "exhausted"
+      ? "Kuota periode hampir habis, pulih saat reset"
+      : null;
+  }
+  const jam = summary.rollingAllowance.windowHours;
+  const recoversAt = summary.rollingAllowance.recoversAt;
+  if (remaining <= RECOVERY_HINT_BASIS_POINTS && recoversAt) {
+    const at = new Date(recoversAt);
+    if (at.getTime() > now.getTime()) {
+      return `Jatah nambah lagi sekitar ${formatClock(at, timeZone, now)}`;
+    }
+  }
+  return `Batas ${jam} jam terakhir, bukan per hari`;
+}
+
+/** Baris pendamping: kolam periode, aktivitas, dan siapa yang menanggung. */
+function contextSection(
+  summary: UserUsageSummary,
+  format: SemanticFormatter,
+  timeZone: string,
+): string[] {
+  const usage = summary.modelUsage;
+  const cached = usage.cachedInputTokens !== null && usage.cachedInputTokens > 0
+    ? ` (${formatCompactUsage(usage.cachedInputTokens)} cache)`
+    : "";
+  const lines = [
+    format.text(
+      `Kuota periode ${
+        formatRemainingPercentage(
+          normalizeBasisPoints(summary.allowance.remainingBasisPoints),
+        )
+      } · reset ${
+        formatResetDate(summary.period.resetsAt, summary.period.startsAt, timeZone)
+      }`,
+    ),
+    format.text(
+      `Aktivitas ${formatCompactUsage(usage.inputTokens)} masuk${cached} · ${
+        formatCompactUsage(usage.outputTokens)
+      } keluar${usage.hasEstimatedUsage ? " (sebagian perkiraan)" : ""}`,
+    ),
+  ];
+  const funding = fundingLine(summary);
+  if (funding) lines.push(format.text(funding));
+  return lines;
+}
+
+/**
+ * Satu baris untuk siapa yang menanggung biayanya.
+ *
+ * Menggantikan dua seksi lama—daftar "Sumber biaya" dan "Saat ini
+ * menggunakan"—yang pada akun gratis biasa berisi satu butir dan satu label
+ * yang mengatakan hal yang sama.
+ */
+function fundingLine(summary: UserUsageSummary): string | null {
+  const { funding } = summary;
+  const included = BigInt(funding.includedUsdNanos);
+  const overhead = BigInt(funding.harvyOverheadUsdNanos);
+  const byok = BigInt(funding.byokUsdNanos);
+  const sponsored = BigInt(funding.sponsoredUsdNanos);
+  const current = funding.current?.type ?? null;
+  const parts: string[] = [];
+  if (summary.plan.isFree) {
+    const harvy = included + overhead;
+    if (harvy > 0n || current === "free") {
+      parts.push(`Ditanggung Harvy ${formatUsd(harvy.toString())}`);
+    }
+  } else {
+    if (included > 0n || current === "plan") {
+      parts.push(`Termasuk paket ${formatUsd(included.toString())}`);
+    }
+    if (overhead > 0n) {
+      parts.push(`Ditanggung Harvy ${formatUsd(overhead.toString())}`);
+    }
+  }
+  if (sponsored > 0n || current === "sponsored") {
+    parts.push(`Bersponsor ${formatUsd(sponsored.toString())}`);
+  }
+  if (byok > 0n || current === "byok") {
+    parts.push(`API milikmu ${formatUsd(byok.toString())}`);
+  }
+  if (funding.paygUsed || funding.paygRelevant || current === "payg") {
+    parts.push(
+      funding.paygIdr === null
+        ? "Saldo tambahan: jumlah belum tersedia"
+        : `Saldo tambahan ${formatIdr(funding.paygIdr)}`,
+    );
+  }
+  if (parts.length === 0) return "Belum ada biaya pada periode ini";
+  const incomplete = summary.cost.completeness !== "complete"
+    ? " · sebagian biaya belum terhitung"
+    : "";
+  return `${parts.join(" · ")}${incomplete}`;
+}
+
+/**
+ * Jam pemulihan, dengan "besok" ketika tanggalnya memang berbeda.
+ *
+ * Jendela berjalan membuat pemulihan selalu berada di dalam 24 jam ke depan,
+ * jadi tanggal yang berbeda hanya bisa berarti besok. Tanpa kata itu, keluaran
+ * pertama di kanal nyata berbunyi "sekitar pukul 12.51" pada pukul 19.00—jam
+ * yang sudah lewat hari itu, dan pembacanya tidak punya cara tahu bahwa yang
+ * dimaksud hari berikutnya.
+ */
+function formatClock(value: Date, timeZone: string, now: Date): string {
+  const hari = new Intl.DateTimeFormat("id-ID", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  });
+  const besok = hari.format(value) !== hari.format(now) ? "besok " : "";
+  return `${besok}pukul ${
+    new Intl.DateTimeFormat("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone,
+    }).format(value).replace(":", ".")
+  }`;
 }
 
 const BASIS_POINTS_FULL = 10_000;
@@ -142,58 +302,7 @@ export function formatCompactUsage(value: number): string {
   return scaled(value, 1_000_000, "M");
 }
 
-function remainingSection(
-  summary: UserUsageSummary,
-  format: SemanticFormatter,
-): string[] {
-  const remainingBasisPoints = normalizeBasisPoints(
-    summary.effectiveAllowance.remainingBasisPoints,
-  );
-  const lines = [
-    format.bold("Sisa penggunaan"),
-    format.text(
-      `${usageProgressBarFromBasisPoints(remainingBasisPoints)} ${
-        formatRemainingPercentage(remainingBasisPoints)
-      }`,
-    ),
-  ];
-  // Pelengkap dari batang di atasnya, jadi keduanya selalu bicara tentang
-  // anggaran yang sama. Sebelumnya baris ini memakai persentase kolam periode
-  // sementara batangnya sudah menampilkan anggaran yang mengikat.
-  if (remainingBasisPoints < 10_000 && remainingBasisPoints >= 9_900) {
-    lines.push(format.text(
-      `Terpakai: ${formatUsedPercentage(10_000 - remainingBasisPoints)}`,
-    ));
-  }
-  lines.push(format.text(
-    summary.effectiveAllowance.binding === "rolling"
-      ? `Yang membatasi sekarang: jatah ${summary.rollingAllowance.windowHours} jam terakhir. Jendela berjalan—yang terpakai pulih ${summary.rollingAllowance.windowHours} jam kemudian, bukan pada pergantian hari.`
-      : "Yang membatasi sekarang: kuota periode.",
-  ));
-  if (
-    summary.allowance.state === "getting_low" ||
-    summary.allowance.state === "low"
-  ) {
-    lines.push("", format.text("Penggunaanmu hampir habis untuk periode ini."));
-  }
-  return lines;
-}
 
-/** Kolam periode, yang kini menjadi keterangan pendamping alih-alih judulnya. */
-function periodPoolSection(
-  summary: UserUsageSummary,
-  format: SemanticFormatter,
-): string[] {
-  const remaining = normalizeBasisPoints(summary.allowance.remainingBasisPoints);
-  return [
-    format.bold("Kuota periode"),
-    format.text(
-      `${usageProgressBarFromBasisPoints(remaining)} ${
-        formatRemainingPercentage(remaining)
-      }`,
-    ),
-  ];
-}
 
 function normalizeBasisPoints(value: number): number {
   if (!Number.isSafeInteger(value)) return 0;
@@ -206,21 +315,6 @@ function nearFullPrecision(remainingBasisPoints: number): 1 | 2 {
   return Math.floor((remainingBasisPoints + 5) / 10) >= 1_000 ? 2 : 1;
 }
 
-function formatUsedPercentage(usedBasisPoints: number): string {
-  const safeUsed = normalizeBasisPoints(usedBasisPoints);
-  const remaining = BASIS_POINTS_FULL - safeUsed;
-  const precision = nearFullPrecision(remaining);
-  const basisPointsPerDisplayUnit = precision === 1 ? 10 : 1;
-  const totalDisplayUnits = precision === 1 ? 1_000 : 10_000;
-  const roundedRemainingUnits = Math.floor(
-    (remaining + Math.floor(basisPointsPerDisplayUnit / 2)) /
-      basisPointsPerDisplayUnit,
-  );
-  return formatFixedPercent(
-    totalDisplayUnits - roundedRemainingUnits,
-    precision,
-  );
-}
 
 function formatRoundedBasisPoints(
   basisPoints: number,
@@ -245,134 +339,10 @@ function formatFixedPercent(value: number, precision: 1 | 2): string {
   return `${whole}.${fraction}%`;
 }
 
-function activitySection(
-  summary: UserUsageSummary,
-  format: SemanticFormatter,
-): string[] {
-  const usage = summary.modelUsage;
-  const cached = usage.cachedInputTokens !== null && usage.cachedInputTokens > 0
-    ? ` (${formatCompactUsage(usage.cachedInputTokens)} cached)`
-    : "";
-  const lines = [
-    format.bold("Aktivitas AI"),
-    format.text(`Input: ${formatCompactUsage(usage.inputTokens)}${cached}`),
-    format.text(`Output: ${formatCompactUsage(usage.outputTokens)}`),
-  ];
-  if (usage.reasoningTokens !== null) {
-    lines.push(format.text(`Reasoning: ${formatCompactUsage(usage.reasoningTokens)}`));
-  }
-  if (usage.hasEstimatedUsage) {
-    lines.push(format.text("Sebagian angka aktivitas merupakan perkiraan."));
-  }
-  return lines;
-}
 
-function costSection(
-  summary: UserUsageSummary,
-  format: SemanticFormatter,
-): string[] {
-  const lines = [format.bold("Biaya penggunaan AI")];
-  const total = summary.cost.totalProviderCostUsdNanos;
-  if (summary.cost.completeness === "complete" && total !== null) {
-    lines.push(format.text(`Total: ${formatUsd(total)}`));
-  } else if (total !== null) {
-    lines.push(
-      format.text(`Total tercatat: ${formatUsd(total)}`),
-      format.text("Sebagian penggunaan belum dapat dihitung."),
-    );
-  } else {
-    lines.push(format.text("Sebagian biaya belum dapat dihitung."));
-  }
-  return lines;
-}
 
-function fundingSection(
-  summary: UserUsageSummary,
-  format: SemanticFormatter,
-): string[] {
-  const { funding } = summary;
-  const lines = [format.bold("Sumber biaya")];
-  const included = BigInt(funding.includedUsdNanos);
-  const overhead = BigInt(funding.harvyOverheadUsdNanos);
-  const byok = BigInt(funding.byokUsdNanos);
-  const sponsored = BigInt(funding.sponsoredUsdNanos);
-  const current = funding.current?.type ?? null;
-  if (summary.plan.isFree) {
-    const harvy = included + overhead;
-    if (harvy > 0n || current === "free") {
-      lines.push(format.text(`• Ditanggung Harvy: ${formatUsd(harvy.toString())}`));
-    }
-  } else {
-    if (included > 0n || current === "plan") {
-      lines.push(format.text(`• Termasuk paket: ${formatUsd(included.toString())}`));
-    }
-    if (overhead > 0n) {
-      lines.push(format.text(`• Ditanggung Harvy: ${formatUsd(overhead.toString())}`));
-    }
-  }
-  if (sponsored > 0n || current === "sponsored") {
-    lines.push(format.text(`• Akses bersponsor: ${formatUsd(sponsored.toString())}`));
-  }
-  if (byok > 0n || current === "byok") {
-    lines.push(format.text(`• API milikmu: ${formatUsd(byok.toString())}`));
-  }
-  if (funding.paygUsed || funding.paygRelevant || current === "payg") {
-    lines.push(format.text(
-      funding.paygIdr === null
-        ? "• Saldo tambahan: jumlah belum tersedia"
-        : `• Saldo tambahan: ${formatIdr(funding.paygIdr)}`,
-    ));
-  }
-  if (lines.length === 1) {
-    lines.push(format.text("Belum ada biaya pada periode ini."));
-  }
-  return lines;
-}
 
-function efficiencySection(
-  summary: UserUsageSummary,
-  format: SemanticFormatter,
-): string[] | null {
-  const hit = summary.efficiency.cacheHitPercent;
-  const cached = summary.modelUsage.cachedInputTokens;
-  if (hit === null) return null;
-  const lines = [format.bold("Efisiensi"), format.text(`Cache hit: ${hit}%`)];
-  if (cached !== null && cached > 0) {
-    lines.push(format.text(
-      summary.efficiency.cacheSavingsUsdNanos === null
-        ? "Hemat dari cache: Belum dapat dihitung"
-        : `Hemat dari cache: ≈ ${formatUsd(summary.efficiency.cacheSavingsUsdNanos)}`,
-    ));
-  }
-  return lines;
-}
 
-function currentFundingSection(
-  summary: UserUsageSummary,
-  format: SemanticFormatter,
-): string[] | null {
-  const current = summary.funding.current;
-  if (!current) return null;
-  let label: string;
-  switch (current.type) {
-    case "free":
-      label = "Penggunaan gratis Harvy";
-      break;
-    case "plan":
-      label = `Kuota paket ${current.publicName}`;
-      break;
-    case "payg":
-      label = "Saldo tambahan";
-      break;
-    case "byok":
-      label = `API milikmu · ${current.providerName}`;
-      break;
-    case "sponsored":
-      label = "Akses bersponsor";
-      break;
-  }
-  return [format.bold("Saat ini menggunakan"), format.text(label)];
-}
 
 function semanticFormatter(channel: UsageDashboardChannel): SemanticFormatter {
   if (channel === "telegram") {
@@ -398,17 +368,7 @@ function escapeWhatsApp(value: string): string {
   return value.replace(/([\\*_~`])/gu, "\\$1");
 }
 
-function formatPeriod(startsAt: string, endsAt: string, timeZone: string): string {
-  return `${formatShortDate(startsAt, timeZone)} – ${formatShortDate(endsAt, timeZone)}`;
-}
 
-function formatShortDate(value: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("id-ID", {
-    day: "numeric",
-    month: "short",
-    timeZone,
-  }).format(new Date(value)).replace(/\./gu, "");
-}
 
 function formatResetDate(value: string, startsAt: string, timeZone: string): string {
   const startYear = datePart(startsAt, timeZone, "year");

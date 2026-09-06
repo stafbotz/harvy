@@ -238,9 +238,9 @@ describe("user usage summary query", () => {
     assert.equal(summary.efficiency.cacheHitPercent, null);
     assert.equal(summary.efficiency.cacheSavingsUsdNanos, null);
     assert.equal(summary.cost.completeness, "unknown");
-    assert.match(rendered, /Input: 1\.2k/u);
-    assert.doesNotMatch(rendered, /cached|Reasoning:/u);
-    assert.match(rendered, /Sebagian biaya belum dapat dihitung/u);
+    assert.match(rendered, /Aktivitas 1\.2k masuk · 300 keluar/u);
+    assert.doesNotMatch(rendered, /cache|Reasoning/u);
+    assert.match(rendered, /sebagian biaya belum terhitung/u);
   });
 
   it("tidak membagi nol dan tidak mengarang saving tanpa snapshot historis", async () => {
@@ -257,9 +257,11 @@ describe("user usage summary query", () => {
     const summary = await missingSnapshot.summary("owner");
     assert.equal(summary.efficiency.cacheHitPercent, 50);
     assert.equal(summary.efficiency.cacheSavingsUsdNanos, null);
-    assert.match(
+    // Seksi efisiensi tidak lagi dirender sejak tampilan diringkas menjadi
+    // sembilan baris; nilainya tetap tersedia pada summary bagi pemanggil lain.
+    assert.doesNotMatch(
       renderUsageDashboard(summary, "plain").text,
-      /Hemat dari cache: Belum dapat dihitung/u,
+      /Hemat dari cache/u,
     );
   });
 
@@ -343,23 +345,16 @@ describe("usage dashboard formatting", () => {
     const whatsapp = renderUsageDashboard(summary, "whatsapp");
 
     assert.equal(telegram.telegramParseMode, "HTML");
-    assert.match(telegram.text, /^<b>Penggunaan Harvy<\/b>/u);
-    assert.match(telegram.text, /<b>Paket<\/b>\nToro/u);
-    assert.match(telegram.text, /21 Agu – 21 Sep/u);
-    assert.match(telegram.text, /<b>Reset<\/b>\n21 September/u);
+    assert.match(telegram.text, /^<b>Penggunaan Harvy · Toro<\/b>/u);
+    assert.match(telegram.text, /<b>Sisa sekarang<\/b>/u);
     assert.match(telegram.text, /██████████████░░░░░░ 68%/u);
-    assert.match(telegram.text, /Input: 184k \(121k cached\)/u);
-    assert.match(telegram.text, /Output: 31k\nReasoning: 18k/u);
-    assert.match(telegram.text, /Total: \$0\.18/u);
-    assert.match(telegram.text, /• Termasuk paket: \$0\.16/u);
-    assert.match(telegram.text, /• API milikmu: \$0\.02/u);
-    assert.match(telegram.text, /• Saldo tambahan: Rp0/u);
-    assert.match(telegram.text, /Cache hit: 66%/u);
-    assert.match(telegram.text, /Hemat dari cache: ≈ \$0\.11/u);
-    assert.match(telegram.text, /Kuota paket Toro/u);
+    assert.match(telegram.text, /Kuota periode 68% · reset 21 September/u);
+    assert.match(telegram.text, /Aktivitas 184k masuk \(121k cache\) · 31k keluar/u);
+    assert.match(telegram.text, /Termasuk paket \$0\.16/u);
+    assert.match(telegram.text, /API milikmu \$0\.02/u);
+    assert.match(telegram.text, /Saldo tambahan Rp0/u);
 
-    assert.match(whatsapp.text, /^\*Penggunaan Harvy\*/u);
-    assert.match(whatsapp.text, /\*Paket\*\nToro/u);
+    assert.match(whatsapp.text, /^\*Penggunaan Harvy · Toro\*/u);
     assert.doesNotMatch(whatsapp.text, /<b>|<\/b>/u);
     assert.doesNotMatch(whatsapp.text, /\bcompute\b|\bPAYG\b|\bBYOK\b|funding_source|included/iu);
   });
@@ -374,7 +369,7 @@ describe("usage dashboard formatting", () => {
 
     assert.match(telegram, /Toro &lt;A&amp;B&gt; \*pilot\*/u);
     assert.doesNotMatch(telegram, /Toro <A&B>/u);
-    assert.match(whatsapp, /Toro <A&B> \\?\*pilot\\?\*/u);
+    assert.match(whatsapp, /Toro <A&B> \\\*pilot\\\*/u);
     assert.doesNotMatch(whatsapp, /<b>/u);
     assert.match(plain, /^Penggunaan Harvy/u);
     assert.doesNotMatch(plain, /<b>|\*Penggunaan Harvy\*/u);
@@ -421,6 +416,7 @@ describe("usage dashboard formatting", () => {
           windowHours: 24,
           remainingBasisPoints: 2_290,
           enforced: true,
+          recoversAt: null,
         },
         effectiveAllowance: {
           remainingBasisPoints: 2_290,
@@ -433,16 +429,65 @@ describe("usage dashboard formatting", () => {
     // Yang dijawab 22%, bukan 97% kolam periodenya. Dibulatkan ke bawah:
     // lebih baik menganggap ruangnya lebih sempit daripada lebih lega.
     const sisa = rendered.text.slice(
-      rendered.text.indexOf("Sisa penggunaan"),
+      rendered.text.indexOf("Sisa sekarang"),
       rendered.text.indexOf("Kuota periode"),
     );
     assert.match(sisa, /22%/u);
     assert.doesNotMatch(sisa, /97%/u);
-    assert.match(sisa, /Yang membatasi sekarang: jatah 24 jam terakhir/u);
-    assert.match(sisa, /bukan pada pergantian hari/u);
+    assert.match(sisa, /Batas 24 jam terakhir, bukan per hari/u);
     // Kolam periodenya tidak hilang, hanya turun menjadi pendamping.
     assert.match(rendered.text, /Kuota periode/u);
     assert.match(rendered.text, /97%/u);
+  });
+
+  // Keluaran pertama di kanal nyata berbunyi "sekitar pukul 12.51" pada pukul
+  // 19.00—jam yang sudah lewat hari itu. Jendela berjalan membuat pemulihan
+  // selalu berada di dalam 24 jam ke depan, jadi tanggal yang berbeda hanya
+  // bisa berarti besok, dan itu wajib disebut.
+  it("menyebut jam pemulihan, dengan besok ketika tanggalnya berbeda", () => {
+    const summary = (recoversAt: string): UserUsageSummary =>
+      acceptanceSummary({
+        rollingAllowance: {
+          windowHours: 24,
+          remainingBasisPoints: 600,
+          enforced: true,
+          recoversAt,
+        },
+        effectiveAllowance: { remainingBasisPoints: 600, binding: "rolling" },
+      });
+    // 12.00 UTC = 19.00 WIB.
+    const sekarang = new Date("2026-09-06T12:00:00.000Z");
+
+    // 13.30 UTC = 20.30 WIB, masih hari yang sama.
+    assert.match(
+      renderUsageDashboard(
+        summary("2026-09-06T13:30:00.000Z"),
+        "plain",
+        "Asia/Jakarta",
+        sekarang,
+      ).text,
+      /Jatah nambah lagi sekitar pukul 20\.30/u,
+    );
+    // 05.51 UTC keesokan harinya = 12.51 WIB besok.
+    assert.match(
+      renderUsageDashboard(
+        summary("2026-09-07T05:51:00.000Z"),
+        "plain",
+        "Asia/Jakarta",
+        sekarang,
+      ).text,
+      /Jatah nambah lagi sekitar besok pukul 12\.51/u,
+    );
+    // Waktu yang sudah lewat tidak pernah ditawarkan sebagai janji.
+    assert.match(
+      renderUsageDashboard(
+        summary("2026-09-06T11:00:00.000Z"),
+        "plain",
+        "Asia/Jakarta",
+        sekarang,
+      ).text,
+      /Batas 24 jam terakhir, bukan per hari/u,
+    );
   });
 
   it("menyebut kuota periode sebagai pembatas ketika memang ia yang mengikat", () => {
@@ -457,6 +502,7 @@ describe("usage dashboard formatting", () => {
           windowHours: 24,
           remainingBasisPoints: 9_800,
           enforced: true,
+          recoversAt: null,
         },
         effectiveAllowance: {
           remainingBasisPoints: 1_200,
@@ -466,77 +512,35 @@ describe("usage dashboard formatting", () => {
       "plain",
     );
 
-    assert.match(rendered.text, /Yang membatasi sekarang: kuota periode/u);
-    assert.doesNotMatch(rendered.text, /pergantian hari/u);
+    assert.match(rendered.text, /Kuota periode hampir habis, pulih saat reset/u);
+    assert.doesNotMatch(rendered.text, /24 jam/u);
   });
 
-  it("menampilkan Terpakai dari basis points yang sama hanya di dekat 100%", () => {
-    // `effectiveAllowance` ikut disetel: baris ini menguji kolam periode, dan
-    // sejak 6 September 2026 judul "Sisa penggunaan" menampilkan anggaran yang
-    // mengikat, bukan kolam itu.
-    const untouched = renderUsageDashboard(acceptanceSummary({
-      allowance: {
-        remainingBasisPoints: 10_000,
-        usedBasisPoints: 0,
-        state: "healthy",
-      },
-      effectiveAllowance: { remainingBasisPoints: 10_000, binding: "period" },
-    }), "plain").text;
-    const slightlyUsed = renderUsageDashboard(acceptanceSummary({
-      allowance: {
-        remainingBasisPoints: 9_980,
-        usedBasisPoints: 20,
-        state: "healthy",
-      },
-      effectiveAllowance: { remainingBasisPoints: 9_980, binding: "period" },
-    }), "plain").text;
-    const belowThreshold = renderUsageDashboard(acceptanceSummary({
-      allowance: {
-        remainingBasisPoints: 9_800,
-        usedBasisPoints: 200,
-        state: "healthy",
-      },
-    }), "plain").text;
-
-    assert.match(untouched, /████████████████████ 100%/u);
-    assert.doesNotMatch(untouched, /Terpakai:/u);
-    assert.match(slightlyUsed, /███████████████████▉ 99\.8%\nTerpakai: 0\.2%/u);
-    assert.doesNotMatch(belowThreshold, /Terpakai:/u);
-
-    const nearFull = acceptanceSummary({
-      allowance: {
-        remainingBasisPoints: 9_980,
-        usedBasisPoints: 20,
-        state: "healthy",
-      },
-      effectiveAllowance: { remainingBasisPoints: 9_980, binding: "period" },
-    });
-    const telegram = renderUsageDashboard(nearFull, "telegram").text;
-    const whatsapp = renderUsageDashboard(nearFull, "whatsapp").text;
-    assert.match(
-      telegram,
-      /<b>Sisa penggunaan<\/b>\n███████████████████▉ 99\.8%\nTerpakai: 0\.2%/u,
-    );
-    assert.match(
-      whatsapp,
-      /\*Sisa penggunaan\*\n███████████████████▉ 99\.8%\nTerpakai: 0\.2%/u,
-    );
-
-    for (const [remaining, used, expected] of [
-      [9_999, 1, "99.99%\nTerpakai: 0.01%"],
-      [9_990, 10, "99.9%\nTerpakai: 0.1%"],
-      [9_940, 60, "99.4%\nTerpakai: 0.6%"],
-      [9_900, 100, "99.0%\nTerpakai: 1.0%"],
-    ] as const) {
-      const rendered = renderUsageDashboard(acceptanceSummary({
+  // Batang dan persentase harus membedakan pemakaian kecil dari 100%; sejak
+  // tampilan diringkas, baris "Terpakai" tidak ada lagi dan tugas itu
+  // sepenuhnya dipikul keduanya.
+  it("tidak menyamakan pemakaian kecil dengan jatah yang belum tersentuh", () => {
+    const render = (basisPoints: number): string =>
+      renderUsageDashboard(acceptanceSummary({
         allowance: {
-          remainingBasisPoints: remaining,
-          usedBasisPoints: used,
+          remainingBasisPoints: basisPoints,
+          usedBasisPoints: 10_000 - basisPoints,
           state: "healthy",
         },
-        effectiveAllowance: { remainingBasisPoints: remaining, binding: "period" },
+        effectiveAllowance: { remainingBasisPoints: basisPoints, binding: "period" },
       }), "plain").text;
-      assert.ok(rendered.includes(expected));
+
+    assert.match(render(10_000), /████████████████████ 100%/u);
+    for (const [basisPoints, expected] of [
+      [9_999, "99.99%"],
+      [9_990, "99.9%"],
+      [9_940, "99.4%"],
+      [9_900, "99.0%"],
+      [9_800, "98%"],
+    ] as const) {
+      const rendered = render(basisPoints);
+      assert.ok(rendered.includes(expected), `${basisPoints}: ${rendered}`);
+      assert.doesNotMatch(rendered, /████████████████████ 100%/u);
     }
   });
 
@@ -548,8 +552,7 @@ describe("usage dashboard formatting", () => {
         resetsAt: "2027-01-01T17:00:00.000Z",
       },
     }), "plain").text;
-    assert.match(rendered, /Periode\n21 Des – 2 Jan/u);
-    assert.match(rendered, /Reset\n2 Januari 2027/u);
+    assert.match(rendered, /reset 2 Januari 2027/u);
   });
 
   it("memakai copy Free, PAYG, BYOK, dan exhausted tanpa enum internal", () => {
@@ -568,7 +571,7 @@ describe("usage dashboard formatting", () => {
         current: null,
       },
     }), "plain").text;
-    assert.match(free, /Ditanggung Harvy: \$0\.18/u);
+    assert.match(free, /Ditanggung Harvy \$0\.18/u);
     assert.match(free, /Penggunaan gratis periode ini sudah terpakai/u);
 
     const payg = renderUsageDashboard(acceptanceSummary({
@@ -581,8 +584,7 @@ describe("usage dashboard formatting", () => {
         current: { type: "payg" },
       },
     }), "plain").text;
-    assert.match(payg, /Saldo tambahan: Rp6\.400/u);
-    assert.match(payg, /Saat ini menggunakan\nSaldo tambahan/u);
+    assert.match(payg, /Saldo tambahan Rp6\.400/u);
 
     const byok = renderUsageDashboard(acceptanceSummary({
       funding: {
@@ -593,8 +595,7 @@ describe("usage dashboard formatting", () => {
         current: { type: "byok", providerName: "OpenAI" },
       },
     }), "plain").text;
-    assert.match(byok, /API milikmu: \$0\.18/u);
-    assert.match(byok, /API milikmu · OpenAI/u);
+    assert.match(byok, /API milikmu \$0\.18/u);
     assert.doesNotMatch(byok, /credential|secret|subject_/iu);
   });
 
@@ -607,7 +608,7 @@ describe("usage dashboard formatting", () => {
           state,
         },
       }), "plain").text;
-      assert.match(rendered, /Penggunaanmu hampir habis untuk periode ini/u);
+      assert.match(rendered, /Kuota periode hampir habis, pulih saat reset/u);
     }
     assert.doesNotMatch(
       renderUsageDashboard(acceptanceSummary(), "plain").text,
@@ -650,6 +651,7 @@ function accounting(
       rollingWindowHours: 24,
       rollingLimitComputeUnits: "200000000",
       rollingUsedComputeUnits: "0",
+      rollingRecoversAt: null,
       health: "healthy",
       nextResetAt: PERIOD_END,
       fundingPreference: "harvy_first",
@@ -758,6 +760,7 @@ function acceptanceSummary(overrides: Partial<UserUsageSummary> = {}): UserUsage
       windowHours: 24,
       remainingBasisPoints: 10_000,
       enforced: true,
+      recoversAt: null,
     },
     effectiveAllowance: {
       remainingBasisPoints: 6_800,
