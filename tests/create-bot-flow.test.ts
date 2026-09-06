@@ -7092,6 +7092,10 @@ function usageSummary(): UserUsageSummary {
       remainingBasisPoints: 10_000,
       enforced: true,
     },
+    effectiveAllowance: {
+      remainingBasisPoints: 6_800,
+      binding: "period",
+    },
     modelUsage: {
       inputTokens: 184_000,
       cachedInputTokens: 121_000,

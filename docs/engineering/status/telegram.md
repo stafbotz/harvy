@@ -475,17 +475,32 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   tidak ada angka yang dikarang model—yang salah bukan pengambilan angkanya
   melainkan angka mana yang diambil.
 
-  `EconomyUsageView` kini membawa jendela pendek beserta pemakaiannya,
-  `UserUsageSummary` menurunkannya menjadi `rollingAllowance`, dan dashboard
-  menampilkan baris "Sisa hari ini" di samping kuota periode—bukan
-  menggantikannya, karena keduanya memang ada. Diverifikasi dari kanal sesudah
-  kuota dikembalikan ke batas paket asli: "Sisa penggunaan 97%" berdampingan
-  dengan 22% pada jendela pendek, persis angka yang dihitung dari penyimpanan.
+  `EconomyUsageView` kini membawa jendela pendek beserta pemakaiannya, dan
+  `UserUsageSummary` menurunkan dua hal darinya: `rollingAllowance` dan
+  `effectiveAllowance`—anggaran yang sisa **absolut**-nya paling kecil.
+  Perbandingannya absolut, bukan persentase, karena dua anggaran ini berbeda
+  ukuran: pada plan Perkenalan kolam periode tepat 30 kali jatah hariannya,
+  sehingga 97% kolam itu masih jauh lebih besar daripada 100% jatah sehari.
 
-  Judul barisnya sempat "Sisa hari ini", dan itu mengulang kekeliruan yang sama
-  dari sisi lain: jendelanya **berjalan**—yang terpakai pukul sembilan kemarin
-  pulih pukul sembilan hari ini, bukan pada tengah malam. Sekarang "Sisa 24 jam
-  terakhir", dengan satu kalimat yang menyebut jendelanya berjalan.
+  "Sisa penggunaan" karena itu tidak lagi menampilkan kolam periode melainkan
+  anggaran yang mengikat, dan menyebutkan yang mana. Kolam periodenya tidak
+  hilang—ia turun menjadi baris "Kuota periode" di bawahnya. Baris "Terpakai"
+  juga kini pelengkap dari batang di atasnya, bukan persentase kolam periode
+  yang kebetulan berdampingan dengan batang anggaran lain.
+
+  Diverifikasi dari kanal sesudah kuota dikembalikan ke batas paket asli:
+
+      Sisa penggunaan
+      █████░░░░░░░░░░░░░░░ 22%
+      Yang membatasi sekarang: jatah 24 jam terakhir. Jendela berjalan—yang
+      terpakai pulih 24 jam kemudian, bukan pada pergantian hari.
+
+      Kuota periode
+      ███████████████████▌ 97%
+
+  Judulnya sempat "Sisa hari ini" pada percobaan pertama, dan itu mengulang
+  kekeliruan yang sama dari sisi lain: jendelanya berjalan, bukan hari kalender.
+  Yang terpakai pukul sembilan kemarin pulih pukul sembilan hari ini.
 
   Copy penolakannya ikut dibetulkan. "Batas pemakaian singkat Harvy tercapai.
   Coba lagi setelah jeda" terbaca seperti jeda menit padahal mekanismenya 24

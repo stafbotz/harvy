@@ -52,6 +52,20 @@ export interface UserUsageSummary {
     /** Batas nol berarti kanal ini memang tidak memakai jendela pendek. */
     enforced: boolean;
   };
+  /**
+   * Anggaran yang benar-benar mengikat sekarang, yaitu yang sisa **absolut**-nya
+   * paling kecil di antara kuota periode dan jendela pendek.
+   *
+   * Pertanyaan "sisa penggunaanku berapa" hanya punya satu jawaban yang berguna:
+   * berapa banyak yang masih bisa dipakai sebelum ada yang menghentikan. Sampai
+   * 6 September 2026 yang dijawab adalah kuota periode, dan pada plan Perkenalan
+   * kuota itu tepat 30 kali jatah hariannya—jadi ia hampir tidak pernah bisa
+   * turun jauh, dan membaca 97% pada hari pengguna benar-benar terhenti.
+   */
+  effectiveAllowance: {
+    remainingBasisPoints: number;
+    binding: "period" | "rolling";
+  };
   modelUsage: {
     inputTokens: number;
     cachedInputTokens: number | null;
@@ -199,6 +213,16 @@ function summarizeUserUsage(
     BigInt(view.sponsoredRemainingComputeUnits);
   const rollingLimit = BigInt(view.rollingLimitComputeUnits);
   const rollingRemaining = rollingLimit - BigInt(view.rollingUsedComputeUnits);
+  const rollingEnforced = rollingLimit > 0n;
+  const rollingRemainingBasisPoints = allowanceBasisPoints(
+    rollingRemaining,
+    rollingLimit,
+  );
+  // Dibandingkan pada sisa **absolut**, bukan persentase: dua anggaran ini
+  // berbeda ukurannya, dan 97% dari kolam bulanan bisa jauh lebih besar
+  // daripada 100% jatah hariannya.
+  const rollingBinds = rollingEnforced &&
+    (rollingRemaining < 0n ? 0n : rollingRemaining) < remainingAllowance;
   const remainingBasisPoints = allowanceBasisPoints(
     remainingAllowance,
     totalAllowance,
@@ -222,8 +246,14 @@ function summarizeUserUsage(
     },
     rollingAllowance: {
       windowHours: view.rollingWindowHours,
-      remainingBasisPoints: allowanceBasisPoints(rollingRemaining, rollingLimit),
-      enforced: rollingLimit > 0n,
+      remainingBasisPoints: rollingRemainingBasisPoints,
+      enforced: rollingEnforced,
+    },
+    effectiveAllowance: {
+      remainingBasisPoints: rollingBinds
+        ? rollingRemainingBasisPoints
+        : remainingBasisPoints,
+      binding: rollingBinds ? "rolling" : "period",
     },
     modelUsage: {
       inputTokens,

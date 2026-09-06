@@ -39,7 +39,7 @@ export function renderUsageDashboard(
       format.text(formatPeriod(summary.period.startsAt, summary.period.endsAt, timeZone)),
     ],
     remainingSection(summary, format),
-    rollingSection(summary, format),
+    periodPoolSection(summary, format),
     [
       format.bold("Reset"),
       format.text(formatResetDate(summary.period.resetsAt, summary.period.startsAt, timeZone)),
@@ -142,55 +142,12 @@ export function formatCompactUsage(value: number): string {
   return scaled(value, 1_000_000, "M");
 }
 
-/**
- * Sisa anggaran jendela pendek—batas yang benar-benar menghentikan percakapan.
- *
- * Sampai 6 September 2026 dashboard ini hanya menampilkan kuota periode, dan
- * itu menjawab pertanyaan yang berbeda dari yang ditanyakan orang. Dogfood hari
- * itu mengukur selisihnya pada plan Perkenalan: periode menyisakan 97% pada
- * saat jendela 24 jam tinggal 22,9%, dan sehari sebelumnya jendela itu habis di
- * tengah kerja sementara "Sisa penggunaan" tetap terbaca 97% dengan "Reset: 6
- * Oktober". Angkanya benar, dan justru itu yang menyesatkan.
- *
- * Baris ini tidak menggantikan kuota periode; keduanya nyata dan keduanya
- * ditampilkan. Keduanya juga berbeda bentuk: kuota periode adalah jendela tetap
- * sepanjang `billingPeriodDays` yang berakhir pada satu tanggal, sedangkan yang
- * ini jendela berjalan yang pulih terus-menerus. Yang dihilangkan hanyalah kemungkinan pengguna menyimpulkan
- * masih punya banyak ruang padahal yang membatasinya hari itu hampir penuh.
- */
-function rollingSection(
-  summary: UserUsageSummary,
-  format: SemanticFormatter,
-): string[] {
-  if (!summary.rollingAllowance.enforced) return [];
-  const remaining = normalizeBasisPoints(
-    summary.rollingAllowance.remainingBasisPoints,
-  );
-  const jam = summary.rollingAllowance.windowHours;
-  // Labelnya sengaja bukan "Sisa hari ini". Jendela ini **berjalan**: yang
-  // terpakai pukul sembilan kemarin pulih sendiri pukul sembilan hari ini, bukan
-  // pada tengah malam. Percobaan pertama memakai "hari ini" dan itu mengulang
-  // persis kekeliruan yang sedang diperbaiki—judul yang menjawab pertanyaan
-  // berbeda dari yang ditanyakan orang.
-  return [
-    format.bold(`Sisa ${jam} jam terakhir`),
-    format.text(
-      `${usageProgressBarFromBasisPoints(remaining)} ${
-        formatRemainingPercentage(remaining)
-      }`,
-    ),
-    format.text(
-      `Terpisah dari kuota periode. Jendela berjalan: yang terpakai pulih ${jam} jam kemudian, bukan pada pergantian hari.`,
-    ),
-  ];
-}
-
 function remainingSection(
   summary: UserUsageSummary,
   format: SemanticFormatter,
 ): string[] {
   const remainingBasisPoints = normalizeBasisPoints(
-    summary.allowance.remainingBasisPoints,
+    summary.effectiveAllowance.remainingBasisPoints,
   );
   const lines = [
     format.bold("Sisa penggunaan"),
@@ -200,11 +157,19 @@ function remainingSection(
       }`,
     ),
   ];
+  // Pelengkap dari batang di atasnya, jadi keduanya selalu bicara tentang
+  // anggaran yang sama. Sebelumnya baris ini memakai persentase kolam periode
+  // sementara batangnya sudah menampilkan anggaran yang mengikat.
   if (remainingBasisPoints < 10_000 && remainingBasisPoints >= 9_900) {
     lines.push(format.text(
-      `Terpakai: ${formatUsedPercentage(summary.allowance.usedBasisPoints)}`,
+      `Terpakai: ${formatUsedPercentage(10_000 - remainingBasisPoints)}`,
     ));
   }
+  lines.push(format.text(
+    summary.effectiveAllowance.binding === "rolling"
+      ? `Yang membatasi sekarang: jatah ${summary.rollingAllowance.windowHours} jam terakhir. Jendela berjalan—yang terpakai pulih ${summary.rollingAllowance.windowHours} jam kemudian, bukan pada pergantian hari.`
+      : "Yang membatasi sekarang: kuota periode.",
+  ));
   if (
     summary.allowance.state === "getting_low" ||
     summary.allowance.state === "low"
@@ -212,6 +177,22 @@ function remainingSection(
     lines.push("", format.text("Penggunaanmu hampir habis untuk periode ini."));
   }
   return lines;
+}
+
+/** Kolam periode, yang kini menjadi keterangan pendamping alih-alih judulnya. */
+function periodPoolSection(
+  summary: UserUsageSummary,
+  format: SemanticFormatter,
+): string[] {
+  const remaining = normalizeBasisPoints(summary.allowance.remainingBasisPoints);
+  return [
+    format.bold("Kuota periode"),
+    format.text(
+      `${usageProgressBarFromBasisPoints(remaining)} ${
+        formatRemainingPercentage(remaining)
+      }`,
+    ),
+  ];
 }
 
 function normalizeBasisPoints(value: number): number {

@@ -21,7 +21,7 @@ Context-Version: 1
 
 ## Recent material changes
 
-- Dogfood terpadatkan lewat akun penguji (`tg-dogfood-20260906a`, tiga run)
+- Dogfood terpadatkan lewat akun penguji (`tg-dogfood-20260906a`, empat run)
   menemukan lima cacat yang tidak pernah terlihat probe, dan kelimanya
   diperbaiki. Run pertama, 35 giliran: balasan mengaku menyimpan tanpa receipt
   code-owned (gerbangnya dulu menuntut adanya kandidat yang gagal, bukan adanya
@@ -31,10 +31,10 @@ Context-Version: 1
   ditunggu tanpa batas; serta narasi protokol tool di dalam balasan dan tawaran
   "Dengerin dulu" kepada pengguna yang memilih "Langsung saran". Run kedua
   melengkapi delapan marker mode full dan memverifikasi tiga di antaranya dari
-  kanal. Run ketiga: "sisa penggunaan" menjawab kuota periode padahal yang
-  menghentikan percakapan adalah jendela 24 jam—97% lawan 22,9% pada saat yang
-  sama—jadi dashboard kini menampilkan "Sisa 24 jam terakhir" di sampingnya, dan
-  copy penolakannya menyebut kapan jatah itu pulih.
+  kanal. Run ketiga dan keempat: "sisa penggunaan" menjawab kuota periode
+  padahal yang menghentikan percakapan adalah jendela 24 jam—97% lawan 22,9%
+  pada saat yang sama—jadi ia kini menampilkan anggaran yang sisa absolutnya
+  paling kecil dan menyebut yang mana.
 - Ingatan jahitan pada `history.search` ditutup. `scoreEpisode` membuang klaim
   yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku, dan
   klaim `unresolved` justru jarang mengulang kata topiknya. Sebelum: 24 run

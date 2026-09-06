@@ -409,53 +409,78 @@ describe("usage dashboard formatting", () => {
   // Oktober". Angkanya benar untuk kuota periode, dan justru itu yang
   // menyesatkan—yang menghentikannya kemarin adalah jendela 24 jam, yang pada
   // saat yang sama tinggal 22,9%.
-  it("menampilkan sisa jendela pendek di samping kuota periode", () => {
+  it("menjawab sisa penggunaan dengan anggaran yang benar-benar mengikat", () => {
     const rendered = renderUsageDashboard(
       acceptanceSummary({
+        allowance: {
+          remainingBasisPoints: 9_743,
+          usedBasisPoints: 257,
+          state: "healthy",
+        },
         rollingAllowance: {
           windowHours: 24,
           remainingBasisPoints: 2_290,
           enforced: true,
         },
-      }),
-      "plain",
-    );
-
-    assert.match(rendered.text, /Sisa penggunaan/u);
-    assert.match(rendered.text, /Sisa 24 jam terakhir/u);
-    // Dibulatkan ke bawah, seperti sisa kuota periode: lebih baik menganggap
-    // ruangnya lebih sempit daripada lebih lega.
-    assert.match(rendered.text, /22%/u);
-    assert.match(rendered.text, /Terpisah dari kuota periode/u);
-    // Judulnya tidak boleh menyiratkan reset tengah malam; jendelanya berjalan.
-    assert.doesNotMatch(rendered.text, /Sisa hari ini/u);
-    assert.match(rendered.text, /bukan pada pergantian hari/u);
-  });
-
-  it("tidak menampilkan baris itu ketika jendela pendek tidak ditegakkan", () => {
-    const rendered = renderUsageDashboard(
-      acceptanceSummary({
-        rollingAllowance: {
-          windowHours: 24,
-          remainingBasisPoints: 10_000,
-          enforced: false,
+        effectiveAllowance: {
+          remainingBasisPoints: 2_290,
+          binding: "rolling",
         },
       }),
       "plain",
     );
 
-    assert.doesNotMatch(rendered.text, /Sisa 24 jam terakhir/u);
-    // Bagian kosong tidak boleh meninggalkan baris kosong ganda.
-    assert.doesNotMatch(rendered.text, /\n\n\n/u);
+    // Yang dijawab 22%, bukan 97% kolam periodenya. Dibulatkan ke bawah:
+    // lebih baik menganggap ruangnya lebih sempit daripada lebih lega.
+    const sisa = rendered.text.slice(
+      rendered.text.indexOf("Sisa penggunaan"),
+      rendered.text.indexOf("Kuota periode"),
+    );
+    assert.match(sisa, /22%/u);
+    assert.doesNotMatch(sisa, /97%/u);
+    assert.match(sisa, /Yang membatasi sekarang: jatah 24 jam terakhir/u);
+    assert.match(sisa, /bukan pada pergantian hari/u);
+    // Kolam periodenya tidak hilang, hanya turun menjadi pendamping.
+    assert.match(rendered.text, /Kuota periode/u);
+    assert.match(rendered.text, /97%/u);
+  });
+
+  it("menyebut kuota periode sebagai pembatas ketika memang ia yang mengikat", () => {
+    const rendered = renderUsageDashboard(
+      acceptanceSummary({
+        allowance: {
+          remainingBasisPoints: 1_200,
+          usedBasisPoints: 8_800,
+          state: "low",
+        },
+        rollingAllowance: {
+          windowHours: 24,
+          remainingBasisPoints: 9_800,
+          enforced: true,
+        },
+        effectiveAllowance: {
+          remainingBasisPoints: 1_200,
+          binding: "period",
+        },
+      }),
+      "plain",
+    );
+
+    assert.match(rendered.text, /Yang membatasi sekarang: kuota periode/u);
+    assert.doesNotMatch(rendered.text, /pergantian hari/u);
   });
 
   it("menampilkan Terpakai dari basis points yang sama hanya di dekat 100%", () => {
+    // `effectiveAllowance` ikut disetel: baris ini menguji kolam periode, dan
+    // sejak 6 September 2026 judul "Sisa penggunaan" menampilkan anggaran yang
+    // mengikat, bukan kolam itu.
     const untouched = renderUsageDashboard(acceptanceSummary({
       allowance: {
         remainingBasisPoints: 10_000,
         usedBasisPoints: 0,
         state: "healthy",
       },
+      effectiveAllowance: { remainingBasisPoints: 10_000, binding: "period" },
     }), "plain").text;
     const slightlyUsed = renderUsageDashboard(acceptanceSummary({
       allowance: {
@@ -463,6 +488,7 @@ describe("usage dashboard formatting", () => {
         usedBasisPoints: 20,
         state: "healthy",
       },
+      effectiveAllowance: { remainingBasisPoints: 9_980, binding: "period" },
     }), "plain").text;
     const belowThreshold = renderUsageDashboard(acceptanceSummary({
       allowance: {
@@ -483,6 +509,7 @@ describe("usage dashboard formatting", () => {
         usedBasisPoints: 20,
         state: "healthy",
       },
+      effectiveAllowance: { remainingBasisPoints: 9_980, binding: "period" },
     });
     const telegram = renderUsageDashboard(nearFull, "telegram").text;
     const whatsapp = renderUsageDashboard(nearFull, "whatsapp").text;
@@ -507,6 +534,7 @@ describe("usage dashboard formatting", () => {
           usedBasisPoints: used,
           state: "healthy",
         },
+        effectiveAllowance: { remainingBasisPoints: remaining, binding: "period" },
       }), "plain").text;
       assert.ok(rendered.includes(expected));
     }
@@ -730,6 +758,10 @@ function acceptanceSummary(overrides: Partial<UserUsageSummary> = {}): UserUsage
       windowHours: 24,
       remainingBasisPoints: 10_000,
       enforced: true,
+    },
+    effectiveAllowance: {
+      remainingBasisPoints: 6_800,
+      binding: "period",
     },
     modelUsage: {
       inputTokens: 184_000,

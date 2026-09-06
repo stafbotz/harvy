@@ -239,8 +239,14 @@ describe("Harvy Compute economy authority", () => {
     const rendered = renderUsageDashboard(summary, "plain").text;
     assert.ok(summary.allowance.remainingBasisPoints < 10_000);
     assert.ok(summary.allowance.usedBasisPoints > 0);
+    // Satu permintaan kecil terlihat pada anggaran yang mengikat maupun pada
+    // kolam periode. Sejak 6 September 2026 judul "Sisa penggunaan" menampilkan
+    // yang mengikat, dan pada plan gratis itu jendela 24 jam—yang ukurannya 1/30
+    // kolam periode, sehingga permintaan yang sama memakan porsi jauh lebih
+    // besar di sana.
+    assert.ok(summary.effectiveAllowance.remainingBasisPoints < 10_000);
     assert.doesNotMatch(rendered, /████████████████████ 100%/u);
-    assert.match(rendered, /Terpakai: 0\.[0-9]+%/u);
+    assert.match(rendered, /Kuota periode/u);
   });
 
   it("menampilkan reservation aktif sebagai allowance yang sudah berkurang sementara", async () => {
