@@ -2416,16 +2416,35 @@ export class Conversation {
             observation.status !== "ok",
         )
       : false;
+    // Hanya delegasi yang benar-benar berjalan menghabiskan jatah fan-out.
+    // Sesudah delegasi paralel tetap terlihat pada langkah berikutnya, panggilan
+    // yang ditolak executor juga meninggalkan observation—dan menghitungnya akan
+    // menyembunyikan capability-nya sesudah dua penolakan, menghidupkan lagi
+    // persis kontradiksi yang baru saja dicabut.
     const delegationCount = input.observations.filter((observation) =>
-      isDelegationCapability(observation.capabilityId)
+      isDelegationCapability(observation.capabilityId) &&
+      observation.status === "ok"
     ).length;
     let plannerInput: AgentPlannerInput = {
       ...input,
+      // Delegasi paralel tidak lagi disembunyikan sesudah langkah pertama.
+      // Batasnya tetap satu per run, tetapi yang memilikinya
+      // `ParallelDelegationExecutor`, yang memang sudah menolak `step !== 0`
+      // sejak awal. Penyaringan di sini hanyalah pagar kedua, dan pagar kedua
+      // itu yang justru menjatuhkan run: daftar tool berhenti menawarkannya
+      // sementara transcript memperlihatkan panggilan pertamanya berhasil, lalu
+      // model yang diminta pengguna mendelegasikan sekali lagi memanggil nama
+      // yang tidak ada dan run mati sebagai `unknown_tool`.
+      //
+      // Diukur, bukan ditebak. Probe `delegasi-ulang` meminta putaran delegasi
+      // kedua secara eksplisit: 9 dari 10 run kena, nol selesai. Memberi tahu
+      // model bahwa tool-nya dicabut tidak menolong—dengan penanda
+      // `callableAgain` hasilnya 11 kejadian dari 10 run. Yang diminta pengguna
+      // tetap delegasi, dan menyembunyikan tombolnya tidak mengubah itu.
+      // Sekarang panggilannya sah, dijawab `unavailable` berikut alasannya, dan
+      // run berjalan terus dengan satu langkah terpakai.
       callableCapabilities: input.callableCapabilities.filter(
         (capability) => {
-          if (
-            capability.id === "agent.delegate.parallel" && input.step > 0
-          ) return false;
           if (
             isDelegationCapability(capability.id) &&
             delegationCount >= MAX_DELEGATION_ACTIONS_PER_RUN
@@ -2507,8 +2526,15 @@ export class Conversation {
     // Legacy parallel delegation membawa instruksi bebas ke worker, sehingga
     // fase itu tetap context-free. Specialist menerima WorkBrief terstruktur
     // yang disanitasi executor; orkestratornya boleh melihat konteks relevan.
+    //
+    // `step === 0` dulu tersirat: delegasi paralel disaring keluar sesudah
+    // langkah pertama, jadi fase ini tidak mungkin menyala lagi. Sesudah
+    // penyaringan itu dicabut, syaratnya harus ditulis. Tanpa ini setiap
+    // langkah berjalan context-free lebih dulu lalu diulang dengan konteks—
+    // satu panggilan model ekstra per langkah, untuk fase yang memang hanya
+    // masuk akal pada langkah pertama.
     const isContextFreeDelegation =
-      mode === "orchestrate" && !mustReadLiveState &&
+      mode === "orchestrate" && !mustReadLiveState && input.step === 0 &&
       plannerInput.callableCapabilities.some((capability) =>
         capability.id === "agent.delegate.parallel"
       );
@@ -2516,8 +2542,15 @@ export class Conversation {
     const plannerSourceContext = isContextFreeDelegation
       ? EMPTY_CONTEXT
       : sourceContext;
+    // "Masih ada pilihan mendelegasikan", bukan sekadar "tool-nya terlihat".
+    // Delegasi paralel sesudah langkah pertama pasti ditolak executor, jadi ia
+    // tidak menghalangi langkah ini menjadi sintesis. Syarat ini dulu tersirat
+    // pada penyaringan daftar callable; sesudah penyaringan itu dicabut, ia
+    // harus ditulis—kalau tidak, langkah kedua tetap berperan planner dan
+    // kehilangan anggaran `final` miliknya.
     const canDelegate = plannerInput.callableCapabilities.some((capability) =>
-      isDelegationCapability(capability.id)
+      isDelegationCapability(capability.id) &&
+      (capability.id !== "agent.delegate.parallel" || input.step === 0)
     );
     let planned = await this.requestAgentDecision(
       plannerInput,
@@ -3460,19 +3493,6 @@ function continueAgentNativeThread(
     if (!observation) {
       throw new Error("Hasil native tool belum tersedia untuk continuation.");
     }
-    // Delegasi dicabut dari daftar callable sesudah langkah pertama, sementara
-    // transcript tetap memperlihatkan model memanggilnya dengan berhasil. Satu
-    // run pernah gagal tepat di celah itu: penyintesis memanggil lagi nama yang
-    // sudah tidak ditawarkan, kode menolak dengan `unknown_tool`, dan satu-
-    // satunya perbaikan yang dibayar run itu keburu dibatalkan deadline.
-    //
-    // Yang ditawarkan tidak diubah—menukar kebijakan atas satu kejadian persis
-    // yang dilarang `KNOWN-FAILURES.md`. Yang diperbaiki adalah transcript yang
-    // diam-diam bertentangan dengan daftar tool: hasilnya kini menyebutkan
-    // sendiri bahwa capability itu tidak dapat dipanggil lagi.
-    const stillCallable = input.callableCapabilities.some(
-      (capability) => capability.id === observation.capabilityId,
-    );
     thread.messages.push(
       pending.assistant,
       {
@@ -3483,7 +3503,6 @@ function continueAgentNativeThread(
           capabilityId: observation.capabilityId,
           status: observation.status,
           summary: observation.summary,
-          ...(stillCallable ? {} : { callableAgain: false }),
         }),
       },
     );

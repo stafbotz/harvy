@@ -141,7 +141,13 @@ export interface AgentExecutionContext {
 }
 
 export interface AgentExecutorResult {
-  status: "ok" | "error" | "unknown";
+  /**
+   * `unavailable` adalah batas, bukan kerusakan: capability-nya terpasang dan
+   * boleh dipanggil, tetapi tidak berlaku pada langkah atau keadaan ini.
+   * Memisahkannya dari `error` membuat jejak run dapat menjawab "apakah ada
+   * yang rusak" tanpa menghitung penolakan yang memang dirancang.
+   */
+  status: "ok" | "error" | "unavailable" | "unknown";
   summary: string;
 }
 
@@ -1533,6 +1539,7 @@ function validExecutorResult(value: unknown): value is AgentExecutorResult {
   return (
     (record.status === "ok" ||
       record.status === "error" ||
+      record.status === "unavailable" ||
       record.status === "unknown") &&
     typeof record.summary === "string"
   );

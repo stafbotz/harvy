@@ -160,7 +160,7 @@ implements AgentCapabilityExecutor<ParallelDelegationInput> {
     }
     if (context.step !== 0) {
       return {
-        status: "error",
+        status: "unavailable",
         summary: JSON.stringify({
           kind: "agent.delegate.parallel.result",
           reason:

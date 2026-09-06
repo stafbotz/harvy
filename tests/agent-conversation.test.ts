@@ -127,9 +127,6 @@ describe("Conversation agent runtime", () => {
     assert.equal(toolResult.tool_call_id, assistantCall.tool_calls[0]?.id);
     assert.equal(toolResult.name, "harvy_settings_time_get_v1");
     assert.match(toolResult.content, /settings\.time\.get\.result/u);
-    // Capability yang masih ada di daftar tidak diberi penanda pencabutan.
-    // Penanda yang muncul di mana-mana akan mengajari model mengabaikannya.
-    assert.doesNotMatch(toolResult.content, /callableAgain/u);
   });
 
   // Dahulu kelas state-live dipaksa lewat named `tool_choice`, sehingga
@@ -419,7 +416,13 @@ describe("Conversation agent runtime", () => {
     assert.equal(requests[0]?.execution?.requestedEffort, "high");
     assert.match(requests[0]?.messages[1]?.content ?? "", /root orchestrator/u);
     assert.match(requests[0]?.messages[0]?.content ?? "", /agent\.delegate\.parallel/u);
-    assert.doesNotMatch(requests[1]?.messages[0]?.content ?? "", /agent\.delegate\.parallel/u);
+    // Dulu langkah kedua berhenti menawarkan delegasi, dan justru itu yang
+    // menjatuhkan run: transcript memperlihatkan panggilan pertamanya berhasil
+    // sementara daftar tool tidak lagi memuatnya. Probe `delegasi-ulang`
+    // mengukurnya—9 dari 10 run mati sebagai `unknown_tool`, nol selesai.
+    // Sekarang ia tetap ditawarkan; batas satu delegasi paralel per run dijaga
+    // `ParallelDelegationExecutor`, yang memang sudah menolak `step !== 0`.
+    assert.match(requests[1]?.messages[0]?.content ?? "", /agent\.delegate\.parallel/u);
     assert.doesNotMatch(
       requests[0]?.messages.map((message) => message.content).join("\n") ?? "",
       /CANARY_(?:MEMORI|RIWAYAT|CATATAN)_RAHASIA/u,
@@ -437,16 +440,6 @@ describe("Conversation agent runtime", () => {
     assert.match(
       requests[1]?.messages.at(-1)?.content ?? "",
       /agent\.delegate\.parallel\.result/u,
-    );
-    // Celah yang menjatuhkan satu run sungguhan. Daftar tool langkah kedua
-    // sudah tidak memuat delegasi—baris di atas menguncinya—sementara
-    // transcript tetap memperlihatkan model memanggilnya dengan berhasil.
-    // Model yang mengikuti transcript memanggil nama yang tidak ditawarkan,
-    // dan satu-satunya perbaikan yang dibayar run itu dibatalkan deadline.
-    // Yang ditawarkan tidak diubah; hasilnya yang berhenti diam.
-    assert.match(
-      requests[1]?.messages.at(-1)?.content ?? "",
-      /"callableAgain":\s*false/u,
     );
     assert.match(
       requests[1]?.messages.map((message) => message.content).join("\n") ?? "",

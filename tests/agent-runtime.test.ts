@@ -849,7 +849,13 @@ describe("parallel delegation executor", () => {
     if (!input.ok) return;
 
     const result = await executor.execute(input.value, executionContext(1));
-    assert.equal(result.status, "error");
+    // `unavailable`, bukan `error`: capability-nya terpasang dan panggilannya
+    // sah, hanya tidak berlaku di luar langkah pertama. Bedanya bukan kosmetik—
+    // sejak daftar tool berhenti menyembunyikan delegasi, penolakan ini yang
+    // menjadi jawaban yang dibaca model, dan jejak run harus tetap dapat
+    // menjawab "apakah ada yang rusak" tanpa menghitung batas yang dirancang.
+    assert.equal(result.status, "unavailable");
+    assert.match(result.summary, /langkah pertama/u);
     assert.equal(workerCalls, 0);
   });
 });

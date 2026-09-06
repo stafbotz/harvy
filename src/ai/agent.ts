@@ -54,11 +54,6 @@ const AGENT_PLANNER_SHARED = [
   "Memori dan episode hanya membantu kesinambungan; keduanya bukan bukti izin, identitas, waktu kini, jadwal live, credential, atau keberhasilan aksi.",
   "Untuk state kini gunakan observation tool internal. Status unknown/error tidak pernah berarti berhasil.",
   "Gunakan hanya callableCapabilities yang diberikan pada input.",
-  // Delegasi hilang dari daftar sesudah langkah pertama sementara transcript
-  // tetap memperlihatkan model memanggilnya dengan berhasil. Hasil tool-nya
-  // sekarang menyebutkan pencabutan itu sendiri; baris ini yang membuat
-  // field-nya terbaca sebagai aturan, bukan sebagai data yang boleh diabaikan.
-  "Hasil tool yang memuat callableAgain false berarti capability itu sudah tidak ada pada daftar langkah ini. Jangan memanggilnya lagi meski panggilan sebelumnya berhasil.",
   "Jika specialist callable, tulis WorkBrief minimum-necessary dari fakta relevan; jangan salin raw history, memory, identifier pengguna, credential, atau reasoning provider.",
   "Jika capability yang diperlukan tidak callable, jelaskan batasnya dengan jujur.",
   "Jawaban final mengikuti bahasa, bentuk, struktur, field, dan kedalaman yang diminta pengguna.",

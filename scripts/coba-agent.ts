@@ -278,6 +278,74 @@ if (jalankan("delegasi")) {
   }
 }
 
+/**
+ * Provokasi langsung terhadap celah yang menjatuhkan satu run sungguhan.
+ *
+ * Kasus `delegasi` biasa tidak pernah menghasilkan `unknown_tool` dalam 20 run,
+ * karena tidak ada yang mendorong model memanggil delegasi untuk kedua kalinya.
+ * Di sini permintaannya yang mendorong: sesudah tiga subpekerjaan selesai,
+ * pengguna meminta satu putaran delegasi lagi—persis pada langkah ketika
+ * `agent.delegate.parallel` sudah dicabut dari daftar callable, sementara
+ * transcript masih memperlihatkan panggilan pertamanya berhasil.
+ *
+ * Yang dihitung hanya golongan tool yang ditolak. Jawaban akhirnya tidak
+ * dinilai: model yang jujur mengatakan ia tidak bisa mendelegasikan lagi sama
+ * berhasilnya dengan model yang langsung menyusun sendiri.
+ */
+if (jalankan("delegasi-ulang")) {
+  const kelasTool = new Map<string, number>();
+  const status = new Map<string, number>();
+  for (let percobaan = 1; percobaan <= ulangi; percobaan += 1) {
+    kejadianLog.length = 0;
+    const hasil = await retryAgentRun(() =>
+      conversation.agent(
+        [
+          "Rencanakan panduan memilih metode belajar untuk ujian.",
+          "Delegasikan paralel tepat tiga subpekerjaan independen:",
+          "buat opsi metode, nilai risiko tiap opsi, dan susun kriteria keputusan.",
+          "Sesudah ketiganya selesai, delegasikan sekali lagi satu subpekerjaan",
+          "untuk memeriksa ulang hasil gabungannya, baru susun jawaban akhir.",
+        ].join(" "),
+        "orchestrate",
+        { summary: null, turns: [], memories: [] },
+        { ownerId: "probe-agent", channel: "telegram", intent: "request" },
+      )
+    );
+    status.set(hasil.status, (status.get(hasil.status) ?? 0) + 1);
+    for (const kejadian of kejadianLog) {
+      if (kejadian.event !== "agent_tool_shape_repair") continue;
+      const kelas = String(
+        kejadian.fields["toolClass"] ?? kejadian.fields["reason"] ?? "?",
+      );
+      kelasTool.set(kelas, (kelasTool.get(kelas) ?? 0) + 1);
+    }
+    console.log(
+      `delegasi-ulang ${percobaan}/${ulangi}: ${hasil.status}${
+        kejadianLog.length > 0
+          ? ` | log: ${
+            kejadianLog.map((entry) =>
+              `${entry.event}(${
+                String(entry.fields["toolClass"] ?? entry.fields["reason"] ?? "")
+              })`
+            ).join(", ")
+          }`
+          : ""
+      }`,
+    );
+  }
+  console.log("");
+  console.log("--- rekap delegasi ulang ---");
+  console.log(`Percobaan   : ${ulangi}`);
+  console.log(`Status      : ${
+    [...status].map(([nama, jumlah]) => `${nama}=${jumlah}`).join(", ")
+  }`);
+  console.log(`Tool ditolak: ${
+    [...kelasTool].map(([kelas, jumlah]) => `${kelas}=${jumlah}`).join(", ") ||
+      "tidak ada"
+  }`);
+}
+
+
 let agendaPassed = true;
 if (jalankan("agenda")) {
   const agenda = await retryAgentRun(() =>
