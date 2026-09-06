@@ -96,14 +96,19 @@ export function replyAcknowledgesMemoryWrite(text: string): boolean {
   ) return false;
 
   if (
-    /\b(?:tidak|tak|gak|ga|nggak|enggak|belum|jangan)\b[^.!?]{0,28}\b(?:dicatat|disimpan|diingat|diperbarui)\b/u
+    /\b(?:tidak|tak|gak|ga|nggak|enggak|belum|jangan)\b[^.!?]{0,28}\b(?:dicatat|disimpan|diingat|diperbarui|tersimpan|tercatat)\b/u
       .test(clean)
   ) return false;
 
   // Bentuk pasif seperti "aturan baru dicatat" tetap mengklaim adanya write.
   // Model tidak boleh menghindari receipt code-owned hanya dengan mengganti
   // subjek kalimat atau memakai bentuk pasif.
-  if (/\b(?:dicatat|disimpan|diingat|diperbarui)\b/u.test(clean)) return true;
+  // Awalan ter- ikut, karena ia kata kerja yang sama dengan awalan berbeda.
+  // Verifikasi 6 September 2026 menangkap "beres, drafnya sudah tersimpan"
+  // pada giliran tanpa satu pun receipt—bentuk yang lolos hanya karena
+  // daftarnya memuat di- dan tidak memuat ter-. "teringat" sengaja tidak ikut:
+  // ia penanda recall di bawah, bukan klaim menulis.
+  if (/\b(?:dicatat|disimpan|diingat|diperbarui|tersimpan|tercatat)\b/u.test(clean)) return true;
 
   // 📍 cukup jelas sebagai bahasa write setelah commit terkonfirmasi. Ia tetap
   // bukan bukti bahwa commit terjadi; caller sudah memegang receipt code-owned.

@@ -512,6 +512,116 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   nonRepetition 4, uiClarity 3, contextCoherence 5, correctionHandling 4,
   completion `partial`—scope-nya memang satu pertanyaan, bukan perjalanan penuh.
 
+- **Run keempat: satu masalah yang berjalan, bukan daftar fitur.** 12 giliran di
+  atas 43 giliran sebelumnya, satu restart runtime, shutdown bersih, journey
+  dipertahankan. Skenarionya pengumpulan data skripsi yang gagal—kuesioner
+  terisi 23 dari 60, bimbingan Rabu—supaya yang diukur bukan lagi "apakah
+  mekanismenya jalan" melainkan "apakah jawabannya dipakai". Penilaian:
+  usefulness 5, contextCoherence 5, correctionHandling 3, initiative 3,
+  uiClarity 3, naturalness 2, nonRepetition 2, completion `partial`. Seluruh
+  giliran penggunanya tetap dikarang, jadi ini masih bukan dogfood tujuh hari.
+
+  Isinya naik kelas: Harvy memisahkan 23 yang mengisi dari 17 yang memenuhi
+  kriteria, menyusun paragraf bab 3 yang memakai ketiga angka dengan benar
+  beserta saran sub-bab keterbatasan, dan ketika angka targetnya dikoreksi di
+  tengah jalan—dosen menulis minimal 30, yang 60 target sendiri—selisihnya
+  berubah 43 menjadi 13 dan kelayakannya dinilai ulang. Diminta mencari jurnal
+  untuk dikutip, ia menolak dengan jujur alih-alih mengarang sitasi.
+
+- **Diperbaiki: sapaan berpindah ke lo-gue dan janji berhentinya dilanggar.**
+  3 dari 16 bubble jawaban, delapan kejadian, mulai giliran sembilan. Ditegur,
+  Harvy menjawab "maaf, kelepasan. balik ke aku-kamu ya"—lalu bubble berikutnya
+  pada giliran yang sama memakai lo dan gue empat kali. Sapaan sekarang dimiliki
+  kode lewat `harvyPronounRegister`, sejajar dengan ketikan santai dan
+  pengakuan-memotong. Ini bukan cermin: pengguna yang menulis lo-gue tetap
+  dijawab aku-kamu, karena sapaan bagian dari siapa Harvy, bukan cara menulis.
+  Kutipan, pagar kode, dan "gua" yang berarti rongga bukit tidak disentuh.
+
+- **Diperbaiki: kosakata internal bocor ke balasan.** Satu jawaban dibuka dengan
+  "Root agen tidak memakai tool untuk menyusun teks."
+  `withoutToolProtocolNarration` melewatkannya karena polanya menuntut kata
+  kerja memanggil sedangkan kalimat itu memakai "memakai"—dan asumsi yang
+  tertulis di komentarnya, bahwa kalimat batas capability yang jujur tidak
+  memuat kata kerja memanggil, tidak berlaku untuk laporan tentang eksekusi
+  sendiri. Dua bentuk ditambahkan: menyangkal memakai tool, dan menyebut root
+  agen. Saran "kamu bisa pakai tool gratis seperti Zotero" tetap utuh.
+
+- **Diperbaiki: rangkuman menyebut hari yang salah.** "buat dibaca pas bimbingan
+  besok" pada hari Minggu untuk bimbingan Rabu; seluruh isi rangkumannya benar
+  dan hanya bingkai waktunya meleset. Tanggal lengkap sudah lama ada di prompt,
+  jadi yang kurang bukan informasinya melainkan hitungannya. `clockNote` kini
+  membawa peta empat hari terdekat lengkap dengan nama harinya, dan melarang
+  "besok" atau "lusa" untuk hari yang tidak ada di peta itu.
+
+- **Diperbaiki: tiga giliran pertama bertanya tanpa memberi langkah** kepada
+  pengguna yang profilnya sudah `stylePreference: advice`. Pertanyaannya
+  relevan, tapi orang dengan tenggat dua hari membayar tiga giliran sebelum
+  menerima apa pun yang bisa dikerjakan. `styleGuidance` sisi saran dulu tidak
+  menyinggung pertanyaan sama sekali; sekarang bertanya boleh, satu saja, dan
+  wajib disertai satu langkah yang bisa dikerjakan sekarang.
+
+- **Diperbaiki: syarat dari dosen tidak masuk memori.** "dosenku nulisnya
+  minimal 30, bukan 60" hanya hidup di riwayat percakapan sementara catatan
+  lama soal purposive sampling—kalimat yang bentuknya sama persis—tersimpan.
+  Diukur, bukan ditebak: enam probe pemahaman memberi `memories` kosong enam
+  kali. Batas self/work pada aturan ekstraksi tidak pernah menyebut syarat yang
+  dijatuhkan orang lain kepada pengguna, sehingga syarat skripsi terbaca sebagai
+  isi pekerjaan. Sesudah aturannya ditambah: lima dari enam mengusulkan
+  kandidat, dengan sourceSubject `self`.
+
+- **Tidak diperbaiki: kata rusak.** "bimbing rabu" dan "meresponsinnya" pada run
+  ini, digabung empat dari run pertama menjadi delapan kejadian. Tidak ada sebab
+  di kode yang ditemukan: keluaran provider tidak di-stream, tidak ada pemotongan
+  pada jalur balasan, dan log journey tidak memuat pembuangan aksara. Yang
+  tersisa adalah mutu keluaran model, dan itu belum dapat dipisahkan selama
+  `AI_MODE=testing` memetakan keempat tier ke satu model.
+
+- **Batas giliran gagal 8 dari 48 panggilan**, seluruhnya `aborterror` pada
+  tier `cheap`. Distribusinya punya tebing: 40 panggilan yang selesai
+  mencatat p50 1.417 ms, p90 2.567 ms, dan maksimum 2.876 ms—tidak satu pun
+  mendarat di antara 2.876 ms dan batas 3.500 ms. Karena itu batasnya tidak
+  dinaikkan; yang gagal bukan ekor yang mepet melainkan permintaan yang
+  tertahan jauh lebih lama, dan itu konsisten dengan empat peran mengantre di
+  endpoint yang sama.
+
+- **Verifikasi dari kanal, empat giliran sesudah perbaikan.** Peta hari terbukti
+  dipakai: ditanya deadline, Harvy menjawab "hari ini minggu, 6 september. rabu
+  9 september berarti sisa tiga hari lagi"—hitungan yang persis meleset pada run
+  sebelumnya. Sapaan bersih: nol lo/gue pada sembilan bubble jawaban. Dua cacat
+  baru muncul justru dari verifikasi ini.
+
+- **Diperbaiki: klaim menyimpan berbentuk ter- lolos gerbang receipt.** "beres,
+  drafnya sudah tersimpan" terkirim utuh pada giliran tanpa satu pun
+  `memory_write_outcome`, dan tidak ada berkas yang benar-benar ditulis—
+  `terminal.run` memang ditawarkan pada langkah itu, tetapi tidak ada workspace
+  maupun artefak sesudahnya. `replyAcknowledgesMemoryWrite` memuat `disimpan`
+  dan `dicatat` tetapi tidak `tersimpan` maupun `tercatat`: kata kerja yang sama
+  dengan awalan berbeda. Keduanya ditambahkan pada daftar positif sekaligus pada
+  penjagaan negasinya, sehingga "belum tersimpan" tetap bukan klaim. `teringat`
+  sengaja tidak ikut karena ia penanda recall.
+
+- **Diperbaiki: gaya `advice` dijawab pertanyaan telanjang.** Arahan prompt
+  sudah menyebut syaratnya—bertanya boleh, satu saja, wajib menyertakan satu
+  langkah—dan tetap dilanggar dua dari empat giliran verifikasi, satu di
+  antaranya terhadap permintaan "bikin rencana singkat". Karena itu syaratnya
+  ikut menjadi kontrak keluaran: `questionOnlyReply` memeriksa apakah seluruh
+  kalimat prosa berbentuk tanya, dan bila pengguna memilih saran, balasan
+  seperti itu masuk ke jalur regenerasi yang sama dengan pelanggaran aksara dan
+  constraint explicit. Balasan berbutir dan yang menyertakan satu langkah tidak
+  tersentuh.
+
+  Diverifikasi ulang dari kanal: pesan yang sama—"bikin rencana singkat: aku
+  harus ngapain tiap hari sampai hari pengumpulan"—kini dijawab rencana harian
+  Minggu sampai Rabu, dengan nama hari yang benar dan pengingat Selasa ikut
+  dirangkai, lalu satu pertanyaan di akhir. Regenerasinya sendiri tidak
+  terpanggil pada giliran itu; draf pertamanya sudah memuat langkah, jadi yang
+  bekerja adalah promptnya dan `questionOnlyReply` berdiri sebagai jaring.
+  Giliran ambigu berikutnya menunjukkan jaring itu tidak terlalu lebar:
+  "hah, mana nih? kamu nanya hal apa? aku agak lupa, coba ulangi sebentar"
+  tidak dianggap pelanggaran karena kalimat terakhirnya bukan pertanyaan.
+
+
+
 - **Tampilan `/penggunaan` diringkas dari 35 baris menjadi 9.** Baris terpanjang
   turun dari 129 karakter menjadi 55. Bentuk lamanya memberi ruang yang sama
   besar kepada hal yang paling sering ditanya dan hal yang hampir tidak pernah

@@ -20,7 +20,14 @@ perubahanmu — buktikan asalnya sebelum melapor.
 ## Aktif
 
 Tidak ada kegagalan yang diketahui. Suite penuh terakhir pada 2026-09-06
-hijau: 2.373 tes, 2.373 lulus, 0 gagal dalam 311 suite.
+hijau: 2.406 tes, 2.406 lulus, 0 gagal dalam 315 suite.
+
+Dijalankan dengan `node --test --test-concurrency=2`. Dengan konkurensi bawaan,
+mesin ini kehabisan memori dan runner-nya dibunuh di tengah jalan; tujuh berkas
+terakhir secara alfabetis lalu dilaporkan gagal dalam ~50 ms tanpa sempat
+berjalan. Itu bukan kegagalan tes—`whatsapp-config.test.js` sendirian lulus
+6 dari 6—dan konkurensi yang dibatasi justru selesai lebih cepat, 218 detik
+lawan sekitar 400.
 
 Ketiga entri yang sebelumnya tercatat di sini sudah diperbaiki pada tanggal yang
 sama. Sebabnya dicatat di bawah karena dua di antaranya sempat salah

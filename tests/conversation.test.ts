@@ -1543,6 +1543,14 @@ describe("balasan percakapan", () => {
     // Menyandingkan jam sistem dengan keadaan yang disebut pengguna sendiri
     // menghasilkan "tengah malam begini (atau mungkin jam sekolah ya)".
     assert.match(system, /jangan sebut jam ini sama sekali/i);
+
+    // Rangkuman keputusan pernah dibuka "buat dibaca pas bimbingan besok" pada
+    // hari Minggu untuk bimbingan Rabu. Nama harinya sekarang diberikan jadi,
+    // supaya tidak ada aritmetika tanggal yang harus dipercayai.
+    assert.match(system, /Besok Senin, 27 Juli 2026/);
+    assert.match(system, /Lusa Selasa, 28 Juli 2026/);
+    assert.match(system, /Tiga hari lagi Rabu, 29 Juli 2026/);
+    assert.match(system, /sebut nama harinya saja/i);
   });
 
   it("mengaku belum punya percakapan pada pesan pertama", async () => {

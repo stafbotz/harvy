@@ -441,6 +441,13 @@ const ALLOWED_DATA_KEYS = new Set([
   "recentcontextused",
   "retentiondays",
   "retentionsucceeded",
+  // Kelas pelanggaran kontrak keluaran balasan, bukan isinya: enum aksara,
+  // enum constraint explicit, dan satu boolean gaya. Tanpa ketiganya
+  // `conversation_reply_output_rejected` hanya mengatakan bahwa ada yang
+  // ditolak—yang benar-benar terjadi, dan tercatat sebagai fieldsOmitted 2.
+  "scripts",
+  "constraints",
+  "styleunmet",
   "route",
   "routeallowed",
   "semanticdomain",

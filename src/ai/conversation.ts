@@ -203,8 +203,11 @@ import {
   parseCheckInPresentation,
 } from "./check-in-presentation.js";
 import {
+  adviceStyleRepairInstruction,
   explicitReplyConstraintViolations,
+  harvyPronounRegister,
   normalizeAccidentalDuplicatePunctuation,
+  questionOnlyReply,
   removeUnexpectedReplyScripts,
   replyConstraintRepairInstruction,
   replyLanguageGuidance,
@@ -1552,13 +1555,22 @@ export class Conversation {
       message,
       reply,
     );
-    if (unexpectedScripts.length > 0 || constraintViolations.length > 0) {
+    // Pengguna yang memilih "Langsung saran" tidak boleh dijawab pertanyaan
+    // telanjang. Arahan promptnya sudah ada dan tetap dilanggar dua dari empat
+    // giliran, jadi syaratnya ikut menjadi kontrak keluaran yang diperiksa.
+    const adviceStyle = runtime.style === "advice";
+    const styleUnmet = adviceStyle && questionOnlyReply(reply);
+    if (
+      unexpectedScripts.length > 0 || constraintViolations.length > 0 ||
+      styleUnmet
+    ) {
       this.logger.warn(
         "conversation_reply_output_rejected",
         "Balasan percakapan melanggar kontrak keluaran explicit; regeneration terbatas dijalankan.",
         {
           scripts: unexpectedScripts,
           constraints: constraintViolations,
+          styleUnmet,
         },
       );
       const repairMessages: ChatRequest["messages"] = [
@@ -1573,6 +1585,7 @@ export class Conversation {
             ...(constraintViolations.length > 0
               ? [replyConstraintRepairInstruction(constraintViolations)]
               : []),
+            ...(styleUnmet ? [adviceStyleRepairInstruction()] : []),
           ].join("\n\n"),
         },
       ];
@@ -1593,7 +1606,8 @@ export class Conversation {
                 value,
                 boundedContext.turns,
               ).length === 0 &&
-              explicitReplyConstraintViolations(message, value).length === 0,
+              explicitReplyConstraintViolations(message, value).length === 0 &&
+              !(adviceStyle && questionOnlyReply(value)),
           });
           const candidateScripts = unexpectedReplyScripts(
             message,
@@ -1604,8 +1618,11 @@ export class Conversation {
             message,
             candidate,
           );
+          const candidateStyleUnmet = adviceStyle &&
+            questionOnlyReply(candidate);
           if (
-            candidateScripts.length === 0 && candidateConstraints.length === 0
+            candidateScripts.length === 0 && candidateConstraints.length === 0 &&
+            !candidateStyleUnmet
           ) {
             reply = candidate;
             break;
@@ -1617,6 +1634,7 @@ export class Conversation {
               attempt: attempt + 1,
               scripts: candidateScripts,
               constraints: candidateConstraints,
+              styleUnmet: candidateStyleUnmet,
             },
           );
         } catch (error) {
@@ -1779,6 +1797,8 @@ export class Conversation {
       }
     }
     reply = normalizeAccidentalDuplicatePunctuation(reply);
+    // Sapaan Harvy dimiliki kode, sejajar dengan ketikan santai di bawah.
+    reply = harvyPronounRegister(reply);
     // Sejajar dengan identitas capybara: fakta dan kalimatnya sama-sama milik
     // kode. Model tidak pernah mengakui potongan meski diminta—0 dari 5 pada
     // pengukuran provider nyata—sedangkan kode tahu persis kapan itu terjadi.
@@ -1860,7 +1880,8 @@ export class Conversation {
         );
         return null;
       }
-      return casualTyping ? casualChatTypography(intro) : intro;
+      const sapaan = harvyPronounRegister(intro);
+      return casualTyping ? casualChatTypography(sapaan) : sapaan;
     } catch (error) {
       this.logger.warn(
         "introduction_failed",

@@ -22,6 +22,7 @@ import {
 } from "../core/execution-policy.js";
 import { resolveModelProfile } from "./model-profile.js";
 import type { ReplyStructureContract } from "../core/reply-structure-contract.js";
+import { harvyPronounRegister } from "./reply-language-policy.js";
 
 export type AgentMode = "tools" | "orchestrate";
 
@@ -137,9 +138,23 @@ function unwrapFinalTag(text: string): string {
  * function/tool. Pelajar yang bertanya tentang aplikasi bernama "tool" tetap
  * dijawab utuh, dan kalimat yang jujur menyatakan sebuah capability tidak
  * tersedia tidak memuat kata kerja memanggil.
+ *
+ * Journey keempat 6 September 2026 menunjukkan asumsi terakhir itu terlalu
+ * sempit dalam satu arah. Balasan dibuka dengan "Root agen tidak memakai tool
+ * untuk menyusun teks."—bukan pernyataan batas kepada pengguna, melainkan
+ * laporan tentang eksekusi kita sendiri, dengan kata kerja memakai alih-alih
+ * memanggil. Dua bentuk ditambahkan, keduanya tetap sempit:
+ *
+ * - **Menyangkal memakai** tool atau function. Kalimat yang menyarankan
+ *   pengguna memakai sebuah alat tidak bernegasi, jadi "kamu bisa pakai tool
+ *   gratis seperti Zotero" tetap utuh.
+ * - **Menyebut root agen.** Frasa itu tidak ada di kode mana pun; model
+ *   menirukannya dari kosakata prompt, dan kalimat pelajar tidak memuatnya.
+ *   Hanya frasa ini—"planner" juga berarti buku agenda dan "sub-agent"
+ *   dipakai salinan milik kode, jadi keduanya dibiarkan.
  */
 const TOOL_PROTOCOL_NARRATION =
-  /\b(?:(?:tidak|tanpa|nggak|gak|ga|belum)\s+(?:perlu\s+)?)?(?:me)?(?:manggil|panggil)\w*\s+(?:function|fungsi|tool)\b|\b(?:tool|function)\s+call\b|\bnative\s+(?:function|tool)\b/iu;
+  /\b(?:(?:tidak|tanpa|nggak|gak|ga|belum)\s+(?:perlu\s+)?)?(?:me)?(?:manggil|panggil)\w*\s+(?:function|fungsi|tool)\b|\b(?:tidak|tanpa|nggak|gak|ga|belum)\s+(?:perlu\s+)?(?:me)?(?:makai|pakai|make|gunakan|nggunakan)\w*\s+(?:function|fungsi|tool)\b|\b(?:tool|function)\s+call\b|\bnative\s+(?:function|tool)\b|\b(?:root\s+agen|agen\s+root)\w*\b/iu;
 
 export function withoutToolProtocolNarration(text: string): string {
   const pieces = text.match(/[^.!?\n]+[.!?]?|\n+/gu) ?? [text];
@@ -290,8 +305,8 @@ export function parseAgentAutoDecision(
 ): AgentPlannerDecision | null {
   if (completion.kind === "text") {
     if (replyContract !== null) return null;
-    const reply = withoutToolProtocolNarration(
-      unwrapFinalTag(completion.content.trim()),
+    const reply = harvyPronounRegister(
+      withoutToolProtocolNarration(unwrapFinalTag(completion.content.trim())),
     );
     return reply.length > 0 ? { kind: "final", reply } : null;
   }
@@ -359,7 +374,7 @@ export function parseAgentNativeDecision(
   ) {
     return {
       kind: "final",
-      reply: withoutToolProtocolNarration(input.reply),
+      reply: harvyPronounRegister(withoutToolProtocolNarration(input.reply)),
     };
   }
   if (
@@ -367,7 +382,9 @@ export function parseAgentNativeDecision(
     replyContract !== null
   ) {
     const reply = renderStructuredStepsReply(input, replyContract);
-    return reply === null ? null : { kind: "final", reply };
+    return reply === null
+      ? null
+      : { kind: "final", reply: harvyPronounRegister(reply) };
   }
   if (
     call.function.name === NEED_INPUT_TOOL_NAME &&

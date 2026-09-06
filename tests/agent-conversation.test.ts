@@ -2041,6 +2041,36 @@ describe("narasi protokol tool tidak sampai ke pengguna", () => {
     assert.equal(withoutToolProtocolNarration(jujur), jujur);
   });
 
+  it("membuang laporan eksekusi yang memakai kata kerja memakai", () => {
+    const bocor = [
+      "Root agen tidak memakai tool untuk menyusun teks.",
+      "berdasarkan catatan bimbingan, minimal 30 dari dosen.",
+    ].join("\n\n");
+
+    assert.equal(
+      withoutToolProtocolNarration(bocor),
+      "berdasarkan catatan bimbingan, minimal 30 dari dosen.",
+    );
+  });
+
+  it("membuang kalimat yang menyebut root agen sekalipun tanpa kata tool", () => {
+    const bocor = [
+      "Root agen memutuskan langkah ini cukup satu tahap.",
+      "jadi urutannya: kumpulkan data dulu, baru tulis analisisnya.",
+    ].join(" ");
+
+    assert.equal(
+      withoutToolProtocolNarration(bocor),
+      "jadi urutannya: kumpulkan data dulu, baru tulis analisisnya.",
+    );
+  });
+
+  it("tidak menyentuh saran memakai alat yang memang untuk pengguna", () => {
+    const utuh =
+      "kamu bisa pakai tool bawaan Word buat bikin daftar isi otomatis.";
+    assert.equal(withoutToolProtocolNarration(utuh), utuh);
+  });
+
   it("membiarkan jawaban apa adanya bila seluruh isinya narasi protokol", () => {
     const semua = "aku tidak perlu memanggil tool untuk ini.";
     assert.equal(withoutToolProtocolNarration(semua), semua);

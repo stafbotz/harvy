@@ -415,6 +415,7 @@ export function understandingPrompt(now: Date, timeZone: string): string {
     "- Pekerjaan yang diminta kepada Harvy bukan fakta tentang pengguna: \"Tolong buat acceptance reminder untuk Harvy\" menghasilkan memories [].",
     "- Preferensi cara belajar atau berkomunikasi yang mengubah cara Harvy membantu wajib menjadi candidate preference, meski pengguna hanya menyatakannya. \"aku lebih paham lewat contoh nyata daripada teori panjang\" menjadi preference \"Lebih mudah belajar lewat contoh nyata daripada teori panjang.\"",
     "- \"Aku biasanya paling fokus belajar pagi dan ingin jawaban bernomor ke depan\" menghasilkan dua candidate durable/self dengan evidence masing-masing.",
+    "- Syarat yang harus dipenuhi pengguna dan berlaku lintas giliran adalah konteks tentang penggunanya, bukan isi pekerjaan: aturan dari dosen, guru, sekolah, atau orang tua. \"dosenku minta minimal 30 responden\" menjadi candidate self durable, bukan work. Angka atau syarat yang dikoreksi diusulkan dalam versi barunya.",
     "- Pekerjaan yang sudah masuk ke task tidak diulang sebagai memori; itu tugas, bukan pengetahuan tentang orangnya.",
     "- Kandidat yang sudah ada pada bagian \"Yang kamu ingat tentang pengguna ini\" tidak diulang. Kemunculan fakta atau instruksi hanya di ringkasan maupun giliran terakhir bukan bukti bahwa ia sudah tersimpan. Bila PESAN SAAT INI menyatakan ulang, mengoreksi, atau meminta hal itu berlaku lintas giliran, usulkan lagi; primary memory service yang menangani duplikat.",
     "- content adalah satu kalimat pendek tentang penggunanya dan ditulis langsung kepada orangnya: \"Suka menulis untuk melepas pikiran\", bukan \"Pengguna suka menulis untuk melepas pikiran\".",
@@ -1606,6 +1607,15 @@ export function messageOutline(message: string): string[] {
  * pernah nyata: pada pukul 23.02 Harvy menyuruh penggunanya "rebahan dulu
  * sebentar" lalu mengajak "ngobrol sambil nunggu malam". Waktu bukan hiasan
  * prompt — sebagian besar saran sehari-hari salah tanpa mengetahuinya.
+ *
+ * Sejak journey keempat 6 September 2026 ia juga membawa peta hari terdekat.
+ * Harvy merangkum keputusan pengguna dengan pembuka "buat dibaca pas bimbingan
+ * besok" pada hari Minggu untuk bimbingan Rabu; seluruh isi rangkumannya benar
+ * dan hanya bingkai waktunya meleset. Tanggal lengkap sudah ada di baris
+ * pertama, jadi yang kurang bukan informasinya melainkan hitungannya. Nama
+ * harinya sekarang diberikan jadi, bukan disuruh dihitung: pemetaan yang
+ * dimiliki kode tidak pernah salah, sedangkan aritmetika tanggal di kepala
+ * model kadang salah.
  */
 function clockNote(now: Date | undefined, timeZone: string): string {
   if (!now) return "";
@@ -1618,9 +1628,13 @@ function clockNote(now: Date | undefined, timeZone: string): string {
 
   return [
     `Sekarang ${stamp} di zona ${timeZone}.`,
+    nearbyDayMap(now, timeZone),
     "Pakai ini supaya saranmu masuk akal: jangan menyuruh tidur siang pada",
     "tengah malam, dan jangan menyebut waktu yang belum terjadi seolah sedang",
     "berlangsung.",
+    "Nama hari yang disebut pengguna tunjuk memakai peta di atas sebelum kamu",
+    'menyebutnya lagi. Jangan menulis "besok" atau "lusa" untuk hari yang tidak',
+    "ada di peta itu; sebut nama harinya saja.",
     "Kalau pengguna menyebut sendiri keadaannya sekarang — misalnya sedang di",
     "sekolah — ikuti perkataannya dan **jangan sebut jam ini sama sekali**.",
     "Menyandingkan keduanya seperti \"tengah malam begini (atau mungkin jam",
@@ -1628,6 +1642,44 @@ function clockNote(now: Date | undefined, timeZone: string): string {
     "kebingungan itu.",
     "",
   ].join("\n");
+}
+
+/**
+ * Peta hari terdekat, supaya model tidak perlu berhitung.
+ *
+ * Empat hari ke depan cukup: lebih jauh dari itu pengguna menyebut tanggal,
+ * bukan nama hari, dan daftar yang panjang justru mengaburkan yang penting.
+ */
+function nearbyDayMap(now: Date, timeZone: string): string {
+  // Label dibentuk di UTC, bukan di zona pengguna. Tanggalnya sudah dihitung
+  // sebagai angka di bawah, jadi mengubahnya kembali lewat zona hanya menambah
+  // satu kesempatan meleset—dan pada zona UTC+13/+14 penambatan tengah hari
+  // memang meleset satu hari.
+  const label = new Intl.DateTimeFormat("id-ID", {
+    dateStyle: "full",
+    timeZone: "UTC",
+  });
+  // Hari kalender setempat, bukan penambahan 24 jam. Menambah milidetik pada
+  // instant dapat melompati atau mengulang satu tanggal di zona ber-DST, dan
+  // peta hari yang meleset satu hari lebih buruk daripada tidak ada peta.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const part = (type: string): number =>
+    Number(parts.find((entry) => entry.type === type)?.value ?? "0");
+  const names = ["Besok", "Lusa", "Tiga hari lagi", "Empat hari lagi"];
+  const entries = names.map((name, index) => {
+    const day = new Date(Date.UTC(
+      part("year"),
+      part("month") - 1,
+      part("day") + index + 1,
+    ));
+    return `${name} ${label.format(day)}`;
+  });
+  return `${entries.join(". ")}.`;
 }
 
 /**
@@ -1665,6 +1717,14 @@ const RECENT_TURNS_NOTE = [
  *
  * Sengaja tidak menjadi kepribadian kedua: ia hanya menggeser urutan antara
  * mendengarkan dan menawarkan langkah.
+ *
+ * Sisi "saran" sempat kehilangan gigi karena tidak menyinggung pertanyaan
+ * sama sekali. Journey keempat 6 September 2026: pengguna yang sudah memilih
+ * "Langsung saran" datang dengan tenggat dua hari, dan tiga giliran pertama
+ * dijawab pertanyaan tanpa satu pun langkah. Pertanyaannya relevan—dari mana
+ * kuesionernya disebar, masih ada waktu atau tidak—tetapi orang yang memilih
+ * saran membayar tiga giliran sebelum menerima apa pun yang bisa dikerjakan.
+ * Yang ditambahkan bukan larangan bertanya, melainkan syarat menyertainya.
  */
 function styleGuidance(style: StylePreference | null): string {
   if (!style) return "";
@@ -1679,6 +1739,9 @@ function styleGuidance(style: StylePreference | null): string {
     : [
         "Pengguna ini pernah bilang ia lebih suka langsung diberi saran.",
         "Akui keadaannya sebentar saja, lalu masuk ke langkah konkretnya.",
+        "Boleh bertanya, tapi satu pertanyaan saja dan jangan pernah bertanya",
+        "tanpa memberi apa pun: sertakan satu langkah yang bisa ia kerjakan",
+        "sekarang, meski jawaban pertanyaanmu belum kamu tahu.",
         "",
       ].join("\n");
 }

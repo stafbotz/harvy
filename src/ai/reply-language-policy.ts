@@ -450,3 +450,127 @@ function proseOnly(value: string): string {
     .replace(/`[^`\n]+`/gu, "")
     .replace(/https?:\/\/[^\s<>"']+/giu, "");
 }
+
+/**
+ * Sapaan Harvy kepada penggunanya adalah aku-kamu, dan itu dimiliki kode.
+ *
+ * Journey keempat 6 September 2026: mulai giliran sembilan Harvy berpindah ke
+ * lo-gue pada 3 dari 16 bubble jawaban, delapan kejadian. Yang membuat ini
+ * bukan sekadar selera adalah kelanjutannya—ditegur, Harvy menjawab "maaf,
+ * kelepasan. balik ke aku-kamu ya", lalu bubble **berikutnya pada giliran yang
+ * sama** memakai lo dan gue empat kali. Dua giliran kemudian ia kambuh. Janji
+ * yang dilanggar di kalimat sesudahnya lebih merusak kepercayaan daripada
+ * sapaan yang salah sejak awal.
+ *
+ * Karena itu polanya sama dengan ketikan santai dan pengakuan-memotong: arahan
+ * prompt tidak dipegang model, jadi yang wajib terjadi dimiliki kode.
+ *
+ * Ini bukan cermin. Ketikan santai mengikuti penggunanya karena yang ditiru
+ * adalah cara menulis; sapaan adalah bagian dari siapa Harvy, jadi pengguna
+ * yang menulis lo-gue tetap dijawab aku-kamu—wajar dan hangat dalam bahasa
+ * Indonesia, bukan kaku.
+ *
+ * Dua penjagaan supaya penggantian tidak merusak kalimat yang benar:
+ *
+ * - **Kutipan tidak disentuh.** Harvy yang mengutip ucapan penggunanya sendiri
+ *   harus tetap berbunyi seperti penggunanya.
+ * - **"gua" hanya diganti bila ada kata ganti slang lain di balasan yang
+ *   sama.** Kata itu juga berarti rongga di bukit, dan pertanyaan geografi
+ *   tidak memuat lo atau gue.
+ */
+const SLANG_PRONOUN_REPLACEMENT = new Map<string, string>([
+  ["lo", "kamu"],
+  ["loe", "kamu"],
+  ["lu", "kamu"],
+  ["elo", "kamu"],
+  ["elu", "kamu"],
+  ["gue", "aku"],
+  ["gwe", "aku"],
+  ["gw", "aku"],
+]);
+
+// Tanda hubung ikut menjadi batas kata di sini: "lo-fi" bukan kata ganti,
+// dan batas kata biasa memotongnya menjadi "kamu-fi".
+const SLANG_PRONOUN =
+  /(?<![-\p{L}\p{N}_])(?:lo|loe|lu|elo|elu|gue|gwe|gw)(?![-\p{L}\p{N}_])/giu;
+
+const SLANG_PRONOUN_WITH_CAVE =
+  /(?<![-\p{L}\p{N}_])(?:lo|loe|lu|elo|elu|gue|gwe|gw|gua)(?![-\p{L}\p{N}_])/giu;
+
+/** Rentang yang tidak boleh disentuh: kutipan, pagar kode, dan kode sebaris. */
+const PROTECTED_SPAN =
+  /```[\s\S]*?```|`[^`\n]+`|"[^"\n]*"|'[^'\n]*'|\u201c[^\u201d\n]*\u201d/gu;
+
+export function harvyPronounRegister(reply: string): string {
+  if (!SLANG_PRONOUN.test(reply)) {
+    SLANG_PRONOUN.lastIndex = 0;
+    return reply;
+  }
+  SLANG_PRONOUN.lastIndex = 0;
+  // "gua" ikut diganti hanya di balasan yang memang sudah terbukti slang.
+  const pattern = SLANG_PRONOUN_WITH_CAVE;
+  const spans: [number, number][] = [];
+  for (const match of reply.matchAll(PROTECTED_SPAN)) {
+    spans.push([match.index, match.index + match[0].length]);
+  }
+  const protectedAt = (index: number): boolean =>
+    spans.some(([start, end]) => index >= start && index < end);
+  pattern.lastIndex = 0;
+  return reply.replace(pattern, (match, offset: number) => {
+    if (protectedAt(offset)) return match;
+    const replacement = match.toLowerCase() === "gua"
+      ? "aku"
+      : SLANG_PRONOUN_REPLACEMENT.get(match.toLowerCase());
+    if (replacement === undefined) return match;
+    return /^\p{Lu}/u.test(match)
+      ? replacement.charAt(0).toUpperCase() + replacement.slice(1)
+      : replacement;
+  });
+}
+
+/**
+ * Balasan yang seluruhnya bertanya, tanpa satu pun kalimat yang memberi.
+ *
+ * Dipakai hanya untuk pengguna yang sudah memilih "Langsung saran". Preferensi
+ * itu dinyatakan sendiri oleh penggunanya lewat tombol, jadi ia constraint
+ * explicit—dan "semua kalimatnya bertanya" dapat dibuktikan mekanis, sehingga
+ * pemeriksaan ini tetap berada di kelas yang sama dengan
+ * `explicitReplyConstraintViolations`: bukan penilai isi.
+ *
+ * Alasannya diukur. Arahan prompt sudah menyebut syaratnya—bertanya boleh, satu
+ * saja, dan wajib menyertakan satu langkah—dan tetap dilanggar: pada verifikasi
+ * 6 September 2026, dua dari empat giliran dijawab pertanyaan telanjang, salah
+ * satunya terhadap permintaan "bikin rencana singkat". Pola yang sama dengan
+ * ketikan santai dan sapaan: yang wajib terjadi tidak boleh hanya berupa
+ * kalimat di prompt.
+ *
+ * Pagar kode, tautan, dan daftar berbutir dibuang lebih dulu. Balasan yang
+ * memuat butir sudah memberi sesuatu meski setiap kalimatnya berbentuk tanya.
+ */
+export function questionOnlyReply(reply: string): boolean {
+  const prose = proseOnly(reply);
+  if (/^\s*[-*\u2022\d]/mu.test(prose)) return false;
+  const sentences = prose
+    .split(/(?<=[.!?\u2026])\s+|\n+/gu)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => /\p{L}/u.test(sentence));
+  if (sentences.length === 0) return false;
+  return sentences.every((sentence) => sentence.endsWith("?"));
+}
+
+/**
+ * Perbaikan untuk balasan yang hanya bertanya kepada pengguna gaya "saran".
+ */
+export function adviceStyleRepairInstruction(): string {
+  return [
+    "<pemeriksaan-kualitas-keluaran>",
+    "Tulis ulang jawaban untuk pesan ini dari awal.",
+    "Percobaan sebelumnya hanya berisi pertanyaan, sedangkan pengguna ini",
+    "sudah memilih langsung diberi saran.",
+    "Pertahankan pertanyaanmu bila memang perlu—satu saja—tetapi mulai dengan",
+    "satu langkah konkret yang bisa ia kerjakan sekarang, meski jawaban",
+    "pertanyaanmu belum kamu tahu.",
+    "Jangan membahas pemeriksaan internal ini.",
+    "</pemeriksaan-kualitas-keluaran>",
+  ].join("\n");
+}

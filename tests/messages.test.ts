@@ -112,6 +112,13 @@ describe("catatan memori pada balasan", () => {
     assert.equal(replyAcknowledgesMemoryWrite("Oke, aku mencatat yang ini."), true);
     assert.equal(replyAcknowledgesMemoryWrite("Aturan baru dicatat untuk ke depan."), true);
     assert.equal(replyAcknowledgesMemoryWrite("Aturan itu belum dicatat."), false);
+    // Awalan ter-: "beres, drafnya sudah tersimpan" pernah lolos utuh pada
+    // giliran tanpa satu pun receipt, hanya karena daftarnya memuat di-.
+    assert.equal(replyAcknowledgesMemoryWrite("Beres, drafnya sudah tersimpan."), true);
+    assert.equal(replyAcknowledgesMemoryWrite("Catatannya tercatat ya."), true);
+    assert.equal(replyAcknowledgesMemoryWrite("Drafnya belum tersimpan."), false);
+    // "teringat" tetap penanda recall, bukan klaim menulis.
+    assert.equal(replyAcknowledgesMemoryWrite("Aku jadi teringat cerita kamu dulu."), false);
     assert.equal(replyAcknowledgesMemoryWrite("Aku perbarui yang dulu 📍"), true);
     assert.equal(replyAcknowledgesMemoryWrite("Mulai sekarang aku panggil Hafizh."), true);
     assert.equal(replyAcknowledgesMemoryWrite("Tenang, aku nggak bakal lupa."), true);

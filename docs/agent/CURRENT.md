@@ -6,48 +6,46 @@ Context-Version: 1
 
 ## Verified baseline
 
-- Diperiksa terhadap `6c65494`; perubahan material yang dirangkum di sini
-  dimulai di atas `5b294a1`. Status commit dan push dibaca dari Git.
-- `npm run check` PASS dan `npm test` 2.388 lulus 0 gagal; bagian Aktif
+- Diperiksa terhadap `6c65494`; perubahan di sini dimulai di atas `5b294a1`.
+- `npm run check` PASS dan `npm test` 2.406 lulus 0 gagal; bagian Aktif
   `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
   dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
-- Telemetri pemakaian nyata 3 September 2026, 13 giliran Telegram: jalur
-  pemahaman 5 `core-only`, 5 `core-escalated`, 3 `direct-full`; keselamatan
-  13/13 `calm`+`certain`.
-- Biaya dari lalu lintas yang sama: pass pemahaman 1.018 token dan 2.179 ms
-  lawan kontrak penuh 7.646 token dan 4.410 ms, 48% lebih hemat.
-- Pencarian memori berdasarkan makna diuji pada model lokal sungguhan dengan
-  kalimat Indonesia; celah kemiripannya lebar (0,63-0,69 lawan 0,13-0,23).
+- Telemetri pemakaian nyata 3 September 2026, 13 giliran Telegram: 5
+  `core-only`, 5 `core-escalated`, 3 `direct-full`; keselamatan 13/13
+  `calm`+`certain`. Pass pemahaman 1.018 token dan 2.179 ms lawan kontrak penuh
+  7.646 token dan 4.410 ms, 48% lebih hemat.
+- Pencarian memori berdasarkan makna diuji pada model lokal sungguhan; celah
+  kemiripannya lebar (0,63-0,69 lawan 0,13-0,23).
 
 ## Recent material changes
 
-- Dogfood terpadatkan lewat akun penguji (`tg-dogfood-20260906a`, empat run)
-  menemukan lima cacat yang tidak pernah terlihat probe, dan kelimanya
-  diperbaiki. Run pertama, 35 giliran: balasan mengaku menyimpan tanpa receipt
-  code-owned (gerbangnya dulu menuntut adanya kandidat yang gagal, bukan adanya
-  receipt); "udah kelar" yang tidak mengubah state tugas kini disertai baris
-  code-owned; animasi status yang menahan jawaban sungguhan sampai 4 menit 12
-  detik kini digabung, berhenti sesudah satu penolakan kanal, dan tidak lagi
-  ditunggu tanpa batas; serta narasi protokol tool di dalam balasan dan tawaran
-  "Dengerin dulu" kepada pengguna yang memilih "Langsung saran". Run kedua
-  melengkapi delapan marker mode full. Run ketiga dan keempat: "sisa
-  penggunaan" menjawab kuota periode padahal yang menghentikan percakapan
-  adalah jendela 24 jam—97% lawan 22,9% pada saat yang sama—jadi ia kini
-  menampilkan anggaran yang sisa absolutnya paling kecil dan menyebut yang
-  mana. Tampilannya diringkas dari 35 baris menjadi 9, dan keterangannya
-  berhenti menjelaskan mekanisme begitu jatah tinggal seperempat—ia menyebut
-  pukul berapa jatah bertambah lagi.
-- Ingatan jahitan pada `history.search` ditutup. `scoreEpisode` membuang klaim
-  yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku, dan
-  klaim `unresolved` justru jarang mengulang kata topiknya. Sebelum
-  `withRequestedFields`: 24 run memberi 18 tepat, 2 di antaranya menjahit klaim
-  dua percakapan. Sesudah: 48 run, nol jahitan.
+- Dogfood terpadatkan lewat akun penguji (`tg-dogfood-20260906a`, enam run)
+  menemukan tiga belas cacat yang tidak terlihat probe; dua belas diperbaiki.
+  Empat run pertama: klaim menyimpan tanpa receipt, "udah kelar" yang tidak
+  mengubah state tugas, animasi status yang menahan jawaban 4 menit 12 detik,
+  narasi protokol tool, tawaran "Dengerin dulu" kepada pengguna yang memilih
+  saran, dan "sisa penggunaan" yang menjawab kuota periode padahal jendela 24
+  jam yang menghentikannya. Tampilannya sekaligus diringkas jadi 9 baris.
+- Run kelima memakai satu masalah yang berjalan, bukan daftar fitur: usefulness
+  5, naturalness 2. Sapaan berpindah ke lo-gue lalu janji berhentinya dilanggar
+  di bubble berikutnya, jadi sapaan kini dimiliki kode
+  (`harvyPronounRegister`). Ikut diperbaiki: "Root agen tidak memakai tool" yang
+  lolos penyaring narasi, "besok" untuk hari Rabu (`clockNote` kini membawa peta
+  hari terdekat), dan syarat dari dosen yang tidak masuk memori—nol dari enam
+  probe sebelum aturan self/work diperjelas, lima dari enam sesudahnya.
+  Verifikasi empat giliran membuktikan peta hari dipakai dan sapaan bersih, lalu
+  menemukan dua cacat lagi: klaim "sudah tersimpan" lolos gerbang receipt karena
+  daftarnya memuat awalan di- dan bukan ter-, dan gaya `advice` tetap dijawab
+  pertanyaan telanjang—`questionOnlyReply` kini memasukkannya ke jalur
+  regenerasi. Kata rusak tetap terbuka: delapan kejadian, tanpa sebab di kode.
+- Ingatan jahitan pada `history.search` ditutup: `scoreEpisode` membuang klaim
+  yang tidak berbagi satu kata pun dengan kueri sebelum bonus jenis berlaku.
+  Sebelum `withRequestedFields` 24 run memberi 2 jahitan; sesudah, 48 run nol.
 - Jalur planning durable: penolakan bentuk jawaban yang membuang sintesis
-  (`structuredFieldBudgetCharacters`), anggaran waktu lane durable yang terpisah
-  dari lane chat (`DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik), dan pengulangan
-  timeout yang tidak menyisakan waktu menjawab (`remainingWorkMs`).
-  `durable_planning_runtime` yang lulus 3 dari 6 lalu 0 dari 4 kini 6 dari 6
-  dalam 36,5-79,2 detik.
+  (`structuredFieldBudgetCharacters`), anggaran waktu lane durable terpisah
+  (`DURABLE_AGENT_RUN_DEADLINE_MS` 75 detik), dan pengulangan timeout yang tidak
+  menyisakan waktu menjawab (`remainingWorkMs`). `durable_planning_runtime` yang
+  lulus 3 dari 6 lalu 0 dari 4 kini 6 dari 6.
 
 ## Active cross-subsystem blockers
 
