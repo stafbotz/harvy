@@ -76,6 +76,63 @@ describe("SpecialistDelegationExecutor", () => {
     assert.equal(summary.handoff.workProduct, "Trade-off yang terlewat.");
   });
 
+  /**
+   * Batas fan-out dulu ditegakkan dengan mencabut capability dari daftar tool.
+   * Bentuk itu terukur merugikan pada delegasi paralel—9 dari 10 run mati
+   * sebagai `unknown_tool`—dan bentuk yang sama tersisa di sini sampai
+   * batasnya dipindahkan ke executor. Sekarang panggilannya dijawab, bukan
+   * dihilangkan.
+   */
+  it("menolak delegasi sesudah jatah run habis, tanpa memanggil worker", async () => {
+    let calls = 0;
+    const executor = new SpecialistDelegationExecutor(
+      async () => {
+        calls += 1;
+        return handoff({ workProduct: "tidak boleh" });
+      },
+      ["strong_worker", "heavy_executor", "verifier", "challenger"],
+      () => ({ decision: "allow" }),
+    );
+    const validated = executor.validate({ role: "challenger", brief: brief() });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const result = await executor.execute(
+      validated.value,
+      context({ priorSuccesses: 2 }),
+    );
+
+    // `unavailable`, bukan `error`: capability-nya terpasang dan panggilannya
+    // sah, jatahnya saja yang habis. Jejak run harus dapat menjawab "apakah ada
+    // yang rusak" tanpa menghitung batas yang memang dirancang.
+    assert.equal(result.status, "unavailable");
+    assert.equal(calls, 0);
+    const summary = JSON.parse(result.summary) as { reason: string };
+    assert.match(summary.reason, /Jatah delegasi specialist run ini sudah terpakai/u);
+  });
+
+  it("masih melayani delegasi kedua selama jatahnya belum habis", async () => {
+    let calls = 0;
+    const executor = new SpecialistDelegationExecutor(
+      async () => {
+        calls += 1;
+        return handoff({ workProduct: "boleh" });
+      },
+      ["strong_worker", "heavy_executor", "verifier", "challenger"],
+      () => ({ decision: "allow" }),
+    );
+    const validated = executor.validate({ role: "challenger", brief: brief() });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const result = await executor.execute(
+      validated.value,
+      context({ priorSuccesses: 1 }),
+    );
+    assert.equal(result.status, "ok");
+    assert.equal(calls, 1);
+  });
+
   it("memanggil specialist yang sama pada WhatsApp privat", async () => {
     let ownerId = "";
     const executor = new SpecialistDelegationExecutor(
@@ -311,7 +368,9 @@ function handoff(
   };
 }
 
-function context(): AgentExecutionContext {
+function context(
+  overrides: Partial<AgentExecutionContext> = {},
+): AgentExecutionContext {
   return {
     runId: "run-1",
     step: 0,
@@ -319,5 +378,7 @@ function context(): AgentExecutionContext {
     idempotencyKey: "idempotent",
     signal: new AbortController().signal,
     runBudget: new RunBudgetAccount(),
+    priorSuccesses: 0,
+    ...overrides,
   };
 }

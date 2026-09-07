@@ -358,8 +358,9 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   bukti bahwa probe-nya tidak pernah menguji kondisi yang membuatnya terjadi.
 
   **Perbaikan pertama tidak bekerja, dan itu terukur.** Hasil tool sempat
-  membawa `callableAgain` bernilai false supaya transcript berhenti bertentangan
-  dengan daftar tool. Memberi tahu model bahwa tool-nya dicabut ternyata tidak
+  membawa penanda callableAgain bernilai false—sengaja tanpa backtick, karena
+  penanda itu sudah tidak ada—supaya transcript berhenti bertentangan dengan
+  daftar tool. Memberi tahu model bahwa tool-nya dicabut ternyata tidak
   membuatnya berhenti memanggil: 11 kejadian dari 10 run dengan penanda, lawan
   9 dari 10 tanpa. Yang diminta pengguna tetap delegasi, dan menyembunyikan
   tombolnya tidak mengubah itu. Penanda itu dibuang, bukan dipertahankan sebagai
@@ -402,6 +403,45 @@ dogfood tujuh hari dan coding/GitHub live belum selesai.
   dengan koreksi schema di sebelahnya. Nama itu berasal dari model dan kembali
   kepada model saja: dipotong 64 karakter, paling banyak dua, tanpa pergantian
   baris, dan tidak pernah masuk log.
+
+- **Batas fan-out menyusul, dan buktinya deterministik—bukan terukur.** Bentuk
+  yang sama tersisa pada `MAX_DELEGATION_ACTIONS_PER_RUN`: sesudah jatah dua
+  delegasi habis, seluruh capability delegasi hilang dari daftar tool sementara
+  transcript memperlihatkan keduanya berhasil. Kondisi itu tidak dapat diukur di
+  lingkungan ini dan alasannya layak dicatat: `src/app.ts` memasang delegasi
+  paralel **atau** specialist, tidak pernah keduanya; paralel hanya bisa
+  berhasil sekali karena executor menolak `step !== 0`; jadi jatah dua hanya
+  tercapai lewat specialist, yang belum terpasang di sini. Tidak ada angka 9
+  dari 10 untuk kelas ini, dan tidak akan diklaim.
+
+  Perbaikannya mengikuti bentuk yang sudah terbukti. `AgentExecutionContext`
+  membawa `priorSuccesses`—berapa kali capability itu sendiri sudah berhasil
+  pada run ini, hanya angka, tanpa observation apa pun—sehingga
+  `SpecialistDelegationExecutor` dapat memiliki batasnya sendiri dan menolak
+  dengan `unavailable` berikut alasannya. Penyaringan terakhir di
+  `planAgent` dicabut: `callableCapabilities` yang dilihat model kini persis
+  yang diterima, dan tidak ada capability yang disembunyikan di lapisan itu
+  lagi. `canDelegate` ikut menghitung jatah, sebab ia yang menentukan langkah
+  berikutnya berperan planner atau sintesis—jebakan yang sama seperti
+  `isContextFreeDelegation`, kali ini diantisipasi, dan assertion perannya
+  memang lulus tanpa perubahan.
+
+  Yang dikunci tes: executor menolak pada jatah habis tanpa memanggil worker;
+  harness benar-benar mengisi hitungannya (`[0, 0, 1]`—panggilan yang gagal
+  tidak menghabiskan jatah, dan keberhasilan capability lain tidak ikut
+  dihitung); dan delegasi ketiga dalam satu run tidak pernah mencapai
+  specialist sementara run tetap selesai. Tes lama yang menuntut tool itu
+  hilang dari daftar dibalik beserta alasannya.
+
+  **Pengukuran ulang jalur delegasi hidup belum dilakukan.** Percobaan sesudah
+  perubahan ini berhenti 10 dari 10 dengan `agent_planner_failed`, dan itu bukan
+  regresi: providernya menjawab 402 pada setiap permintaan, termasuk pada
+  `probe-chat` yang jalurnya sama sekali berbeda. Angka `stopped=10` pada
+  berkas probe hari itu tidak boleh dibaca sebagai hasil. Pengukuran terakhir
+  yang sah untuk jalur ini adalah yang sebelum perubahan fan-out: provokasi
+  10 run dengan nol `unknown_tool` dan 6 selesai, serta delegasi biasa 10 run
+  dengan nol tool ditolak dan 9 selesai. Ulangi keduanya begitu kredit provider
+  tersedia.
 
 
 - Tiga kasus probe menyertainya dan tetap ada:

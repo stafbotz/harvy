@@ -151,6 +151,7 @@ describe("write agent executors", () => {
       idempotencyKey: "key",
       signal: new AbortController().signal,
       runBudget: new RunBudgetAccount(),
+      priorSuccesses: 0,
     });
     assert.equal(result.status, "error");
     assert.match(
@@ -316,6 +317,7 @@ function context(
     idempotencyKey: "key",
     signal: new AbortController().signal,
     runBudget: new RunBudgetAccount(),
+    priorSuccesses: 0,
   };
 }
 

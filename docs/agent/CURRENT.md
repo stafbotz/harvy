@@ -7,7 +7,7 @@ Context-Version: 1
 ## Verified baseline
 
 - Diperiksa terhadap `5148077`; perubahan di sini dimulai di atas `5b294a1`.
-- `npm run check` PASS dan `npm test` 2.409 lulus 0 gagal; bagian Aktif
+- `npm run check` PASS dan `npm test` 2.414 lulus 0 gagal; bagian Aktif
   `docs/engineering/KNOWN-FAILURES.md` kosong. Rujukan berkas dan simbol pada
   dokumen hidup dijaga `tests/periksa-dokumentasi.test.ts`, bukan ingatan.
 - Telemetri nyata 3 September 2026, 13 giliran Telegram: 5 `core-only`, 5
@@ -27,26 +27,24 @@ Context-Version: 1
   menghentikannya. Tampilannya sekaligus diringkas jadi 9 baris.
 - Run kelima memakai satu masalah yang berjalan, bukan daftar fitur: usefulness
   5, naturalness 2. Sapaan berpindah ke lo-gue lalu janji berhentinya dilanggar
-  di bubble berikutnya, jadi sapaan kini dimiliki kode
-  (`harvyPronounRegister`). Ikut diperbaiki: "Root agen tidak memakai tool" yang
-  lolos penyaring narasi, "besok" untuk hari Rabu (`clockNote` membawa peta hari
-  terdekat), dan syarat dosen yang tidak masuk memori—nol dari enam probe
-  sebelum aturan self/work diperjelas, lima dari enam sesudahnya.
-  Verifikasi empat giliran menemukan dua lagi: klaim "sudah tersimpan" lolos
-  gerbang receipt karena daftarnya memuat awalan di- bukan ter-, dan gaya
-  `advice` tetap dijawab pertanyaan telanjang—`questionOnlyReply` kini
-  memasukkannya ke jalur regenerasi. Kata rusak terbuka: delapan kejadian.
-- Ingatan jahitan pada `history.search` ditutup: `scoreEpisode` membuang klaim
-  yang tidak berbagi satu kata pun dengan kueri. Sebelum `withRequestedFields`
-  24 run memberi 2 jahitan; sesudah, 48 run nol.
+  di bubble berikutnya, jadi sapaan kini dimiliki kode (`harvyPronounRegister`).
+  Ikut diperbaiki: "Root agen tidak memakai tool" yang lolos penyaring narasi,
+  "besok" untuk hari Rabu (`clockNote` membawa peta hari terdekat), dan syarat
+  dosen yang tidak masuk memori—nol dari enam probe sebelum aturan self/work
+  diperjelas, lima dari enam sesudahnya. Verifikasi empat giliran menemukan dua
+  lagi: klaim "sudah tersimpan" lolos gerbang receipt karena daftarnya memuat
+  awalan di- bukan ter-, dan gaya `advice` tetap dijawab pertanyaan telanjang
+  (`questionOnlyReply`). Kata rusak terbuka: delapan kejadian.
 - `unknown_tool` ditutup. Sebabnya terbaca dari kode—delegasi disaring keluar
   saat `input.step > 0` sementara transcript tetap memperlihatkan panggilannya
   berhasil—lalu direproduksi begitu probe `delegasi-ulang` meminta putaran
-  delegasi kedua: 9 dari 10 run mati, nol selesai. Memberi tahu model bahwa
-  tool-nya dicabut tidak menolong (11 dari 10). Yang bekerja: berhenti
-  menyembunyikan, dan menjawab panggilannya `unavailable` lewat executor yang
-  memang sudah menolak `step !== 0`. Kelasnya turun ke nol, run selesai 6 dari
-  10, batas satu delegasi paralel per run tidak berubah.
+  delegasi kedua: 9 dari 10 run mati. Memberi tahu model bahwa tool-nya dicabut
+  tidak menolong (11 dari 10). Yang bekerja: berhenti menyembunyikan, dan
+  menjawab panggilannya `unavailable` lewat executor yang memang sudah menolak
+  `step !== 0`. Kelasnya nol, run selesai 6 dari 10, batasnya tidak berubah.
+  Batas fan-out menyusul ke `SpecialistDelegationExecutor` lewat
+  `priorSuccesses`, jadi tidak ada capability yang disembunyikan dari model
+  lagi; buktinya deterministik, sebab delegasi specialist belum terpasang.
 
 ## Active cross-subsystem blockers
 

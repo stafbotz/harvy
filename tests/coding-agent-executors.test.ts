@@ -510,6 +510,7 @@ function directContext(scope: AgentExecutionContext["scope"]): AgentExecutionCon
     idempotencyKey: "idempotency-1",
     signal: new AbortController().signal,
     runBudget: {} as AgentExecutionContext["runBudget"],
+    priorSuccesses: 0,
   };
 }
 

@@ -138,6 +138,20 @@ export interface AgentExecutionContext {
   runBudget: RunBudgetAccount;
   /** Diturunkan composition dari assessment turn, tidak dapat diubah model. */
   workSignals?: AgentWorkSignals;
+  /**
+   * Berapa kali capability ini sudah benar-benar berhasil pada run ini.
+   *
+   * Ada supaya batas per-run dapat dimiliki executor, bukan disembunyikan dari
+   * daftar tool. Menyembunyikan capability yang transcript-nya memperlihatkan
+   * berhasil membuat model memanggil nama yang tidak ada dan menjatuhkan run;
+   * itu terukur pada delegasi paralel—9 dari 10 run mati—dan bentuk yang sama
+   * tersisa pada batas fan-out. Executor yang tahu hitungannya dapat menolak
+   * dengan jujur alih-alih lenyap.
+   *
+   * Hanya angka, dan hanya milik capability ini: executor tidak diberi
+   * observation run mana pun.
+   */
+  priorSuccesses: number;
 }
 
 export interface AgentExecutorResult {
@@ -959,6 +973,10 @@ async function executeAction(
           idempotencyKey: digest,
           signal,
           runBudget,
+          priorSuccesses: checkpoint.observations.filter((observation) =>
+            observation.capabilityId === capability.id &&
+            observation.status === "ok"
+          ).length,
           ...(input.workSignals ? { workSignals: input.workSignals } : {}),
         }),
       input.signal,

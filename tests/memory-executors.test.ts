@@ -370,6 +370,7 @@ function context(ownerId: string): AgentExecutionContext {
     idempotencyKey: "key",
     signal: new AbortController().signal,
     runBudget: new RunBudgetAccount(),
+    priorSuccesses: 0,
   };
 }
 

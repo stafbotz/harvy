@@ -860,6 +860,105 @@ describe("parallel delegation executor", () => {
   });
 });
 
+/**
+ * Hitungan yang membuat batas per-run dapat dimiliki executor.
+ *
+ * Tanpa angka ini, satu-satunya cara menegakkan batas adalah mencabut
+ * capability dari daftar tool—dan bentuk itu terukur menjatuhkan run: model
+ * memanggil nama yang transcript-nya perlihatkan berhasil, lalu run mati
+ * sebagai `unknown_tool`.
+ */
+describe("hitungan keberhasilan capability pada satu run", () => {
+  const berhitung = (
+    capabilityId: string,
+    terlihat: number[],
+    hasil: (panggilan: number) => "ok" | "error",
+  ): AgentCapabilityExecutor<Record<string, unknown>> => {
+    let panggilan = 0;
+    return {
+      capabilityId,
+      capabilityVersion: "1",
+      // Input diteruskan apa adanya supaya dua panggilan berbeda tidak dianggap
+      // siklus oleh penjaga harness.
+      validate: (input) => ({ ok: true, value: input as Record<string, unknown> }),
+      execute: async (_input, context) => {
+        terlihat.push(context.priorSuccesses);
+        panggilan += 1;
+        return { status: hasil(panggilan), summary: "{}" };
+      },
+    };
+  };
+
+  it("bertambah hanya ketika panggilan sebelumnya berhasil", async () => {
+    const harness = new AgentHarness(createHarvyCapabilityCatalog({
+      internalToolsInstalled: true,
+    }));
+    const terlihat: number[] = [];
+    let langkah = 0;
+    const result = await harness.run({
+      scope: privateAgentScope("telegram", "student"),
+      request: "cek waktu berkali-kali",
+      // Panggilan pertama gagal; kegagalan tidak boleh menghabiskan jatah,
+      // sebab tidak ada pekerjaan yang benar-benar terjadi.
+      executors: [berhitung("settings.time.get", terlihat, (n) => n === 1 ? "error" : "ok")],
+      planner: async () => {
+        langkah += 1;
+        if (langkah <= 3) {
+          return {
+            kind: "action",
+            capabilityId: "settings.time.get",
+            capabilityVersion: "1",
+            input: { percobaan: langkah },
+          };
+        }
+        return { kind: "final", reply: "selesai" };
+      },
+    });
+
+    assert.equal(result.status, "completed");
+    assert.deepEqual(terlihat, [0, 0, 1]);
+  });
+
+  it("tidak menghitung keberhasilan capability lain", async () => {
+    const harness = new AgentHarness(createHarvyCapabilityCatalog({
+      internalToolsInstalled: true,
+    }));
+    const terlihat: number[] = [];
+    let langkah = 0;
+    const result = await harness.run({
+      scope: privateAgentScope("telegram", "student"),
+      request: "dua capability berbeda",
+      executors: [
+        fakeExecutor("task.list_active"),
+        berhitung("settings.time.get", terlihat, () => "ok"),
+      ],
+      planner: async () => {
+        langkah += 1;
+        if (langkah === 1) {
+          return {
+            kind: "action",
+            capabilityId: "task.list_active",
+            capabilityVersion: "1",
+            input: {},
+          };
+        }
+        if (langkah === 2) {
+          return {
+            kind: "action",
+            capabilityId: "settings.time.get",
+            capabilityVersion: "1",
+            input: {},
+          };
+        }
+        return { kind: "final", reply: "selesai" };
+      },
+    });
+
+    assert.equal(result.status, "completed");
+    assert.deepEqual(terlihat, [0]);
+  });
+});
+
 function fakeExecutor(capabilityId: string): AgentCapabilityExecutor<Record<string, never>> {
   return {
     capabilityId,
@@ -886,6 +985,7 @@ function fakeNativeExecutor(
 function executionContext(
   step = 0,
   runBudget = new RunBudgetAccount(),
+  priorSuccesses = 0,
 ): AgentExecutionContext {
   return {
     runId: "run",
@@ -894,6 +994,7 @@ function executionContext(
     idempotencyKey: "idempotent",
     signal: new AbortController().signal,
     runBudget,
+    priorSuccesses,
   };
 }
 

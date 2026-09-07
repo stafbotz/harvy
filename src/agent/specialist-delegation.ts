@@ -139,6 +139,19 @@ const SPECIALIST_NATIVE_TOOL = {
  * Satu-hop specialist boundary. Worker tidak menerima harness, tool registry,
  * memory, provider continuation, credential, atau API delegasi.
  */
+/**
+ * Jatah delegasi specialist satu run.
+ *
+ * Angkanya sama dengan `MAX_DELEGATION_ACTIONS_PER_RUN` di composition root,
+ * dan itu memang disengaja: keduanya menyatakan batas yang sama dari dua sisi.
+ * Yang di sini menolak panggilannya; yang di sana hanya memutuskan apakah
+ * langkah berikutnya masih berperan planner atau sudah menjadi sintesis.
+ * Delegasi paralel dan specialist tidak pernah terpasang bersamaan
+ * (`src/app.ts` memilih salah satu), sehingga hitungan per-capability di sini
+ * setara dengan hitungan lintas-capability di sana.
+ */
+const MAX_SPECIALIST_DELEGATIONS_PER_RUN = 2;
+
 export class SpecialistDelegationExecutor
 implements AgentCapabilityExecutor<SpecialistRequest> {
   readonly capabilityId = "agent.delegate.specialist";
@@ -185,6 +198,24 @@ implements AgentCapabilityExecutor<SpecialistRequest> {
   ): Promise<AgentExecutorResult> {
     if (context.scope.kind !== "private") {
       return failure(input.role, "Specialist hanya tersedia pada ruang privat Harvy.");
+    }
+    // Batas fan-out per run dimiliki di sini, bukan dengan menghilangkan
+    // capability dari daftar tool. Bentuk yang kedua sudah terbukti merugikan
+    // pada delegasi paralel: transcript memperlihatkan panggilan sebelumnya
+    // berhasil sementara daftarnya berhenti memuatnya, lalu model memanggil
+    // nama yang tidak ada dan run mati sebagai `unknown_tool`—9 dari 10 run
+    // pada probe yang memprovokasinya. Penolakan yang terbaca model jauh lebih
+    // murah daripada tool yang lenyap tanpa penjelasan.
+    if (context.priorSuccesses >= MAX_SPECIALIST_DELEGATIONS_PER_RUN) {
+      return {
+        status: "unavailable",
+        summary: JSON.stringify({
+          kind: "agent.delegate.specialist.result",
+          role: input.role,
+          reason:
+            `Jatah delegasi specialist run ini sudah terpakai (${MAX_SPECIALIST_DELEGATIONS_PER_RUN}). Susun sisanya sendiri dari hasil yang sudah ada.`,
+        }),
+      };
     }
     if (input.brief.originalRequestRef !== context.runId) {
       return failure(input.role, "WorkBrief tidak terikat ke run aktif.");

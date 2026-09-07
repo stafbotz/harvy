@@ -660,9 +660,59 @@ describe("Conversation agent runtime", () => {
       requests.map((request) => request.execution?.role),
       ["planner", "planner", "synthesizer"],
     );
+    // Tool-nya tetap ditawarkan meski jatahnya habis. Menyembunyikannya adalah
+    // bentuk yang terukur menjatuhkan run pada delegasi paralel—transcript
+    // memperlihatkan dua panggilan berhasil sementara daftarnya berhenti
+    // memuatnya, lalu model memanggil nama yang tidak ada. Batasnya sekarang
+    // dimiliki `SpecialistDelegationExecutor`, yang menolak dengan
+    // `unavailable`; tes di bawah membuktikannya masih ditegakkan.
     assert.equal(requests[2]?.tools?.some(
       (tool) => tool.function.name === "harvy_agent_delegate_specialist_v1",
-    ), false);
+    ), true);
+  });
+
+  it("menolak delegasi ketiga tanpa memanggil specialist, dan run tetap selesai", async () => {
+    const requests: ChatRequest[] = [];
+    const called: string[] = [];
+    const specialist = new SpecialistDelegationExecutor(
+      async (request) => {
+        called.push(request.role);
+        return specialistHandoff(
+          request.brief.originalRequestRef,
+          `${request.role} selesai.`,
+        );
+      },
+      ["heavy_executor", "verifier", "challenger"],
+      () => ({ decision: "allow" }),
+    );
+    const delegasi = (role: string, instruksi: string) => ({
+      kind: "action" as const,
+      capabilityId: "agent.delegate.specialist",
+      capabilityVersion: "1",
+      input: { role, brief: specialistBrief("run-bounded", instruksi) },
+    });
+    const conversation = fixture(
+      requests,
+      [
+        delegasi("heavy_executor", "Kerjakan analisis berat."),
+        delegasi("verifier", "Verifikasi hasil secara independen."),
+        delegasi("challenger", "Sanggah kesimpulannya sekali lagi."),
+        { kind: "final", reply: "Sintesis final berbasis dua handoff." },
+      ],
+      [specialist],
+    );
+
+    const result = await conversation.agent(
+      "selesaikan, verifikasi, lalu sanggah pekerjaan sulit ini",
+      "orchestrate",
+      undefined,
+      { ownerId: "student", channel: "telegram", runId: "run-bounded" },
+    );
+
+    // Batasnya tetap dua, dan yang ketiga tidak pernah mencapai worker. Bedanya
+    // dengan sebelumnya: run tidak mati, ia melanjutkan ke sintesis.
+    assert.equal(result.status, "completed");
+    assert.deepEqual(called, ["heavy_executor", "verifier"]);
   });
 
   it("mengulang final langsung orkestrator dengan konteks tetapi tanpa delegasi", async () => {

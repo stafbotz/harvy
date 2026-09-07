@@ -2427,31 +2427,22 @@ export class Conversation {
     ).length;
     let plannerInput: AgentPlannerInput = {
       ...input,
-      // Delegasi paralel tidak lagi disembunyikan sesudah langkah pertama.
-      // Batasnya tetap satu per run, tetapi yang memilikinya
-      // `ParallelDelegationExecutor`, yang memang sudah menolak `step !== 0`
-      // sejak awal. Penyaringan di sini hanyalah pagar kedua, dan pagar kedua
-      // itu yang justru menjatuhkan run: daftar tool berhenti menawarkannya
-      // sementara transcript memperlihatkan panggilan pertamanya berhasil, lalu
-      // model yang diminta pengguna mendelegasikan sekali lagi memanggil nama
-      // yang tidak ada dan run mati sebagai `unknown_tool`.
+      // Tidak ada capability yang disembunyikan dari model di sini lagi.
       //
-      // Diukur, bukan ditebak. Probe `delegasi-ulang` meminta putaran delegasi
-      // kedua secara eksplisit: 9 dari 10 run kena, nol selesai. Memberi tahu
-      // model bahwa tool-nya dicabut tidak menolong—dengan penanda
-      // `callableAgain` hasilnya 11 kejadian dari 10 run. Yang diminta pengguna
-      // tetap delegasi, dan menyembunyikan tombolnya tidak mengubah itu.
-      // Sekarang panggilannya sah, dijawab `unavailable` berikut alasannya, dan
-      // run berjalan terus dengan satu langkah terpakai.
-      callableCapabilities: input.callableCapabilities.filter(
-        (capability) => {
-          if (
-            isDelegationCapability(capability.id) &&
-            delegationCount >= MAX_DELEGATION_ACTIONS_PER_RUN
-          ) return false;
-          return true;
-        },
-      ),
+      // Dua batas delegasi dulu ditegakkan dengan mencabut tool dari daftar:
+      // delegasi paralel sesudah langkah pertama, dan seluruh delegasi sesudah
+      // jatah fan-out habis. Bentuk itu terukur merugikan—transcript
+      // memperlihatkan panggilan sebelumnya berhasil sementara daftarnya
+      // berhenti memuatnya, lalu model memanggil nama yang tidak ada dan run
+      // mati sebagai `unknown_tool`. Probe `delegasi-ulang`: 9 dari 10 run
+      // kena, nol selesai. Memberi tahu model bahwa tool-nya dicabut tidak
+      // menolong (11 dari 10 run); yang diminta pengguna tetap delegasi.
+      //
+      // Kedua batas itu sekarang dimiliki executor-nya masing-masing, yang
+      // menjawab `unavailable` berikut alasannya. Yang tersisa di sini hanya
+      // `canDelegate` di bawah, dan ia tidak menyembunyikan apa pun—ia hanya
+      // memutuskan apakah langkah ini masih planner atau sudah sintesis.
+      callableCapabilities: input.callableCapabilities,
     };
     // Transcript disambung sesudah daftar callable disaring, bukan sebelumnya.
     // Hasil tool langkah lalu perlu tahu apakah capability-nya masih boleh
@@ -2543,13 +2534,14 @@ export class Conversation {
       ? EMPTY_CONTEXT
       : sourceContext;
     // "Masih ada pilihan mendelegasikan", bukan sekadar "tool-nya terlihat".
-    // Delegasi paralel sesudah langkah pertama pasti ditolak executor, jadi ia
-    // tidak menghalangi langkah ini menjadi sintesis. Syarat ini dulu tersirat
-    // pada penyaringan daftar callable; sesudah penyaringan itu dicabut, ia
-    // harus ditulis—kalau tidak, langkah kedua tetap berperan planner dan
-    // kehilangan anggaran `final` miliknya.
+    // Delegasi yang pasti ditolak executor tidak menghalangi langkah ini
+    // menjadi sintesis. Syarat ini dulu tersirat pada penyaringan daftar
+    // callable; sesudah penyaringan itu dicabut ia harus ditulis—kalau tidak,
+    // langkah sesudah delegasi tetap berperan planner dan kehilangan anggaran
+    // `final` miliknya.
     const canDelegate = plannerInput.callableCapabilities.some((capability) =>
       isDelegationCapability(capability.id) &&
+      delegationCount < MAX_DELEGATION_ACTIONS_PER_RUN &&
       (capability.id !== "agent.delegate.parallel" || input.step === 0)
     );
     let planned = await this.requestAgentDecision(
